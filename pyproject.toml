@@ -1,0 +1,5 @@
+[project]
+name = "sayvors"
+version = "0.1.0"
+description = "Sayvors monorepo"
+requires-python = ">=3.11"
