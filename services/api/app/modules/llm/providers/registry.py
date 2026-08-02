@@ -1,6 +1,6 @@
-from ...config import settings
+from ....config import settings
 from .base import LLMProvider, ProviderError
-from .catalog import get_provider_from_model
+from .catalog import MODELS, ModelInfo, get_provider_from_model
 from .openai_compatible import OpenAICompatibleProvider
 from .gemini import GeminiProvider
 
@@ -52,3 +52,7 @@ def get_provider(provider: str) -> LLMProvider:
 def get_provider_for_model(model_id: str) -> LLMProvider:
     provider_key = get_provider_from_model(model_id)
     return get_provider(provider_key)
+
+
+def list_models() -> list[ModelInfo]:
+    return MODELS

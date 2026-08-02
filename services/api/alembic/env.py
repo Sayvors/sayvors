@@ -1,13 +1,18 @@
 import asyncio
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
 config = context.config
+
+# load .env so os.getenv sees DATABASE_URL
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
