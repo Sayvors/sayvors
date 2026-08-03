@@ -147,14 +147,6 @@ export default function Sidebar() {
         collapsed ? "w-[56px]" : "w-[220px]"
       }`}
     >
-      {/* Logo */}
-      <div className="flex h-11 items-center gap-2 border-b border-ink/[0.06] px-3">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-deep-violet to-magenta">
-          <span className="text-[11px] font-bold text-white">S</span>
-        </div>
-        {!collapsed && <span className="text-[14px] font-semibold text-ink">Sayvors</span>}
-      </div>
-
       {/* Quick action */}
       <div className="px-2 pt-3">
         <button
