@@ -4,35 +4,35 @@ import Link from "next/link";
 import { useState } from "react";
 
 const navItems = [
-  { label: "Inbox", icon: InboxIcon, href: "/dashboard", badge: 12 },
+  { label: "Dashboard", icon: LayoutIcon, href: "/dashboard" },
   { label: "Conversations", icon: ChatIcon, href: "/dashboard/conversations", badge: 3 },
   { label: "Contacts", icon: UsersIcon, href: "/dashboard/contacts" },
   { label: "Channels", icon: GlobeIcon, href: "/dashboard/channels" },
+  { label: "Campaigns", icon: MegaphoneIcon, href: "/dashboard/campaigns" },
 ];
 
 const aiItems = [
-  { label: "TTS Studio", icon: MicIcon, href: "/dashboard/tts" },
-  { label: "STT Transcribe", icon: HeadphonesIcon, href: "/dashboard/stt" },
-  { label: "LLM Chat", icon: SparklesIcon, href: "/dashboard/llm" },
+  { label: "TTS", icon: MicIcon, href: "/dashboard/tts" },
+  { label: "STT", icon: HeadphonesIcon, href: "/dashboard/stt" },
+  { label: "LLM", icon: SparklesIcon, href: "/dashboard/llm" },
 ];
 
 const bottomItems = [
   { label: "Settings", icon: SettingsIcon, href: "/dashboard/settings" },
-  { label: "Billing", icon: CreditCardIcon, href: "/dashboard/billing" },
 ];
 
 function NavItem({ item, collapsed }: { item: typeof navItems[0]; collapsed: boolean }) {
   return (
     <Link
       href={item.href}
-      className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] font-medium text-ink/60 transition hover:bg-ink/[0.04] hover:text-ink"
+      className="group flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink"
     >
-      <item.icon className="h-[18px] w-[18px] shrink-0 text-ink/40 group-hover:text-deep-violet" />
+      <item.icon className="h-4 w-4 shrink-0 text-ink/30 group-hover:text-deep-violet" />
       {!collapsed && (
         <>
           <span className="flex-1">{item.label}</span>
           {"badge" in item && item.badge && (
-            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-coral px-1.5 text-[11px] font-semibold text-white">
+            <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-coral px-1 text-[10px] font-semibold text-white">
               {item.badge}
             </span>
           )}
@@ -43,9 +43,9 @@ function NavItem({ item, collapsed }: { item: typeof navItems[0]; collapsed: boo
 }
 
 function SectionLabel({ children, collapsed }: { children: React.ReactNode; collapsed: boolean }) {
-  if (collapsed) return <div className="mx-3 my-2 h-px bg-ink/[0.06]" />;
+  if (collapsed) return <div className="mx-2.5 my-1.5 h-px bg-ink/[0.06]" />;
   return (
-    <p className="mx-3 mb-1 mt-5 text-[11px] font-semibold uppercase tracking-wider text-ink/30">
+    <p className="mx-2.5 mb-0.5 mt-3 text-[10px] font-semibold uppercase tracking-wider text-ink/25">
       {children}
     </p>
   );
@@ -57,47 +57,47 @@ export default function Sidebar() {
   return (
     <aside
       className={`relative flex h-screen flex-col border-r border-ink/[0.06] bg-white transition-all duration-200 ${
-        collapsed ? "w-[68px]" : "w-[240px]"
+        collapsed ? "w-[56px]" : "w-[200px]"
       }`}
     >
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2.5 border-b border-ink/[0.06] px-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-deep-violet to-magenta">
-          <span className="text-[13px] font-bold text-white">S</span>
+      <div className="flex h-11 items-center gap-2 border-b border-ink/[0.06] px-3">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-deep-violet to-magenta">
+          <span className="text-[11px] font-bold text-white">S</span>
         </div>
-        {!collapsed && <span className="text-[15px] font-semibold text-ink">Sayvors</span>}
+        {!collapsed && <span className="text-[14px] font-semibold text-ink">Sayvors</span>}
       </div>
 
-      {/* Compose button */}
-      <div className="px-3 pt-4">
+      {/* Quick action */}
+      <div className="px-2 pt-3">
         <button
-          className={`flex h-10 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-deep-violet to-magenta text-[13px] font-semibold text-white shadow-md shadow-deep-violet/20 transition hover:shadow-lg hover:shadow-deep-violet/30 active:scale-[0.98] ${
-            collapsed ? "w-10" : "w-full px-4"
+          className={`flex h-8 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-deep-violet to-magenta text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/20 transition hover:shadow-md active:scale-[0.98] ${
+            collapsed ? "w-8" : "w-full px-3"
           }`}
         >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-            <path d="M12 2.5H4a1.5 1.5 0 00-1.5 1.5v8A1.5 1.5 0 004 13.5h8a1.5 1.5 0 001.5-1.5V4A1.5 1.5 0 0012 2.5zM5.5 5.5h5M5.5 8h3" strokeLinecap="round" strokeLinejoin="round" />
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
+            <path d="M8 3v10M3 8h10" strokeLinecap="round" />
           </svg>
-          {!collapsed && "New Message"}
+          {!collapsed && "New"}
         </button>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto px-2 pt-3">
+      <nav className="flex-1 overflow-y-auto px-2 pt-2">
         <div className="space-y-0.5">
           {navItems.map((item) => (
             <NavItem key={item.href} item={item} collapsed={collapsed} />
           ))}
         </div>
 
-        <SectionLabel collapsed={collapsed}>AI Tools</SectionLabel>
+        <SectionLabel collapsed={collapsed}>AI</SectionLabel>
         <div className="space-y-0.5">
           {aiItems.map((item) => (
             <NavItem key={item.href} item={item} collapsed={collapsed} />
           ))}
         </div>
 
-        <SectionLabel collapsed={collapsed}>Account</SectionLabel>
+        <SectionLabel collapsed={collapsed}>More</SectionLabel>
         <div className="space-y-0.5">
           {bottomItems.map((item) => (
             <NavItem key={item.href} item={item} collapsed={collapsed} />
@@ -105,17 +105,17 @@ export default function Sidebar() {
         </div>
       </nav>
 
-      {/* Collapse toggle */}
+      {/* Collapse */}
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="flex h-10 items-center justify-center border-t border-ink/[0.06] text-ink/30 transition hover:text-ink/60"
+        className="flex h-9 items-center justify-center border-t border-ink/[0.06] text-ink/25 transition hover:text-ink/50"
       >
         <svg
           viewBox="0 0 16 16"
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          className={`h-4 w-4 transition-transform ${collapsed ? "rotate-180" : ""}`}
+          className={`h-3.5 w-3.5 transition-transform ${collapsed ? "rotate-180" : ""}`}
         >
           <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -124,13 +124,15 @@ export default function Sidebar() {
   );
 }
 
-/* ── Icons ──────────────────────────────────────── */
+/* ── Icons (small, consistent) ────────────────── */
 
-function InboxIcon({ className }: { className?: string }) {
+function LayoutIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M22 12h-6l-2 3h-4l-2-3H2" />
-      <path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" />
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
     </svg>
   );
 }
@@ -163,6 +165,15 @@ function GlobeIcon({ className }: { className?: string }) {
   );
 }
 
+function MegaphoneIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 11l18-5v12L3 13v-2z" />
+      <path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
+    </svg>
+  );
+}
+
 function MicIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -185,7 +196,6 @@ function SparklesIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
       <path d="M12 2l2.09 6.26L20.18 10l-6.09 1.74L12 18l-2.09-6.26L3.82 10l6.09-1.74z" />
-      <path d="M5 3l1 3M18 17l1 3" />
     </svg>
   );
 }
@@ -195,15 +205,6 @@ function SettingsIcon({ className }: { className?: string }) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
-    </svg>
-  );
-}
-
-function CreditCardIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-      <line x1="1" y1="10" x2="23" y2="10" />
     </svg>
   );
 }
