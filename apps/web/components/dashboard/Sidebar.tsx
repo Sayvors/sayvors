@@ -147,20 +147,6 @@ export default function Sidebar() {
         collapsed ? "w-[56px]" : "w-[220px]"
       }`}
     >
-      {/* Quick action */}
-      <div className="px-2 pt-3">
-        <button
-          className={`flex h-8 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-deep-violet to-magenta text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/20 transition hover:shadow-md active:scale-[0.98] ${
-            collapsed ? "w-8" : "w-full px-3"
-          }`}
-        >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
-            <path d="M8 3v10M3 8h10" strokeLinecap="round" />
-          </svg>
-          {!collapsed && "New"}
-        </button>
-      </div>
-
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 pt-3">
         {/* Bottom nav first */}

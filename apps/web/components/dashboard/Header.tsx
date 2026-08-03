@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
 
 const languages = [
@@ -34,14 +35,19 @@ export default function Header() {
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-ink/[0.06] bg-white px-4">
       {/* Left: Logo + Search */}
       <div className="flex items-center gap-3">
-        {/* Wordmark */}
-        <Image
-          src="/Sayvors_Wordmark_Dark.png"
-          alt="Sayvors"
-          width={120}
-          height={20}
-          className="h-5 w-auto"
-        />
+        {/* Logo + Wordmark */}
+        <Link href="/dashboard" className="flex items-center gap-2">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-deep-violet to-magenta">
+            <span className="text-[11px] font-bold text-white">S</span>
+          </div>
+          <Image
+            src="/Sayvors_Wordmark_Dark.png"
+            alt="Sayvors"
+            width={120}
+            height={20}
+            className="h-5 w-auto"
+          />
+        </Link>
 
         <div className="h-5 w-px bg-ink/[0.06]" />
 
