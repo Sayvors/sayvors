@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -147,6 +148,14 @@ export default function Sidebar() {
         collapsed ? "w-[56px]" : "w-[220px]"
       }`}
     >
+      {/* Logo */}
+      <div className="flex h-11 items-center gap-2 border-b border-ink/[0.06] px-3">
+        <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-5 w-auto" />
+        {!collapsed && (
+          <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={110} height={18} className="h-4 w-auto" />
+        )}
+      </div>
+
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 pt-3">
         {/* Bottom nav first */}
