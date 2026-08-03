@@ -76,6 +76,14 @@ export default function Header() {
           Automation
         </button>
 
+        {/* Subscribe to premium */}
+        <button className="flex h-8 items-center gap-1.5 rounded-lg border border-amber-400/50 bg-amber-400/10 px-3 text-[12px] font-semibold text-amber-700 transition hover:bg-amber-400/20 active:scale-[0.98]">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
+          </svg>
+          Premium
+        </button>
+
         <div className="mx-1 h-5 w-px bg-ink/[0.06]" />
 
         {/* Notifications */}
