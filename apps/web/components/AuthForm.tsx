@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState, type FormEvent } from "react";
+import { useAuth } from "@/lib/auth-context";
 
 type Mode = "login" | "signup";
 type FieldName = "firstName" | "lastName" | "email" | "password" | "confirm";
@@ -160,6 +161,7 @@ function Select({
 /* ── main component ────────────────────────────────── */
 
 export default function AuthForm({ mode }: { mode: Mode }) {
+  const { signup, login } = useAuth();
   const isLogin = mode === "login";
   const [step, setStep] = useState(0);
   const [v, setV] = useState<FormValues>(defaultValues);
@@ -169,6 +171,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   const pw = useMemo(() => strength(v.password), [v.password]);
   const totalSteps = 3;
@@ -178,6 +181,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   const set = (f: FieldName) => (val: string) => {
     setV((p) => ({ ...p, [f]: val }));
     setErrs((p) => ({ ...p, [f]: undefined }));
+    setError("");
   };
 
   const next = () => {
@@ -189,15 +193,49 @@ export default function AuthForm({ mode }: { mode: Mode }) {
 
   const back = () => { setErrs({}); setStep((s) => Math.max(s - 1, 0)); };
 
-  const submit = (ev: FormEvent) => {
+  const submit = async (ev: FormEvent) => {
     ev.preventDefault();
+    setError("");
+
     if (isLogin) {
       const e = validate(0, v, true);
       setErrs(e);
       if (Object.keys(e).length > 0) return;
-    } else if (step < totalSteps - 1) { next(); return; }
-    setBusy(true);
-    setTimeout(() => { setBusy(false); setDone(true); }, 900);
+
+      setBusy(true);
+      try {
+        await login({ email: v.email.trim(), password: v.password });
+        setDone(true);
+      } catch (err: any) {
+        setError(err.message || "Login failed");
+      } finally {
+        setBusy(false);
+      }
+    } else if (step < totalSteps - 1) {
+      next();
+      return;
+    } else {
+      setBusy(true);
+      try {
+        const result = await signup({
+          first_name: v.firstName.trim(),
+          last_name: v.lastName.trim(),
+          email: v.email.trim(),
+          password: v.password,
+          business_type: v.businessType || undefined,
+          referral: v.referral || undefined,
+          newsletter: v.newsletter,
+        });
+        if (result.verification_token) {
+          localStorage.setItem("verification_token", result.verification_token);
+        }
+        setDone(true);
+      } catch (err: any) {
+        setError(err.message || "Signup failed");
+      } finally {
+        setBusy(false);
+      }
+    }
   };
 
   /* ── success ── */
@@ -211,7 +249,9 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           </div>
         </div>
         <h2 className="text-lg font-semibold text-ink">{isLogin ? "Welcome back" : "You\u2019re in!"}</h2>
-        <p className="mt-1.5 text-[13px] text-ink/55">Frontend preview only.</p>
+        <p className="mt-1.5 text-[13px] text-ink/55">
+          {isLogin ? "Redirecting you to dashboard..." : "Check your email for verification link."}
+        </p>
         <div className="mt-7 flex w-full flex-col gap-2.5">
           <Link href="/dashboard" className="flex h-11 items-center justify-center rounded-lg bg-ink text-[14px] font-medium text-white transition hover:bg-ink/90 active:scale-[0.99]">
             Go to dashboard
@@ -338,7 +378,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
                 placeholder="Your password" autoComplete="current-password" toggle
                 toggleVisible={pwVisible} onToggle={() => setPwVisible((p) => !p)} onChange={set("password")} />
               <div className="mt-2 flex justify-end">
-                <a href="#" className="text-[12px] font-medium text-ink/45 transition hover:text-ink/60">Forgot password?</a>
+                <a href="/forgot-password" className="text-[12px] font-medium text-ink/45 transition hover:text-ink/60">Forgot password?</a>
               </div>
             </div>
           </>
@@ -359,6 +399,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
             ) : isLogin ? "Sign in" : step === totalSteps - 1 ? "Create account" : "Continue"}
           </button>
         </div>
+        {error && <p className="mt-3 text-center text-[12px] font-medium text-coral">{error}</p>}
       </form>
 
       {/* footer links */}

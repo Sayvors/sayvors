@@ -5,10 +5,26 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors"
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRATION_MINUTES: int = 60 * 24
+    JWT_ACCESS_EXPIRATION_MINUTES: int = 15
+    JWT_REFRESH_EXPIRATION_DAYS: int = 7
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     REDIS_URL: str = "redis://localhost:6379/0"
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
+
+    # ── Auth security ────────────────────────────────────
+    MAX_LOGIN_ATTEMPTS: int = 5
+    LOCKOUT_MINUTES: int = 15
+    CSRF_COOKIE_NAME: str = "csrf_token"
+    REFRESH_COOKIE_NAME: str = "refresh_token"
+    REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
+
+    # ── Email ────────────────────────────────────────────
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    EMAIL_FROM: str = "noreply@sayvors.com"
+    FRONTEND_URL: str = "http://localhost:3000"
 
     # ── LLM provider API keys ──────────────────────────
     OPENAI_API_KEY: str = ""
