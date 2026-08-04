@@ -68,7 +68,7 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
     credentials: "include",
   });
 
-  if (response.status === 401 && path !== "/auth/refresh") {
+  if (response.status === 401 && path !== "/api/v1/auth/refresh") {
     const refreshed = await tryRefresh();
     if (refreshed) {
       const retryResponse = await fetch(`${API_URL}${path}`, {
@@ -85,7 +85,7 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
 
 async function tryRefresh(): Promise<boolean> {
   try {
-    const res = await fetch(`${API_URL}/auth/refresh`, {
+    const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
       method: "POST",
       credentials: "include",
       headers: {
@@ -104,7 +104,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const checkAuth = useCallback(async () => {
     try {
-      const res = await apiFetch("/auth/me");
+      const res = await apiFetch("/api/v1/auth/me");
       if (res.ok) {
         const data = await res.json();
         setUser(data);
@@ -123,7 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [checkAuth]);
 
   const signup = async (data: SignupData) => {
-    const res = await apiFetch("/auth/signup", {
+    const res = await apiFetch("/api/v1/auth/signup", {
       method: "POST",
       body: JSON.stringify(data),
     });
@@ -139,7 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const login = async (data: LoginData) => {
-    const res = await apiFetch("/auth/login", {
+    const res = await apiFetch("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify(data),
     });
@@ -154,7 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async (allDevices = false) => {
-    await apiFetch("/auth/logout", {
+    await apiFetch("/api/v1/auth/logout", {
       method: "POST",
       body: JSON.stringify({ all_devices: allDevices }),
     });
@@ -162,7 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const forgotPassword = async (email: string) => {
-    const res = await apiFetch("/auth/forgot-password", {
+    const res = await apiFetch("/api/v1/auth/forgot-password", {
       method: "POST",
       body: JSON.stringify({ email }),
     });
@@ -174,7 +174,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetPassword = async (token: string, password: string) => {
-    const res = await apiFetch("/auth/reset-password", {
+    const res = await apiFetch("/api/v1/auth/reset-password", {
       method: "POST",
       body: JSON.stringify({ token, password }),
     });
@@ -186,7 +186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const verifyEmail = async (token: string) => {
-    const res = await apiFetch("/auth/verify-email", {
+    const res = await apiFetch("/api/v1/auth/verify-email", {
       method: "POST",
       body: JSON.stringify({ token }),
     });
