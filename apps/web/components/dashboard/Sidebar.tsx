@@ -19,48 +19,16 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "My Agents", href: "/dashboard/agents" },
       { label: "Create Agent", href: "/dashboard/agents/create" },
-      { label: "Agent Logs", href: "/dashboard/agents/logs" },
-      { label: "Agent Analytics", href: "/dashboard/agents/analytics" },
     ],
   },
   {
-    label: "Speech to Text",
-    icon: <MicIcon />,
+    label: "AI Tools",
+    icon: <SparklesIcon />,
     color: "from-magenta to-coral",
     items: [
-      { label: "Transcribe", href: "/dashboard/stt/transcribe" },
-      { label: "History", href: "/dashboard/stt/history" },
-      { label: "Languages", href: "/dashboard/stt/languages" },
-    ],
-  },
-  {
-    label: "Text to Speech",
-    icon: <VolumeIcon />,
-    color: "from-coral to-orange-400",
-    items: [
-      { label: "Generate", href: "/dashboard/tts/generate" },
-      { label: "Voice Library", href: "/dashboard/tts/voices" },
-      { label: "History", href: "/dashboard/tts/history" },
-    ],
-  },
-  {
-    label: "Chat with Docs",
-    icon: <DocIcon />,
-    color: "from-emerald-500 to-teal-400",
-    items: [
-      { label: "Upload", href: "/dashboard/docs/upload" },
-      { label: "My Documents", href: "/dashboard/docs" },
-      { label: "Chat History", href: "/dashboard/docs/history" },
-    ],
-  },
-  {
-    label: "Automations",
-    icon: <ZapIcon />,
-    color: "from-amber-400 to-orange-500",
-    items: [
-      { label: "Overview", href: "/dashboard/automations" },
-      { label: "Create", href: "/dashboard/automations/create" },
-      { label: "History", href: "/dashboard/automations/history" },
+      { label: "Speech to Text", href: "/dashboard/stt" },
+      { label: "Text to Speech", href: "/dashboard/tts" },
+      { label: "Chat with Docs", href: "/dashboard/docs" },
     ],
   },
 ];
@@ -361,19 +329,20 @@ function DatabaseIcon() {
   );
 }
 
+function SparklesIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+      <path d="M12 2l1.5 5.5L19 9l-5.5 1.5L12 16l-1.5-5.5L5 9l5.5-1.5L12 2z" />
+      <path d="M19 14l1 3.5L23.5 18.5 19 19.5l-1 3.5-1-3.5-4.5-1 4.5-1 1-3.5z" />
+    </svg>
+  );
+}
+
 function SettingsIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
-    </svg>
-  );
-}
-
-function ZapIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
     </svg>
   );
 }
