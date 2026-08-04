@@ -7,6 +7,11 @@
   --foreground: #14101f;
 }
 
+.dark {
+  --background: #14101f;
+  --foreground: #f4f2f7;
+}
+
 @theme {
   --color-deep-violet: #3d1d6e;
   --color-magenta: #b0338a;

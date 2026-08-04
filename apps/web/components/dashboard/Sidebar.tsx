@@ -81,14 +81,14 @@ function GroupHeader({
     return (
       <div className="relative group/tooltip">
         <button
-          className="flex h-8 w-full items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60"
+          className="flex h-8 w-full items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60 dark:text-fog/40 dark:hover:bg-fog/[0.04] dark:hover:text-fog/60"
           title={group.label}
         >
           <span className={`flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br ${group.color} text-white`}>
             {group.icon}
           </span>
         </button>
-        <div className="absolute left-full top-1/2 z-50 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-ink/[0.08] bg-white px-2.5 py-1.5 text-[11px] font-medium text-ink shadow-lg group-hover/tooltip:block">
+        <div className="absolute left-full top-1/2 z-50 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-ink/[0.08] bg-white px-2.5 py-1.5 text-[11px] font-medium text-ink shadow-lg group-hover/tooltip:block dark:border-fog/[0.08] dark:bg-ink dark:text-fog">
           {group.label}
         </div>
       </div>
@@ -100,32 +100,32 @@ function GroupHeader({
       <button
         onClick={() => onToggle(group.label)}
         className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 transition ${
-          isOpen ? "bg-ink/[0.04]" : "hover:bg-ink/[0.03]"
+          isOpen ? "bg-ink/[0.04] dark:bg-fog/[0.04]" : "hover:bg-ink/[0.03] dark:hover:bg-fog/[0.03]"
         }`}
       >
         <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br ${group.color} text-white`}>
           {group.icon}
         </span>
-        <span className="flex-1 text-[13px] font-semibold text-ink">{group.label}</span>
+        <span className="flex-1 text-[13px] font-semibold text-ink dark:text-fog">{group.label}</span>
         <svg
           viewBox="0 0 16 16"
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          className={`h-3 w-3 text-ink/25 transition-transform ${isOpen ? "rotate-90" : ""}`}
+          className={`h-3 w-3 text-ink/25 transition-transform ${isOpen ? "rotate-90" : ""} dark:text-fog/25`}
         >
           <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
       {isOpen && (
-        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-ink/[0.06] pl-3">
+        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-ink/[0.06] pl-3 dark:border-fog/[0.06]">
           {group.items.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className="flex items-center gap-2 rounded-md px-2.5 py-[6px] text-[12px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink"
+              className="flex items-center gap-2 rounded-md px-2.5 py-[6px] text-[12px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.04] dark:hover:text-fog"
             >
-              <span className="h-1 w-1 shrink-0 rounded-full bg-ink/20" />
+              <span className="h-1 w-1 shrink-0 rounded-full bg-ink/20 dark:bg-fog/20" />
               {item.label}
             </Link>
           ))}
@@ -145,12 +145,12 @@ export default function Sidebar() {
 
   return (
     <aside
-      className={`relative flex h-screen flex-col border-r border-ink/[0.06] bg-white transition-all duration-200 ${
+      className={`relative flex h-screen flex-col border-r border-ink/[0.06] bg-white transition-all duration-200 dark:bg-ink dark:border-fog/[0.06] ${
         collapsed ? "w-[56px]" : "w-[220px]"
       }`}
     >
       {/* Logo */}
-      <div className="flex h-11 items-center gap-2 border-b border-ink/[0.06] px-3">
+      <div className="flex h-11 items-center gap-2 border-b border-ink/[0.06] px-3 dark:border-fog/[0.06]">
         <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-5 w-auto" />
         {!collapsed && (
           <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={110} height={18} className="h-4 w-auto" />
@@ -165,9 +165,9 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink"
+              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.04] dark:hover:text-fog"
             >
-              <span className="h-4 w-4 shrink-0 text-ink/30">{item.icon}</span>
+              <span className="h-4 w-4 shrink-0 text-ink/30 dark:text-fog/30">{item.icon}</span>
               {!collapsed && (
                 <>
                   <span className="flex-1">{item.label}</span>
@@ -183,11 +183,11 @@ export default function Sidebar() {
         </div>
 
         {/* Divider */}
-        <div className="mx-2.5 mb-2 h-px bg-ink/[0.06]" />
+        <div className="mx-2.5 mb-2 h-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
 
         {/* AI System groups */}
         {!collapsed && (
-          <p className="mx-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink/25">
+          <p className="mx-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink/25 dark:text-fog/25">
             AI Systems
           </p>
         )}
@@ -206,16 +206,16 @@ export default function Sidebar() {
         {/* Shared templates */}
         {!collapsed && (
           <>
-            <div className="mx-2.5 my-3 h-px bg-ink/[0.06]" />
-            <p className="mx-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink/25">
+            <div className="mx-2.5 my-3 h-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
+            <p className="mx-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink/25 dark:text-fog/25">
               Templates
             </p>
             <Link
               href="/dashboard/templates"
-              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink"
+              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.04] dark:hover:text-fog"
             >
               <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-ink/30">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-ink/30 dark:text-fog/30">
                   <rect x="3" y="3" width="7" height="7" rx="1" />
                   <rect x="14" y="3" width="7" height="7" rx="1" />
                   <rect x="14" y="14" width="7" height="7" rx="1" />
@@ -226,10 +226,10 @@ export default function Sidebar() {
             </Link>
             <Link
               href="/dashboard/templates/shared"
-              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink"
+              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.04] dark:hover:text-fog"
             >
               <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-ink/30">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-ink/30 dark:text-fog/30">
                   <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
                   <circle cx="9" cy="7" r="4" />
                   <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
@@ -244,7 +244,7 @@ export default function Sidebar() {
       {/* Collapse */}
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="flex h-9 items-center justify-center border-t border-ink/[0.06] text-ink/25 transition hover:text-ink/50"
+        className="flex h-9 items-center justify-center border-t border-ink/[0.06] text-ink/25 transition hover:text-ink/50 dark:border-fog/[0.06] dark:text-fog/25 dark:hover:text-fog/50"
       >
         <svg
           viewBox="0 0 16 16"

@@ -1,6 +1,7 @@
 "use client";
 
 import Breadcrumbs from "@/components/Breadcrumbs";
+import { use } from "react";
 
 const channelData: Record<string, { name: string; icon: string; color: string; connected: boolean; fields: string[] }> = {
   instagram: {
@@ -47,8 +48,9 @@ const channelData: Record<string, { name: string; icon: string; color: string; c
   },
 };
 
-export default function ChannelAuthPage({ params }: { params: { slug: string } }) {
-  const data = channelData[params.slug] || { name: params.slug, icon: "🔗", color: "from-gray-400 to-gray-500", connected: false, fields: [] };
+export default function ChannelAuthPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = use(params);
+  const data = channelData[slug] || { name: slug, icon: "🔗", color: "from-gray-400 to-gray-500", connected: false, fields: [] };
 
   return (
     <div className="space-y-5">
@@ -64,26 +66,26 @@ export default function ChannelAuthPage({ params }: { params: { slug: string } }
             {data.icon}
           </div>
           <div>
-            <h1 className="text-[20px] font-bold text-ink">{data.name}</h1>
-            <p className={`text-[12px] font-medium ${data.connected ? "text-emerald-600" : "text-ink/40"}`}>
+            <h1 className="text-[20px] font-bold text-ink dark:text-fog">{data.name}</h1>
+            <p className={`text-[12px] font-medium ${data.connected ? "text-emerald-600" : "text-ink/40 dark:text-fog/40"}`}>
               {data.connected ? "Connected" : "Not connected"}
             </p>
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-ink/[0.06] bg-white p-5">
-        <h3 className="text-[14px] font-semibold text-ink">
+      <div className="rounded-xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
+        <h3 className="text-[14px] font-semibold text-ink dark:text-fog">
           {data.connected ? "Connection Settings" : "Connect " + data.name}
         </h3>
         <div className="mt-4 space-y-3">
           {data.fields.map((field) => (
             <div key={field} className="space-y-1">
-              <label className="text-[12px] font-medium text-ink/60">{field}</label>
+              <label className="text-[12px] font-medium text-ink/60 dark:text-fog/60">{field}</label>
               <input
                 type="text"
                 placeholder={`Enter ${field.toLowerCase()}`}
-                className="h-10 w-full rounded-lg border border-ink/[0.08] bg-fog/30 px-3.5 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.06]"
+                className="h-10 w-full rounded-lg border border-ink/[0.08] bg-fog/30 px-3.5 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.06] dark:border-fog/[0.08] dark:bg-ink/40 dark:text-fog dark:placeholder:text-fog/25 dark:focus:bg-ink"
               />
             </div>
           ))}

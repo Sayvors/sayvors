@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useTheme } from "@/components/ThemeProvider";
 
 const languages = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -12,8 +13,8 @@ const languages = [
 ];
 
 export default function Header() {
+  const { theme, toggle } = useTheme();
   const [searchFocused, setSearchFocused] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
   const [langOpen, setLangOpen] = useState(false);
   const [lang, setLang] = useState(languages[0]);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -30,12 +31,12 @@ export default function Header() {
   }, []);
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-ink/[0.06] bg-white px-4">
+    <header className="flex h-12 shrink-0 items-center justify-between border-b border-ink/[0.06] bg-white px-4 dark:bg-ink dark:border-fog/[0.06]">
       {/* Left: Search */}
       <div className="flex items-center gap-3">
         {/* Search */}
 
-        <div className="h-5 w-px bg-ink/[0.06]" />
+        <div className="h-5 w-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
 
         {/* Search */}
         <div className="relative">
@@ -47,7 +48,7 @@ export default function Header() {
             strokeLinecap="round"
             strokeLinejoin="round"
             className={`absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 transition-colors ${
-              searchFocused ? "text-deep-violet" : "text-ink/25"
+              searchFocused ? "text-deep-violet" : "text-ink/25 dark:text-fog/25"
             }`}
           >
             <circle cx="11" cy="11" r="8" />
@@ -58,9 +59,9 @@ export default function Header() {
             placeholder="Search..."
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
-            className="h-8 w-56 rounded-md border border-ink/[0.08] bg-fog/40 pl-8 pr-8 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:w-72 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.06]"
+            className="h-8 w-56 rounded-md border border-ink/[0.08] bg-fog/40 pl-8 pr-8 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:w-72 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.06] dark:border-fog/[0.08] dark:bg-ink/40 dark:text-fog dark:placeholder:text-fog/30 dark:focus:bg-ink"
           />
-          <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-ink/[0.08] bg-white px-1 py-0.5 text-[9px] font-medium text-ink/25">
+          <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-ink/[0.08] bg-white px-1 py-0.5 text-[9px] font-medium text-ink/25 dark:border-fog/[0.08] dark:bg-ink dark:text-fog/25">
             ⌘K
           </kbd>
         </div>
@@ -84,10 +85,10 @@ export default function Header() {
           Premium
         </button>
 
-        <div className="mx-1 h-5 w-px bg-ink/[0.06]" />
+        <div className="mx-1 h-5 w-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
 
         {/* Notifications */}
-        <button className="relative flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60">
+        <button className="relative flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60 dark:text-fog/40 dark:hover:bg-fog/[0.04] dark:hover:text-fog/60">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
             <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
             <path d="M13.73 21a2 2 0 01-3.46 0" />
@@ -97,8 +98,8 @@ export default function Header() {
 
         {/* Theme toggle */}
         <button
-          onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60"
+          onClick={toggle}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60"
           title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
         >
           {theme === "light" ? (
@@ -124,7 +125,7 @@ export default function Header() {
         <div className="relative" ref={langRef}>
           <button
             onClick={() => setLangOpen(!langOpen)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60 dark:text-fog/40 dark:hover:bg-fog/[0.04] dark:hover:text-fog/60"
             title="Change language"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -134,13 +135,13 @@ export default function Header() {
             </svg>
           </button>
           {langOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg border border-ink/[0.08] bg-white shadow-lg">
+            <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg border border-ink/[0.08] bg-white shadow-lg dark:border-fog/[0.08] dark:bg-ink">
               {languages.map((l) => (
                 <button
                   key={l.code}
                   onClick={() => { setLang(l); setLangOpen(false); }}
-                  className={`flex w-full items-center gap-2 px-3 py-2 text-[12px] transition hover:bg-fog ${
-                    lang.code === l.code ? "font-medium text-deep-violet" : "text-ink/60"
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-[12px] transition hover:bg-fog dark:hover:bg-fog/[0.06] ${
+                    lang.code === l.code ? "font-medium text-deep-violet" : "text-ink/60 dark:text-fog/60"
                   }`}
                 >
                   <span className="text-[14px]">{l.flag}</span>
@@ -151,7 +152,7 @@ export default function Header() {
           )}
         </div>
 
-        <div className="mx-1 h-5 w-px bg-ink/[0.06]" />
+        <div className="mx-1 h-5 w-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
 
         {/* Profile dropdown */}
         <div className="relative" ref={profileRef}>
@@ -162,15 +163,15 @@ export default function Header() {
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-deep-violet to-magenta text-[10px] font-semibold text-white">
               SS
             </div>
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`h-3 w-3 text-ink/30 transition-transform ${profileOpen ? "rotate-180" : ""}`}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`h-3 w-3 text-ink/30 transition-transform ${profileOpen ? "rotate-180" : ""} dark:text-fog/30`}>
               <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
           {profileOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-ink/[0.08] bg-white shadow-lg">
-              <div className="border-b border-ink/[0.06] px-3 py-2.5">
-                <p className="text-[13px] font-medium text-ink">Syed S.</p>
-                <p className="text-[11px] text-ink/40">syed@sayvors.com</p>
+            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-ink/[0.08] bg-white shadow-lg dark:border-fog/[0.08] dark:bg-ink">
+              <div className="border-b border-ink/[0.06] px-3 py-2.5 dark:border-fog/[0.06]">
+                <p className="text-[13px] font-medium text-ink dark:text-fog">Syed S.</p>
+                <p className="text-[11px] text-ink/40 dark:text-fog/40">syed@sayvors.com</p>
               </div>
               <div className="py-1">
                 <ProfileMenuItem icon={<UserIcon />} label="My profile" />
@@ -178,7 +179,7 @@ export default function Header() {
                 <ProfileMenuItem icon={<CreditCardIcon />} label="Billing" />
                 <ProfileMenuItem icon={<HelpIcon />} label="Help & support" />
               </div>
-              <div className="border-t border-ink/[0.06] py-1">
+              <div className="border-t border-ink/[0.06] py-1 dark:border-fog/[0.06]">
                 <ProfileMenuItem icon={<LogoutIcon />} label="Sign out" danger />
               </div>
             </div>
@@ -191,7 +192,7 @@ export default function Header() {
 
 function ProfileMenuItem({ icon, label, danger }: { icon: React.ReactNode; label: string; danger?: boolean }) {
   return (
-    <button className={`flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition hover:bg-fog ${danger ? "text-coral" : "text-ink/60"}`}>
+    <button className={`flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition hover:bg-fog dark:hover:bg-fog/[0.06] ${danger ? "text-coral" : "text-ink/60 dark:text-fog/60"}`}>
       {icon}
       {label}
     </button>
