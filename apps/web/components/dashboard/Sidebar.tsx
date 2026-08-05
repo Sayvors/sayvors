@@ -22,6 +22,15 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    label: "Widget Library",
+    icon: <WidgetIcon />,
+    color: "from-emerald-400 to-teal-500",
+    items: [
+      { label: "Browse Widgets", href: "/dashboard/widgets" },
+      { label: "Create Widget", href: "/dashboard/widgets" },
+    ],
+  },
+  {
     label: "Automations",
     icon: <ZapIcon />,
     color: "from-amber-400 to-orange-500",
@@ -351,6 +360,16 @@ function ZapIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  );
+}
+
+function WidgetIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <circle cx="12" cy="12" r="3" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" />
     </svg>
   );
 }

@@ -1,12 +1,14 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import WizardStepper from "@/components/agents/WizardStepper";
+import { listDatabanks } from "@/lib/api-rag";
 
 type WizardData = {
   agentId: string;
   model: string;
+  databankId: string;
   channels: string[];
   widgetPreset: string;
   responseHours: "24/7" | "business";
@@ -20,6 +22,7 @@ type WizardData = {
 const defaultData: WizardData = {
   agentId: "",
   model: "",
+  databankId: "",
   channels: [],
   widgetPreset: "",
   responseHours: "24/7",
@@ -30,7 +33,7 @@ const defaultData: WizardData = {
   greetingMessage: "Hi! How can I help you today?",
 };
 
-const stepLabels = ["Pick Agent", "Pick Model", "Channels & Widget", "Rules", "Review"];
+const stepLabels = ["Pick Agent", "Pick Model", "Pick Databank", "Channels & Widget", "Rules", "Review"];
 
 const agents = [
   { id: "hr-agent", name: "HR Agent", category: "HR", description: "Handles employee inquiries, policies, onboarding" },
@@ -68,6 +71,20 @@ const widgetPresets = [
 export default function CreateAutomationPage() {
   const [step, setStep] = useState(0);
   const [data, setData] = useState<WizardData>(defaultData);
+  const [databanks, setDatabanks] = useState<{ id: string; name: string; doc_count: number }[]>([]);
+
+  const fetchDatabanks = useCallback(async () => {
+    try {
+      const res = await listDatabanks();
+      setDatabanks(Array.isArray(res) ? res : res.databanks || []);
+    } catch {
+      /* empty */
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDatabanks();
+  }, [fetchDatabanks]);
 
   const update = <K extends keyof WizardData>(key: K, value: WizardData[K]) => {
     setData((prev) => ({ ...prev, [key]: value }));
@@ -174,8 +191,49 @@ export default function CreateAutomationPage() {
           </div>
         )}
 
-        {/* Step 3: Channels & Widget */}
+        {/* Step 3: Pick Databank */}
         {step === 2 && (
+          <div className="space-y-5">
+            <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Pick Databank</h2>
+            <p className="text-[12px] text-ink/45 dark:text-fog/45">Choose a knowledge base for this agent to reference.</p>
+            {databanks.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-ink/[0.12] p-6 text-center dark:border-fog/[0.12]">
+                <p className="text-[12px] text-ink/30 dark:text-fog/30">No databanks found. Create one in the Databank page first.</p>
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {databanks.map((db) => (
+                  <button
+                    key={db.id}
+                    onClick={() => setData((prev) => ({ ...prev, databankId: db.id }))}
+                    className={`rounded-xl border p-4 text-left transition ${
+                      data.databankId === db.id
+                        ? "border-deep-violet/30 bg-deep-violet/[0.04]"
+                        : "border-ink/[0.06] hover:border-ink/[0.1] dark:border-fog/[0.06] dark:hover:border-fog/[0.1]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[13px] font-semibold text-ink dark:text-fog">{db.name}</span>
+                      <span className="rounded-full bg-ink/[0.04] px-2 py-0.5 text-[9px] font-medium text-ink/40 dark:bg-fog/[0.04] dark:text-fog/40">
+                        {db.doc_count || 0} docs
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {data.databankId && (
+              <div className="rounded-xl border border-deep-violet/20 bg-deep-violet/[0.04] p-4">
+                <p className="text-[12px] font-medium text-deep-violet">
+                  Selected: {databanks.find((d) => d.id === data.databankId)?.name || "—"}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Step 4: Channels & Widget */}
+        {step === 3 && (
           <div className="space-y-5">
             <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Channels & Widget</h2>
             <p className="text-[12px] text-ink/45 dark:text-fog/45">Select where this automation will be active.</p>
@@ -230,8 +288,8 @@ export default function CreateAutomationPage() {
           </div>
         )}
 
-        {/* Step 4: Rules & Triggers */}
-        {step === 3 && (
+        {/* Step 5: Rules & Triggers */}
+        {step === 4 && (
           <div className="space-y-5">
             <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Rules & Triggers</h2>
 
@@ -328,8 +386,8 @@ export default function CreateAutomationPage() {
           </div>
         )}
 
-        {/* Step 5: Review & Activate */}
-        {step === 4 && (
+        {/* Step 6: Review & Activate */}
+        {step === 5 && (
           <div className="space-y-5">
             <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Review & Activate</h2>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -339,6 +397,9 @@ export default function CreateAutomationPage() {
               </ReviewCard>
               <ReviewCard title="Model">
                 <ReviewRow label="Model" value={data.model || "—"} />
+              </ReviewCard>
+              <ReviewCard title="Databank">
+                <ReviewRow label="Databank" value={databanks.find((d) => d.id === data.databankId)?.name || "None selected"} />
               </ReviewCard>
               <ReviewCard title="Channels">
                 <div className="flex flex-wrap gap-1.5">
@@ -376,7 +437,7 @@ export default function CreateAutomationPage() {
           <button className="text-[12px] font-medium text-ink/40 transition hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60">
             Save as Draft
           </button>
-          {step < 4 ? (
+          {step < 5 ? (
             <button onClick={() => setStep(step + 1)} className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90">
               Next
             </button>

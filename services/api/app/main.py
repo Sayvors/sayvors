@@ -11,6 +11,7 @@ from .modules.llm.router import router as llm_router
 from .modules.channels.router import router as channels_router
 from .modules.redis.router import router as redis_router
 from .modules.kafka.router import router as kafka_router
+from .modules.rag.router import router as rag_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
 
@@ -53,6 +54,7 @@ app.include_router(llm_router)
 app.include_router(channels_router)
 app.include_router(redis_router)
 app.include_router(kafka_router)
+app.include_router(rag_router)
 
 
 @app.get("/health")

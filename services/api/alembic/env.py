@@ -24,6 +24,8 @@ from app.modules.tts import models as tts_models  # noqa: F401
 from app.modules.stt import models as stt_models  # noqa: F401
 from app.modules.llm import models as llm_models  # noqa: F401
 from app.modules.channels import models as channels_models  # noqa: F401
+from app.modules.rag import models as rag_models  # noqa: F401
+from app.modules.auth import models as auth_models  # noqa: F401
 
 target_metadata = Base.metadata
 
