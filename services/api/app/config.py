@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     REFRESH_COOKIE_NAME: str = "refresh_token"
     REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
 
+    # ── File uploads ────────────────────────────────────
+    UPLOAD_DIR: str = "./data/uploads"
+    MAX_UPLOAD_SIZE_MB: int = 100
+
     # ── Email ────────────────────────────────────────────
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
@@ -38,3 +42,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if settings.JWT_SECRET == "change-me-in-production":
+    import sys
+    print("FATAL: JWT_SECRET must be set to a strong random value in .env", file=sys.stderr)
+    print("  Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\"", file=sys.stderr)
+    sys.exit(1)

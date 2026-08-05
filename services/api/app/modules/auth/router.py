@@ -76,7 +76,6 @@ async def signup_endpoint(
     return {
         "access_token": result["access_token"],
         "user": result["user"],
-        "verification_token": verification_token,
     }
 
 
@@ -133,6 +132,10 @@ async def refresh_endpoint(
 ):
     if not refresh_token:
         raise HTTPException(status_code=401, detail="No refresh token")
+
+    ip = get_client_ip(request)
+    if not await rate_limit(f"refresh:{ip}", 30, 60):
+        raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     try:
         result = await refresh_tokens(refresh_token, db)
@@ -205,7 +208,7 @@ async def forgot_password_endpoint(
     token = await forgot_password(body, db, ip)
     if token:
         # TODO: send email with token
-        return {"message": "If email exists, a reset link has been sent", "dev_token": token}
+        pass
     return {"message": "If email exists, a reset link has been sent"}
 
 

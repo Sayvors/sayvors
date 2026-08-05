@@ -1,4 +1,5 @@
 import hashlib
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -6,6 +7,7 @@ from fastapi import UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
 from ..users.models import User
 from .cache import content_hash, set_progress
 from .chunker import chunk_text
@@ -84,10 +86,14 @@ async def delete_databank(
 async def upload_document(
     databank_id: str, file: UploadFile, user: User, db: AsyncSession
 ) -> Document:
-    content = await file.read()
     ext = (file.filename or "unknown").rsplit(".", 1)[-1].lower()
     if ext not in ("pdf", "docx", "txt", "md", "csv", "xlsx", "sql"):
         raise ValueError(f"Unsupported file type: {ext}")
+
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise ValueError(f"File too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB}MB.")
 
     c_hash = hashlib.sha256(content).hexdigest()
 
@@ -105,6 +111,13 @@ async def upload_document(
     db.add(doc)
     await db.commit()
     await db.refresh(doc)
+
+    upload_dir = os.path.join(settings.UPLOAD_DIR, databank_id)
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = os.path.join(upload_dir, f"{doc.id}.{ext}")
+    with open(file_path, "wb") as f:
+        f.write(content)
+
     return doc
 
 
@@ -268,15 +281,12 @@ async def _parse_document(doc: Document) -> str:
     from .parsers.sql import parse_sql
     from .parsers.text import parse_text
 
-    import aiofiles
-    import os
-
-    file_path = f"/tmp/sayvors_docs/{doc.id}.{doc.file_type}"
+    file_path = os.path.join(settings.UPLOAD_DIR, doc.databank_id, f"{doc.id}.{doc.file_type}")
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Document file not found: {file_path}")
 
-    async with aiofiles.open(file_path, "rb") as f:
-        content = await f.read()
+    with open(file_path, "rb") as f:
+        content = f.read()
 
     parsers = {
         "pdf": parse_pdf,

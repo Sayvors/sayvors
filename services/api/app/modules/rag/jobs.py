@@ -1,7 +1,8 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ...database import async_session
 from .cache import set_progress
@@ -32,6 +33,7 @@ async def start_worker() -> None:
     global _worker_task, _running
     if _running:
         return
+    await _recover_stale_jobs()
     _running = True
     _worker_task = asyncio.create_task(_worker_loop())
 
@@ -42,6 +44,23 @@ async def stop_worker() -> None:
     if _worker_task:
         _worker_task.cancel()
         _worker_task = None
+
+
+async def _recover_stale_jobs() -> None:
+    try:
+        async with async_session() as db:
+            stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+            await db.execute(
+                update(IngestJob)
+                .where(
+                    IngestJob.status.in_(["parsing", "chunking", "embedding", "indexing"]),
+                    IngestJob.updated_at < stale_cutoff,
+                )
+                .values(status="queued", stage="Re-queued after crash", progress=0)
+            )
+            await db.commit()
+    except Exception:
+        logger.exception("Failed to recover stale jobs")
 
 
 async def _worker_loop() -> None:
@@ -71,6 +90,7 @@ async def _dequeue_job() -> str | None:
             .where(IngestJob.status == "queued")
             .order_by(IngestJob.created_at)
             .limit(1)
+            .with_for_update(skip_locked=True)
         )
         job = result.scalar_one_or_none()
         if job:
