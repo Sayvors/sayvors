@@ -17,8 +17,17 @@ const navGroups: NavGroup[] = [
     icon: <BotIcon />,
     color: "from-deep-violet to-magenta",
     items: [
-      { label: "My Agents", href: "/dashboard/agents" },
+      { label: "Agents Library", href: "/dashboard/agents" },
       { label: "Create Agent", href: "/dashboard/agents/create" },
+    ],
+  },
+  {
+    label: "Automations",
+    icon: <ZapIcon />,
+    color: "from-amber-400 to-orange-500",
+    items: [
+      { label: "Overview", href: "/dashboard/automations" },
+      { label: "Create", href: "/dashboard/automations/create" },
     ],
   },
   {
@@ -166,7 +175,7 @@ export default function Sidebar() {
         {/* AI System groups */}
         {!collapsed && (
           <p className="mx-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink/25 dark:text-fog/25">
-            AI Systems
+            AI Agents & Automations
           </p>
         )}
         <div className="space-y-1">
@@ -334,6 +343,14 @@ function SparklesIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
       <path d="M12 2l1.5 5.5L19 9l-5.5 1.5L12 16l-1.5-5.5L5 9l5.5-1.5L12 2z" />
       <path d="M19 14l1 3.5L23.5 18.5 19 19.5l-1 3.5-1-3.5-4.5-1 4.5-1 1-3.5z" />
+    </svg>
+  );
+}
+
+function ZapIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
     </svg>
   );
 }
