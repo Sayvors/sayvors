@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 
 async def rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
-    """Returns True if allowed, False if rate limited. Falls back to allow if Redis unavailable."""
+    """Returns True if allowed, False if rate limited. Falls back to DENY if Redis unavailable."""
     try:
         from ..redis.client import get_redis
         redis = await get_redis()
@@ -19,7 +19,7 @@ async def rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
         request_count = results[2]
         return request_count <= max_requests
     except Exception:
-        return True
+        return False  # Fail-closed: deny when Redis unavailable
 
 
 async def blacklist_token(jti: str, expires_in_seconds: int) -> None:

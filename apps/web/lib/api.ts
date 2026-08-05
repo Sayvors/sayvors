@@ -1,78 +1,57 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  const token = getAccessToken();
+function getCsrfToken(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.split("; ").find((c) => c.startsWith("csrf_token="));
+  return match ? match.split("=")[1] : null;
+}
 
+export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  const method = options.method || "GET";
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  const csrfToken = getCsrfToken();
+  if (csrfToken && ["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
+    headers["X-CSRF-Token"] = csrfToken;
   }
 
-  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const response = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: "include",
+  });
 
-  if (response.status === 401) {
-    const refreshed = await refreshAccessToken();
+  if (response.status === 401 && path !== "/api/v1/auth/refresh") {
+    const refreshed = await tryRefresh();
     if (refreshed) {
-      headers["Authorization"] = `Bearer ${getAccessToken()}`;
-      return fetch(`${API_URL}${path}`, { ...options, headers });
+      const newCsrf = getCsrfToken();
+      if (newCsrf && ["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
+        headers["X-CSRF-Token"] = newCsrf;
+      }
+      return fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
     }
-    clearAuth();
     window.location.href = "/login";
   }
 
   return response;
 }
 
-function getAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("sayvors_access_token");
-}
-
-function getRefreshToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("sayvors_refresh_token");
-}
-
-function setTokens(access: string, refresh: string) {
-  localStorage.setItem("sayvors_access_token", access);
-  localStorage.setItem("sayvors_refresh_token", refresh);
-}
-
-function clearAuth() {
-  localStorage.removeItem("sayvors_access_token");
-  localStorage.removeItem("sayvors_refresh_token");
-}
-
-async function refreshAccessToken(): Promise<boolean> {
-  const refresh = getRefreshToken();
-  if (!refresh) return false;
-
+async function tryRefresh(): Promise<boolean> {
   try {
-    const res = await fetch(`${API_URL}/auth/refresh`, {
+    const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refresh }),
     });
-
-    if (!res.ok) return false;
-
-    const data = await res.json();
-    setTokens(data.access_token, data.refresh_token);
-    return true;
+    return res.ok;
   } catch {
     return false;
   }
 }
 
 export function logout() {
-  clearAuth();
   window.location.href = "/login";
-}
-
-export function isAuthenticated(): boolean {
-  return !!getAccessToken();
 }

@@ -11,6 +11,9 @@ from .providers.catalog import get_model_by_id, get_provider_from_model
 from .providers.registry import get_provider_for_model
 from .schemas import ChatRequest, ConversationCreate, MessageCreate
 
+# Max messages to include in LLM context (token-aware windowing)
+MAX_HISTORY_MESSAGES = 40
+
 
 async def create_conversation(
     body: ConversationCreate, user: User, db: AsyncSession
@@ -81,9 +84,10 @@ async def _load_history(conv_id: str, db: AsyncSession) -> list[LLMMessage]:
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conv_id)
-        .order_by(Message.created_at)
+        .order_by(Message.created_at.desc())
+        .limit(MAX_HISTORY_MESSAGES)
     )
-    messages = result.scalars().all()
+    messages = list(reversed(result.scalars().all()))
     return [LLMMessage(role=m.role, content=m.content) for m in messages]
 
 

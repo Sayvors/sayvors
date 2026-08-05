@@ -15,7 +15,7 @@ async def log_auth_event(
     success: bool = True,
     metadata: dict | None = None,
 ) -> None:
-    """Publish an auth event to Kafka."""
+    """Publish an auth event to Kafka (fire-and-forget)."""
     try:
         producer = await get_kafka_producer()
         event = {
@@ -30,7 +30,7 @@ async def log_auth_event(
         }
         key = f"{event_type}:{user_id or email}".encode()
         value = json.dumps(event).encode()
-        await producer.send_and_wait(AUTH_TOPIC, key=key, value=value)
+        await producer.send(AUTH_TOPIC, key=key, value=value)
     except Exception:
         pass
 

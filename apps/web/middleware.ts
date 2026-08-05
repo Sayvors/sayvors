@@ -24,6 +24,18 @@ export function middleware(request: NextRequest) {
     return new NextResponse("Too many requests", { status: 429, headers: { "Retry-After": "60" } });
   }
 
+  const { pathname } = request.nextUrl;
+
+  // Server-side auth guard: redirect /dashboard/* to /login if no refresh_token cookie
+  if (pathname.startsWith("/dashboard")) {
+    const refreshToken = request.cookies.get("refresh_token");
+    if (!refreshToken) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("redirect", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+  }
+
   const response = NextResponse.next();
   const isProd = process.env.NODE_ENV === "production";
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";

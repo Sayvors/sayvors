@@ -3,7 +3,7 @@ import { ComponentType } from "react";
 
 export function lazyLoad<T extends Record<string, unknown>>(
   factory: () => Promise<{ default: ComponentType<T> }>,
-  options?: { loading?: ComponentType }
+  options?: Record<string, unknown>
 ) {
   return dynamic(factory, { ssr: false, ...options });
 }

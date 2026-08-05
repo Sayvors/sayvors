@@ -175,11 +175,17 @@ async def chat(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    conv = await create_conversation(
-        ConversationCreate(title=None, model=body.model, system_prompt=body.system_prompt),
-        user,
-        db,
-    )
+    # Reuse existing conversation or create new one
+    if body.conversation_id:
+        conv = await get_conversation(body.conversation_id, user, db)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    else:
+        conv = await create_conversation(
+            ConversationCreate(title=None, model=body.model, system_prompt=body.system_prompt),
+            user,
+            db,
+        )
     try:
         user_msg, assistant_msg = await send_message(
             conv.id, MessageCreate(content=body.messages[-1].content), user, db
@@ -210,11 +216,17 @@ async def chat_stream(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    conv = await create_conversation(
-        ConversationCreate(title=None, model=body.model, system_prompt=body.system_prompt),
-        user,
-        db,
-    )
+    # Reuse existing conversation or create new one
+    if body.conversation_id:
+        conv = await get_conversation(body.conversation_id, user, db)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    else:
+        conv = await create_conversation(
+            ConversationCreate(title=None, model=body.model, system_prompt=body.system_prompt),
+            user,
+            db,
+        )
 
     async def event_generator() -> AsyncIterator[str]:
         try:

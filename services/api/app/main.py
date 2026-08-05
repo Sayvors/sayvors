@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import settings
 from .modules.auth.router import router as auth_router
@@ -14,6 +15,33 @@ from .modules.kafka.router import router as kafka_router
 from .modules.rag.router import router as rag_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """Double-submit CSRF protection: validate X-CSRF-Token header against csrf_token cookie."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return await call_next(request)
+
+        # Skip CSRF for login/signup/forgot/reset/verify (they set the cookie)
+        skip_paths = {"/api/v1/auth/login", "/api/v1/auth/signup", "/api/v1/auth/refresh",
+                      "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password",
+                      "/api/v1/auth/verify-email", "/api/v1/auth/csrf-token", "/health"}
+        if request.url.path in skip_paths:
+            return await call_next(request)
+
+        csrf_header = request.headers.get("x-csrf-token")
+        csrf_cookie = request.cookies.get(settings.CSRF_COOKIE_NAME)
+
+        if not csrf_header or not csrf_cookie or csrf_header != csrf_cookie:
+            return Response(
+                content='{"detail":"CSRF validation failed"}',
+                status_code=403,
+                media_type="application/json",
+            )
+
+        return await call_next(request)
 
 
 @asynccontextmanager
@@ -45,6 +73,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-CSRF-Token"],
     expose_headers=["X-CSRF-Token"],
 )
+app.add_middleware(CSRFMiddleware)
 
 # ── register modules ────────────────────────────────────
 app.include_router(auth_router)

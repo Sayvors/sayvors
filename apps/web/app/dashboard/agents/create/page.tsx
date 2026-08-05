@@ -38,7 +38,7 @@ const defaultData: WizardData = {
   integrationsPreset: "",
 };
 
-const stepLabels = ["Basics", "Training", "Knowledge", "Appearance", "Tickets", "Webhooks", "Review"];
+  const stepLabels = ["Basics", "Training", "Knowledge", "Appearance", "Tickets", "Webhooks", "Review"];
 
 const personas = ["Customer Support", "Sales Assistant", "HR Rep", "Tech Support", "Concierge", "Custom"];
 
@@ -89,6 +89,21 @@ const integrationPresets = [
 export default function CreateAgentPage() {
   const [step, setStep] = useState(0);
   const [data, setData] = useState<WizardData>(defaultData);
+
+  const handleSaveDraft = () => {
+    const drafts = JSON.parse(localStorage.getItem("sayvors_agent_drafts") || "[]");
+    drafts.push({ ...data, savedAt: new Date().toISOString() });
+    localStorage.setItem("sayvors_agent_drafts", JSON.stringify(drafts));
+    alert("Draft saved!");
+  };
+
+  const handleSaveAgent = () => {
+    const agents = JSON.parse(localStorage.getItem("sayvors_agents") || "[]");
+    agents.push({ ...data, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
+    localStorage.setItem("sayvors_agents", JSON.stringify(agents));
+    alert("Agent saved!");
+    window.location.href = "/dashboard/agents";
+  };
 
   const update = <K extends keyof WizardData>(key: K, value: WizardData[K]) => {
     setData((prev) => ({ ...prev, [key]: value }));
@@ -527,13 +542,13 @@ export default function CreateAgentPage() {
               Previous
             </button>
           ) : (
-            <button className="text-[12px] font-medium text-ink/30 transition hover:text-ink/50 dark:text-fog/30 dark:hover:text-fog/50">
+            <button onClick={handleSaveDraft} className="text-[12px] font-medium text-ink/30 transition hover:text-ink/50 dark:text-fog/30 dark:hover:text-fog/50">
               Save as Draft
             </button>
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button className="text-[12px] font-medium text-ink/40 transition hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60">
+          <button onClick={handleSaveDraft} className="text-[12px] font-medium text-ink/40 transition hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60">
             Save as Draft
           </button>
           {step < 6 ? (
@@ -541,7 +556,7 @@ export default function CreateAgentPage() {
               Next
             </button>
           ) : (
-            <button className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90">
+            <button onClick={handleSaveAgent} className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90">
               Save Agent
             </button>
           )}

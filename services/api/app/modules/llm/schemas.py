@@ -39,6 +39,7 @@ class MessageListResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     model: str = "openai:gpt-4o"
+    conversation_id: str | None = None
     system_prompt: str | None = None
     messages: list[MessageCreate]
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)

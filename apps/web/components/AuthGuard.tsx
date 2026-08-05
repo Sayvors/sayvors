@@ -2,19 +2,21 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { isAuthenticated } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const { user, loading } = useAuth();
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    if (!isAuthenticated()) {
+    if (loading) return;
+    if (!user) {
       router.replace("/login");
     } else {
       setChecked(true);
     }
-  }, [router]);
+  }, [user, loading, router]);
 
   if (!checked) {
     return (

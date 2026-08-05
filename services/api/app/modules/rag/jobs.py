@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ...database import async_session
 from .cache import set_progress
@@ -73,6 +74,7 @@ async def _worker_loop() -> None:
 
 
 async def _dequeue_job() -> str | None:
+    # Try Redis first
     try:
         from ...modules.redis.client import get_redis
 
@@ -84,17 +86,22 @@ async def _dequeue_job() -> str | None:
     except Exception:
         pass
 
-    async with async_session() as db:
-        result = await db.execute(
-            select(IngestJob)
-            .where(IngestJob.status == "queued")
-            .order_by(IngestJob.created_at)
-            .limit(1)
-            .with_for_update(skip_locked=True)
-        )
-        job = result.scalar_one_or_none()
-        if job:
-            return str(job.id)
+    # DB fallback: atomic claim with UPDATE … RETURNING
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                update(IngestJob)
+                .where(IngestJob.status == "queued")
+                .values(status="parsing", stage="Claimed", updated_at=datetime.now(timezone.utc))
+                .returning(IngestJob.id)
+                .execution_options(synchronize_session=False)
+            )
+            row = result.first()
+            if row:
+                await db.commit()
+                return str(row[0])
+    except Exception:
+        logger.exception("DB dequeue failed")
     return None
 
 
@@ -108,11 +115,13 @@ async def _process_job(job_id: str) -> None:
             if not job:
                 return
 
-            job.status = "parsing"
-            job.progress = 0
-            job.stage = "Starting..."
-            await db.commit()
-            await set_progress(job_id, 0, "Starting...")
+            # If already claimed (parsing), skip the status update
+            if job.status != "parsing":
+                job.status = "parsing"
+                job.progress = 0
+                job.stage = "Starting..."
+                await db.commit()
+            await set_progress(job_id, 0, job.stage or "Starting...")
 
             try:
                 if job.document_id:

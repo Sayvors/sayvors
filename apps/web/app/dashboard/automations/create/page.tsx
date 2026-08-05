@@ -33,7 +33,7 @@ const defaultData: WizardData = {
   greetingMessage: "Hi! How can I help you today?",
 };
 
-const stepLabels = ["Pick Agent", "Pick Model", "Pick Databank", "Channels & Widget", "Rules", "Review"];
+  const stepLabels = ["Pick Agent", "Pick Model", "Pick Databank", "Channels & Widget", "Rules", "Review"];
 
 const agents = [
   { id: "hr-agent", name: "HR Agent", category: "HR", description: "Handles employee inquiries, policies, onboarding" },
@@ -72,6 +72,21 @@ export default function CreateAutomationPage() {
   const [step, setStep] = useState(0);
   const [data, setData] = useState<WizardData>(defaultData);
   const [databanks, setDatabanks] = useState<{ id: string; name: string; doc_count: number }[]>([]);
+
+  const handleSaveDraft = () => {
+    const drafts = JSON.parse(localStorage.getItem("sayvors_automation_drafts") || "[]");
+    drafts.push({ ...data, savedAt: new Date().toISOString() });
+    localStorage.setItem("sayvors_automation_drafts", JSON.stringify(drafts));
+    alert("Draft saved!");
+  };
+
+  const handleDeploy = () => {
+    const automations = JSON.parse(localStorage.getItem("sayvors_automations") || "[]");
+    automations.push({ ...data, id: crypto.randomUUID(), status: "active", createdAt: new Date().toISOString() });
+    localStorage.setItem("sayvors_automations", JSON.stringify(automations));
+    alert("Automation deployed!");
+    window.location.href = "/dashboard/automations";
+  };
 
   const fetchDatabanks = useCallback(async () => {
     try {
@@ -434,7 +449,7 @@ export default function CreateAutomationPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button className="text-[12px] font-medium text-ink/40 transition hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60">
+          <button onClick={handleSaveDraft} className="text-[12px] font-medium text-ink/40 transition hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60">
             Save as Draft
           </button>
           {step < 5 ? (
@@ -442,7 +457,7 @@ export default function CreateAutomationPage() {
               Next
             </button>
           ) : (
-            <button className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90">
+            <button onClick={handleDeploy} className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90">
               Deploy & Activate
             </button>
           )}

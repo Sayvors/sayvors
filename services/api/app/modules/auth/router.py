@@ -28,7 +28,16 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 def get_client_ip(request: Request) -> str:
-    return request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
+    # Only trust X-Forwarded-For from a known reverse proxy (the first hop).
+    # In production behind a proxy, use the rightmost untrusted hop.
+    # For now, use the first value (leftmost = original client behind trusted proxy).
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
 
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)

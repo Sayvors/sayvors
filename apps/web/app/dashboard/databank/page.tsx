@@ -441,47 +441,13 @@ export default function DatabankPage() {
             </label>
           </div>
 
-          {/* Scrape form */}
-          <div className="rounded-lg border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
-            <p className="text-[12px] font-medium text-ink/60 dark:text-fog/60 mb-2">Scrape Website</p>
-            <div className="flex gap-2">
-              <input
-                type="url"
-                value={scrapeUrlVal}
-                onChange={(e) => setScrapeUrlVal(e.target.value)}
-                placeholder="https://example.com/docs"
-                className="flex-1 rounded-lg border border-ink/[0.06] bg-white px-3 py-2 text-[12px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/40 dark:border-fog/[0.06] dark:bg-ink dark:text-fog dark:placeholder:text-fog/25"
-              />
-              <div className="flex items-center gap-0.5 rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.03]">
-                <button
-                  onClick={() => setCrawlMode("single")}
-                  className={`rounded-md px-3 py-1.5 text-[11px] font-medium transition ${
-                    crawlMode === "single"
-                      ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-deep-violet"
-                      : "text-ink/40 hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60"
-                  }`}
-                >
-                  Single
-                </button>
-                <button
-                  onClick={() => setCrawlMode("full")}
-                  className={`rounded-md px-3 py-1.5 text-[11px] font-medium transition ${
-                    crawlMode === "full"
-                      ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-deep-violet"
-                      : "text-ink/40 hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60"
-                  }`}
-                >
-                  Full
-                </button>
-              </div>
-              <button
-                onClick={handleScrape}
-                disabled={!scrapeUrlVal.trim() || scraping}
-                className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
-              >
-                {scraping ? "Scraping..." : "Scrape"}
-              </button>
+          {/* Scrape form — disabled until scraper is implemented */}
+          <div className="rounded-lg border border-ink/[0.06] p-3 opacity-60 dark:border-fog/[0.06]">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[12px] font-medium text-ink/60 dark:text-fog/60">Scrape Website</p>
+              <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[9px] font-semibold text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40">Coming Soon</span>
             </div>
+            <p className="text-[11px] text-ink/30 dark:text-fog/30">Web scraping will be available in a future update.</p>
           </div>
 
           {/* Process All */}

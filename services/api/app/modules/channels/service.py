@@ -1,12 +1,68 @@
+import hashlib
+import hmac
+import json
 import uuid
 from datetime import datetime, timezone
 
+from fastapi import Request
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
 from ..users.models import User
 from .models import Channel, ChannelMessage
 from .schemas import ChannelCreate, ChannelMessageSend
+
+
+def _get_fernet():
+    """Lazy-load Fernet for token encryption."""
+    from cryptography.fernet import Fernet
+    # Derive a Fernet key from JWT_SECRET (deterministic, same every boot)
+    key = hashlib.sha256(settings.JWT_SECRET.encode()).digest()
+    import base64
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def encrypt_token(token: str) -> str:
+    """Encrypt an OAuth token at rest."""
+    if not token:
+        return token
+    return _get_fernet().encrypt(token.encode()).decode()
+
+
+def decrypt_token(encrypted: str) -> str:
+    """Decrypt an OAuth token."""
+    if not encrypted:
+        return encrypted
+    return _get_fernet().decrypt(encrypted.encode()).decode()
+
+
+async def verify_webhook_signature(
+    platform: str, payload: bytes, signature: str, channel: Channel
+) -> bool:
+    """Verify webhook signature for supported platforms."""
+    secret = channel.webhook_secret
+    if not secret:
+        return False
+
+    if platform == "telegram":
+        # Telegram: HMAC-SHA256
+        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+    elif platform == "whatsapp":
+        # WhatsApp: HMAC-SHA256
+        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+    elif platform in ("facebook", "instagram"):
+        # Meta: HMAC-SHA256 with app secret
+        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+    elif platform == "x":
+        # X/Twitter: HMAC-SHA256
+        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
+    return False
 
 
 async def create_channel(body: ChannelCreate, user: User, db: AsyncSession) -> Channel:
@@ -16,7 +72,7 @@ async def create_channel(body: ChannelCreate, user: User, db: AsyncSession) -> C
         platform=body.platform,
         platform_user_id=body.platform_user_id,
         display_name=body.display_name,
-        access_token=body.access_token,
+        access_token=encrypt_token(body.access_token) if body.access_token else None,
     )
     db.add(channel)
     await db.commit()
@@ -78,7 +134,6 @@ async def send_message(
 
     # TODO: dispatch to platform API (Facebook Graph, Instagram, X API, etc.)
     # For now, mark as sent
-    db.add(msg)
     await db.commit()
     await db.refresh(msg)
     return msg
