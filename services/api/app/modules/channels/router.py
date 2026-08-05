@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db, get_current_user
+from ...config import settings
 from ..users.models import User
+from .models import Channel
 from .schemas import (
     ChannelCreate,
     ChannelListResponse,
@@ -19,9 +24,14 @@ from .service import (
     list_channels,
     list_messages,
     send_message,
+    verify_webhook_signature,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
+
+MAX_WEBHOOK_BODY_BYTES = 1_000_000  # 1 MB
 
 
 @router.post("/", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
@@ -152,6 +162,16 @@ async def get_channel_messages(
 
 # ── Webhooks (no auth — platform sends these) ──────────────────────────
 
+# Platform → header that carries the HMAC signature
+_SIGNATURE_HEADERS = {
+    "facebook": "x-hub-signature-256",
+    "instagram": "x-hub-signature-256",
+    "x": "x-twitter-webhooks-signature",
+    "telegram": "x-telegram-bot-api-secret-token",
+    "whatsapp": "x-hub-signature-256",
+    "linkedin": "x-linkedin-signature",
+}
+
 
 @router.post("/webhook/{platform}")
 async def channel_webhook(
@@ -159,6 +179,44 @@ async def channel_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    payload = await request.json()
+    # ── Enforce body size limit ──
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_WEBHOOK_BODY_BYTES:
+        return Response(status_code=413, content="Payload too large")
+
+    raw_body = await request.body()
+    if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:
+        return Response(status_code=413, content="Payload too large")
+
+    # ── Signature verification ──
+    sig_header = _SIGNATURE_HEADERS.get(platform)
+    if sig_header:
+        signature = request.headers.get(sig_header)
+        # Look up the channel for this platform to get the webhook_secret
+        result = await db.execute(
+            select(Channel).where(
+                Channel.platform == platform,
+                Channel.status == "active",
+            )
+        )
+        channel = result.scalar_one_or_none()
+
+        if channel and channel.webhook_secret:
+            body_bytes = raw_body
+            verified = await verify_webhook_signature(platform, body_bytes, signature or "", channel)
+            if not verified:
+                logger.warning("Webhook signature verification failed for platform=%s", platform)
+                return Response(status_code=403, content="Invalid signature")
+        elif not channel:
+            # No channel found — might be a verify request or misconfiguration
+            logger.warning("Webhook received for platform=%s with no active channel", platform)
+
+    # ── Parse and dispatch ──
+    try:
+        import json
+        payload = json.loads(raw_body)
+    except Exception:
+        return Response(status_code=400, content="Invalid JSON")
+
     msg = await handle_webhook(platform, payload, db)
     return {"status": "ok"}

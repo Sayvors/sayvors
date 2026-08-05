@@ -369,3 +369,31 @@ async def get_user_sessions(user_id: str, db: AsyncSession) -> list[dict]:
         }
         for t in tokens
     ]
+
+
+async def cleanup_expired_data(db: AsyncSession) -> dict:
+    """Delete old login_attempts (>30d) and expired/revoked refresh_tokens (>7d).
+
+    Called on startup and can be scheduled periodically.
+    Returns counts of deleted rows.
+    """
+    now = datetime.now(timezone.utc)
+    login_cutoff = now - timedelta(days=30)
+    token_cutoff = now - timedelta(days=7)
+
+    # Delete old login attempts
+    result = await db.execute(
+        delete(LoginAttempt).where(LoginAttempt.created_at < login_cutoff)
+    )
+    login_deleted = result.rowcount
+
+    # Delete expired refresh tokens
+    result = await db.execute(
+        delete(RefreshToken).where(
+            (RefreshToken.expires_at < now) | (RefreshToken.revoked == True)
+        )
+    )
+    token_deleted = result.rowcount
+
+    await db.commit()
+    return {"login_attempts_deleted": login_deleted, "refresh_tokens_deleted": token_deleted}

@@ -1,5 +1,7 @@
 "use client";
 
+import { getAccessToken, setAccessToken } from "./auth-context";
+
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function getCsrfToken(): string | null {
@@ -15,15 +17,22 @@ async function tryRefresh(): Promise<boolean> {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
     });
-    return res.ok;
+    if (res.ok) {
+      const data = await res.json();
+      if (data.access_token) setAccessToken(data.access_token);
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }
 }
 
-function getHeaders(isForm = false): Record<string, string> {
+function buildHeaders(isForm = false): Record<string, string> {
   const headers: Record<string, string> = {};
   if (!isForm) headers["Content-Type"] = "application/json";
+  const token = getAccessToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   const csrf = getCsrfToken();
   if (csrf) headers["X-CSRF-Token"] = csrf;
   return headers;
@@ -33,7 +42,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
   const method = options.method || "GET";
   const isForm = options.body instanceof FormData;
   const headers = {
-    ...getHeaders(isForm),
+    ...buildHeaders(isForm),
     ...(options.headers as Record<string, string>),
   };
 
@@ -46,7 +55,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
   if (res.status === 401 && path !== "/api/v1/auth/refresh") {
     const refreshed = await tryRefresh();
     if (refreshed) {
-      const retryHeaders = { ...getHeaders(isForm), ...(options.headers as Record<string, string>) };
+      const retryHeaders = { ...buildHeaders(isForm), ...(options.headers as Record<string, string>) };
       const retryRes = await fetch(`${API}${path}`, { ...options, headers: retryHeaders, credentials: "include" });
       if (!retryRes.ok) throw new Error(await retryRes.text());
       return retryRes.json();
@@ -62,8 +71,10 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
 export async function uploadFile(databankId: string, file: File): Promise<any> {
   const form = new FormData();
   form.append("file", file);
-  const csrf = getCsrfToken();
   const headers: Record<string, string> = {};
+  const token = getAccessToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const csrf = getCsrfToken();
   if (csrf) headers["X-CSRF-Token"] = csrf;
   const res = await fetch(`${API}/api/v1/rag/databanks/${databankId}/documents`, {
     method: "POST",

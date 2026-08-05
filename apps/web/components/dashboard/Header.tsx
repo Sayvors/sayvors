@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useTheme } from "@/components/ThemeProvider";
+import { useAuth } from "@/lib/auth-context";
 
 const languages = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -14,12 +15,17 @@ const languages = [
 
 export default function Header() {
   const { theme, toggle } = useTheme();
+  const { user, logout } = useAuth();
   const [searchFocused, setSearchFocused] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const [lang, setLang] = useState(languages[0]);
   const [profileOpen, setProfileOpen] = useState(false);
   const langRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
+
+  const initials = user
+    ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U"
+    : "U";
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -161,7 +167,7 @@ export default function Header() {
             className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition hover:bg-ink/[0.04]"
           >
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-deep-violet to-magenta text-[10px] font-semibold text-white">
-              SS
+              {initials}
             </div>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`h-3 w-3 text-ink/30 transition-transform ${profileOpen ? "rotate-180" : ""} dark:text-fog/30`}>
               <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -170,8 +176,12 @@ export default function Header() {
           {profileOpen && (
             <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-ink/[0.08] bg-white shadow-lg dark:border-fog/[0.08] dark:bg-ink">
               <div className="border-b border-ink/[0.06] px-3 py-2.5 dark:border-fog/[0.06]">
-                <p className="text-[13px] font-medium text-ink dark:text-fog">Syed S.</p>
-                <p className="text-[11px] text-ink/40 dark:text-fog/40">syed@sayvors.com</p>
+                <p className="text-[13px] font-medium text-ink dark:text-fog">
+                  {user ? `${user.first_name} ${user.last_name}` : "User"}
+                </p>
+                <p className="text-[11px] text-ink/40 dark:text-fog/40">
+                  {user?.email ?? ""}
+                </p>
               </div>
               <div className="py-1">
                 <ProfileMenuItem icon={<UserIcon />} label="My profile" />
@@ -180,7 +190,7 @@ export default function Header() {
                 <ProfileMenuItem icon={<HelpIcon />} label="Help & support" />
               </div>
               <div className="border-t border-ink/[0.06] py-1 dark:border-fog/[0.06]">
-                <ProfileMenuItem icon={<LogoutIcon />} label="Sign out" danger />
+                <ProfileMenuItem icon={<LogoutIcon />} label="Sign out" danger onClick={() => logout()} />
               </div>
             </div>
           )}
@@ -190,9 +200,12 @@ export default function Header() {
   );
 }
 
-function ProfileMenuItem({ icon, label, danger }: { icon: React.ReactNode; label: string; danger?: boolean }) {
+function ProfileMenuItem({ icon, label, danger, onClick }: { icon: React.ReactNode; label: string; danger?: boolean; onClick?: () => void }) {
   return (
-    <button className={`flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition hover:bg-fog dark:hover:bg-fog/[0.06] ${danger ? "text-coral" : "text-ink/60 dark:text-fog/60"}`}>
+    <button
+      onClick={onClick}
+      className={`flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition hover:bg-fog dark:hover:bg-fog/[0.06] ${danger ? "text-coral" : "text-ink/60 dark:text-fog/60"}`}
+    >
       {icon}
       {label}
     </button>

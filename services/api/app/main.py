@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import settings
 from .modules.auth.router import router as auth_router
@@ -24,11 +25,16 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return await call_next(request)
 
-        # Skip CSRF for login/signup/forgot/reset/verify (they set the cookie)
-        skip_paths = {"/api/v1/auth/login", "/api/v1/auth/signup", "/api/v1/auth/refresh",
-                      "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password",
-                      "/api/v1/auth/verify-email", "/api/v1/auth/csrf-token", "/health"}
-        if request.url.path in skip_paths:
+        # Exempt paths: auth endpoints, webhooks, health
+        path = request.url.path
+        skip_prefixes = (
+            "/api/v1/auth/login", "/api/v1/auth/signup", "/api/v1/auth/refresh",
+            "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password",
+            "/api/v1/auth/verify-email", "/api/v1/auth/csrf-token",
+            "/api/v1/channels/webhook/",
+            "/health",
+        )
+        if any(path.startswith(p) for p in skip_prefixes):
             return await call_next(request)
 
         csrf_header = request.headers.get("x-csrf-token")
@@ -57,8 +63,30 @@ async def lifespan(app: FastAPI):
         await get_kafka_producer()
     except Exception:
         pass
+
+    # Run retention cleanup on startup
+    try:
+        from .database import async_session
+        from .modules.auth.service import cleanup_expired_data
+        async with async_session() as db:
+            result = await cleanup_expired_data(db)
+            import logging
+            logging.getLogger(__name__).info(
+                "Retention cleanup: deleted %d login attempts, %d refresh tokens",
+                result["login_attempts_deleted"],
+                result["refresh_tokens_deleted"],
+            )
+    except Exception:
+        pass
+
     yield
     # Shutdown
+    from .modules.kafka.client import get_kafka_producer
+    try:
+        producer = await get_kafka_producer()
+        await producer.flush()
+    except Exception:
+        pass
     await close_redis()
     await close_kafka()
 
@@ -74,6 +102,8 @@ app.add_middleware(
     expose_headers=["X-CSRF-Token"],
 )
 app.add_middleware(CSRFMiddleware)
+if settings.ALLOWED_HOSTS:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 
 # ── register modules ────────────────────────────────────
 app.include_router(auth_router)

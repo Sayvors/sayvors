@@ -3,7 +3,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ...database import async_session
 from .cache import set_progress
@@ -74,7 +73,7 @@ async def _worker_loop() -> None:
 
 
 async def _dequeue_job() -> str | None:
-    # Try Redis first
+    # Try Redis first — this is just a wake-up hint
     try:
         from ...modules.redis.client import get_redis
 
@@ -108,6 +107,7 @@ async def _dequeue_job() -> str | None:
 async def _process_job(job_id: str) -> None:
     async with SEMAPHORE:
         async with async_session() as db:
+            # DB claim is the single source of truth
             result = await db.execute(
                 select(IngestJob).where(IngestJob.id == job_id)
             )
@@ -115,12 +115,19 @@ async def _process_job(job_id: str) -> None:
             if not job:
                 return
 
-            # If already claimed (parsing), skip the status update
+            # If not yet claimed, atomically claim it (single worker case)
             if job.status != "parsing":
-                job.status = "parsing"
-                job.progress = 0
-                job.stage = "Starting..."
+                claim_result = await db.execute(
+                    update(IngestJob)
+                    .where(IngestJob.id == job_id, IngestJob.status == "queued")
+                    .values(status="parsing", stage="Starting", updated_at=datetime.now(timezone.utc))
+                )
+                if claim_result.rowcount == 0:
+                    # Another worker claimed it — skip
+                    return
                 await db.commit()
+                job.status = "parsing"
+
             await set_progress(job_id, 0, job.stage or "Starting...")
 
             try:

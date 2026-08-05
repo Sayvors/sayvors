@@ -17,10 +17,14 @@ class Settings(BaseSettings):
     CSRF_COOKIE_NAME: str = "csrf_token"
     REFRESH_COOKIE_NAME: str = "refresh_token"
     REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
+    ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
 
     # ── File uploads ────────────────────────────────────
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 100
+
+    # ── Channel encryption ────────────────────────────────
+    CHANNEL_ENCRYPTION_KEY: str = ""  # Falls back to JWT_SECRET if empty
 
     # ── Email ────────────────────────────────────────────
     SMTP_HOST: str = ""

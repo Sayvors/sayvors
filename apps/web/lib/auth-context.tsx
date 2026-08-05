@@ -4,6 +4,10 @@ import { createContext, useContext, useEffect, useState, useCallback } from "rea
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+let _accessToken: string | null = null;
+export function getAccessToken(): string | null { return _accessToken; }
+export function setAccessToken(token: string | null) { _accessToken = token; }
+
 interface User {
   id: string;
   first_name: string;
@@ -47,20 +51,28 @@ export function useAuth() {
   return ctx;
 }
 
+function getCsrfToken(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.split("; ").find((c) => c.startsWith("csrf_token="));
+  return match ? match.split("=")[1] : null;
+}
+
+function buildHeaders(isForm = false): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (!isForm) headers["Content-Type"] = "application/json";
+  if (_accessToken) headers["Authorization"] = `Bearer ${_accessToken}`;
+  const csrf = getCsrfToken();
+  if (csrf) headers["X-CSRF-Token"] = csrf;
+  return headers;
+}
+
 async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+  const isForm = options.body instanceof FormData;
+  const method = options.method || "GET";
+  const headers = {
+    ...buildHeaders(isForm),
     ...(options.headers as Record<string, string>),
   };
-
-  const csrfToken = document.cookie
-    .split("; ")
-    .find((c) => c.startsWith("csrf_token="))
-    ?.split("=")[1];
-
-  if (csrfToken && ["POST", "PUT", "DELETE", "PATCH"].includes(options.method || "GET")) {
-    headers["X-CSRF-Token"] = csrfToken;
-  }
 
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -71,13 +83,10 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
   if (response.status === 401 && path !== "/api/v1/auth/refresh") {
     const refreshed = await tryRefresh();
     if (refreshed) {
-      const retryResponse = await fetch(`${API_URL}${path}`, {
-        ...options,
-        headers,
-        credentials: "include",
-      });
-      return retryResponse;
+      return fetch(`${API_URL}${path}`, { ...options, headers: buildHeaders(isForm), credentials: "include" });
     }
+    setAccessToken(null);
+    window.location.href = "/login";
   }
 
   return response;
@@ -88,11 +97,14 @@ async function tryRefresh(): Promise<boolean> {
     const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
       method: "POST",
       credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
     });
-    return res.ok;
+    if (res.ok) {
+      const data = await res.json();
+      if (data.access_token) setAccessToken(data.access_token);
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -134,6 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const result = await res.json();
+    if (result.access_token) setAccessToken(result.access_token);
     setUser(result.user);
     return { verification_token: result.verification_token };
   };
@@ -150,6 +163,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const result = await res.json();
+    if (result.access_token) setAccessToken(result.access_token);
     setUser(result.user);
   };
 
@@ -158,7 +172,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ all_devices: allDevices }),
     });
+    setAccessToken(null);
     setUser(null);
+    window.location.href = "/login";
   };
 
   const forgotPassword = async (email: string) => {
