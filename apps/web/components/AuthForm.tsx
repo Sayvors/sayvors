@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth-context";
 
 type Mode = "login" | "signup";
@@ -72,7 +72,7 @@ function validate(step: number, v: FormValues, isLogin: boolean) {
   return e;
 }
 
-/* ── tiny icon components ──────────────────────────── */
+/* ── icons ─────────────────────────────────────────── */
 
 function Eye({ open }: { open: boolean }) {
   return open ? (
@@ -100,12 +100,14 @@ function Spinner() {
 
 function Input({
   id, label, type = "text", value, error, placeholder, autoComplete,
-  toggle, toggleVisible, onToggle, onChange,
+  toggle, toggleVisible, onToggle, onChange, autoFocus,
 }: {
   id: string; label: string; type?: string; value: string; error?: string;
   placeholder: string; autoComplete?: string; toggle?: boolean;
   toggleVisible?: boolean; onToggle?: () => void; onChange: (v: string) => void;
+  autoFocus?: boolean;
 }) {
+  const [focused, setFocused] = useState(false);
   return (
     <div className="space-y-1.5">
       <label htmlFor={id} className="block text-[13px] font-medium text-ink/70">{label}</label>
@@ -115,22 +117,29 @@ function Input({
           type={toggle && toggleVisible ? "text" : type}
           value={value} placeholder={placeholder} autoComplete={autoComplete}
           aria-invalid={!!error}
+          autoFocus={autoFocus}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onChange={(e) => onChange(e.target.value)}
-          className={`h-11 w-full rounded-lg border bg-white px-3.5 text-[14px] text-ink outline-none transition placeholder:text-ink/35 ${
+          className={`h-11 w-full rounded-lg border bg-white px-3.5 text-[14px] text-ink outline-none transition-all duration-200 placeholder:text-ink/35 ${
             error
               ? "border-coral/50 focus:border-coral focus:ring-[3px] focus:ring-coral/10"
-              : "border-ink/[0.12] focus:border-deep-violet/40 focus:ring-[3px] focus:ring-deep-violet/[0.08] hover:border-ink/20"
+              : focused
+                ? "border-deep-violet/40 ring-[3px] ring-deep-violet/[0.08]"
+                : "border-ink/[0.12] hover:border-ink/20"
           } ${toggle ? "pr-11" : ""}`}
         />
         {toggle && (
           <button type="button" tabIndex={-1} onClick={onToggle}
             aria-label={toggleVisible ? "Hide" : "Show"}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-ink/35 transition hover:text-ink/60">
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-ink/35 transition-colors duration-150 hover:text-ink/60">
             <Eye open={toggleVisible ?? false} />
           </button>
         )}
       </div>
-      {error && <p className="text-[12px] font-medium text-coral">{error}</p>}
+      {error && (
+        <p className="text-[12px] font-medium text-coral animate-in fade-in slide-in-from-top-1 duration-200">{error}</p>
+      )}
     </div>
   );
 }
@@ -143,13 +152,20 @@ function Select({
   id: string; label: string; value: string; options: string[];
   placeholder: string; onChange: (v: string) => void;
 }) {
+  const [focused, setFocused] = useState(false);
   return (
     <div className="space-y-1.5">
       <label htmlFor={id} className="block text-[13px] font-medium text-ink/70">{label}</label>
       <select
         id={id} value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full appearance-none rounded-lg border border-ink/[0.12] bg-white px-3.5 text-[14px] text-ink outline-none transition focus:border-deep-violet/40 focus:ring-[3px] focus:ring-deep-violet/[0.08] hover:border-ink/20"
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        className={`h-11 w-full appearance-none rounded-lg border bg-white px-3.5 text-[14px] text-ink outline-none transition-all duration-200 ${
+          focused
+            ? "border-deep-violet/40 ring-[3px] ring-deep-violet/[0.08]"
+            : "border-ink/[0.12] hover:border-ink/20"
+        }`}
       >
         <option value="">{placeholder}</option>
         {options.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -178,20 +194,20 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   const stepTitle = ["Create your account", "Secure your account", "Almost done"];
   const stepSub = ["A few details to get started.", "Pick a strong password.", "Totally optional — skip if you like."];
 
-  const set = (f: FieldName) => (val: string) => {
+  const set = useCallback((f: FieldName) => (val: string) => {
     setV((p) => ({ ...p, [f]: val }));
     setErrs((p) => ({ ...p, [f]: undefined }));
     setError("");
-  };
+  }, []);
 
-  const next = () => {
+  const next = useCallback(() => {
     const e = validate(step, v, false);
     setErrs(e);
     if (Object.keys(e).length > 0) return;
     setStep((s) => Math.min(s + 1, totalSteps - 1));
-  };
+  }, [step, v]);
 
-  const back = () => { setErrs({}); setStep((s) => Math.max(s - 1, 0)); };
+  const back = useCallback(() => { setErrs({}); setStep((s) => Math.max(s - 1, 0)); }, []);
 
   const submit = async (ev: FormEvent) => {
     ev.preventDefault();
@@ -243,8 +259,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     return (
       <div className="flex flex-col items-center text-center">
         <div className="relative mb-6">
-          <div className="absolute inset-0 animate-ping rounded-full bg-emerald-400/20" />
-          <div className="relative flex h-[52px] w-[52px] items-center justify-center rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/20">
+          <div className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-emerald-500 transition-transform duration-300 scale-100">
             <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6"><path d="M4.5 12.75l6 6 9-13.5" /></svg>
           </div>
         </div>
@@ -253,11 +268,11 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           {isLogin ? "Redirecting you to dashboard..." : "Check your email for verification link."}
         </p>
         <div className="mt-7 flex w-full flex-col gap-2.5">
-          <Link href="/dashboard" className="flex h-11 items-center justify-center rounded-lg bg-ink text-[14px] font-medium text-white transition hover:bg-ink/90 active:scale-[0.99]">
+          <Link href="/dashboard" className="flex h-11 items-center justify-center rounded-lg bg-ink text-[14px] font-medium text-white transition-all duration-200 hover:bg-ink/90 active:scale-[0.98]">
             Go to dashboard
           </Link>
           <button type="button" onClick={() => { setV(defaultValues); setDone(false); setStep(0); }}
-            className="flex h-11 items-center justify-center rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/60 transition hover:bg-ink/[0.03]">
+            className="flex h-11 items-center justify-center rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/60 transition-all duration-200 hover:bg-ink/[0.03] hover:border-ink/20 active:scale-[0.98]">
             Back to {isLogin ? "sign in" : "sign up"}
           </button>
         </div>
@@ -283,7 +298,13 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         <div className="mb-6 flex gap-2">
           {Array.from({ length: totalSteps }, (_, i) => (
             <div key={i} className="flex-1">
-              <div className={`h-[3px] rounded-full transition-all duration-300 ${i < step ? "bg-ink" : i === step ? "bg-gradient-to-r from-deep-violet to-magenta" : "bg-ink/[0.08]"}`} />
+              <div className="relative h-[3px] overflow-hidden rounded-full bg-ink/[0.08]">
+                <div
+                  className={`absolute inset-y-0 left-0 rounded-full transition-all duration-500 ease-out ${
+                    i < step ? "bg-ink w-full" : i === step ? "bg-ink w-full" : "w-0"
+                  }`}
+                />
+              </div>
             </div>
           ))}
         </div>
@@ -292,19 +313,21 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       {/* social buttons */}
       <div className="space-y-2.5">
         <button type="button" onClick={() => setNote("Google sign-in coming soon.")}
-          className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/70 transition hover:border-ink/20 hover:bg-ink/[0.02] active:scale-[0.99]">
+          className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/70 transition-all duration-200 hover:border-ink/20 hover:bg-ink/[0.02] active:scale-[0.99]">
           <Image src="/google.svg" alt="" width={18} height={18} className="h-[18px] w-[18px]" />
           Continue with Google
         </button>
         <button type="button" onClick={() => setNote("GitHub sign-in coming soon.")}
-          className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/70 transition hover:border-ink/20 hover:bg-ink/[0.02] active:scale-[0.99]">
+          className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/70 transition-all duration-200 hover:border-ink/20 hover:bg-ink/[0.02] active:scale-[0.99]">
           <Image src="/github.svg" alt="" width={18} height={18} className="h-[18px] w-[18px]" />
           Continue with GitHub
         </button>
       </div>
       {note && (
-        <div className="mt-3 rounded-lg bg-coral/[0.07] px-3 py-2.5 text-center text-[12px] font-medium text-coral">{note}</div>
+        <div className="mt-3 rounded-lg bg-coral/[0.07] px-3 py-2.5 text-center text-[12px] font-medium text-coral animate-in fade-in duration-200">{note}</div>
       )}
+
+      {/* divider */}
       <div className="my-5 flex items-center gap-3">
         <span className="h-px flex-1 bg-ink/[0.07]" />
         <span className="text-[11px] font-medium uppercase tracking-widest text-ink/35">or</span>
@@ -318,7 +341,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
             <div className="flex gap-3">
               <div className="flex-1">
                 <Input id="firstName" label="First name" value={v.firstName} error={errs.firstName}
-                  placeholder="Ada" autoComplete="given-name" onChange={set("firstName")} />
+                  placeholder="Ada" autoComplete="given-name" onChange={set("firstName")} autoFocus />
               </div>
               <div className="flex-1">
                 <Input id="lastName" label="Last name" value={v.lastName} error={errs.lastName}
@@ -335,15 +358,15 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           <>
             <Input id="password" label="Password" type="password" value={v.password} error={errs.password}
               placeholder="Min. 8 characters" autoComplete="new-password" toggle
-              toggleVisible={pwVisible} onToggle={() => setPwVisible((p) => !p)} onChange={set("password")} />
+              toggleVisible={pwVisible} onToggle={() => setPwVisible((p) => !p)} onChange={set("password")} autoFocus />
             {v.password.length > 0 && (
               <div className="flex items-center gap-2.5 pt-0.5">
                 <div className="flex flex-1 gap-1">
                   {[1, 2, 3, 4, 5].map((i) => (
-                    <div key={i} className={`h-[3px] flex-1 rounded-full transition ${i <= pw.n ? pw.color : "bg-ink/[0.06]"}`} />
+                    <div key={i} className={`h-[3px] flex-1 rounded-full transition-all duration-300 ${i <= pw.n ? pw.color : "bg-ink/[0.06]"}`} />
                   ))}
                 </div>
-                <span className={`text-[11px] font-medium ${pw.n <= 2 ? "text-coral" : pw.n <= 3 ? "text-amber-500" : "text-emerald-600"}`}>{pw.label}</span>
+                <span className={`text-[11px] font-medium transition-colors duration-200 ${pw.n <= 2 ? "text-coral" : pw.n <= 3 ? "text-amber-500" : "text-emerald-600"}`}>{pw.label}</span>
               </div>
             )}
             <Input id="confirm" label="Confirm password" type="password" value={v.confirm} error={errs.confirm}
@@ -372,13 +395,13 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         {isLogin && (
           <>
             <Input id="email" label="Email" type="email" value={v.email} error={errs.email}
-              placeholder="you@company.com" autoComplete="email" onChange={set("email")} />
+              placeholder="you@company.com" autoComplete="email" onChange={set("email")} autoFocus />
             <div>
               <Input id="password" label="Password" type="password" value={v.password} error={errs.password}
                 placeholder="Your password" autoComplete="current-password" toggle
                 toggleVisible={pwVisible} onToggle={() => setPwVisible((p) => !p)} onChange={set("password")} />
               <div className="mt-2 flex justify-end">
-                <a href="/forgot-password" className="text-[12px] font-medium text-ink/45 transition hover:text-ink/60">Forgot password?</a>
+                <a href="/forgot-password" className="text-[12px] font-medium text-ink/45 transition-colors duration-150 hover:text-ink/60">Forgot password?</a>
               </div>
             </div>
           </>
@@ -388,31 +411,31 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         <div className="flex gap-2.5 pt-1.5">
           {!isLogin && step > 0 && (
             <button type="button" onClick={back}
-              className="h-11 px-4 rounded-lg border border-ink/[0.12] text-[13px] font-medium text-ink/55 transition hover:border-ink/20 hover:text-ink/70">
+              className="h-11 px-4 rounded-lg border border-ink/[0.12] text-[13px] font-medium text-ink/55 transition-all duration-200 hover:border-ink/20 hover:text-ink/70 active:scale-[0.98]">
               Back
             </button>
           )}
           <button type="submit" disabled={busy}
-            className="h-11 flex-1 rounded-lg bg-ink text-[14px] font-medium text-white transition hover:bg-ink/90 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed">
+            className="h-11 flex-1 rounded-lg bg-ink text-[14px] font-medium text-white transition-all duration-200 hover:bg-ink/90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed">
             {busy ? (
               <span className="inline-flex items-center gap-2"><Spinner /> {isLogin ? "Signing in..." : "Creating..."}</span>
             ) : isLogin ? "Sign in" : step === totalSteps - 1 ? "Create account" : "Continue"}
           </button>
         </div>
-        {error && <p className="mt-3 text-center text-[12px] font-medium text-coral">{error}</p>}
+        {error && <p className="mt-3 text-center text-[12px] font-medium text-coral animate-in fade-in duration-200">{error}</p>}
       </form>
 
       {/* footer links */}
       {isLogin && (
         <p className="mt-6 text-center text-[13px] text-ink/50">
           Don{"\u2019"}t have an account?{" "}
-          <Link href="/signup" className="font-medium text-ink/70 transition hover:text-ink">Sign up</Link>
+          <Link href="/signup" className="font-medium text-ink/70 transition-colors duration-150 hover:text-ink">Sign up</Link>
         </p>
       )}
       {!isLogin && step === 0 && (
         <p className="mt-5 text-center text-[13px] text-ink/50">
           Already have an account?{" "}
-          <Link href="/login" className="font-medium text-ink/70 transition hover:text-ink">Sign in</Link>
+          <Link href="/login" className="font-medium text-ink/70 transition-colors duration-150 hover:text-ink">Sign in</Link>
         </p>
       )}
       {!isLogin && step === 2 && (
