@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 
 const rateLimit = new Map<string, { count: number; last: number }>();
 const RATE_LIMIT_WINDOW = 60_000;
-const RATE_LIMIT_MAX = 100;
+const RATE_LIMIT_MAX = process.env.NODE_ENV === "production" ? 100 : 500;
 
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();

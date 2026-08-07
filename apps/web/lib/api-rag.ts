@@ -60,7 +60,10 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
       if (!retryRes.ok) throw new Error(await retryRes.text());
       return retryRes.json();
     }
-    window.location.href = "/login";
+    // Don't redirect if already on an auth page — prevents infinite reload loop
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email")) {
+      window.location.href = "/login";
+    }
     throw new Error("Unauthorized");
   }
 
