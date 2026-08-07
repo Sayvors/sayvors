@@ -52,17 +52,36 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: warm up Redis and Kafka connections
+    import logging
+    log = logging.getLogger(__name__)
+
+    # Warm up database connection pool (critical for first-request speed)
+    try:
+        from .database import engine
+        async with engine.connect() as conn:
+            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+        log.info("Database pool warmed up")
+    except Exception as e:
+        log.error("Database pool warmup failed: %s", e)
+
+    # Try Redis — mark unavailable fast if down
     try:
         from .modules.redis.client import get_redis
-        await get_redis()
+        redis = await get_redis()
+        await redis.ping()
+        log.info("Redis connected")
     except Exception:
-        pass
+        from .modules.redis.client import mark_redis_unavailable
+        mark_redis_unavailable()
+
+    # Try Kafka — mark unavailable fast if down (5s timeout)
     try:
         from .modules.kafka.client import get_kafka_producer
         await get_kafka_producer()
+        log.info("Kafka connected")
     except Exception:
-        pass
+        from .modules.kafka.client import mark_kafka_unavailable
+        mark_kafka_unavailable()
 
     # Run retention cleanup on startup
     try:
@@ -70,8 +89,7 @@ async def lifespan(app: FastAPI):
         from .modules.auth.service import cleanup_expired_data
         async with async_session() as db:
             result = await cleanup_expired_data(db)
-            import logging
-            logging.getLogger(__name__).info(
+            log.info(
                 "Retention cleanup: deleted %d login attempts, %d refresh tokens",
                 result["login_attempts_deleted"],
                 result["refresh_tokens_deleted"],
@@ -79,10 +97,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Start the outbox worker (drains events to Kafka)
+    from .modules.outbox.worker import OutboxWorker
+    outbox_worker = OutboxWorker()
+    await outbox_worker.start()
+
     yield
+
     # Shutdown
-    from .modules.kafka.client import get_kafka_producer
+    await outbox_worker.stop()
     try:
+        from .modules.kafka.client import get_kafka_producer
         producer = await get_kafka_producer()
         await producer.flush()
     except Exception:

@@ -1,7 +1,7 @@
-import json
+import logging
 from datetime import datetime, timezone
 
-from ..kafka.client import get_kafka_producer
+logger = logging.getLogger(__name__)
 
 AUTH_TOPIC = "auth-events"
 
@@ -15,9 +15,15 @@ async def log_auth_event(
     success: bool = True,
     metadata: dict | None = None,
 ) -> None:
-    """Publish an auth event to Kafka (fire-and-forget)."""
+    """Publish an auth event via the outbox pattern.
+
+    Writes to the event_outbox table (local PostgreSQL, ~1-2ms).
+    A background worker picks it up and delivers to Kafka.
+    If Kafka is down, events queue up and retry automatically.
+    """
     try:
-        producer = await get_kafka_producer()
+        from ..outbox.service import enqueue_event
+
         event = {
             "event_type": event_type,
             "user_id": user_id,
@@ -28,11 +34,16 @@ async def log_auth_event(
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "metadata": metadata or {},
         }
-        key = f"{event_type}:{user_id or email}".encode()
-        value = json.dumps(event).encode()
-        await producer.send(AUTH_TOPIC, key=key, value=value)
+
+        await enqueue_event(
+            event_type=event_type,
+            payload=event,
+            topic=AUTH_TOPIC,
+        )
     except Exception:
-        pass
+        # Outbox enqueue should never fail the request.
+        # If the DB is down, we log and move on.
+        logger.exception("Failed to enqueue auth event: %s", event_type)
 
 
 async def log_signup(user_id: str, email: str, ip: str, ua: str) -> None:
