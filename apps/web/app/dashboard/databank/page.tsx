@@ -231,7 +231,7 @@ export default function DatabankPage() {
   const pendingDocs = documents.filter((d) => d.status === "pending" || d.status === "failed");
 
   return (
-    <div className="space-y-5">
+    <div className="h-full overflow-y-auto p-6 space-y-5">
       <div>
         <Breadcrumbs items={[{ label: "Databank" }]} />
         <div className="mt-2 flex items-center justify-between">

@@ -37,12 +37,12 @@ export default function Header() {
   }, []);
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-ink/[0.06] bg-white px-4 dark:bg-ink dark:border-fog/[0.06]">
+    <header className="flex h-12 shrink-0 items-center justify-between border-b border-deep-violet/[0.06] bg-white px-4 dark:bg-ink dark:border-deep-violet/[0.06]">
       {/* Left: Search */}
       <div className="flex items-center gap-3">
         {/* Search */}
 
-        <div className="h-5 w-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
+        <div className="h-5 w-px bg-deep-violet/[0.08]" />
 
         {/* Search */}
         <div className="relative">
@@ -65,9 +65,9 @@ export default function Header() {
             placeholder="Search..."
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
-            className="h-8 w-56 rounded-md border border-ink/[0.08] bg-fog/40 pl-8 pr-8 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:w-72 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.06] dark:border-fog/[0.08] dark:bg-ink/40 dark:text-fog dark:placeholder:text-fog/30 dark:focus:bg-ink"
+            className="h-8 w-56 rounded-md border border-deep-violet/[0.08] bg-deep-violet/[0.03] pl-8 pr-8 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:w-72 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.08] dark:border-deep-violet/[0.12] dark:bg-deep-violet/[0.06] dark:text-fog dark:placeholder:text-fog/30 dark:focus:bg-ink"
           />
-          <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-ink/[0.08] bg-white px-1 py-0.5 text-[9px] font-medium text-ink/25 dark:border-fog/[0.08] dark:bg-ink dark:text-fog/25">
+          <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-deep-violet/[0.1] bg-white px-1 py-0.5 text-[9px] font-medium text-deep-violet/40 dark:border-deep-violet/[0.15] dark:bg-ink dark:text-deep-violet/50">
             ⌘K
           </kbd>
         </div>
@@ -76,7 +76,7 @@ export default function Header() {
       {/* Right: Actions */}
       <div className="flex items-center gap-1">
         {/* Create automation */}
-        <button className="flex h-8 items-center gap-1.5 rounded-lg bg-gradient-to-r from-deep-violet to-magenta px-3 text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/20 transition hover:shadow-md active:scale-[0.98]">
+        <button className="flex h-8 items-center gap-1.5 rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-md active:scale-[0.98]">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
             <path d="M8 3v10M3 8h10" strokeLinecap="round" />
           </svg>
@@ -84,17 +84,17 @@ export default function Header() {
         </button>
 
         {/* Subscribe to premium */}
-        <button className="flex h-8 items-center gap-1.5 rounded-lg border border-amber-400/50 bg-amber-400/10 px-3 text-[12px] font-semibold text-amber-700 transition hover:bg-amber-400/20 active:scale-[0.98]">
+        <button className="flex h-8 items-center gap-1.5 rounded-lg bg-amber-500 px-3 text-[12px] font-semibold text-white shadow-sm shadow-amber-500/25 transition hover:bg-amber-500/90 active:scale-[0.98]">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
           </svg>
           Premium
         </button>
 
-        <div className="mx-1 h-5 w-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
+        <div className="mx-1 h-5 w-px bg-deep-violet/[0.08]" />
 
         {/* Notifications */}
-        <button className="relative flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60 dark:text-fog/40 dark:hover:bg-fog/[0.04] dark:hover:text-fog/60">
+        <button className="relative flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-deep-violet/[0.06] hover:text-deep-violet dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
             <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
             <path d="M13.73 21a2 2 0 01-3.46 0" />
@@ -105,7 +105,7 @@ export default function Header() {
         {/* Theme toggle */}
         <button
           onClick={toggle}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-deep-violet/[0.06] hover:text-deep-violet dark:text-fog/40 dark:hover:text-deep-violet"
           title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
         >
           {theme === "light" ? (
@@ -131,7 +131,7 @@ export default function Header() {
         <div className="relative" ref={langRef}>
           <button
             onClick={() => setLangOpen(!langOpen)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60 dark:text-fog/40 dark:hover:bg-fog/[0.04] dark:hover:text-fog/60"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-deep-violet/[0.06] hover:text-deep-violet dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
             title="Change language"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -141,12 +141,12 @@ export default function Header() {
             </svg>
           </button>
           {langOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg border border-ink/[0.08] bg-white shadow-lg dark:border-fog/[0.08] dark:bg-ink">
+            <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
               {languages.map((l) => (
                 <button
                   key={l.code}
                   onClick={() => { setLang(l); setLangOpen(false); }}
-                  className={`flex w-full items-center gap-2 px-3 py-2 text-[12px] transition hover:bg-fog dark:hover:bg-fog/[0.06] ${
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-[12px] transition hover:bg-deep-violet/[0.04] ${
                     lang.code === l.code ? "font-medium text-deep-violet" : "text-ink/60 dark:text-fog/60"
                   }`}
                 >
@@ -158,15 +158,15 @@ export default function Header() {
           )}
         </div>
 
-        <div className="mx-1 h-5 w-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
+        <div className="mx-1 h-5 w-px bg-deep-violet/[0.08]" />
 
         {/* Profile dropdown */}
         <div className="relative" ref={profileRef}>
           <button
             onClick={() => setProfileOpen(!profileOpen)}
-            className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition hover:bg-ink/[0.04]"
+            className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition hover:bg-deep-violet/[0.04]"
           >
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-deep-violet to-magenta text-[10px] font-semibold text-white">
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-deep-violet to-magenta text-[10px] font-semibold text-white shadow-sm shadow-deep-violet/20">
               {initials}
             </div>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`h-3 w-3 text-ink/30 transition-transform ${profileOpen ? "rotate-180" : ""} dark:text-fog/30`}>
@@ -174,8 +174,8 @@ export default function Header() {
             </svg>
           </button>
           {profileOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-ink/[0.08] bg-white shadow-lg dark:border-fog/[0.08] dark:bg-ink">
-              <div className="border-b border-ink/[0.06] px-3 py-2.5 dark:border-fog/[0.06]">
+            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
+              <div className="border-b border-deep-violet/[0.06] px-3 py-2.5">
                 <p className="text-[13px] font-medium text-ink dark:text-fog">
                   {user ? `${user.first_name} ${user.last_name}` : "User"}
                 </p>
@@ -189,7 +189,7 @@ export default function Header() {
                 <ProfileMenuItem icon={<CreditCardIcon />} label="Billing" />
                 <ProfileMenuItem icon={<HelpIcon />} label="Help & support" />
               </div>
-              <div className="border-t border-ink/[0.06] py-1 dark:border-fog/[0.06]">
+              <div className="border-t border-deep-violet/[0.06] py-1">
                 <ProfileMenuItem icon={<LogoutIcon />} label="Sign out" danger onClick={() => logout()} />
               </div>
             </div>
@@ -204,7 +204,7 @@ function ProfileMenuItem({ icon, label, danger, onClick }: { icon: React.ReactNo
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition hover:bg-fog dark:hover:bg-fog/[0.06] ${danger ? "text-coral" : "text-ink/60 dark:text-fog/60"}`}
+      className={`flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition hover:bg-deep-violet/[0.04] ${danger ? "text-coral" : "text-ink/60 dark:text-fog/60"}`}
     >
       {icon}
       {label}

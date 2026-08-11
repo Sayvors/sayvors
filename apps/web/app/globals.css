@@ -3,21 +3,36 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: #ffffff;
-  --foreground: #14101f;
+  --background: #f8f6ff;
+  --foreground: #1a1230;
+  --sidebar-bg: #1e1547;
+  --sidebar-text: #c4b8e8;
+  --card-bg: #ffffff;
+  --card-border: #e8e0f5;
+  --accent-soft: #f0eaff;
 }
 
 .dark {
   --background: #14101f;
   --foreground: #f4f2f7;
+  --sidebar-bg: #0d0a18;
+  --sidebar-text: #9b8ec4;
+  --card-bg: #1e1a2e;
+  --card-border: #2a2440;
+  --accent-soft: #2a1f45;
 }
 
 @theme {
-  --color-deep-violet: #3d1d6e;
-  --color-magenta: #b0338a;
+  --color-deep-violet: #5b2d8e;
+  --color-violet-light: #8b5cf6;
+  --color-violet-soft: #c4b5fd;
+  --color-magenta: #d946a8;
   --color-coral: #ff4f6e;
-  --color-ink: #14101f;
-  --color-fog: #f4f2f7;
+  --color-amber: #f59e0b;
+  --color-emerald: #10b981;
+  --color-sky: #0ea5e9;
+  --color-ink: #1a1230;
+  --color-fog: #f8f6ff;
 }
 
 @theme inline {
@@ -31,4 +46,19 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #c4b5fd40;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c4b5fd80;
 }
