@@ -33,7 +33,14 @@ const defaultData: WizardData = {
   greetingMessage: "Hi! How can I help you today?",
 };
 
-  const stepLabels = ["Pick Agent", "Pick Model", "Pick Databank", "Channels & Widget", "Rules", "Review"];
+  const stepLabels = [
+    { label: "Pick Agent", description: "Choose which agent to deploy", required: true },
+    { label: "Pick Model", description: "Select the AI model", required: true },
+    { label: "Pick Databank", description: "Connect knowledge sources", required: false },
+    { label: "Channels & Widget", description: "Select deployment channels", required: true },
+    { label: "Rules", description: "Set automation rules", required: false },
+    { label: "Review", description: "Review and launch", required: true },
+  ];
 
 const agents = [
   { id: "hr-agent", name: "HR Agent", category: "HR", description: "Handles employee inquiries, policies, onboarding" },
@@ -117,14 +124,14 @@ export default function CreateAutomationPage() {
   const selectedAgent = agents.find((a) => a.id === data.agentId);
 
   return (
-    <div className="space-y-5">
+    <div className="h-full overflow-y-auto p-6 space-y-5">
       <div>
         <Breadcrumbs items={[{ label: "Automations", href: "/dashboard/automations" }, { label: "Create Automation" }]} />
         <h1 className="mt-2 text-[20px] font-bold text-ink dark:text-fog">Create Automation</h1>
         <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">Deploy an agent with a model across channels.</p>
       </div>
 
-      <WizardStepper steps={stepLabels} current={step} />
+      <WizardStepper steps={stepLabels} current={step} completedSteps={[]} />
 
       {/* Step content */}
       <div className="min-h-[400px] rounded-xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
@@ -208,7 +215,7 @@ export default function CreateAutomationPage() {
 
         {/* Step 3: Pick Databank */}
         {step === 2 && (
-          <div className="space-y-5">
+    <div className="h-full overflow-y-auto p-6 space-y-5">
             <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Pick Databank</h2>
             <p className="text-[12px] text-ink/45 dark:text-fog/45">Choose a knowledge base for this agent to reference.</p>
             {databanks.length === 0 ? (

@@ -7,13 +7,13 @@ type Period = "day" | "week" | "month" | "year";
 function PeriodFilter({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
   const opts: Period[] = ["day", "week", "month", "year"];
   return (
-    <div className="flex gap-0.5 rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.03]">
+    <div className="flex gap-0.5 rounded-xl bg-deep-violet/[0.06] p-0.5">
       {opts.map((p) => (
         <button
           key={p}
           onClick={() => onChange(p)}
-          className={`rounded-md px-2 py-1 text-[11px] font-medium capitalize transition ${
-            value === p ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-deep-violet" : "text-ink/40 hover:text-ink/60 dark:text-fog/40 dark:hover:text-fog/60"
+          className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold capitalize transition ${
+            value === p ? "bg-deep-violet text-white shadow-sm" : "text-ink/50 hover:text-ink/70"
           }`}
         >
           {p}
@@ -33,9 +33,9 @@ function PanelCard({
   className?: string;
 }) {
   return (
-    <div className={`rounded-xl border border-ink/[0.06] bg-white dark:bg-ink dark:border-fog/[0.06] ${className}`}>
-      <div className="flex items-center justify-between border-b border-ink/[0.04] px-4 py-3 dark:border-fog/[0.04]">
-        <h3 className="text-[13px] font-semibold text-ink dark:text-fog">{title}</h3>
+    <div className={`rounded-2xl border-2 border-white bg-white/80 backdrop-blur-sm ${className}`}>
+      <div className="flex items-center justify-between border-b border-deep-violet/[0.06] px-4 py-3">
+        <h3 className="text-[13px] font-semibold text-ink">{title}</h3>
       </div>
       <div className="p-4">{children}</div>
     </div>
@@ -96,12 +96,12 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="h-full overflow-y-auto p-6 space-y-5 bg-[#f3f0ff]">
       {/* Welcome */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[22px] font-bold text-ink dark:text-fog">{greeting()}, Syed 👋</h1>
-          <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">Here's what's happening across your channels today.</p>
+          <h1 className="text-[22px] font-bold text-ink">{greeting()}, Syed 👋</h1>
+          <p className="mt-0.5 text-[13px] text-ink/65">Here&apos;s what&apos;s happening across your channels today.</p>
         </div>
         <PeriodFilter value={period} onChange={setPeriod} />
       </div>
@@ -121,27 +121,27 @@ export default function DashboardPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
-                <tr className="border-b border-ink/[0.04] dark:border-fog/[0.04]">
-                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink/35 dark:text-fog/35">Name</th>
-                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink/35 dark:text-fog/35">Status</th>
-                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink/35 dark:text-fog/35">Triggers</th>
-                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink/35 dark:text-fog/35">Conversion</th>
+                <tr className="border-b border-deep-violet/[0.06]">
+                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink/45">Name</th>
+                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink/45">Status</th>
+                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink/45">Triggers</th>
+                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink/45">Conversion</th>
                 </tr>
               </thead>
               <tbody>
                 {automations.map((a) => (
-                  <tr key={a.name} className="border-b border-ink/[0.02] last:border-0 dark:border-fog/[0.02]">
-                    <td className="py-2.5 text-[12px] font-medium text-ink dark:text-fog">{a.name}</td>
+                  <tr key={a.name} className="border-b border-ink/[0.03] last:border-0">
+                    <td className="py-2.5 text-[12px] font-medium text-ink">{a.name}</td>
                     <td className="py-2.5">
                       <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                        a.status === "active" ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                        a.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
                       }`}>
                         <span className={`h-1 w-1 rounded-full ${a.status === "active" ? "bg-emerald-500" : "bg-amber-500"}`} />
                         {a.status}
                       </span>
                     </td>
-                    <td className="py-2.5 text-[12px] text-ink/60 dark:text-fog/60">{a.triggers.toLocaleString()}</td>
-                    <td className="py-2.5 text-[12px] font-medium text-ink dark:text-fog">{a.conversion}</td>
+                    <td className="py-2.5 text-[12px] text-ink/65">{a.triggers.toLocaleString()}</td>
+                    <td className="py-2.5 text-[12px] font-semibold text-ink">{a.conversion}</td>
                   </tr>
                 ))}
               </tbody>
@@ -154,17 +154,17 @@ export default function DashboardPage() {
           <div className="flex items-end gap-1" style={{ height: 140 }}>
             {[45, 62, 38, 75, 88, 52, 95].map((h, i) => (
               <div key={i} className="flex flex-1 flex-col items-center gap-1">
-                <div className="w-full rounded-t bg-gradient-to-t from-deep-violet/25 to-deep-violet/5 transition-all hover:from-deep-violet/40 hover:to-deep-violet/10" style={{ height: `${h}%` }} />
-                <span className="text-[9px] text-ink/25 dark:text-fog/25">{["M","T","W","T","F","S","S"][i]}</span>
+                <div className="w-full rounded-t bg-gradient-to-t from-deep-violet/30 to-deep-violet/5 transition-all hover:from-deep-violet/50 hover:to-deep-violet/10" style={{ height: `${h}%` }} />
+                <span className="text-[9px] text-ink/35">{["M","T","W","T","F","S","S"][i]}</span>
               </div>
             ))}
           </div>
-          <div className="mt-3 flex items-center justify-between border-t border-ink/[0.04] dark:border-fog/[0.04] pt-3">
+          <div className="mt-3 flex items-center justify-between border-t border-deep-violet/[0.06] pt-3">
             <div>
-              <p className="text-[18px] font-bold text-ink dark:text-fog">1,243</p>
-              <p className="text-[10px] text-ink/35 dark:text-fog/35">total this week</p>
+              <p className="text-[18px] font-bold text-ink">1,243</p>
+              <p className="text-[10px] text-ink/45">total this week</p>
             </div>
-            <span className="text-[11px] font-semibold text-emerald-600">+9.1%</span>
+            <span className="text-[11px] font-bold text-emerald-600">+9.1%</span>
           </div>
         </PanelCard>
       </div>
@@ -174,18 +174,18 @@ export default function DashboardPage() {
         <PanelCard title="Recent Conversations" className="lg:col-span-2">
           <div className="space-y-0">
             {conversations.map((c, i) => (
-              <div key={i} className={`flex items-center gap-3 border-b border-ink/[0.03] dark:border-fog/[0.03] py-2.5 last:border-0 ${c.unread ? "" : ""}`}>
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-deep-violet/[0.06] text-[11px] font-semibold text-deep-violet">
+              <div key={i} className="flex items-center gap-3 border-b border-ink/[0.04] py-2.5 last:border-0">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[11px] font-bold text-deep-violet">
                   {c.name.split(" ").map((n) => n[0]).join("")}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className={`text-[12px] ${c.unread ? "font-semibold text-ink dark:text-fog" : "font-medium text-ink/70 dark:text-fog/70"}`}>{c.name}</span>
-                    <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[9px] font-medium text-ink/30 dark:bg-fog/[0.04] dark:text-fog/30">{c.platform}</span>
+                    <span className={`text-[12px] ${c.unread ? "font-bold text-ink" : "font-medium text-ink/70"}`}>{c.name}</span>
+                    <span className="rounded-md bg-deep-violet/[0.06] px-1.5 py-0.5 text-[9px] font-semibold text-deep-violet/60">{c.platform}</span>
                   </div>
-                  <p className="truncate text-[11px] text-ink/40 dark:text-fog/40">{c.lastMsg}</p>
+                  <p className="truncate text-[11px] text-ink/55">{c.lastMsg}</p>
                 </div>
-                <span className="shrink-0 text-[10px] text-ink/25 dark:text-fog/25">{c.time}</span>
+                <span className="shrink-0 text-[10px] text-ink/35">{c.time}</span>
               </div>
             ))}
           </div>
@@ -194,7 +194,7 @@ export default function DashboardPage() {
         {/* User ratings */}
         <PanelCard title="User Ratings">
           <div className="text-center">
-            <p className="text-[32px] font-bold text-ink dark:text-fog">4.7</p>
+            <p className="text-[32px] font-bold text-ink">4.7</p>
             <div className="mx-auto flex items-center justify-center gap-0.5">
               {[1, 2, 3, 4, 5].map((s) => (
                 <svg key={s} viewBox="0 0 24 24" className={`h-4 w-4 ${s <= 4 ? "fill-amber-400 text-amber-400" : "fill-amber-400/40 text-amber-400/40"}`}>
@@ -202,19 +202,19 @@ export default function DashboardPage() {
                 </svg>
               ))}
             </div>
-            <p className="mt-1 text-[11px] text-ink/35 dark:text-fog/35">Based on 1,240 reviews</p>
+            <p className="mt-1 text-[11px] text-ink/45">Based on 1,240 reviews</p>
           </div>
           <div className="mt-4 space-y-1.5">
             {ratings.map((r) => (
               <div key={r.stars} className="flex items-center gap-2">
-                <span className="w-3 text-right text-[10px] text-ink/40 dark:text-fog/40">{r.stars}</span>
+                <span className="w-3 text-right text-[10px] text-ink/50">{r.stars}</span>
                 <svg viewBox="0 0 24 24" className="h-3 w-3 fill-amber-400 text-amber-400">
                   <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
                 </svg>
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink/[0.04] dark:bg-fog/[0.04]">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink/[0.06]">
                   <div className="h-full rounded-full bg-amber-400" style={{ width: `${r.pct}%` }} />
                 </div>
-                <span className="w-8 text-right text-[10px] text-ink/30 dark:text-fog/30">{r.count}</span>
+                <span className="w-8 text-right text-[10px] text-ink/40">{r.count}</span>
               </div>
             ))}
           </div>
@@ -225,35 +225,35 @@ export default function DashboardPage() {
         {/* Tickets */}
         <PanelCard title="Tickets & Leads Created" className="lg:col-span-2">
           <div className="mb-3 grid grid-cols-3 gap-2">
-            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-center">
+            <div className="rounded-xl bg-emerald-100 px-3 py-2.5 text-center">
               <p className="text-[16px] font-bold text-emerald-700">18</p>
-              <p className="text-[10px] text-emerald-600/70">Resolved</p>
+              <p className="text-[10px] font-medium text-emerald-600/80">Resolved</p>
             </div>
-            <div className="rounded-lg bg-amber-50 px-3 py-2 text-center">
+            <div className="rounded-xl bg-amber-100 px-3 py-2.5 text-center">
               <p className="text-[16px] font-bold text-amber-700">4</p>
-              <p className="text-[10px] text-amber-600/70">Pending</p>
+              <p className="text-[10px] font-medium text-amber-600/80">Pending</p>
             </div>
-            <div className="rounded-lg bg-coral/10 px-3 py-2 text-center">
+            <div className="rounded-xl bg-coral/10 px-3 py-2.5 text-center">
               <p className="text-[16px] font-bold text-coral">2</p>
-              <p className="text-[10px] text-coral/70">Open</p>
+              <p className="text-[10px] font-medium text-coral/80">Open</p>
             </div>
           </div>
           <div className="space-y-0">
             {tickets.map((t) => (
-              <div key={t.id} className="flex items-center gap-3 border-b border-ink/[0.03] dark:border-fog/[0.03] py-2 last:border-0">
-                <span className="text-[11px] font-mono text-ink/30 dark:text-fog/30">{t.id}</span>
-                <span className="min-w-0 flex-1 truncate text-[12px] text-ink/70 dark:text-fog/70">{t.subject}</span>
+              <div key={t.id} className="flex items-center gap-3 border-b border-ink/[0.04] py-2 last:border-0">
+                <span className="text-[11px] font-mono text-ink/40">{t.id}</span>
+                <span className="min-w-0 flex-1 truncate text-[12px] text-ink/70">{t.subject}</span>
                 <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
                   t.status === "open" ? "bg-coral/10 text-coral" :
-                  t.status === "pending" ? "bg-amber-50 text-amber-600" :
-                  "bg-emerald-50 text-emerald-600"
+                  t.status === "pending" ? "bg-amber-100 text-amber-700" :
+                  "bg-emerald-100 text-emerald-700"
                 }`}>{t.status}</span>
                 <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
                   t.priority === "high" ? "bg-coral/10 text-coral" :
-                  t.priority === "medium" ? "bg-amber-50 text-amber-600" :
-                   "bg-ink/[0.04] text-ink/40 dark:bg-fog/[0.04] dark:text-fog/40"
+                  t.priority === "medium" ? "bg-amber-100 text-amber-700" :
+                   "bg-ink/[0.06] text-ink/50"
                 }`}>{t.priority}</span>
-                <span className="shrink-0 text-[10px] text-ink/25 dark:text-fog/25">{t.created}</span>
+                <span className="shrink-0 text-[10px] text-ink/35">{t.created}</span>
               </div>
             ))}
           </div>
@@ -263,19 +263,19 @@ export default function DashboardPage() {
         <PanelCard title="Recent Leads">
           <div className="space-y-0">
             {leads.map((l, i) => (
-              <div key={i} className="flex items-center gap-3 border-b border-ink/[0.03] dark:border-fog/[0.03] py-2.5 last:border-0">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-deep-violet/[0.06] text-[11px] font-semibold text-deep-violet">
+              <div key={i} className="flex items-center gap-3 border-b border-ink/[0.04] py-2.5 last:border-0">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[11px] font-bold text-deep-violet">
                   {l.name.split(" ").map((n) => n[0]).join("")}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-medium text-ink dark:text-fog">{l.name}</p>
-                  <p className="text-[10px] text-ink/35 dark:text-fog/35">{l.source}</p>
+                  <p className="text-[12px] font-semibold text-ink">{l.name}</p>
+                  <p className="text-[10px] text-ink/45">{l.source}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-[12px] font-semibold text-ink dark:text-fog">{l.value}</p>
+                  <p className="text-[12px] font-bold text-ink">{l.value}</p>
                   <div className="flex items-center gap-1">
                     <span className={`h-1.5 w-1.5 rounded-full ${l.score >= 80 ? "bg-emerald-500" : l.score >= 60 ? "bg-amber-400" : "bg-coral"}`} />
-                    <span className="text-[9px] text-ink/30 dark:text-fog/30">{l.score}</span>
+                    <span className="text-[9px] text-ink/40">{l.score}</span>
                   </div>
                 </div>
               </div>
@@ -293,15 +293,15 @@ function KpiCard({ label, value, change, icon }: { label: string; value: string;
   const up = change.startsWith("+") || change.startsWith("-");
   const positive = change.startsWith("+") || (change.startsWith("-") && label.includes("Ticket"));
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-deep-violet/[0.06] text-deep-violet">
+    <div className="flex items-center gap-3 rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-deep-violet/10 text-deep-violet">
         {icon}
       </div>
       <div>
-        <p className="text-[11px] font-medium text-ink/40 dark:text-fog/40">{label}</p>
+        <p className="text-[11px] font-semibold text-ink/55">{label}</p>
         <div className="flex items-baseline gap-1.5">
-          <span className="text-[18px] font-bold text-ink dark:text-fog">{value}</span>
-          <span className={`text-[11px] font-semibold ${positive ? "text-emerald-600" : "text-coral"}`}>{change}</span>
+          <span className="text-[20px] font-bold text-ink">{value}</span>
+          <span className={`text-[11px] font-bold ${positive ? "text-emerald-600" : "text-coral"}`}>{change}</span>
         </div>
       </div>
     </div>

@@ -58,7 +58,7 @@ export default function CustomizationsPage() {
   const [editingPreset, setEditingPreset] = useState<string | null>(null);
 
   return (
-    <div className="space-y-5">
+    <div className="h-full overflow-y-auto p-6 space-y-5">
       <div>
         <Breadcrumbs items={[{ label: "Agents", href: "/dashboard/agents" }, { label: "Customizations" }]} />
         <h1 className="mt-2 text-[20px] font-bold text-ink dark:text-fog">Customization Library</h1>

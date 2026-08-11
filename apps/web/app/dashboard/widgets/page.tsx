@@ -143,7 +143,7 @@ export default function WidgetsPage() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="h-full overflow-y-auto p-6 space-y-5">
       <div>
         <Breadcrumbs items={[{ label: "Widget Library" }]} />
         <div className="mt-2 flex items-center justify-between">

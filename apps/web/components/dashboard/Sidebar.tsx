@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
+import { ChannelLogo } from "./ChannelLogos";
 
 interface NavGroup {
   label: string;
@@ -22,24 +23,6 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: "Widget Library",
-    icon: <WidgetIcon />,
-    color: "from-emerald-400 to-teal-500",
-    items: [
-      { label: "Browse Widgets", href: "/dashboard/widgets" },
-      { label: "Create Widget", href: "/dashboard/widgets" },
-    ],
-  },
-  {
-    label: "Automations",
-    icon: <ZapIcon />,
-    color: "from-amber-400 to-orange-500",
-    items: [
-      { label: "Overview", href: "/dashboard/automations" },
-      { label: "Create", href: "/dashboard/automations/create" },
-    ],
-  },
-  {
     label: "AI Tools",
     icon: <SparklesIcon />,
     color: "from-magenta to-coral",
@@ -53,23 +36,42 @@ const navGroups: NavGroup[] = [
 
 const bottomNav = [
   { label: "Dashboard", icon: <LayoutIcon />, href: "/dashboard" },
-  { label: "Conversations", icon: <ChatIcon />, href: "/dashboard/conversations", badge: 3 },
   { label: "Contacts", icon: <UsersIcon />, href: "/dashboard/contacts" },
-  { label: "Channels", icon: <GlobeIcon />, href: "/dashboard/channels" },
   { label: "Databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
   { label: "Settings", icon: <SettingsIcon />, href: "/dashboard/settings" },
 ];
+
+const channelList = [
+  { name: "Instagram", slug: "instagram", connected: true, agentActive: false },
+  { name: "X / Twitter", slug: "x", connected: true, agentActive: false },
+  { name: "Telegram", slug: "telegram", connected: true, agentActive: true },
+  { name: "Facebook", slug: "facebook", connected: false, agentActive: false },
+  { name: "WhatsApp", slug: "whatsapp", connected: true, agentActive: false },
+  { name: "LinkedIn", slug: "linkedin", connected: false, agentActive: false },
+  { name: "TikTok", slug: "tiktok", connected: false, agentActive: false },
+];
+
+const channelsGroup: NavGroup = {
+  label: "Channels",
+  icon: <ChannelsIcon />,
+  color: "from-sky-400 to-blue-500",
+  items: channelList.map((ch) => ({ label: ch.name, href: `/dashboard/channels/${ch.slug}` })),
+};
+
+const channelsWithHref = channelList.map((ch) => ({ ...ch, href: `/dashboard/channels/${ch.slug}` }));
 
 function GroupHeader({
   group,
   expanded,
   onToggle,
   collapsed,
+  channelList,
 }: {
   group: NavGroup;
   expanded: string | null;
   onToggle: (label: string) => void;
   collapsed: boolean;
+  channelList?: { name: string; slug: string; connected: boolean; agentActive: boolean; href: string }[];
 }) {
   const isOpen = expanded === group.label;
 
@@ -77,14 +79,14 @@ function GroupHeader({
     return (
       <div className="relative group/tooltip">
         <button
-          className="flex h-8 w-full items-center justify-center rounded-lg text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink/60 dark:text-fog/40 dark:hover:bg-fog/[0.04] dark:hover:text-fog/60"
+          className="flex h-8 w-full items-center justify-center rounded-lg text-white/40 transition hover:bg-white/[0.08] hover:text-white/60"
           title={group.label}
         >
           <span className={`flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br ${group.color} text-white`}>
             {group.icon}
           </span>
         </button>
-        <div className="absolute left-full top-1/2 z-50 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-ink/[0.08] bg-white px-2.5 py-1.5 text-[11px] font-medium text-ink shadow-lg group-hover/tooltip:block dark:border-fog/[0.08] dark:bg-ink dark:text-fog">
+        <div className="absolute left-full top-1/2 z-50 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-white/[0.08] bg-[#1e1547] px-2.5 py-1.5 text-[11px] font-medium text-white shadow-lg group-hover/tooltip:block">
           {group.label}
         </div>
       </div>
@@ -96,39 +98,68 @@ function GroupHeader({
       <button
         onClick={() => onToggle(group.label)}
         className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 transition ${
-          isOpen ? "bg-ink/[0.04] dark:bg-fog/[0.04]" : "hover:bg-ink/[0.03] dark:hover:bg-fog/[0.03]"
+          isOpen ? "bg-white/[0.08]" : "hover:bg-white/[0.04]"
         }`}
       >
         <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br ${group.color} text-white`}>
           {group.icon}
         </span>
-        <span className="flex-1 text-[13px] font-semibold text-ink dark:text-fog">{group.label}</span>
+        <span className="flex-1 text-[13px] font-semibold text-white/90">{group.label}</span>
         <svg
           viewBox="0 0 16 16"
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          className={`h-3 w-3 text-ink/25 transition-transform ${isOpen ? "rotate-90" : ""} dark:text-fog/25`}
+          className={`h-3 w-3 text-white/25 transition-transform ${isOpen ? "rotate-90" : ""}`}
         >
           <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
       {isOpen && (
-        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-ink/[0.06] pl-3 dark:border-fog/[0.06]">
-          {group.items.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="flex items-center gap-2 rounded-md px-2.5 py-[6px] text-[12px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.04] dark:hover:text-fog"
-            >
-              <span className="h-1 w-1 shrink-0 rounded-full bg-ink/20 dark:bg-fog/20" />
-              {item.label}
-            </Link>
-          ))}
+        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-white/[0.1] pl-3">
+          {channelList ? (
+            channelList.map((ch) => (
+              <Link
+                key={ch.slug}
+                href={ch.href}
+                className="flex items-center gap-2 rounded-md px-2.5 py-[6px] text-[12px] font-medium text-white/40 transition hover:bg-white/[0.08] hover:text-white/80"
+              >
+                <ChannelLogo channel={ch.slug} className="h-3.5 w-3.5 shrink-0" />
+                <span className="flex-1">{ch.name}</span>
+                <ChannelStatusDot connected={ch.connected} agentActive={ch.agentActive} />
+              </Link>
+            ))
+          ) : (
+            group.items.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="flex items-center gap-2 rounded-md px-2.5 py-[6px] text-[12px] font-medium text-white/40 transition hover:bg-white/[0.08] hover:text-white/80"
+              >
+                <span className="h-1 w-1 shrink-0 rounded-full bg-white/20" />
+                {item.label}
+              </Link>
+            ))
+          )}
         </div>
       )}
     </div>
   );
+}
+
+function ChannelStatusDot({ connected, agentActive }: { connected: boolean; agentActive: boolean }) {
+  if (agentActive) {
+    return (
+      <span className="relative flex h-2 w-2 shrink-0">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+      </span>
+    );
+  }
+  if (connected) {
+    return <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />;
+  }
+  return <span className="h-2 w-2 shrink-0 rounded-full bg-coral" />;
 }
 
 export default function Sidebar() {
@@ -141,15 +172,16 @@ export default function Sidebar() {
 
   return (
     <aside
-      className={`relative flex h-screen flex-col border-r border-ink/[0.06] bg-white transition-all duration-200 dark:bg-ink dark:border-fog/[0.06] ${
+      className={`relative flex h-screen flex-col border-r border-white/[0.08] transition-all duration-200 ${
         collapsed ? "w-[56px]" : "w-[220px]"
       }`}
+      style={{ background: "linear-gradient(180deg, #1e1547 0%, #151030 100%)" }}
     >
       {/* Logo */}
-      <div className="flex h-11 items-center gap-2 border-b border-ink/[0.06] px-3 dark:border-fog/[0.06]">
+      <div className="flex h-11 items-center gap-2 border-b border-white/[0.08] px-3">
         <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-5 w-auto" />
         {!collapsed && (
-          <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={110} height={18} className="h-4 w-auto" />
+          <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={110} height={18} className="h-4 w-auto brightness-0 invert" />
         )}
       </div>
 
@@ -161,30 +193,33 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.04] dark:hover:text-fog"
+              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-white/50 transition hover:bg-white/[0.08] hover:text-white"
             >
-              <span className="h-4 w-4 shrink-0 text-ink/30 dark:text-fog/30">{item.icon}</span>
-              {!collapsed && (
-                <>
-                  <span className="flex-1">{item.label}</span>
-                  {"badge" in item && item.badge && (
-                    <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-coral px-1 text-[10px] font-semibold text-white">
-                      {item.badge}
-                    </span>
-                  )}
-                </>
-              )}
+              <span className="h-4 w-4 shrink-0 text-white/30">{item.icon}</span>
+              {!collapsed && <span className="flex-1">{item.label}</span>}
             </Link>
           ))}
         </div>
 
         {/* Divider */}
-        <div className="mx-2.5 mb-2 h-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
+        <div className="mx-2.5 mb-2 h-px bg-white/[0.08]" />
+
+        {/* Channels dropdown */}
+        <GroupHeader
+          group={channelsGroup}
+          expanded={expanded}
+          onToggle={toggleGroup}
+          collapsed={collapsed}
+          channelList={channelsWithHref}
+        />
+
+        {/* Divider */}
+        <div className="mx-2.5 mb-2 h-px bg-white/[0.08]" />
 
         {/* AI System groups */}
         {!collapsed && (
-          <p className="mx-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink/25 dark:text-fog/25">
-            AI Agents & Automations
+          <p className="mx-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/25">
+            AI Agents & Tools
           </p>
         )}
         <div className="space-y-1">
@@ -202,16 +237,16 @@ export default function Sidebar() {
         {/* Shared templates */}
         {!collapsed && (
           <>
-            <div className="mx-2.5 my-3 h-px bg-ink/[0.06] dark:bg-fog/[0.06]" />
-            <p className="mx-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink/25 dark:text-fog/25">
+            <div className="mx-2.5 my-3 h-px bg-white/[0.08]" />
+            <p className="mx-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-white/25">
               Templates
             </p>
             <Link
               href="/dashboard/templates"
-              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.04] dark:hover:text-fog"
+              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-white/50 transition hover:bg-white/[0.08] hover:text-white"
             >
               <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-ink/30 dark:text-fog/30">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-white/30">
                   <rect x="3" y="3" width="7" height="7" rx="1" />
                   <rect x="14" y="3" width="7" height="7" rx="1" />
                   <rect x="14" y="14" width="7" height="7" rx="1" />
@@ -222,10 +257,10 @@ export default function Sidebar() {
             </Link>
             <Link
               href="/dashboard/templates/shared"
-              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-ink/50 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.04] dark:hover:text-fog"
+              className="flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium text-white/50 transition hover:bg-white/[0.08] hover:text-white"
             >
               <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-ink/30 dark:text-fog/30">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-white/30">
                   <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
                   <circle cx="9" cy="7" r="4" />
                   <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
@@ -240,7 +275,7 @@ export default function Sidebar() {
       {/* Collapse */}
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="flex h-9 items-center justify-center border-t border-ink/[0.06] text-ink/25 transition hover:text-ink/50 dark:border-fog/[0.06] dark:text-fog/25 dark:hover:text-fog/50"
+        className="flex h-9 items-center justify-center border-t border-white/[0.08] text-white/25 transition hover:text-white/50"
       >
         <svg
           viewBox="0 0 16 16"
@@ -268,36 +303,6 @@ function BotIcon() {
   );
 }
 
-function MicIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-      <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
-      <path d="M19 10v2a7 7 0 01-14 0v-2" />
-      <path d="M12 19v4M8 23h8" />
-    </svg>
-  );
-}
-
-function VolumeIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      <path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" />
-    </svg>
-  );
-}
-
-function DocIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-      <line x1="16" y1="13" x2="8" y2="13" />
-      <line x1="16" y1="17" x2="8" y2="17" />
-    </svg>
-  );
-}
-
 function LayoutIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -309,30 +314,12 @@ function LayoutIcon() {
   );
 }
 
-function ChatIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-    </svg>
-  );
-}
-
 function UsersIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
       <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
       <circle cx="9" cy="7" r="4" />
       <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
-    </svg>
-  );
-}
-
-function GlobeIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-      <circle cx="12" cy="12" r="10" />
-      <line x1="2" y1="12" x2="22" y2="12" />
-      <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
     </svg>
   );
 }
@@ -379,6 +366,15 @@ function SettingsIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+    </svg>
+  );
+}
+
+function ChannelsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
     </svg>
   );
 }

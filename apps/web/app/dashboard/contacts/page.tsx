@@ -14,7 +14,7 @@ const contacts = [
 
 export default function ContactsPage() {
   return (
-    <div className="space-y-5">
+    <div className="h-full overflow-y-auto p-6 space-y-5">
       <div>
         <Breadcrumbs items={[{ label: "Contacts" }]} />
         <h1 className="mt-2 text-[20px] font-bold text-ink dark:text-fog">Contacts</h1>

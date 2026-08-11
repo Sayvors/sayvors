@@ -47,7 +47,7 @@ export default function AutomationsPage() {
   const [period, setPeriod] = useState<Period>("week");
 
   return (
-    <div className="space-y-5">
+    <div className="h-full overflow-y-auto p-6 space-y-5">
       <div className="flex items-start justify-between">
         <div>
           <Breadcrumbs items={[{ label: "Automations" }]} />

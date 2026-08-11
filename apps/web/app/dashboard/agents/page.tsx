@@ -43,7 +43,7 @@ export default function AgentsPage() {
   const filteredAgents = category === "All" ? systemAgents : systemAgents.filter((a) => a.category === category);
 
   return (
-    <div className="space-y-5">
+    <div className="h-full overflow-y-auto p-6 space-y-5">
       <div className="flex items-start justify-between">
         <div>
           <Breadcrumbs items={[{ label: "Agents" }]} />
