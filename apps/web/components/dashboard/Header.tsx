@@ -75,12 +75,12 @@ export default function Header() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-1">
-        {/* Create automation */}
+        {/* Create agent */}
         <button className="flex h-8 items-center gap-1.5 rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-md active:scale-[0.98]">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
             <path d="M8 3v10M3 8h10" strokeLinecap="round" />
           </svg>
-          Automation
+          Agent
         </button>
 
         {/* Subscribe to premium */}
