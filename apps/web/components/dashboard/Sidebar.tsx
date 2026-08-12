@@ -8,6 +8,7 @@ import { ChannelLogo } from "./ChannelLogos";
 interface NavGroup {
   label: string;
   icon: React.ReactNode;
+  iconSrc?: string;
   color: string;
   items: { label: string; href: string }[];
 }
@@ -16,6 +17,7 @@ const navGroups: NavGroup[] = [
   {
     label: "AI Agents",
     icon: <BotIcon />,
+    iconSrc: "/agents.png",
     color: "from-deep-violet to-magenta",
     items: [
       { label: "Agents Library", href: "/dashboard/agents" },
@@ -25,6 +27,7 @@ const navGroups: NavGroup[] = [
   {
     label: "AI Tools",
     icon: <SparklesIcon />,
+    iconSrc: "/aitools.png",
     color: "from-magenta to-coral",
     items: [
       { label: "Speech to Text", href: "/dashboard/stt" },
@@ -38,6 +41,7 @@ const bottomNav = [
   { label: "Dashboard", icon: <LayoutIcon />, href: "/dashboard" },
   { label: "Contacts", icon: <UsersIcon />, href: "/dashboard/contacts" },
   { label: "Databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
+  { label: "Video Studio", icon: <VideoStudioIcon />, href: "/dashboard/video-studio" },
   { label: "Settings", icon: <SettingsIcon />, href: "/dashboard/settings" },
 ];
 
@@ -54,6 +58,7 @@ const channelList = [
 const channelsGroup: NavGroup = {
   label: "Channels",
   icon: <ChannelsIcon />,
+  iconSrc: "/channels.png",
   color: "from-sky-400 to-blue-500",
   items: channelList.map((ch) => ({ label: ch.name, href: `/dashboard/channels/${ch.slug}` })),
 };
@@ -75,6 +80,12 @@ function GroupHeader({
 }) {
   const isOpen = expanded === group.label;
 
+  const iconContent = group.iconSrc ? (
+    <Image src={group.iconSrc} alt="" width={20} height={20} className="h-5 w-5 rounded-md object-cover" />
+  ) : (
+    group.icon
+  );
+
   if (collapsed) {
     return (
       <div className="relative group/tooltip">
@@ -82,8 +93,8 @@ function GroupHeader({
           className="flex h-8 w-full items-center justify-center rounded-lg text-white/40 transition hover:bg-white/[0.08] hover:text-white/60"
           title={group.label}
         >
-          <span className={`flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br ${group.color} text-white`}>
-            {group.icon}
+          <span className={`flex h-6 w-6 items-center justify-center rounded-md ${group.iconSrc ? "" : `bg-gradient-to-br ${group.color} text-white`}`}>
+            {iconContent}
           </span>
         </button>
         <div className="absolute left-full top-1/2 z-50 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-white/[0.08] bg-[#1e1547] px-2.5 py-1.5 text-[11px] font-medium text-white shadow-lg group-hover/tooltip:block">
@@ -101,9 +112,9 @@ function GroupHeader({
           isOpen ? "bg-white/[0.08]" : "hover:bg-white/[0.04]"
         }`}
       >
-        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br ${group.color} text-white`}>
-          {group.icon}
-        </span>
+        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${group.iconSrc ? "" : `bg-gradient-to-br ${group.color} text-white`}`}>
+            {iconContent}
+          </span>
         <span className="flex-1 text-[13px] font-semibold text-white/90">{group.label}</span>
         <svg
           viewBox="0 0 16 16"
@@ -375,6 +386,15 @@ function ChannelsIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
       <rect x="2" y="3" width="20" height="14" rx="2" />
       <path d="M8 21h8M12 17v4" />
+    </svg>
+  );
+}
+
+function VideoStudioIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+      <polygon points="23 7 16 12 23 17 23 7" />
+      <rect x="1" y="5" width="15" height="14" rx="2" />
     </svg>
   );
 }
