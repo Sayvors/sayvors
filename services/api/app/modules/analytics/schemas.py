@@ -177,3 +177,16 @@ class Opportunity(BaseModel):
 class OpportunitiesResponse(BaseModel):
     days: int
     opportunities: list[Opportunity]
+
+
+class ExecutiveSummaryResponse(BaseModel):
+    days: int
+    headline: str
+    avg_rating: float
+    reputation_score: int
+    health_score: int
+    wins: list[str]
+    problems: list[str]
+    opportunity: str
+    recommended_action: str
+    benchmark_text: str

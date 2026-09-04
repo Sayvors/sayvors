@@ -84,6 +84,13 @@ class AutoReplyConfig(Base):
     databank_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     # Reviews with rating below this are queued for human approval, not auto-posted
     min_rating_auto: Mapped[int] = mapped_column(Integer, default=4)
+    # "auto" = post above min_rating_auto, queue below.
+    # "approval" = every reply waits for human approval.
+    approval_mode: Mapped[str] = mapped_column(
+        Enum("auto", "approval", name="reply_approval_mode"), default="auto"
+    )
+    # Free-text brand voice / house rules injected into every reply prompt
+    custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     # LLM model id (provider catalog id, e.g. "openai:gpt-4o-mini")
     model: Mapped[str] = mapped_column(String(100), default="openai:gpt-4o-mini")
     # Polling lease (atomic claim across worker instances)

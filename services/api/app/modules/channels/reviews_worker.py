@@ -238,7 +238,11 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 stats["errors"] += 1
                 continue
 
-            if review.rating >= config.min_rating_auto:
+            needs_approval = (
+                getattr(config, "approval_mode", "auto") == "approval"
+                or review.rating < config.min_rating_auto
+            )
+            if not needs_approval:
                 try:
                     if not mock_mode:
                         await client.reply_to_review(review.review_id, reply_text)

@@ -237,3 +237,47 @@ export const fetchAcquisition = (days: number, channelId?: string | null): Promi
 
 export const fetchOpportunities = (days: number, channelId?: string | null): Promise<OpportunitiesResponse> =>
   apiFetch(`/api/v1/analytics/opportunities?${qs(days, channelId)}`);
+
+/* ── AI reply workflow (Manage pillar) ────────────────────────── */
+
+export interface ReviewReplyDTO {
+  id: string;
+  channel_id: string;
+  review_id: string;
+  rating: number;
+  review_text: string | null;
+  reviewer_name: string | null;
+  reply_text: string;
+  status: string;
+  error: string | null;
+  created_at: string;
+}
+
+export function generateReply(
+  channelId: string,
+  body: { review_id: string; rating: number; review_text?: string | null; reviewer_name?: string | null }
+): Promise<ReviewReplyDTO> {
+  return apiFetch(`/api/v1/channels/${channelId}/reviews/generate`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function editReply(channelId: string, replyId: string, replyText: string): Promise<ReviewReplyDTO> {
+  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}`, {
+    method: "PUT",
+    body: JSON.stringify({ reply_text: replyText }),
+  });
+}
+
+export function regenerateReply(channelId: string, replyId: string): Promise<ReviewReplyDTO> {
+  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}/regenerate`, { method: "POST" });
+}
+
+export function approveReply(channelId: string, replyId: string): Promise<ReviewReplyDTO> {
+  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}/approve`, { method: "POST" });
+}
+
+export function rejectReply(channelId: string, replyId: string): Promise<ReviewReplyDTO> {
+  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}`, { method: "DELETE" });
+}

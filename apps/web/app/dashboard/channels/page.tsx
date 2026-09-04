@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import { getAccessToken } from "@/lib/auth-context";
@@ -22,6 +22,8 @@ interface AutoReply {
   databank_id: string | null;
   min_rating_auto: number;
   model: string;
+  approval_mode?: string;
+  custom_instructions?: string | null;
 }
 
 const GOOGLE_ERRORS: Record<string, string> = {
@@ -36,6 +38,10 @@ function ConnectHub() {
   const params = useSearchParams();
   const [channels, setChannels] = useState<ApiChannel[]>([]);
   const [autoreply, setAutoreply] = useState<Record<string, AutoReply>>({});
+  const [expandedConfig, setExpandedConfig] = useState<string | null>(null);
+  const [voiceDraft, setVoiceDraft] = useState("");
+  const [approvalDraft, setApprovalDraft] = useState<"auto" | "approval">("auto");
+  const [savingConfig, setSavingConfig] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -43,45 +49,55 @@ function ConnectHub() {
   const connectedCount = params.get("google_connected");
   const googleError = params.get("google_error");
 
-  const load = useCallback(async () => {
-    try {
-      const data = await apiFetch("/api/v1/channels/?limit=100");
-      setChannels(data.channels ?? []);
-      const configs: Record<string, AutoReply> = {};
-      await Promise.all(
-        (data.channels ?? [])
-          .filter((c: ApiChannel) => c.platform === "google_reviews")
-          .map(async (c: ApiChannel) => {
-            try {
-              const cfg = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
-              configs[c.id] = cfg;
-            } catch {
-              /* config endpoint creates default on first GET; ignore errors */
-            }
-          })
-      );
-      setAutoreply(configs);
-    } catch {
-      /* not logged in yet or backend down — cards still render */
-    } finally {
-      setLoading(false);
+  // URL-driven banner derived during render (no effect needed)
+  const urlBanner = useMemo(() => {
+    if (connectedCount !== null) {
+      return {
+        kind: "ok" as const,
+        text: `Google Reviews connected! ${connectedCount} location(s) added.`,
+      };
     }
-  }, []);
+    if (googleError) {
+      return {
+        kind: "err" as const,
+        text: GOOGLE_ERRORS[googleError] ?? `Google connect failed (${googleError}).`,
+      };
+    }
+    return null;
+  }, [connectedCount, googleError]);
+  const activeBanner = banner ?? urlBanner;
 
   useEffect(() => {
-    load();
-    if (connectedCount !== null) {
-      setBanner({
-        kind: "ok",
-        text: `Google Reviews connected! ${connectedCount} location(s) added.`,
-      });
-    } else if (googleError) {
-      setBanner({
-        kind: "err",
-        text: GOOGLE_ERRORS[googleError] ?? `Google connect failed (${googleError}).`,
-      });
-    }
-  }, [load, connectedCount, googleError]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiFetch("/api/v1/channels/?limit=100");
+        if (cancelled) return;
+        setChannels(data.channels ?? []);
+        const configs: Record<string, AutoReply> = {};
+        await Promise.all(
+          (data.channels ?? [])
+            .filter((c: ApiChannel) => c.platform === "google_reviews")
+            .map(async (c: ApiChannel) => {
+              try {
+                const cfg = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
+                configs[c.id] = cfg;
+              } catch {
+                /* config endpoint creates default on first GET; ignore errors */
+              }
+            })
+        );
+        if (!cancelled) setAutoreply(configs);
+      } catch {
+        /* not logged in yet or backend down — cards still render */
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const connectGoogle = () => {
     const token = getAccessToken();
@@ -107,6 +123,29 @@ function ConnectHub() {
     }
   };
 
+  const openConfig = (channelId: string) => {
+    const cfg = autoreply[channelId];
+    setExpandedConfig(expandedConfig === channelId ? null : channelId);
+    setVoiceDraft(cfg?.custom_instructions ?? "");
+    setApprovalDraft(cfg?.approval_mode === "approval" ? "approval" : "auto");
+  };
+
+  const saveConfig = async (channelId: string) => {
+    setSavingConfig(true);
+    try {
+      const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
+        method: "PUT",
+        body: JSON.stringify({ approval_mode: approvalDraft, custom_instructions: voiceDraft }),
+      });
+      setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
+      setBanner({ kind: "ok", text: "Response engine settings saved." });
+    } catch {
+      setBanner({ kind: "err", text: "Could not save the response engine settings." });
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
   const googleChannels = channels.filter((c) => c.platform === "google_reviews");
 
   return (
@@ -118,16 +157,16 @@ function ConnectHub() {
         </p>
       </div>
 
-      {banner && (
+      {activeBanner && (
         <div
           className={`rounded-xl border p-3 text-[13px] ${
-            banner.kind === "ok"
+            activeBanner.kind === "ok"
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
               : "border-red-200 bg-red-50 text-red-700"
           }`}
         >
           <div className="flex items-center justify-between gap-3">
-            <span>{banner.text}</span>
+            <span>{activeBanner.text}</span>
             <button
               className="shrink-0 text-[12px] underline underline-offset-2"
               onClick={() => setBanner(null)}
@@ -195,30 +234,96 @@ function ConnectHub() {
             return (
               <div
                 key={c.id}
-                className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
+                className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
               >
-                <div className="flex-1">
-                  <p className="text-[14px] font-semibold text-ink dark:text-fog">
-                    {c.display_name || "Business location"}
-                  </p>
-                  <p className="text-[12px] text-ink/40 dark:text-fog/40">
-                    {enabled ? "AI replies on · 4–5★ auto · 1–3★ need your approval" : "Auto-reply off"}
-                  </p>
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <p className="text-[14px] font-semibold text-ink dark:text-fog">
+                      {c.display_name || "Business location"}
+                    </p>
+                    <p className="text-[12px] text-ink/40 dark:text-fog/40">
+                      {enabled
+                        ? cfg?.approval_mode === "approval"
+                          ? "AI drafts every reply — you approve all"
+                          : "AI replies on ★4–5 · ★1–3 need your approval"
+                        : "Auto-reply off"}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => openConfig(c.id)}
+                    className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-deep-violet transition hover:bg-deep-violet/[0.06]"
+                  >
+                    {expandedConfig === c.id ? "Close" : "AI settings"}
+                  </button>
+                  <button
+                    onClick={() => toggleAutoReply(c.id, !enabled)}
+                    disabled={busy === c.id}
+                    className={`relative h-6 w-11 rounded-full transition ${
+                      enabled ? "bg-emerald-500" : "bg-ink/15 dark:bg-fog/15"
+                    } ${busy === c.id ? "opacity-50" : ""}`}
+                    aria-label={enabled ? "Turn off auto-reply" : "Turn on auto-reply"}
+                  >
+                    <span
+                      className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                        enabled ? "left-[22px]" : "left-0.5"
+                      }`}
+                    />
+                  </button>
                 </div>
-                <button
-                  onClick={() => toggleAutoReply(c.id, !enabled)}
-                  disabled={busy === c.id}
-                  className={`relative h-6 w-11 rounded-full transition ${
-                    enabled ? "bg-emerald-500" : "bg-ink/15 dark:bg-fog/15"
-                  } ${busy === c.id ? "opacity-50" : ""}`}
-                  aria-label={enabled ? "Turn off auto-reply" : "Turn on auto-reply"}
-                >
-                  <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                      enabled ? "left-[22px]" : "left-0.5"
-                    }`}
-                  />
-                </button>
+
+                {expandedConfig === c.id && (
+                  <div className="mt-4 space-y-4 border-t border-ink/[0.05] pt-4">
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">
+                        Approval mode
+                      </p>
+                      <div className="flex rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.06]">
+                        {([
+                          { key: "auto", label: "Fully automatic" },
+                          { key: "approval", label: "I approve everything" },
+                        ] as const).map((m) => (
+                          <button
+                            key={m.key}
+                            onClick={() => setApprovalDraft(m.key)}
+                            aria-pressed={approvalDraft === m.key}
+                            className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                              approvalDraft === m.key
+                                ? "bg-white text-deep-violet shadow-sm dark:bg-ink"
+                                : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
+                            }`}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-1 text-[10px] text-ink/35 dark:text-fog/35">
+                        Automatic: replies post instantly above your rating threshold. Approval: every draft waits for you.
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">
+                        Brand voice &amp; house rules
+                      </p>
+                      <textarea
+                        value={voiceDraft}
+                        onChange={(e) => setVoiceDraft(e.target.value)}
+                        rows={3}
+                        maxLength={2000}
+                        placeholder="e.g. We never promise refunds in replies. Mention our loyalty program to happy customers."
+                        className="w-full resize-y rounded-lg border border-ink/[0.08] bg-white p-2.5 text-[12px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                      />
+                    </div>
+
+                    <button
+                      onClick={() => saveConfig(c.id)}
+                      disabled={savingConfig}
+                      className="rounded-lg bg-deep-violet px-3.5 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+                    >
+                      {savingConfig ? "Saving..." : "Save AI settings"}
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
