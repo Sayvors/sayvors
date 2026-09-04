@@ -1,4 +1,6 @@
 import logging
+import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
@@ -17,6 +19,8 @@ from .schemas import (
     ChannelMessageResponse,
     ChannelMessageSend,
     ChannelResponse,
+    ReviewReplyEdit,
+    ReviewReplyGenerate,
     ReviewReplyListResponse,
     ReviewReplyResponse,
 )
@@ -475,6 +479,8 @@ async def get_autoreply_config(
         databank_id=config.databank_id,
         min_rating_auto=config.min_rating_auto,
         model=config.model,
+        approval_mode=config.approval_mode,
+        custom_instructions=config.custom_instructions,
     )
 
 
@@ -516,6 +522,10 @@ async def update_autoreply_config(
         config.min_rating_auto = body.min_rating_auto
     if body.model is not None:
         config.model = body.model[:100]
+    if body.approval_mode is not None:
+        config.approval_mode = body.approval_mode
+    if body.custom_instructions is not None:
+        config.custom_instructions = body.custom_instructions.strip()[:2000] or None
 
     await db.commit()
     await db.refresh(config)
@@ -526,6 +536,8 @@ async def update_autoreply_config(
         databank_id=config.databank_id,
         min_rating_auto=config.min_rating_auto,
         model=config.model,
+        approval_mode=config.approval_mode,
+        custom_instructions=config.custom_instructions,
     )
 
 
@@ -599,23 +611,47 @@ async def approve_review_reply(
     from .google_reviews import GoogleReviewsClient, GoogleReviewsError
     from .service import decrypt_token
 
-    access_token = decrypt_token(channel.access_token) if channel.access_token else None
-    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
-    client = GoogleReviewsClient(access_token or "", refresh_token)
-    try:
-        if not access_token:
-            await client.refresh_access_token()
-        await client.reply_to_review(reply.review_id, reply.reply_text)
+    if settings.GOOGLE_REVIEWS_MOCK:
+        # Dev mode: no real GBP location behind the demo channel
         reply.status = "posted"
         reply.error = None
         await db.commit()
-    except GoogleReviewsError as e:
-        reply.status = "failed"
-        reply.error = str(e)[:2000]
-        await db.commit()
-        raise HTTPException(status_code=e.status_code, detail="Failed to post reply to Google")
-    finally:
-        await client.close()
+    else:
+        access_token = decrypt_token(channel.access_token) if channel.access_token else None
+        refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+        client = GoogleReviewsClient(access_token or "", refresh_token)
+        try:
+            if not access_token:
+                await client.refresh_access_token()
+            await client.reply_to_review(reply.review_id, reply.reply_text)
+            reply.status = "posted"
+            reply.error = None
+            await db.commit()
+        except GoogleReviewsError as e:
+            reply.status = "failed"
+            reply.error = str(e)[:2000]
+            await db.commit()
+            raise HTTPException(status_code=e.status_code, detail="Failed to post reply to Google")
+        finally:
+            await client.close()
+
+    # Keep analytics response-rate/response-time accurate
+    try:
+        from ..outbox.service import enqueue_event
+
+        await enqueue_event(
+            "review.replied",
+            {
+                "user_id": user.id,
+                "channel_id": channel.id,
+                "review_id": reply.review_id,
+                "status": "posted",
+                "replied_at": datetime.now(timezone.utc).isoformat(),
+            },
+            topic="review-events",
+        )
+    except Exception:
+        logger.warning("review.replied enqueue failed for %s", reply.review_id)
 
     await db.refresh(reply)
     return ReviewReplyResponse(
@@ -630,3 +666,147 @@ async def approve_review_reply(
         error=reply.error,
         created_at=reply.created_at.isoformat(),
     )
+
+
+@router.post("/{channel_id}/reviews/generate", response_model=ReviewReplyResponse, status_code=status.HTTP_201_CREATED)
+async def generate_reply_for_review(
+    channel_id: str,
+    body: ReviewReplyGenerate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Draft an AI reply for a review that has no reply row yet (inbox flow)."""
+    channel = await _get_owned_channel(channel_id, user, db)
+    config = (
+        await db.execute(select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel.id))
+    ).scalar_one_or_none()
+    if not config:
+        config = AutoReplyConfig(channel_id=channel.id)
+        db.add(config)
+
+    duplicate = await db.execute(
+        select(ReviewReply.id).where(
+            ReviewReply.channel_id == channel.id,
+            ReviewReply.review_id == body.review_id,
+        ).limit(1)
+    )
+    if duplicate.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="A reply already exists for this review")
+
+    from .review_reply import generate_review_reply
+
+    try:
+        reply_text = await generate_review_reply(
+            config, body.rating, body.review_text, body.reviewer_name, db
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+
+    reply = ReviewReply(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        review_id=body.review_id,
+        rating=body.rating,
+        review_text=body.review_text,
+        reviewer_name=body.reviewer_name,
+        reply_text=reply_text,
+        status="pending_approval",
+    )
+    db.add(reply)
+    await db.commit()
+    await db.refresh(reply)
+    return _reply_response(reply)
+
+
+@router.put("/{channel_id}/reviews/{reply_id}", response_model=ReviewReplyResponse)
+async def edit_pending_reply(
+    channel_id: str,
+    reply_id: str,
+    body: ReviewReplyEdit,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit a reply draft before publishing."""
+    reply = await _get_owned_reply(channel_id, reply_id, user, db)
+    if reply.status != "pending_approval":
+        raise HTTPException(status_code=400, detail="Only pending replies can be edited")
+    reply.reply_text = body.reply_text.strip()
+    await db.commit()
+    await db.refresh(reply)
+    return _reply_response(reply)
+
+
+@router.post("/{channel_id}/reviews/{reply_id}/regenerate", response_model=ReviewReplyResponse)
+async def regenerate_reply(
+    channel_id: str,
+    reply_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-generate a pending reply with the channel's current model/tone/voice."""
+    reply = await _get_owned_reply(channel_id, reply_id, user, db)
+    if reply.status != "pending_approval":
+        raise HTTPException(status_code=400, detail="Only pending replies can be regenerated")
+    config = (
+        await db.execute(select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel_id))
+    ).scalar_one_or_none()
+    if not config:
+        config = AutoReplyConfig(channel_id=channel_id)
+        db.add(config)
+
+    from .review_reply import generate_review_reply
+
+    try:
+        reply.reply_text = await generate_review_reply(
+            config, reply.rating, reply.review_text, reply.reviewer_name, db
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+    await db.commit()
+    await db.refresh(reply)
+    return _reply_response(reply)
+
+
+@router.delete("/{channel_id}/reviews/{reply_id}", response_model=ReviewReplyResponse)
+async def reject_reply(
+    channel_id: str,
+    reply_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Discard a pending reply draft without posting anything to Google."""
+    reply = await _get_owned_reply(channel_id, reply_id, user, db)
+    if reply.status != "pending_approval":
+        raise HTTPException(status_code=400, detail="Only pending replies can be rejected")
+    reply.status = "rejected"
+    await db.commit()
+    await db.refresh(reply)
+    return _reply_response(reply)
+
+
+def _reply_response(reply: ReviewReply) -> ReviewReplyResponse:
+    return ReviewReplyResponse(
+        id=reply.id,
+        channel_id=reply.channel_id,
+        review_id=reply.review_id,
+        rating=reply.rating,
+        review_text=reply.review_text,
+        reviewer_name=reply.reviewer_name,
+        reply_text=reply.reply_text,
+        status=reply.status,
+        error=reply.error,
+        created_at=reply.created_at.isoformat(),
+    )
+
+
+async def _get_owned_reply(
+    channel_id: str, reply_id: str, user: User, db: AsyncSession
+) -> ReviewReply:
+    channel = await _get_owned_channel(channel_id, user, db)
+    result = await db.execute(
+        select(ReviewReply).where(ReviewReply.id == reply_id, ReviewReply.channel_id == channel.id)
+    )
+    reply = result.scalar_one_or_none()
+    if not reply:
+        raise HTTPException(status_code=404, detail="Reply not found")
+    return reply

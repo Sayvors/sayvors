@@ -6,9 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
-from . import growth, intelligence, service
+from . import growth, intelligence, service, summary
 from .schemas import (
     AcquisitionResponse,
+    ExecutiveSummaryResponse,
     OpportunitiesResponse,
     OverviewResponse,
     ProblemsResponse,
@@ -165,3 +166,14 @@ async def get_opportunities(
 ):
     """Prioritized growth actions derived from live business data."""
     return await growth.get_opportunities(db, user.id, channel_id, days)
+
+
+@router.get("/executive-summary", response_model=ExecutiveSummaryResponse)
+async def get_executive_summary(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI-composed business briefing pinned to the top of the dashboard."""
+    return await summary.get_executive_summary(db, user.id, channel_id, days)

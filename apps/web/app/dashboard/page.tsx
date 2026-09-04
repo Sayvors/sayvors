@@ -1,8 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { apiFetch } from "@/lib/api-rag";
+
+interface ExecSummary {
+  headline: string;
+  reputation_score: number;
+  health_score: number;
+  wins: string[];
+  problems: string[];
+  opportunity: string;
+  recommended_action: string;
+  benchmark_text: string;
+}
 
 const quickActions = [
   {
@@ -58,6 +70,70 @@ const checklistItems = [
 ];
 
 const CHECKLIST_KEY = "sayvors.onboarding.checklist";
+
+function ExecutiveSummaryBanner() {
+  const [summary, setSummary] = useState<ExecSummary | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/api/v1/analytics/executive-summary?days=30")
+      .then((s) => {
+        if (!cancelled) setSummary(s);
+      })
+      .catch(() => {
+        /* banner stays hidden when no data / backend down */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!summary) return null;
+  return (
+    <section
+      aria-label="Sayvors AI business briefing"
+      className="relative overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet to-magenta p-5 text-white shadow-md shadow-deep-violet/20"
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/15">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden>
+            <path d="M12 2a7 7 0 014 12.7V17a1 1 0 01-1 1H9a1 1 0 01-1-1v-2.3A7 7 0 0112 2z" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M9 21h6" strokeLinecap="round" />
+          </svg>
+        </span>
+        <h2 className="text-[13px] font-bold tracking-wide">Sayvors AI — Business Intelligence</h2>
+        <span className="ml-auto flex items-center gap-3 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold">
+          <span title="Reputation score">Reputation {summary.reputation_score}</span>
+          <span className="h-3 w-px bg-white/25" aria-hidden />
+          <span title="Business health score">Health {summary.health_score}</span>
+        </span>
+      </div>
+      <p className="text-[13px] font-semibold leading-snug">{summary.headline}</p>
+      <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+        {summary.wins.slice(0, 2).map((w) => (
+          <li key={w} className="flex items-center gap-2 text-[12px] text-white/90">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald" aria-hidden />
+            {w}
+          </li>
+        ))}
+        {summary.problems.slice(0, 1).map((p) => (
+          <li key={p} className="flex items-center gap-2 text-[12px] text-white/90 sm:col-start-1">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
+            {p}
+          </li>
+        ))}
+        {summary.opportunity && (
+          <li className="flex items-center gap-2 text-[12px] text-white/90">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky" aria-hidden />
+            {summary.opportunity}
+          </li>
+        )}
+      </ul>
+      <p className="mt-2.5 border-t border-white/15 pt-2 text-[11px] text-white/75">
+        <span className="font-semibold">Recommended action:</span> {summary.recommended_action} · {summary.benchmark_text}
+      </p>
+    </section>
+  );
+}
 
 const EMPTY_CHECKLIST: Record<string, boolean> = {};
 let cachedRaw: string | null = null;
@@ -126,6 +202,9 @@ export default function DashboardPage() {
   const allDone = completed === total;
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-5 bg-[#f3f0ff]">
+      {/* AI Executive Summary */}
+      <ExecutiveSummaryBanner />
+
       {/* Header */}
       <div>
         <h1 className="text-[20px] sm:text-[22px] font-bold text-ink">

@@ -22,6 +22,7 @@ Rules you MUST follow (Google review reply policy):
 
 Tone: {tone}.
 {rating_guidance}
+{custom_block}
 {context_block}
 Write only the reply text — nothing else."""
 
@@ -91,9 +92,18 @@ async def generate_review_reply(
 
     context_block = await _build_context(config, review_text or "", db)
 
+    custom_block = ""
+    if getattr(config, "custom_instructions", None):
+        custom_block = (
+            "Additional instructions from the business owner (follow these closely "
+            "as long as they don't conflict with the rules above):\n"
+            f"{config.custom_instructions.strip()[:1000]}"
+        )
+
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         tone=config.tone,
         rating_guidance=_rating_guidance(rating),
+        custom_block=custom_block,
         context_block=context_block,
     )
 

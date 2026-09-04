@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { fetchInsights, type ReviewInsight } from "@/lib/api-analytics";
+import { ReplyComposer } from "./ReplyComposer";
 
 const PAGE_SIZE = 20;
 
@@ -48,7 +49,7 @@ function relativeDate(iso: string | null) {
   return d.toLocaleDateString("en", { month: "short", day: "numeric" });
 }
 
-function ReviewCard({ review }: { review: ReviewInsight }) {
+function ReviewCard({ review, onReplied }: { review: ReviewInsight; onReplied: () => void }) {
   return (
     <article className="group rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm transition hover:border-deep-violet/15 hover:shadow-md hover:shadow-deep-violet/[0.06]">
       <div className="flex flex-wrap items-center gap-2">
@@ -96,6 +97,17 @@ function ReviewCard({ review }: { review: ReviewInsight }) {
           ))}
         </div>
       )}
+
+      {!review.replied && (
+        <ReplyComposer
+          channelId={review.channel_id}
+          reviewId={review.review_id}
+          rating={review.rating}
+          reviewText={review.review_text}
+          reviewerName={review.reviewer_name}
+          onPublished={onReplied}
+        />
+      )}
     </article>
   );
 }
@@ -112,6 +124,7 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const onReplied = () => setRetryCount((c) => c + 1);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -231,7 +244,7 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
       ) : (
         <div className="space-y-2.5">
           {items.map((r) => (
-            <ReviewCard key={r.id} review={r} />
+            <ReviewCard key={r.id} review={r} onReplied={onReplied} />
           ))}
         </div>
       )}
