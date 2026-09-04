@@ -1,5 +1,5 @@
 # Sayvors — Production Readiness Audit & Fixes Needed
-> 10M-user SaaS MVP · Last updated: 2026-08-05
+> 10M-user SaaS MVP · Last updated: 2026-08-13 (reconciled with code)
 > Audit scope: Backend (65 findings) + Frontend (50 findings) + Infrastructure (33 findings) = **148 total**
 
 ---
@@ -23,10 +23,10 @@
 
 | # | File:Line | Severity | Issue | Fix |
 |---|---|---|---|---|
-| A1 | `app/core/deps.py:26-33` | CRITICAL | `get_current_user` reads only `sub`; never checks `type` claim. Any token (refresh/reset) passes as access token. Combined with A2 = account takeover. | Reject `type != "access"`. Add `aud`/`iss`/`iat` verification. |
-| A2 | `app/modules/auth/router.py:205-208` | CRITICAL | `forgot_password_endpoint` returns the raw password-reset JWT as `dev_token` in the response body. Any caller gets a signed token whose `sub` is the victim's user_id. | Never return reset/verification tokens in API responses. Email them out-of-band. Remove `dev_token` immediately. |
+| A1 | `app/core/deps.py:26-33` | ✅ RESOLVED | **Verified fixed:** `deps.py:31-33` now rejects `type != "access"`. | — |
+| A2 | `app/modules/auth/router.py:207-221` | ✅ RESOLVED | **Verified fixed:** `forgot-password` returns a generic message and never leaks the token (`router.py:217-221`); signup pops & discards `verification_token` (`router.py:61`). | — |
 | A3 | `app/config.py:6` | CRITICAL | `JWT_SECRET: str = "change-me-in-production"` hardcoded default. With HS256 algorithm a known secret = total token forgery. | Make required (no default). Fail fast at startup if still default. Rotate immediately. |
-| A4 | `alembic.ini:4`, `.env.example:1` | CRITICAL | DB password `mentee` committed in git. Real production credentials in tracked files. | Remove hardcoded URL, rotate password, scrub from git history (`git filter-repo`). Sanitize `.env.example`. |
+| A4 | `alembic.ini:4` | HIGH (was CRITICAL) | DB password `mentee` committed in git. `.env` is git-ignored (NOT the leak source). `alembic.ini` still hardcodes `postgres:mentee@localhost` (tracked). Low real risk = localhost dev, but should be scrubbed. | Rotate password, scrub `alembic.ini` from history, inject `DATABASE_URL` via env. |
 | A5 | `app/modules/auth/service.py:40-102` | MEDIUM | `signup` returns `verification_token` in response body. Email never sent (`TODO`). No `email_verified` gate on login. | Send verification email or remove flow. Gate privileged actions on `email_verified`. |
 | A6 | `app/modules/auth/service.py:166-215` | MEDIUM | Refresh-token rotation exists but no reuse detection — stolen token remains viable on paired device. | On use of a revoked token, revoke all refresh tokens for that user (family revocation). |
 | A7 | `app/modules/auth/service.py:134` vs `router.py:127-164` | MEDIUM | Token fingerprint computed but never compared at refresh time. Fingerprint check is dead code. | Pass UA/IP into refresh, reject on mismatch. |
@@ -41,7 +41,7 @@
 
 | # | File:Line | Severity | Issue | Fix |
 |---|---|---|---|---|
-| A14 | `app/main.py` | MEDIUM | No `TrustedHostMiddleware`. App accepts arbitrary `Host` headers (cache-poisoning, CSRF assist). | Add `TrustedHostMiddleware(allowed_hosts=...)`. |
+| A14 | `app/main.py` | ✅ RESOLVED | **Verified fixed:** `main.py:130-131` adds `TrustedHostMiddleware`. | — |
 | A15 | `app/main.py:40-47` | LOW | CORS `allow_credentials=True` with env-configurable origins. Misconfigured `"*"` allows credentialed cross-origin. | Always validate CORS origins as exact list. Reject `*` when credentials on. |
 | A16 | Frontend `lib/auth-context.tsx:56-63` | MEDIUM | CSRF token read/echoed but never validated. No origin/referer check. | Implement double-submit CSRF validation or `SameSite=Strict` + Origin checks. |
 | A17 | Frontend `middleware.ts:43` | CRITICAL | CSP has unclosed quote: `frame-ancestors 'none` → whole policy dropped by browser. | Fix to `"frame-ancestors 'none'"`. |
@@ -96,7 +96,7 @@
 
 | # | File:Line | Severity | Issue | Fix |
 |---|---|---|---|---|
-| B24 | `app/modules/channels/router.py:156-163` | HIGH | Webhook endpoint: unauthenticated POST, reads body with no size cap, no signature verification (TODO). Memory DoS + spoofing vector. | Verify platform `X-Hub-Signature`/HMAC. Enforce max body size. Rate-limit. |
+| B24 | `app/modules/channels/router.py:176-222` | ✅ RESOLVED (gap remains) | **Verified fixed:** HMAC signature verification implemented (`router.py:191-209`) + 1 MB body cap. **Gap:** if a channel has no `webhook_secret`, verification is skipped yet payload still processed — tracked as **G3** in `SECURITY-AUDIT.md`. | Require `webhook_secret` to process non-verify webhooks. |
 | B25 | `app/modules/channels/models.py:19-20,27` | HIGH | `access_token`, `refresh_token`, `webhook_secret` stored plaintext in DB. Platform OAuth credentials at rest exposed. | Encrypt at rest (KMS/field-level). Never store unencrypted. |
 | B26 | `app/modules/stt/schemas.py:5` | LOW | `audio_url` fully user-controlled. When STT provider implemented and fetches it: another SSRF vector. | Fetch server-side with SSRF guardrails. |
 
@@ -260,6 +260,30 @@
 
 ---
 
+## Phase E — Verified Remaining Gaps (audit reconciliation, 2026-08-13)
+
+The following `FIXES-NEEDED` CRITICALs were **verified already fixed in code** and are NOT actionable:
+- **A1** (token `type` not checked) → `deps.py:31-33` enforces `type == "access"` ✅
+- **A2** (reset/signup token leaked in body) → `router.py:217-221` generic msg; signup discards token ✅
+- **A14** (no `TrustedHostMiddleware`) → `main.py:130-131` adds it ✅
+- **B24** (webhook sig = TODO) → `router.py:191-209` verifies HMAC + 1 MB cap ✅ (gap G3 remains)
+
+The **real remaining gaps** are **G1–G9**, fully documented with file:line references in `SECURITY-AUDIT.md` §17.5. Summary:
+
+| ID | Sev | Issue | Where |
+|---|---|---|---|
+| G1 | HIGH | Token blacklist exists but never checked in `get_current_user` | `core/deps.py:20-44` |
+| G2 | HIGH | Access token returned in JSON body (XSS-theftable) | `auth/router.py:85`, `auth/service.py:154` |
+| G3 | MED | Webhook processes payload when no `webhook_secret` set | `channels/router.py:204-212` |
+| G4 | MED | `X-Forwarded-For` trusted → IP spoofing bypasses rate limits | `auth/router.py:34-36` |
+| G5 | MED | In-process rate-limit fallback not scale-safe | `auth/rate_limit.py:35-42` |
+| G6 | MED | Dev DB password `mentee` in `alembic.ini` + no DB SSL | `alembic.ini:4`, `database.py:8` |
+| G7 | MED | No per-user LLM/RAG spend caps | `llm/*`, `rag/*` |
+| G8 | LOW | No global body-size limit / upload MIME check | `main.py`, `rag/router.py` |
+| G9 | LOW | No password complexity / email enumeration | `auth/schemas.py`, `auth/service.py:43` |
+
+---
+
 ## Full Priority Remediation Order
 
 ### 🔴 CRITICAL (must fix before any deployment)
@@ -334,5 +358,5 @@
 ## Backend File Count: 18 rag files + 25 other module files + 5 config files = 48 total
 ## Frontend File Count: ~35 component/page files
 ## Migration: 1 pending (rag tables + auth tables applied successfully)
-## Current Branch: `development @ e58b59a`
-## Next: Resolve Q1-Q5, then start Phase A fixes
+## Current Branch: `development` (reconciled 2026-08-13)
+## Next: Close G1–G2 (HIGH) before launch; G3–G9 can follow in Phase A/B order
