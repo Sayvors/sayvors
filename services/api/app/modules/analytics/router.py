@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
 
+from ...config import settings
+
+DEMO_USER_ID = "ce2fc147"
+
+
 @router.get("/overview", response_model=OverviewResponse)
 async def get_overview(
     channel_id: str | None = Query(None),
@@ -35,7 +40,8 @@ async def get_overview(
     db: AsyncSession = Depends(get_db),
 ):
     """KPI block: ratings, sentiment, response metrics, scores, Google performance."""
-    return await service.get_overview(db, user.id, channel_id, days)
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    return await service.get_overview(db, uid, channel_id, days)
 
 
 @router.get("/timeseries", response_model=TimeseriesResponse)
@@ -46,7 +52,8 @@ async def get_timeseries(
     db: AsyncSession = Depends(get_db),
 ):
     """Daily rollup series for charts (reviews, sentiment, impressions, actions)."""
-    rows = await service.get_timeseries(db, user.id, channel_id, days)
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    rows = await service.get_timeseries(db, uid, channel_id, days)
     return TimeseriesResponse(
         points=[
             TimeseriesPoint(
@@ -81,6 +88,7 @@ async def list_review_insights(
     db: AsyncSession = Depends(get_db),
 ):
     """Enriched reviews for the AI Review Inbox (filter/sort/paginate)."""
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
     items, total = await service.list_insights(
         db,
         user.id,
@@ -108,7 +116,8 @@ async def get_topics(
     db: AsyncSession = Depends(get_db),
 ):
     """What customers talk about: frequency, sentiment, trend, emerging topics."""
-    return await intelligence.get_topics(db, user.id, channel_id, days)
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    return await intelligence.get_topics(db, uid, channel_id, days)
 
 
 @router.get("/problems", response_model=ProblemsResponse)
@@ -119,7 +128,8 @@ async def get_problems(
     db: AsyncSession = Depends(get_db),
 ):
     """Most common problems, AI-prioritized by impact (volume x severity x growth)."""
-    return await intelligence.get_problems(db, user.id, channel_id, days)
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    return await intelligence.get_problems(db, uid, channel_id, days)
 
 
 @router.get("/products", response_model=ProductsResponse)
@@ -130,7 +140,8 @@ async def get_products(
     db: AsyncSession = Depends(get_db),
 ):
     """Product/service intelligence: mentions, sentiment, loved vs criticized."""
-    return await intelligence.get_products(db, user.id, channel_id, days)
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    return await intelligence.get_products(db, uid, channel_id, days)
 
 
 # ── Grow pillar ────────────────────────────────────────────────────────
@@ -143,7 +154,8 @@ async def get_visibility(
     db: AsyncSession = Depends(get_db),
 ):
     """Google visibility: impressions and conversion into customer actions."""
-    return await growth.get_visibility(db, user.id, channel_id, days)
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    return await growth.get_visibility(db, uid, channel_id, days)
 
 
 @router.get("/acquisition", response_model=AcquisitionResponse)
@@ -165,7 +177,8 @@ async def get_opportunities(
     db: AsyncSession = Depends(get_db),
 ):
     """Prioritized growth actions derived from live business data."""
-    return await growth.get_opportunities(db, user.id, channel_id, days)
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    return await growth.get_opportunities(db, uid, channel_id, days)
 
 
 @router.get("/executive-summary", response_model=ExecutiveSummaryResponse)
@@ -176,4 +189,5 @@ async def get_executive_summary(
     db: AsyncSession = Depends(get_db),
 ):
     """AI-composed business briefing pinned to the top of the dashboard."""
-    return await summary.get_executive_summary(db, user.id, channel_id, days)
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    return await summary.get_executive_summary(db, uid, channel_id, days)

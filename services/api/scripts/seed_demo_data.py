@@ -197,6 +197,29 @@ async def main():
             return 1
         print(f"Seeding demo data for user: {user.email}")
 
+        second_user = (await db.execute(select(User).where(User.email == "syab293@gmail.com"))).scalar_one_or_none() or (await db.execute(select(User).where(User.id != user.id).limit(1))).scalar_one_or_none()
+        if second_user:
+            second_channel = (
+                await db.execute(
+                    select(Channel).where(Channel.user_id == second_user.id, Channel.platform == "google_reviews")
+                )
+            ).scalar_one_or_none()
+            if not second_channel:
+                second_channel = Channel(
+                    id=str(uuid.uuid4()),
+                    user_id=second_user.id,
+                    platform="google_reviews",
+                    platform_user_id="demo-acc-456",
+                    display_name="Pizza Palace — Suburban",
+                    status="active",
+                    metadata_json='{"location_id": "demo-loc-789", "account_id": "demo-acc-456"}',
+                    created_at=datetime.now(timezone.utc) - timedelta(days=args.days),
+                )
+                db.add(second_channel)
+                await db.flush()
+                await db.refresh(second_channel)
+                print(f"  created second google_reviews channel {second_channel.id} for {second_user.email}")
+
         # ── resolve/create channel ──
         channel = (
             await db.execute(
@@ -333,7 +356,70 @@ async def main():
 
         await db.commit()
         print(f"  seeded {len(reviews)} reviews ({replied_count} replied), {args.days} days of performance metrics")
-        print("Done — log in as this user and open the Analytics page.")
+
+        # ── Second demo user / location (benchmark/comparison data) ──
+        second_channel = (
+            await db.execute(
+                select(Channel).where(
+                    Channel.user_id == second_user.id,
+                    Channel.platform == "google_reviews",
+                )
+            )
+        ).scalar_one_or_none()
+        if second_channel:
+            # Different profile: lower ratings, different products (pizza-focused),
+            # more cleanliness/service problems (to show cross-location contrast).
+            second_reviews = [
+                (4, "Good pizza but slow on busy nights.", "neutral", 0.05,
+                 [{"name": "service", "sentiment": "neutral"}], [{"name": "Pizza Margherita", "sentiment": "positive"}], [{"name": "slow service", "severity": "medium"}]),
+                (2, "Dirty table and cold fries. Asked for ketchup twice.", "negative", -0.7,
+                 [{"name": "cleanliness", "sentiment": "negative"}, {"name": "service", "sentiment": "negative"}], [{"name": "Fries", "sentiment": "negative"}], [{"name": "dirty table", "severity": "high"}, {"name": "cold food", "severity": "medium"}]),
+                (5, "Best pizza in the neighborhood! Fast and clean.", "positive", 0.9,
+                 [{"name": "service", "sentiment": "positive"}, {"name": "cleanliness", "sentiment": "positive"}], [{"name": "Pizza Margherita", "sentiment": "positive"}], []),
+                (1, "Terrible. Never coming back. Manager was rude.", "negative", -0.9,
+                 [{"name": "service", "sentiment": "negative"}, {"name": "staff", "sentiment": "negative"}], [], [{"name": "staff attitude", "severity": "high"}, {"name": "service failure", "severity": "high"}]),
+            ]
+            second_day_counts = 0
+            second_now = datetime.now(timezone.utc)
+            for review_time_offset, rating, text, sentiment, score, topics, products, problems in second_reviews:
+                review_time = second_now - timedelta(days=random.randint(1, 14))
+                review_time = review_time.replace(hour=random.choice([12, 13, 19, 21]), minute=random.randint(0, 59))
+                review_time = review_time.replace(tzinfo=timezone.utc)
+                review_id = f"{DEMO_ACCOUNT}/locations/demo-loc-789/reviews/{uuid.uuid4().hex[:12]}"
+                db.add(ReviewInsight(
+                    id=str(uuid.uuid4()), user_id=second_user.id, channel_id=second_channel.id,
+                    review_id=review_id, rating=rating, review_text=text,
+                    reviewer_name=random.choice(REVIEWER_NAMES), sentiment=sentiment,
+                    sentiment_score=score, topics=topics, products=products, problems=problems,
+                    enrichment_status="done", replied=False,
+                    review_updated_at=review_time, created_at=review_time, updated_at=review_time,
+                ))
+                second_day_counts += 1
+                db.add(ChannelMessage(
+                    id=str(uuid.uuid4()), channel_id=second_channel.id,
+                    platform_message_id=review_id[:200], direction="inbound",
+                    content=text or f"({rating}/5 stars, no comment)", content_type="review", status="read",
+                    created_at=review_time,
+                ))
+            # Second location performance: lower impressions, lower actions
+            for d in range(1, args.days + 1):
+                day = (second_now - timedelta(days=d)).date()
+                desktop = int(random.uniform(25, 45) * 0.7)
+                mobile = int(random.uniform(70, 130) * 0.7)
+                db.add(LocationDailyMetric(
+                    id=str(uuid.uuid4()), user_id=second_user.id, channel_id=second_channel.id,
+                    date=day, reviews_count=0, avg_rating=0.0,
+                    positive_count=0, neutral_count=0, negative_count=0,
+                    replies_count=0,
+                    impressions_maps_desktop=desktop, impressions_maps_mobile=mobile,
+                    website_clicks=int(random.uniform(3, 10) * 0.7),
+                    call_clicks=int(random.uniform(1, 4) * 0.7),
+                    direction_requests=int(random.uniform(2, 8) * 0.7),
+                ))
+            await db.commit()
+            print(f"  seeded second location {second_channel.display_name} ({second_day_counts} reviews, {args.days}d metrics)")
+
+        print("Done — log in as either user and open the Analytics page.")
     return 0
 
 

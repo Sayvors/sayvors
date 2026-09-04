@@ -182,6 +182,18 @@ async def client(user_id, engine):
         # CSRF middleware requires a matching cookie + header on mutating requests
         c.cookies.set("csrf_token", "test")
         c.headers["x-csrf-token"] = "test"
+        # TrustedHostMiddleware blocks TestClient's host ("testclient").
+        # Allow it by patching the middleware instance directly.
+        for mw in getattr(fastapi_app, "user_middleware", []):
+            allowed_hosts = getattr(mw, "allowed_hosts", None)
+            if allowed_hosts is not None:
+                if isinstance(allowed_hosts, list):
+                    allowed_hosts.extend(["testclient"])
+                else:
+                    try:
+                        mw.allowed_hosts = list(allowed_hosts) + ["testclient"]
+                    except Exception:
+                        pass
         yield c
 
     fastapi_app.dependency_overrides.clear()

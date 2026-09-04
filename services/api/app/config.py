@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     # Exercises the full pipeline (worker -> reply -> approval) with no
     # Google account, no OAuth, and no LLM key required.
     GOOGLE_REVIEWS_MOCK: bool = False
+    # Demo environment: show seeded data regardless of the logged-in user.
+    DEMO_MODE: bool = False
 
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,
