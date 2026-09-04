@@ -93,7 +93,13 @@ export async function listDatabanks(): Promise<any> {
   return apiFetch("/api/v1/rag/databanks");
 }
 
-export async function createDatabank(data: { name: string; description?: string; accent_color?: string }): Promise<any> {
+export async function createDatabank(data: {
+  name: string;
+  description?: string;
+  accent_color?: string;
+  sourceType?: string;
+  sourceConfig?: { files?: string[]; crawlerUrl?: string; crawlerDepth?: number };
+}): Promise<any> {
   return apiFetch("/api/v1/rag/databanks", {
     method: "POST",
     body: JSON.stringify(data),

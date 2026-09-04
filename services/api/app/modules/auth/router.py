@@ -27,17 +27,46 @@ from .service import (
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
+def _ip_in_trusted_proxy(ip: str) -> bool:
+    """Check whether a peer IP matches a configured trusted proxy (IP or CIDR)."""
+    import ipaddress
+
+    if not ip or ip == "unknown":
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    for entry in settings.TRUSTED_PROXIES:
+        try:
+            if addr in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def get_client_ip(request: Request) -> str:
-    # Only trust X-Forwarded-For from a known reverse proxy (the first hop).
-    # In production behind a proxy, use the rightmost untrusted hop.
-    # For now, use the first value (leftmost = original client behind trusted proxy).
+    """Resolve the real client IP.
+
+    Forwarded headers (X-Forwarded-For / X-Real-IP) are only trusted when the
+    direct peer is a configured trusted proxy — otherwise any client could
+    spoof them to bypass IP-based rate limits. When trusted, we take the
+    rightmost XFF entry (the one added by our closest trusted proxy), not the
+    leftmost (fully client-controlled).
+    """
+    peer = request.client.host if request.client else ""
+    if not _ip_in_trusted_proxy(peer):
+        return peer or "unknown"
+
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+        # Rightmost entry was appended by the closest trusted proxy.
+        return forwarded_for.split(",")[-1].strip()
     real_ip = request.headers.get("x-real-ip")
     if real_ip:
         return real_ip.strip()
-    return request.client.host if request.client else "unknown"
+    return peer or "unknown"
 
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
@@ -98,7 +127,10 @@ async def login_endpoint(
     ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
 
-    if not await rate_limit(f"login:{ip}", 10, 60):
+    if not await rate_limit(f"login:ip:{ip}", 10, 60):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
+    # Per-identity limit stops one account being hammered from many IPs.
+    if not await rate_limit(f"login:user:{body.email.lower()}", 10, 60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
 
     try:
@@ -143,11 +175,12 @@ async def refresh_endpoint(
         raise HTTPException(status_code=401, detail="No refresh token")
 
     ip = get_client_ip(request)
+    user_agent = request.headers.get("user-agent", "")
     if not await rate_limit(f"refresh:{ip}", 30, 60):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     try:
-        result = await refresh_tokens(refresh_token, db)
+        result = await refresh_tokens(refresh_token, db, user_agent=user_agent, ip=ip)
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
@@ -258,8 +291,22 @@ async def me(user=Depends(get_current_user)):
         "last_name": user.last_name,
         "email": user.email,
         "email_verified": user.email_verified,
+        "onboarded": user.onboarded,
         "created_at": user.created_at.isoformat(),
     }
+
+
+@router.patch("/me")
+async def update_me(body: dict, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    allowed_fields = {"onboarded", "first_name", "last_name"}
+    update_data = {k: v for k, v in body.items() if k in allowed_fields}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    for field, value in update_data.items():
+        setattr(user, field, value)
+    db.add(user)
+    await db.commit()
+    return {"message": "Updated"}
 
 
 @router.get("/sessions")
