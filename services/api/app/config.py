@@ -53,8 +53,6 @@ class Settings(BaseSettings):
     # Demo environment: analytics endpoints show the demo user's data
     # regardless of the logged-in user (useful for presenting/test-driving).
     DEMO_MODE: bool = False
-    # Demo environment: show seeded data regardless of the logged-in user.
-    DEMO_MODE: bool = False
 
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,
