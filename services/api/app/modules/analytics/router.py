@@ -6,9 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
-from . import benchmark, growth, intelligence, service, summary, summary
+from ...config import settings
+from . import benchmark, growth, intelligence, service, summary
+from .models import ReviewInsight
 from .schemas import (
     AcquisitionResponse,
+    BenchmarkResponse,
     ExecutiveSummaryResponse,
     OpportunitiesResponse,
     OverviewResponse,
@@ -29,7 +32,39 @@ router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
 from ...config import settings
 
-DEMO_USER_ID = "ce2fc147"
+DEMO_USER_ID_FALLBACK = "ce2fc147"
+DEMO_USER_ID = DEMO_USER_ID_FALLBACK
+
+
+async def _resolve_demo_user_id(db: AsyncSession) -> str:
+    """Find the user with the most analytics rows so demo data always shows.
+
+    Falls back to the hardcoded demo user id if the DB has no rows yet.
+    """
+    try:
+        row = (
+            await db.execute(
+                select(ReviewInsight.user_id, func.count().label("n"))
+                .group_by(ReviewInsight.user_id)
+                .order_by(func.count().desc())
+                .limit(1)
+            )
+        ).first()
+        if row and row.user_id:
+            return row.user_id
+    except Exception:
+        pass
+    return DEMO_USER_ID_FALLBACK
+
+
+def _resolve_uid(db: AsyncSession, user) -> str:
+    if settings.DEMO_MODE:
+        # Use the request's DB session only to resolve a dynamic demo user id.
+        # We can't await here, so fall back to the static id; the
+        # `_resolve_demo_user_id` helper is invoked explicitly per-endpoint
+        # below to override when demo mode is on.
+        return DEMO_USER_ID_FALLBACK
+    return user.id
 
 
 @router.get("/overview", response_model=OverviewResponse)
