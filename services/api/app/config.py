@@ -48,10 +48,11 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
     GOOGLE_REVIEWS_REDIRECT_URI: str = "http://localhost:8000/api/v1/channels/google/callback"
-    # Dev/test mode: fabricate sample reviews instead of calling Google.
-    # Exercises the full pipeline (worker -> reply -> approval) with no
-    # Google account, no OAuth, and no LLM key required.
+    # Dev/test mode for Google Reviews: fabricate sample reviews.
     GOOGLE_REVIEWS_MOCK: bool = False
+    # Demo environment: analytics endpoints show the demo user's data
+    # regardless of the logged-in user (useful for presenting/test-driving).
+    DEMO_MODE: bool = False
     # Demo environment: show seeded data regardless of the logged-in user.
     DEMO_MODE: bool = False
 
