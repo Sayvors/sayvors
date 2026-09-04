@@ -110,10 +110,20 @@ export default function DatabankPage() {
     }
   };
 
-  const handleCreate = async (name: string, description: string) => {
+  const handleCreate = async (
+    name: string,
+    description: string,
+    sourceType: "files" | "crawler" | "empty",
+    sourceConfig: { files?: string[]; crawlerUrl?: string; crawlerDepth?: number }
+  ) => {
     setCreating(true);
     try {
-      const created = await createDatabank({ name, description: description || undefined });
+      const created = await createDatabank({
+        name,
+        description: description || undefined,
+        sourceType,
+        sourceConfig,
+      });
       setDatabanks((prev) => [...prev, created]);
       setShowCreateForm(false);
     } catch {

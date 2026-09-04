@@ -1,11 +1,12 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, loading } = useAuth();
   const [checked, setChecked] = useState(false);
 
@@ -13,10 +14,12 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     if (loading) return;
     if (!user) {
       router.replace("/login");
+    } else if (!user.onboarded && !pathname.startsWith("/onboarding")) {
+      router.replace("/onboarding");
     } else {
       setChecked(true);
     }
-  }, [user, loading, router]);
+  }, [user, loading, router, pathname]);
 
   if (!checked) {
     return (

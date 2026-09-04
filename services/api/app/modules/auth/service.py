@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
@@ -97,6 +97,7 @@ async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str
             "last_name": user.last_name,
             "email": user.email,
             "email_verified": user.email_verified,
+            "onboarded": user.onboarded,
         },
         "verification_token": raw_token,
     }
@@ -109,10 +110,11 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
     if user and user.locked_until and user.locked_until > datetime.now(timezone.utc):
         raise ValueError("Account is temporarily locked. Try again later.")
 
-    attempt = LoginAttempt(email=body.email, ip_address=ip, success=False)
-    db.add(attempt)
-
     if not user or not verify_password(body.password, user.password_hash):
+        # Only failures (and lockouts) hit the login_attempts table — at scale,
+        # a row per successful login is an insert firehose. Successes are
+        # already recorded via log_login events.
+        db.add(LoginAttempt(email=body.email, ip_address=ip, success=False))
         if user:
             user.failed_login_attempts += 1
             if user.failed_login_attempts >= settings.MAX_LOGIN_ATTEMPTS:
@@ -124,7 +126,6 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
 
     user.failed_login_attempts = 0
     user.locked_until = None
-    attempt.success = True
 
     access_token = create_access_token(user.id)
     refresh_raw = create_refresh_token(user.id)
@@ -159,11 +160,14 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
             "last_name": user.last_name,
             "email": user.email,
             "email_verified": user.email_verified,
+            "onboarded": user.onboarded,
         },
     }
 
 
-async def refresh_tokens(refresh_token: str, db: AsyncSession) -> dict:
+async def refresh_tokens(
+    refresh_token: str, db: AsyncSession, user_agent: str = "", ip: str = ""
+) -> dict:
     try:
         payload = decode_token(refresh_token)
         if payload.get("type") != "refresh":
@@ -179,24 +183,56 @@ async def refresh_tokens(refresh_token: str, db: AsyncSession) -> dict:
 
     token_hash = hash_token(refresh_token)
     result = await db.execute(
-        select(RefreshToken).where(
-            RefreshToken.token_hash == token_hash,
-            RefreshToken.revoked == False,
-        )
+        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
     )
     db_token = result.scalar_one_or_none()
 
     if not db_token:
         raise ValueError("Refresh token revoked or not found")
 
+    # ── Reuse detection ─────────────────────────────────
+    # A presented token that is already revoked means it was stolen/leaked:
+    # the legitimate client moved on to the rotated token. Kill the whole
+    # family (all sessions for this user) and force a fresh login.
+    if db_token.revoked:
+        user_id = db_token.user_id
+        await db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id)
+            .values(revoked=True)
+        )
+        await db.commit()
+        try:
+            await delete_all_sessions(user_id)
+        except Exception:
+            pass
+        await log_account_locked(payload.get("sub", user_id), ip or "unknown")
+        raise ValueError("Refresh token reuse detected. All sessions revoked.")
+
     if db_token.expires_at < datetime.now(timezone.utc):
         raise ValueError("Refresh token expired")
+
+    # ── Device (user-agent) check ───────────────────────
+    # The token is bound to the device that received it. We compare the
+    # user-agent stored on the row directly (IPs drift legitimately on mobile
+    # networks, so IP is recorded but not enforced).
+    if user_agent and db_token.user_agent and user_agent[:500] != db_token.user_agent:
+        db_token.revoked = True
+        await db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == db_token.user_id)
+            .values(revoked=True)
+        )
+        await db.commit()
+        try:
+            await delete_all_sessions(db_token.user_id)
+        except Exception:
+            pass
+        raise ValueError("Session validation failed. Please log in again.")
 
     # Revoke old token (rotation) and blacklist in Redis
     db_token.revoked = True
     try:
-        from ...modules.redis.client import get_redis
-        redis = await get_redis()
         ttl = int((db_token.expires_at - datetime.now(timezone.utc)).total_seconds())
         if ttl > 0:
             await blacklist_token(payload["jti"], ttl)
@@ -374,26 +410,77 @@ async def get_user_sessions(user_id: str, db: AsyncSession) -> list[dict]:
 async def cleanup_expired_data(db: AsyncSession) -> dict:
     """Delete old login_attempts (>30d) and expired/revoked refresh_tokens (>7d).
 
-    Called on startup and can be scheduled periodically.
-    Returns counts of deleted rows.
+    Deletes run in bounded batches so large tables never take long locks.
+    Called on startup and by the periodic retention task (see events.py /
+    main.py lifespan).
     """
+    from ...config import settings as cfg
+
     now = datetime.now(timezone.utc)
     login_cutoff = now - timedelta(days=30)
     token_cutoff = now - timedelta(days=7)
+    batch = cfg.RETENTION_DELETE_BATCH_SIZE
 
-    # Delete old login attempts
-    result = await db.execute(
-        delete(LoginAttempt).where(LoginAttempt.created_at < login_cutoff)
-    )
-    login_deleted = result.rowcount
-
-    # Delete expired refresh tokens
-    result = await db.execute(
-        delete(RefreshToken).where(
-            (RefreshToken.expires_at < now) | (RefreshToken.revoked == True)
+    # Delete old login attempts in batches
+    login_deleted = 0
+    while True:
+        result = await db.execute(
+            delete(LoginAttempt).where(
+                LoginAttempt.id.in_(
+                    select(LoginAttempt.id)
+                    .where(LoginAttempt.created_at < login_cutoff)
+                    .limit(batch)
+                )
+            )
         )
-    )
-    token_deleted = result.rowcount
+        login_deleted += result.rowcount or 0
+        await db.commit()
+        if (result.rowcount or 0) < batch:
+            break
 
-    await db.commit()
+    # Delete expired/old revoked refresh tokens in batches.
+    # Revoked rows are kept for a grace period because refresh-token reuse
+    # detection needs to observe them (presented-again revoked token => steal).
+    token_deleted = 0
+    while True:
+        result = await db.execute(
+            delete(RefreshToken).where(
+                RefreshToken.id.in_(
+                    select(RefreshToken.id)
+                    .where(
+                        (RefreshToken.expires_at < token_cutoff)
+                        | (
+                            (RefreshToken.revoked == True)  # noqa: E712
+                            & (RefreshToken.created_at < token_cutoff)
+                        )
+                    )
+                    .limit(batch)
+                )
+            )
+        )
+        token_deleted += result.rowcount or 0
+        await db.commit()
+        if (result.rowcount or 0) < batch:
+            break
+
     return {"login_attempts_deleted": login_deleted, "refresh_tokens_deleted": token_deleted}
+
+
+async def run_retention_loop() -> None:
+    """Periodically purge expired auth data. Started from app lifespan."""
+    import asyncio
+    import logging
+
+    from ...config import settings as cfg
+    from ...database import async_session
+
+    log = logging.getLogger(__name__)
+    while True:
+        await asyncio.sleep(cfg.RETENTION_CLEANUP_INTERVAL_SECONDS)
+        try:
+            async with async_session() as db:
+                result = await cleanup_expired_data(db)
+                if any(result.values()):
+                    log.info("Retention cleanup: %s", result)
+        except Exception as e:
+            log.error("Retention cleanup failed: %s", e)
