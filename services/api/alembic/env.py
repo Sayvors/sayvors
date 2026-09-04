@@ -25,6 +25,7 @@ from app.modules.stt import models as stt_models  # noqa: F401
 from app.modules.llm import models as llm_models  # noqa: F401
 from app.modules.channels import models as channels_models  # noqa: F401
 from app.modules.rag import models as rag_models  # noqa: F401
+from app.modules.analytics import models as analytics_models  # noqa: F401
 from app.modules.auth import models as auth_models  # noqa: F401
 from app.modules.outbox import models as outbox_models  # noqa: F401
 

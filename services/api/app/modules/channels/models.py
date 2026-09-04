@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...database import Base
@@ -12,7 +12,16 @@ class Channel(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), index=True)
     platform: Mapped[str] = mapped_column(
-        Enum("facebook", "instagram", "x", "telegram", "whatsapp", "linkedin", name="platform_type")
+        Enum(
+            "facebook",
+            "instagram",
+            "x",
+            "telegram",
+            "whatsapp",
+            "linkedin",
+            "google_reviews",
+            name="platform_type",
+        )
     )
     platform_user_id: Mapped[str] = mapped_column(String(200))
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -57,3 +66,59 @@ class ChannelMessage(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     channel = relationship("Channel", back_populates="messages")
+
+
+class AutoReplyConfig(Base):
+    """Per-channel auto-reply settings (Phase 1: Google Reviews)."""
+
+    __tablename__ = "auto_reply_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Tone preset: friendly, professional, apologetic, playful, ...
+    tone: Mapped[str] = mapped_column(String(50), default="friendly")
+    # Optional Databank linked for grounding replies in merchant knowledge
+    databank_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # Reviews with rating below this are queued for human approval, not auto-posted
+    min_rating_auto: Mapped[int] = mapped_column(Integer, default=4)
+    # LLM model id (provider catalog id, e.g. "openai:gpt-4o-mini")
+    model: Mapped[str] = mapped_column(String(100), default="openai:gpt-4o-mini")
+    # Polling lease (atomic claim across worker instances)
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    polling_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class ReviewReply(Base):
+    """A (candidate or posted) reply to a Google review."""
+
+    __tablename__ = "review_replies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    # Google review resource name: accounts/{a}/locations/{l}/reviews/{r}
+    review_id: Mapped[str] = mapped_column(String(500), index=True)
+    rating: Mapped[int] = mapped_column(Integer)
+    review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reply_text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        Enum("posted", "pending_approval", "failed", name="review_reply_status"),
+        default="pending_approval",
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )

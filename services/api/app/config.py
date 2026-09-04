@@ -14,6 +14,15 @@ class Settings(BaseSettings):
     # ── Auth security ────────────────────────────────────
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_MINUTES: int = 15
+    # Fail closed on auth-critical paths (rate limits, token blacklist) when
+    # Redis is unavailable. Set to false ONLY for local dev without Redis.
+    AUTH_RATE_LIMIT_FAIL_CLOSED: bool = True
+    # IP addresses/CIDRs of reverse proxies whose X-Forwarded-For/X-Real-IP
+    # headers we trust. Requests from any other peer use the socket address.
+    TRUSTED_PROXIES: list[str] = ["127.0.0.1", "::1"]
+    # Retention cleanup interval (seconds) for login_attempts / refresh_tokens.
+    RETENTION_CLEANUP_INTERVAL_SECONDS: int = 6 * 3600
+    RETENTION_DELETE_BATCH_SIZE: int = 1000
     CSRF_COOKIE_NAME: str = "csrf_token"
     REFRESH_COOKIE_NAME: str = "refresh_token"
     REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
@@ -33,6 +42,23 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     EMAIL_FROM: str = "noreply@sayvors.com"
     FRONTEND_URL: str = "http://localhost:3000"
+
+    # ── Google Business Profile (Reviews) ────────────────
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REVIEWS_POLL_INTERVAL_SECONDS: int = 300  # 5 min
+    GOOGLE_REVIEWS_REDIRECT_URI: str = "http://localhost:8000/api/v1/channels/google/callback"
+    # Dev/test mode: fabricate sample reviews instead of calling Google.
+    # Exercises the full pipeline (worker -> reply -> approval) with no
+    # Google account, no OAuth, and no LLM key required.
+    GOOGLE_REVIEWS_MOCK: bool = False
+
+    # ── Analytics / business intelligence ────────────────────────────────
+    # How often the Google Business Profile performance sync runs (impressions,
+    # website clicks, calls, direction requests -> location_daily_metrics).
+    ANALYTICS_PERFORMANCE_SYNC_INTERVAL_SECONDS: int = 6 * 3600
+    # How many days of daily metrics to pull per sync pass.
+    ANALYTICS_PERFORMANCE_DAYS_BACK: int = 30
 
     # ── LLM provider API keys ──────────────────────────
     OPENAI_API_KEY: str = ""

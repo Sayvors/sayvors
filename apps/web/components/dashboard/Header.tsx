@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { useTheme } from "@/components/ThemeProvider";
 import { useAuth } from "@/lib/auth-context";
 
@@ -22,6 +23,7 @@ export default function Header() {
   const [profileOpen, setProfileOpen] = useState(false);
   const langRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const initials = user
     ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U"
@@ -36,14 +38,24 @@ export default function Header() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  useEffect(() => {
+    function handleKeydown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+      if (e.key === "Escape" && document.activeElement === searchRef.current) {
+        searchRef.current?.blur();
+      }
+    }
+    document.addEventListener("keydown", handleKeydown);
+    return () => document.removeEventListener("keydown", handleKeydown);
+  }, []);
+
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-deep-violet/[0.06] bg-white px-4 dark:bg-ink dark:border-deep-violet/[0.06]">
       {/* Left: Search */}
       <div className="flex items-center gap-3">
-        {/* Search */}
-
-        <div className="h-5 w-px bg-deep-violet/[0.08]" />
-
         {/* Search */}
         <div className="relative">
           <svg
@@ -61,8 +73,10 @@ export default function Header() {
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
           <input
+            ref={searchRef}
             type="text"
             placeholder="Search..."
+            aria-label="Search"
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
             className="h-8 w-56 rounded-md border border-deep-violet/[0.08] bg-deep-violet/[0.03] pl-8 pr-8 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:w-72 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.08] dark:border-deep-violet/[0.12] dark:bg-deep-violet/[0.06] dark:text-fog dark:placeholder:text-fog/30 dark:focus:bg-ink"
@@ -75,16 +89,22 @@ export default function Header() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-1">
-        {/* Create agent */}
-        <button className="flex h-8 items-center gap-1.5 rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-md active:scale-[0.98]">
+        {/* Connect channel */}
+        <Link
+          href="/dashboard/channels"
+          className="flex h-8 items-center gap-1.5 rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-md active:scale-[0.98]"
+        >
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
             <path d="M8 3v10M3 8h10" strokeLinecap="round" />
           </svg>
-          Agent
-        </button>
+          Connect
+        </Link>
 
         {/* Subscribe to premium */}
-        <button className="flex h-8 items-center gap-1.5 rounded-lg bg-amber-500 px-3 text-[12px] font-semibold text-white shadow-sm shadow-amber-500/25 transition hover:bg-amber-500/90 active:scale-[0.98]">
+        <button
+          aria-label="Subscribe to premium"
+          className="flex h-8 items-center gap-1.5 rounded-lg bg-amber-500 px-3 text-[12px] font-semibold text-white shadow-sm shadow-amber-500/25 transition hover:bg-amber-500/90 active:scale-[0.98]"
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
           </svg>
@@ -94,7 +114,11 @@ export default function Header() {
         <div className="mx-1 h-5 w-px bg-deep-violet/[0.08]" />
 
         {/* Notifications */}
-        <button className="relative flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-deep-violet/[0.06] hover:text-deep-violet dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet">
+        <button
+          aria-label="Notifications"
+          title="Notifications"
+          className="relative flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
             <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
             <path d="M13.73 21a2 2 0 01-3.46 0" />
@@ -105,7 +129,8 @@ export default function Header() {
         {/* Theme toggle */}
         <button
           onClick={toggle}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-deep-violet/[0.06] hover:text-deep-violet dark:text-fog/40 dark:hover:text-deep-violet"
+          aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:text-deep-violet"
           title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
         >
           {theme === "light" ? (
@@ -131,7 +156,9 @@ export default function Header() {
         <div className="relative" ref={langRef}>
           <button
             onClick={() => setLangOpen(!langOpen)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 transition hover:bg-deep-violet/[0.06] hover:text-deep-violet dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
+            aria-label="Change language"
+            aria-expanded={langOpen}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
             title="Change language"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -164,7 +191,9 @@ export default function Header() {
         <div className="relative" ref={profileRef}>
           <button
             onClick={() => setProfileOpen(!profileOpen)}
-            className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition hover:bg-deep-violet/[0.04]"
+            aria-label="Account menu"
+            aria-expanded={profileOpen}
+            className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 outline-none transition hover:bg-deep-violet/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/30"
           >
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-deep-violet to-magenta text-[10px] font-semibold text-white shadow-sm shadow-deep-violet/20">
               {initials}
@@ -184,9 +213,7 @@ export default function Header() {
                 </p>
               </div>
               <div className="py-1">
-                <ProfileMenuItem icon={<UserIcon />} label="My profile" />
-                <ProfileMenuItem icon={<SettingsIcon />} label="Settings" />
-                <ProfileMenuItem icon={<CreditCardIcon />} label="Billing" />
+                <ProfileMenuItem icon={<UserIcon />} label="My profile" href="/dashboard/profile" />
                 <ProfileMenuItem icon={<HelpIcon />} label="Help & support" />
               </div>
               <div className="border-t border-deep-violet/[0.06] py-1">
@@ -200,12 +227,18 @@ export default function Header() {
   );
 }
 
-function ProfileMenuItem({ icon, label, danger, onClick }: { icon: React.ReactNode; label: string; danger?: boolean; onClick?: () => void }) {
+function ProfileMenuItem({ icon, label, href, danger, onClick }: { icon: React.ReactNode; label: string; href?: string; danger?: boolean; onClick?: () => void }) {
+  const className = `flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition hover:bg-deep-violet/[0.04] focus-visible:bg-deep-violet/[0.04] focus-visible:outline-none ${danger ? "text-coral" : "text-ink/60 dark:text-fog/60"}`;
+  if (href) {
+    return (
+      <Link href={href} className={className}>
+        {icon}
+        {label}
+      </Link>
+    );
+  }
   return (
-    <button
-      onClick={onClick}
-      className={`flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition hover:bg-deep-violet/[0.04] ${danger ? "text-coral" : "text-ink/60 dark:text-fog/60"}`}
-    >
+    <button onClick={onClick} className={className}>
       {icon}
       {label}
     </button>
@@ -217,24 +250,6 @@ function UserIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
       <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
       <circle cx="12" cy="7" r="4" />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
-    </svg>
-  );
-}
-
-function CreditCardIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-      <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-      <line x1="1" y1="10" x2="23" y2="10" />
     </svg>
   );
 }
