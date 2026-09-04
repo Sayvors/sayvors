@@ -238,6 +238,32 @@ export const fetchAcquisition = (days: number, channelId?: string | null): Promi
 export const fetchOpportunities = (days: number, channelId?: string | null): Promise<OpportunitiesResponse> =>
   apiFetch(`/api/v1/analytics/opportunities?${qs(days, channelId)}`);
 
+/* ── Benchmark pillar ─────────────────────────────────────────────── */
+
+export interface BenchmarkResponse {
+  days: number;
+  current_avg_rating: number;
+  similar_avg_rating: number;
+  current_reviews_total: number;
+  similar_reviews_total: number;
+  current_sentiment_positive_pct: number;
+  similar_sentiment_positive_pct: number;
+  current_response_rate: number;
+  similar_response_rate: number;
+  current_customer_actions: number;
+  similar_customer_actions: number;
+  current_reputation_score: number;
+  similar_reputation_score: number;
+  benchmark_text: string;
+  percentile_text: string;
+  outperforms: string[];
+  underperforms: string[];
+  competitive_opportunities: string[];
+  industry_trends: string[];
+}
+
+export const fetchBenchmark = (days: number, channelId?: string | null): Promise<BenchmarkResponse> => apiFetch(`/api/v1/analytics/benchmark/comparison?${qs(days, channelId)}`);
+
 /* ── AI reply workflow (Manage pillar) ────────────────────────── */
 
 export interface ReviewReplyDTO {

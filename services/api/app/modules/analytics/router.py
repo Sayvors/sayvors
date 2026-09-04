@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
-from . import growth, intelligence, service, summary
+from . import benchmark, growth, intelligence, service, summary, summary
 from .schemas import (
     AcquisitionResponse,
     ExecutiveSummaryResponse,
@@ -179,6 +179,18 @@ async def get_opportunities(
     """Prioritized growth actions derived from live business data."""
     uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
     return await growth.get_opportunities(db, uid, channel_id, days)
+
+
+@router.get("/benchmark/comparison", response_model=BenchmarkResponse)
+async def get_benchmark_comparison(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Benchmark the tenant against the second demo business profile (stand-in for comparable businesses)."""
+    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    return await benchmark.get_benchmark(db, uid, channel_id, days)
 
 
 @router.get("/executive-summary", response_model=ExecutiveSummaryResponse)

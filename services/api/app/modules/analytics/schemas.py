@@ -179,6 +179,30 @@ class OpportunitiesResponse(BaseModel):
     opportunities: list[Opportunity]
 
 
+# ── Benchmarking pillar ─────────────────────────────────────────────
+
+class BenchmarkResponse(BaseModel):
+    days: int
+    current_avg_rating: float
+    similar_avg_rating: float
+    current_reviews_total: int
+    similar_reviews_total: int
+    current_sentiment_positive_pct: float
+    similar_sentiment_positive_pct: float
+    current_response_rate: float
+    similar_response_rate: float
+    current_customer_actions: int
+    similar_customer_actions: int
+    current_reputation_score: int
+    similar_reputation_score: int
+    benchmark_text: str
+    percentile_text: str
+    outperforms: list[str]
+    underperforms: list[str]
+    competitive_opportunities: list[str]
+    industry_trends: list[str]
+
+
 class ExecutiveSummaryResponse(BaseModel):
     days: int
     headline: str
