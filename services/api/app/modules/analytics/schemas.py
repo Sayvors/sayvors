@@ -1,0 +1,179 @@
+"""Analytics API schemas."""
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel
+
+
+class PeriodComparison(BaseModel):
+    days: int
+    reviews: int
+    avg_rating: float | None = None
+    reviews_delta_pct: float | None = None
+    rating_delta: float | None = None
+    velocity_ratio: float | None = None
+
+
+class SentimentSplit(BaseModel):
+    positive: int
+    neutral: int
+    negative: int
+    positive_pct: float
+    neutral_pct: float
+    negative_pct: float
+
+
+class GooglePerformance(BaseModel):
+    impressions_maps: int
+    website_clicks: int
+    call_clicks: int
+    direction_requests: int
+    customer_actions: int
+
+
+class OverviewResponse(BaseModel):
+    total_reviews: int
+    avg_rating: float
+    rating_distribution: dict[str, int]
+    sentiment: SentimentSplit
+    response_rate: float
+    avg_response_seconds: int | None = None
+    unanswered: int
+    reputation_score: int
+    health_score: int
+    period: PeriodComparison
+    google_performance: GooglePerformance
+
+
+class TimeseriesPoint(BaseModel):
+    date: str
+    channel_id: str
+    reviews_count: int
+    avg_rating: float
+    positive_count: int
+    neutral_count: int
+    negative_count: int
+    replies_count: int
+    impressions_maps: int
+    website_clicks: int
+    call_clicks: int
+    direction_requests: int
+
+
+class TimeseriesResponse(BaseModel):
+    points: list[TimeseriesPoint]
+
+
+class ReviewInsightItem(BaseModel):
+    id: str
+    channel_id: str
+    review_id: str
+    rating: int
+    review_text: str | None = None
+    reviewer_name: str | None = None
+    sentiment: str
+    sentiment_score: float
+    topics: list[Any]
+    products: list[Any]
+    problems: list[Any]
+    replied: bool
+    replied_at: datetime | None = None
+    review_updated_at: datetime | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ReviewInsightListResponse(BaseModel):
+    total: int
+    items: list[ReviewInsightItem]
+
+
+# ── Understand pillar ──────────────────────────────────────────────────
+
+class TopicStat(BaseModel):
+    name: str
+    mentions: int
+    positive: int
+    neutral: int
+    negative: int
+    positive_pct: float
+    trend_pct: float | None = None
+    emerging: bool
+
+
+class TopicsResponse(BaseModel):
+    days: int
+    topics: list[TopicStat]
+    positive_topics: list[str]
+    negative_topics: list[str]
+
+
+class ProblemStat(BaseModel):
+    name: str
+    mentions: int
+    severity: str
+    trend_pct: float | None = None
+    status: str
+    impact_score: float
+
+
+class ProblemsResponse(BaseModel):
+    days: int
+    problems: list[ProblemStat]
+
+
+class ProductStat(BaseModel):
+    name: str
+    mentions: int
+    positive: int
+    negative: int
+    positive_pct: float
+    avg_rating: float | None = None
+    trend_pct: float | None = None
+    emerging: bool
+
+
+class ProductsResponse(BaseModel):
+    days: int
+    products: list[ProductStat]
+    most_loved: str | None = None
+    most_criticized: str | None = None
+    fastest_growing: str | None = None
+
+
+# ── Grow pillar ────────────────────────────────────────────────────────
+
+class VisibilityResponse(BaseModel):
+    days: int
+    impressions_maps: int
+    impressions_trend_pct: float | None = None
+    customer_actions: int
+    actions_trend_pct: float | None = None
+    click_through_pct: float | None = None
+
+
+class ActionStat(BaseModel):
+    total: int
+    trend_pct: float | None = None
+
+
+class AcquisitionResponse(BaseModel):
+    days: int
+    website_clicks: ActionStat
+    call_clicks: ActionStat
+    direction_requests: ActionStat
+    customer_actions: ActionStat
+
+
+class Opportunity(BaseModel):
+    priority: int
+    type: str
+    title: str
+    detail: str
+
+
+class OpportunitiesResponse(BaseModel):
+    days: int
+    opportunities: list[Opportunity]

@@ -66,13 +66,22 @@ async def verify_webhook_signature(
 
 
 async def create_channel(body: ChannelCreate, user: User, db: AsyncSession) -> Channel:
+    import json as _json
+
+    metadata: dict = {}
+    if body.location_id:
+        metadata["location_id"] = body.location_id
+
     channel = Channel(
         id=str(uuid.uuid4()),
         user_id=user.id,
         platform=body.platform,
-        platform_user_id=body.platform_user_id,
+        platform_user_id=body.platform_user_id or "",
         display_name=body.display_name,
         access_token=encrypt_token(body.access_token) if body.access_token else None,
+        refresh_token=encrypt_token(body.refresh_token) if body.refresh_token else None,
+        webhook_secret=body.webhook_secret or None,
+        metadata_json=_json.dumps(metadata) if metadata else None,
     )
     db.add(channel)
     await db.commit()

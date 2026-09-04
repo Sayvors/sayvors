@@ -14,6 +14,7 @@ from .modules.channels.router import router as channels_router
 from .modules.redis.router import router as redis_router
 from .modules.kafka.router import router as kafka_router
 from .modules.rag.router import router as rag_router
+from .modules.analytics.router import router as analytics_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
 
@@ -97,6 +98,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Schedule periodic retention cleanup (startup-only runs never fire again
+    # on long-lived pods)
+    import asyncio
+    from .modules.auth.service import run_retention_loop
+    retention_task = asyncio.create_task(run_retention_loop())
+
+    # Start the Google Reviews auto-reply polling worker
+    from .modules.channels.reviews_worker import run_google_reviews_worker
+    reviews_task = asyncio.create_task(run_google_reviews_worker())
+
+    # Start the analytics pipeline: Kafka consumer (review enrichment +
+    # daily rollups) and Google performance metrics sync worker
+    from .modules.analytics.consumer import run_analytics_consumer
+    from .modules.analytics.performance import run_performance_sync_worker
+    analytics_consumer_task = asyncio.create_task(run_analytics_consumer())
+    performance_sync_task = asyncio.create_task(run_performance_sync_worker())
+
     # Start the outbox worker (drains events to Kafka)
     from .modules.outbox.worker import OutboxWorker
     outbox_worker = OutboxWorker()
@@ -105,6 +123,10 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    retention_task.cancel()
+    reviews_task.cancel()
+    analytics_consumer_task.cancel()
+    performance_sync_task.cancel()
     await outbox_worker.stop()
     try:
         from .modules.kafka.client import get_kafka_producer
@@ -136,6 +158,7 @@ app.include_router(tts_router)
 app.include_router(stt_router)
 app.include_router(llm_router)
 app.include_router(channels_router)
+app.include_router(analytics_router)
 app.include_router(redis_router)
 app.include_router(kafka_router)
 app.include_router(rag_router)
