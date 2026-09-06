@@ -87,7 +87,7 @@ export default function Greeting({ name }: { name: string }) {
 function LogoTailCursor() {
   return (
     <svg
-      viewBox="0 0 20 20"
+      viewBox="0 0 26 20"
       aria-hidden
       className="ml-1 inline-block h-[0.95em] w-auto align-[-0.12em]"
     >
@@ -98,19 +98,27 @@ function LogoTailCursor() {
           <stop offset="100%" stopColor="#ff4f6e" />
         </linearGradient>
       </defs>
-      <path
-        d="M8 5.5 Q12.5 10 8 14.5"
+      <circle
+        cx="8"
+        cy="10"
+        r="6.5"
         fill="none"
         stroke="url(#sayvors-tail)"
-        strokeWidth="2.4"
+        strokeWidth="3"
+      />
+      <path
+        d="M18 5.5 Q22 10 18 14.5"
+        fill="none"
+        stroke="url(#sayvors-tail)"
+        strokeWidth="2.6"
         strokeLinecap="round"
         className="animate-signal"
       />
       <path
-        d="M12.5 3 Q18.5 10 12.5 17"
+        d="M21 3 Q27 10 21 17"
         fill="none"
         stroke="url(#sayvors-tail)"
-        strokeWidth="2.4"
+        strokeWidth="2.6"
         strokeLinecap="round"
         className="animate-signal-delay"
       />
