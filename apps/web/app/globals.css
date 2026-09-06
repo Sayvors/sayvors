@@ -62,3 +62,29 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #c4b5fd80;
 }
+
+/* Logo-tail typing cursor: the signal arcs radiate in sequence */
+@keyframes signal-ping {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.animate-signal {
+  animation: signal-ping 1.6s ease-in-out infinite;
+}
+
+.animate-signal-delay {
+  animation: signal-ping 1.6s ease-in-out 0.45s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-signal,
+  .animate-signal-delay {
+    animation: none;
+  }
+}
