@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useTheme } from "@/components/ThemeProvider";
-import { useAuth } from "@/lib/auth-context";
 
 const languages = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -16,23 +15,18 @@ const languages = [
 
 export default function Header() {
   const { theme, toggle } = useTheme();
-  const { user, logout } = useAuth();
   const [searchFocused, setSearchFocused] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const [lang, setLang] = useState(languages[0]);
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const langRef = useRef<HTMLDivElement>(null);
-  const profileRef = useRef<HTMLDivElement>(null);
+  const createRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-
-  const initials = user
-    ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U"
-    : "U";
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false);
-      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
+      if (createRef.current && !createRef.current.contains(e.target as Node)) setCreateOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -113,6 +107,29 @@ export default function Header() {
 
         <div className="mx-1 h-5 w-px bg-deep-violet/[0.08]" />
 
+        {/* Quick create */}
+        <div className="relative" ref={createRef}>
+          <button
+            onClick={() => setCreateOpen(!createOpen)}
+            aria-label="Create new"
+            aria-expanded={createOpen}
+            title="Create new"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
+          >
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+              <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+            </svg>
+          </button>
+          {createOpen && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white py-1 shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
+              <CreateMenuItem label="New agent" href="/dashboard/agents/create" />
+              <CreateMenuItem label="New databank" href="/dashboard/databank" />
+              <CreateMenuItem label="New channel" href="/dashboard/channels" />
+              <CreateMenuItem label="New automation" href="/dashboard/automations" />
+            </div>
+          )}
+        </div>
+
         {/* Notifications */}
         <button
           aria-label="Notifications"
@@ -187,89 +204,47 @@ export default function Header() {
 
         <div className="mx-1 h-5 w-px bg-deep-violet/[0.08]" />
 
-        {/* Profile dropdown */}
-        <div className="relative" ref={profileRef}>
-          <button
-            onClick={() => setProfileOpen(!profileOpen)}
-            aria-label="Account menu"
-            aria-expanded={profileOpen}
-            className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 outline-none transition hover:bg-deep-violet/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/30"
-          >
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-deep-violet to-magenta text-[10px] font-semibold text-white shadow-sm shadow-deep-violet/20">
-              {initials}
-            </div>
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`h-3 w-3 text-ink/30 transition-transform ${profileOpen ? "rotate-180" : ""} dark:text-fog/30`}>
-              <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          {profileOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
-              <div className="border-b border-deep-violet/[0.06] px-3 py-2.5">
-                <p className="text-[13px] font-medium text-ink dark:text-fog">
-                  {user ? `${user.first_name} ${user.last_name}` : "User"}
-                </p>
-                <p className="text-[11px] text-ink/40 dark:text-fog/40">
-                  {user?.email ?? ""}
-                </p>
-              </div>
-              <div className="py-1">
-                <ProfileMenuItem icon={<UserIcon />} label="My profile" href="/dashboard/profile" />
-                <ProfileMenuItem icon={<HelpIcon />} label="Help & support" />
-              </div>
-              <div className="border-t border-deep-violet/[0.06] py-1">
-                <ProfileMenuItem icon={<LogoutIcon />} label="Sign out" danger onClick={() => logout()} />
-              </div>
-            </div>
-          )}
-        </div>
+        {/* Settings */}
+        <Link
+          href="/dashboard/settings"
+          aria-label="Settings"
+          title="Settings"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" />
+          </svg>
+        </Link>
+
+        {/* Help */}
+        <Link
+          href="/dashboard/docs"
+          aria-label="Help and documentation"
+          title="Help and documentation"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        </Link>
       </div>
     </header>
   );
 }
 
-function ProfileMenuItem({ icon, label, href, danger, onClick }: { icon: React.ReactNode; label: string; href?: string; danger?: boolean; onClick?: () => void }) {
-  const className = `flex w-full items-center gap-2.5 px-3 py-2 text-[12px] transition hover:bg-deep-violet/[0.04] focus-visible:bg-deep-violet/[0.04] focus-visible:outline-none ${danger ? "text-coral" : "text-ink/60 dark:text-fog/60"}`;
-  if (href) {
-    return (
-      <Link href={href} className={className}>
-        {icon}
-        {label}
-      </Link>
-    );
-  }
+function CreateMenuItem({ label, href }: { label: string; href: string }) {
   return (
-    <button onClick={onClick} className={className}>
-      {icon}
+    <Link
+      href={href}
+      className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-ink/60 transition hover:bg-deep-violet/[0.04] hover:text-ink focus-visible:bg-deep-violet/[0.04] focus-visible:outline-none dark:text-fog/60 dark:hover:text-fog"
+    >
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3 w-3 text-ink/30 dark:text-fog/30">
+        <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+      </svg>
       {label}
-    </button>
-  );
-}
-
-function UserIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
-      <circle cx="12" cy="7" r="4" />
-    </svg>
-  );
-}
-
-function HelpIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-      <circle cx="12" cy="12" r="10" />
-      <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-      <line x1="12" y1="17" x2="12.01" y2="17" />
-    </svg>
-  );
-}
-
-function LogoutIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-      <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
-      <polyline points="16 17 21 12 16 7" />
-      <line x1="21" y1="12" x2="9" y2="12" />
-    </svg>
+    </Link>
   );
 }

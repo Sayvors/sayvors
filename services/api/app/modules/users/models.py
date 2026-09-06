@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -22,6 +22,11 @@ class User(Base):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    business_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    theme: Mapped[str] = mapped_column(String(20), default="light")
+    language: Mapped[str] = mapped_column(String(10), default="en")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

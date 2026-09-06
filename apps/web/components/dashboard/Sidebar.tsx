@@ -3,7 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@/lib/auth-context";
 
 const bottomNav = [
   { label: "Dashboard", icon: <LayoutIcon />, href: "/dashboard" },
@@ -22,7 +23,34 @@ function isActive(pathname: string, href: string) {
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
+  const { user, logout } = useAuth();
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const initials = user
+    ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U"
+    : "U";
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset transient menu on navigation
+    setMenuOpen(false);
+  }, [pathname]);
 
   return (
     <aside
@@ -76,24 +104,88 @@ export default function Sidebar() {
         </div>
       </nav>
 
-      {/* Collapse */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        className="flex h-9 items-center justify-center border-t border-white/[0.08] text-white/25 outline-none transition hover:text-white/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-light/60"
-      >
-        <svg
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          className={`h-3.5 w-3.5 transition-transform ${collapsed ? "rotate-180" : ""}`}
-        >
-          <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
+      {/* Account + collapse */}
+      <div ref={menuRef} className="relative border-t border-white/[0.08]">
+        {menuOpen && (
+          <div
+            className={`absolute bottom-full z-50 mb-2 overflow-hidden rounded-lg border border-white/10 bg-[#221b4d] shadow-xl ${
+              collapsed ? "left-12 w-48" : "left-2 right-2"
+            }`}
+          >
+            <div className="border-b border-white/[0.08] px-3 py-2.5">
+              <p className="truncate text-[13px] font-medium text-white">
+                {user ? `${user.first_name} ${user.last_name}` : "User"}
+              </p>
+              <p className="truncate text-[11px] text-white/40">{user?.email ?? ""}</p>
+            </div>
+            <div className="py-1">
+              <SidebarMenuLink href="/dashboard/profile" label="My profile" />
+              <SidebarMenuLink href="/dashboard/settings" label="Settings" />
+            </div>
+            <div className="border-t border-white/[0.08] py-1">
+              <button
+                onClick={() => logout()}
+                className="flex w-full items-center px-3 py-2 text-[12px] text-coral transition hover:bg-white/[0.06]"
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        )}
+        <div className={`flex items-center gap-1 p-2 ${collapsed ? "flex-col" : ""}`}>
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label="Account menu"
+            aria-expanded={menuOpen}
+            title={collapsed ? (user ? `${user.first_name} ${user.last_name}` : "Account") : undefined}
+            className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
+              collapsed ? "justify-center" : ""
+            }`}
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-light to-magenta text-[10px] font-semibold text-white">
+              {initials}
+            </span>
+            {!collapsed && (
+              <span className="min-w-0 flex-1 text-left">
+                <span className="block truncate text-[12px] font-medium text-white">
+                  {user ? `${user.first_name} ${user.last_name}` : "User"}
+                </span>
+                <span className="block truncate text-[10px] text-white/40">
+                  {user?.email ?? ""}
+                </span>
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/25 outline-none transition hover:bg-white/[0.08] hover:text-white/50 focus-visible:ring-2 focus-visible:ring-violet-light/60"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              className={`h-3.5 w-3.5 transition-transform ${collapsed ? "rotate-180" : ""}`}
+            >
+              <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
     </aside>
+  );
+}
+
+function SidebarMenuLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
+      className="flex w-full items-center px-3 py-2 text-[12px] text-white/60 transition hover:bg-white/[0.06] hover:text-white"
+    >
+      {label}
+    </Link>
   );
 }
 

@@ -28,6 +28,7 @@ from app.modules.rag import models as rag_models  # noqa: F401
 from app.modules.analytics import models as analytics_models  # noqa: F401
 from app.modules.auth import models as auth_models  # noqa: F401
 from app.modules.outbox import models as outbox_models  # noqa: F401
+from app.modules.profile import models as profile_models  # noqa: F401
 
 target_metadata = Base.metadata
 
