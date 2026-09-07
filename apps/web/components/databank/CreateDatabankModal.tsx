@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 
-type SourceType = "files" | "crawler" | "empty";
+type SourceType = "files" | "crawler" | "database" | "empty";
 
 interface CreateDatabankModalProps {
   isOpen: boolean;
@@ -12,7 +12,7 @@ interface CreateDatabankModalProps {
 }
 
 export interface SourceConfig {
-  files?: string[];
+  files?: File[];
   crawlerUrl?: string;
   crawlerDepth?: number;
 }
@@ -29,7 +29,7 @@ export default function CreateDatabankModal({ isOpen, onClose, onCreate, creatin
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [sourceType, setSourceType] = useState<SourceType | null>(null);
-  const [files, setFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
   const [crawlerUrl, setCrawlerUrl] = useState("");
   const [crawlerDepth, setCrawlerDepth] = useState(2);
 
@@ -166,6 +166,7 @@ export default function CreateDatabankModal({ isOpen, onClose, onCreate, creatin
               {[
                 { v: "files" as const, t: "Upload files", d: "PDF, TXT, DOCX — up to 50MB each" },
                 { v: "crawler" as const, t: "Web crawler", d: "Scrape a website by URL" },
+                { v: "database" as const, t: "Live database", d: "PostgreSQL or MySQL — query & ingest" },
                 { v: "empty" as const, t: "Start empty", d: "Add sources later from the databank page" },
               ].map((opt) => {
                 const selected = sourceType === opt.v;
@@ -198,10 +199,28 @@ export default function CreateDatabankModal({ isOpen, onClose, onCreate, creatin
               {sourceType === "files" && (
                 <div>
                   <label className="block text-[11px] font-semibold text-ink/50 mb-1.5">Files</label>
-                  <div className="rounded-xl border-2 border-dashed border-ink/15 bg-ink/[0.03] p-4 text-center">
-                    <p className="text-[12px] text-ink/60">Drop files here or click to browse</p>
-                    <p className="mt-1 text-[10px] text-ink/40">{files.length === 0 ? "No files selected" : `${files.length} file(s) selected`}</p>
-                  </div>
+                  <label className="block cursor-pointer rounded-xl border-2 border-dashed border-ink/15 bg-ink/[0.03] p-4 text-center transition hover:border-deep-violet/40">
+                    <p className="text-[12px] font-semibold text-ink/60">Drop files here or click to browse</p>
+                    <p className="mt-1 text-[10px] text-ink/40">
+                      {files.length === 0 ? "PDF, DOCX, TXT, MD, CSV, XLSX, SQL" : `${files.length} file(s) selected`}
+                    </p>
+                    <input
+                      type="file"
+                      multiple
+                      accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.xls,.sql"
+                      onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+                      className="hidden"
+                    />
+                  </label>
+                  {files.length > 0 && (
+                    <ul className="mt-2 max-h-24 space-y-1 overflow-y-auto">
+                      {files.map((f) => (
+                        <li key={`${f.name}-${f.size}`} className="truncate text-[11px] text-ink/55">
+                          {f.name}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
               {sourceType === "crawler" && (
@@ -234,6 +253,14 @@ export default function CreateDatabankModal({ isOpen, onClose, onCreate, creatin
                   <p className="text-[12px] text-ink/60">You can add sources later from the databank detail page.</p>
                 </div>
               )}
+              {sourceType === "database" && (
+                <div className="rounded-xl bg-ink/[0.03] p-4 text-center">
+                  <p className="text-[12px] text-ink/60">
+                    After creation, open the <span className="font-bold">Databases</span> tab to connect
+                    PostgreSQL or MySQL and ingest query results.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -254,6 +281,7 @@ export default function CreateDatabankModal({ isOpen, onClose, onCreate, creatin
                 <p className="text-[12px] text-ink/70">
                   {sourceType === "files" && `${files.length} file(s) to upload`}
                   {sourceType === "crawler" && `Crawl ${crawlerUrl} (depth ${crawlerDepth})`}
+                  {sourceType === "database" && "Live database — connect after creation"}
                   {sourceType === "empty" && "Start empty — add sources later"}
                 </p>
               </div>

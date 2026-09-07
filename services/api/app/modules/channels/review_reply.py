@@ -49,7 +49,7 @@ async def _build_context(config: AutoReplyConfig, review_text: str, db: AsyncSes
 
         # `search()` is scoped by databank_id (its `user` param is unused);
         # databank ownership was validated when the config was linked.
-        results = await rag_search(
+        results, _degraded = await rag_search(
             config.databank_id,
             SearchRequest(query=review_text[:500], top_k=3),
             None,  # type: ignore[arg-type]

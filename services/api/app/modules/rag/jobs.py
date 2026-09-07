@@ -8,7 +8,7 @@ from ...database import async_session
 from .cache import set_progress
 from .chunker import chunk_text
 from .embeddings import get_embedding_provider
-from .models import Document, DocumentChunk, IngestJob
+from .models import Document, DocumentChunk, IngestJob, ScrapeJob
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,7 @@ async def _worker_loop() -> None:
         if job_id:
             await _process_job(job_id)
         else:
+            await _process_pending_scrape()
             await asyncio.sleep(2)
 
 
@@ -178,6 +179,12 @@ async def _process_document_job(job: IngestJob, db) -> None:
     doc.chunk_count = len(chunks)
     await db.commit()
 
+    # Reprocessing must replace chunks, not duplicate them.
+    await db.execute(
+        DocumentChunk.__table__.delete().where(DocumentChunk.document_id == doc.id)
+    )
+    await db.commit()
+
     await _embed_and_store(doc, chunks, job)
 
 
@@ -223,6 +230,12 @@ async def _process_document_job_single(doc, job, db, index, total) -> None:
     doc.chunk_count = len(chunks)
     await db.commit()
 
+    # Reprocessing must replace chunks, not duplicate them.
+    await db.execute(
+        DocumentChunk.__table__.delete().where(DocumentChunk.document_id == doc.id)
+    )
+    await db.commit()
+
     embed_progress = base_progress + (doc_progress * 2) // 3
     job.stage = f"Embedding {doc.filename}..."
     job.progress = embed_progress
@@ -230,3 +243,126 @@ async def _process_document_job_single(doc, job, db, index, total) -> None:
     await set_progress(str(job.id), embed_progress, job.stage)
 
     await _embed_and_store(doc, chunks, job)
+
+
+async def _process_pending_scrape() -> None:
+    """Claim and run one pending crawl job (single page or same-domain BFS)."""
+    import hashlib
+    import os
+    import uuid
+
+    from ...config import settings
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(ScrapeJob).where(ScrapeJob.status == "pending").order_by(ScrapeJob.created_at).limit(1)
+        )
+        job = result.scalar_one_or_none()
+        if not job:
+            return
+        job.status = "running"
+        await db.commit()
+        job_id, databank_id, user_id = job.id, job.databank_id, job.user_id
+        start_url, crawl_mode, max_pages = job.url, job.crawl_mode, max(1, min(job.max_pages, 500))
+
+    try:
+        pages = await asyncio.get_event_loop().run_in_executor(
+            None, _crawl_sync, start_url, crawl_mode, max_pages
+        )
+    except Exception as e:
+        logger.exception("Scrape job %s failed", job_id)
+        async with async_session() as db:
+            result = await db.execute(select(ScrapeJob).where(ScrapeJob.id == job_id))
+            failed = result.scalar_one_or_none()
+            if failed:
+                failed.status = "failed"
+                failed.error = str(e)[:2000]
+                await db.commit()
+        return
+
+    async with async_session() as db:
+        created = 0
+        for url, text in pages:
+            if not text.strip():
+                continue
+            content = text.encode("utf-8")
+            doc = Document(
+                id=str(uuid.uuid4()),
+                databank_id=databank_id,
+                user_id=user_id,
+                filename=url[:500],
+                source_type="scrape",
+                source_url=url[:2000],
+                file_type="txt",
+                size_bytes=len(content),
+                status="pending",
+                content_hash=hashlib.sha256(content).hexdigest(),
+            )
+            db.add(doc)
+            await db.flush()
+            upload_dir = os.path.join(settings.UPLOAD_DIR, databank_id)
+            os.makedirs(upload_dir, exist_ok=True)
+            with open(os.path.join(upload_dir, f"{doc.id}.txt"), "wb") as f:
+                f.write(content)
+            created += 1
+        result = await db.execute(select(ScrapeJob).where(ScrapeJob.id == job_id))
+        done = result.scalar_one_or_none()
+        if done:
+            done.status = "completed"
+            done.pages_found = created
+            await db.commit()
+        logger.info("Scrape job %s: %d documents from %s", job_id, created, start_url)
+
+
+def _crawl_sync(start_url: str, crawl_mode: str, max_pages: int) -> list[tuple[str, str]]:
+    """Blocking crawl: fetch + trafilatura extract. Same-domain BFS for full mode."""
+    import trafilatura
+    from html.parser import HTMLParser
+    from urllib.parse import urljoin, urlparse
+    from urllib.request import Request, urlopen
+
+    class _Links(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.links: list[str] = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "a":
+                for k, v in attrs:
+                    if k == "href" and v:
+                        self.links.append(v)
+
+    def _fetch(url: str) -> str:
+        req = Request(url, headers={"User-Agent": "SayvorsBot/1.0"})
+        with urlopen(req, timeout=20) as resp:  # noqa: S310
+            return resp.read().decode("utf-8", errors="ignore")
+
+    base_netloc = urlparse(start_url).netloc
+    seen: set[str] = set()
+    queue = [start_url]
+    pages: list[tuple[str, str]] = []
+    depth = 1 if crawl_mode == "single" else max_pages
+
+    while queue and len(pages) < max_pages and len(seen) < max_pages:
+        url = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        try:
+            html = _fetch(url)
+        except Exception:
+            continue
+        text = trafilatura.extract(html) or ""
+        if text.strip():
+            pages.append((url, text))
+        if crawl_mode == "full" and len(pages) < depth:
+            parser = _Links()
+            try:
+                parser.feed(html)
+            except Exception:
+                continue
+            for link in parser.links:
+                full = urljoin(url, link).split("#")[0]
+                if urlparse(full).netloc == base_netloc and full not in seen:
+                    queue.append(full)
+    return pages

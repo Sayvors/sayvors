@@ -51,7 +51,6 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     def __init__(self):
         self.model = "text-embedding-3-small"
         self._dims = 1024
-
     def dimensions(self) -> int:
         return self._dims
 
@@ -77,6 +76,33 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
 _provider: EmbeddingProvider | None = None
 
 
+class GeminiEmbeddingProvider(EmbeddingProvider):
+    """Gemini embeddings (gemini-embedding-001, Matryoshka-truncated to 768d)."""
+
+    def __init__(self):
+        self.model = "gemini-embedding-001"
+        self._dims = 768
+
+    def dimensions(self) -> int:
+        return self._dims
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        from google import genai
+
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        batch_size = 100
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            resp = await client.aio.models.embed_content(
+                model=self.model,
+                contents=batch,
+                config={"output_dimensionality": self._dims},
+            )
+            all_embeddings.extend([list(e.values) for e in resp.embeddings])
+        return all_embeddings
+
+
 async def _check_ollama() -> bool:
     try:
         async with httpx.AsyncClient(timeout=3) as client:
@@ -91,11 +117,26 @@ async def get_embedding_provider() -> EmbeddingProvider:
     if _provider is not None:
         return _provider
 
-    if await _check_ollama():
+    if settings.GEMINI_API_KEY:
+        _provider = GeminiEmbeddingProvider()
+    elif await _check_ollama():
         _provider = OllamaEmbeddingProvider()
     elif settings.OPENAI_API_KEY:
         _provider = OpenAIEmbeddingProvider()
     else:
-        _provider = OllamaEmbeddingProvider()
+        from ..llm.providers.base import ProviderError
+
+        raise ProviderError(
+            "embeddings",
+            "No embedding backend configured. Set GEMINI_API_KEY in .env "
+            "or start Ollama (bge-m3) locally.",
+            503,
+        )
 
     return _provider
+
+
+def reset_embedding_provider() -> None:
+    """Forget the cached provider (tests / key rotation)."""
+    global _provider
+    _provider = None

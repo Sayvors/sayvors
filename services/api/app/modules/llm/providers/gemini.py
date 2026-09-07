@@ -1,9 +1,24 @@
 from typing import AsyncIterator
 
 from google import genai
-from google.genai.types import Content, GenerateContentResponse, Part
+from google.genai.types import (
+    Content,
+    FunctionDeclaration,
+    GenerateContentResponse,
+    Part,
+    Tool,
+)
 
-from .base import LLMProvider, LLMMessage, LLMRequest, LLMResponse, LLMUsage, ProviderError
+from .base import (
+    LLMProvider,
+    LLMMessage,
+    LLMRequest,
+    LLMResponse,
+    LLMUsage,
+    ProviderError,
+    ToolCall,
+    ToolDefinition,
+)
 
 
 class GeminiProvider(LLMProvider):
@@ -30,7 +45,50 @@ class GeminiProvider(LLMProvider):
         }
         if req.system_prompt:
             config["system_instruction"] = req.system_prompt
+        if req.tools:
+            config["tools"] = [Tool(function_declarations=[
+                self._to_declaration(t) for t in req.tools
+            ])]
         return config
+
+    @staticmethod
+    def _to_declaration(tool: ToolDefinition) -> FunctionDeclaration:
+        properties = {}
+        for name, param in tool.parameters.items():
+            schema: dict = {"type": param.type.upper(), "description": param.description}
+            if param.enum:
+                schema["enum"] = param.enum
+            if param.items_type:
+                schema["items"] = {"type": param.items_type.upper()}
+            properties[name] = schema
+        return FunctionDeclaration(
+            name=tool.name,
+            description=tool.description,
+            parameters={
+                "type": "OBJECT",
+                "properties": properties,
+                "required": tool.required,
+            },
+        )
+
+    @staticmethod
+    def _parse_calls(response: GenerateContentResponse) -> tuple[str, list[ToolCall]]:
+        text_parts: list[str] = []
+        calls: list[ToolCall] = []
+        for candidate in response.candidates or []:
+            content = getattr(candidate, "content", None)
+            for part in (getattr(content, "parts", None) or []):
+                fn_call = getattr(part, "function_call", None)
+                if fn_call is not None:
+                    args = getattr(fn_call, "args", {}) or {}
+                    calls.append(ToolCall(
+                        name=getattr(fn_call, "name", ""),
+                        arguments=dict(args),
+                        call_id=getattr(fn_call, "id", "") or "",
+                    ))
+                elif getattr(part, "text", None):
+                    text_parts.append(part.text)
+        return "".join(text_parts), calls
 
     async def complete(self, req: LLMRequest) -> LLMResponse:
         try:
@@ -39,7 +97,9 @@ class GeminiProvider(LLMProvider):
                 contents=self._build_contents(req),
                 config=self._build_config(req),
             )
-            text = response.text or ""
+            text, calls = self._parse_calls(response)
+            if not text:
+                text = response.text or ""
             usage_meta = response.usage_metadata
             usage = LLMUsage(
                 prompt_tokens=getattr(usage_meta, "prompt_token_count", 0) or 0,
@@ -51,8 +111,11 @@ class GeminiProvider(LLMProvider):
                 provider="gemini",
                 model=req.model,
                 usage=usage,
-                finish_reason="stop",
+                finish_reason="tool_calls" if calls else "stop",
+                tool_calls=calls,
             )
+        except ProviderError:
+            raise
         except Exception as e:
             status = self._map_error(e)
             raise ProviderError("gemini", str(e), status)

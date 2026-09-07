@@ -77,6 +77,39 @@ class DocumentChunk(Base):
     )
 
 
+class DataSource(Base):
+    """A live database connection (PostgreSQL / MySQL) attached to a databank.
+
+    Credentials are Fernet-encrypted at rest. The password never leaves the
+    server except inside an encrypted column — list endpoints omit it.
+    """
+
+    __tablename__ = "databank_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    databank_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("databanks.id"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    db_type: Mapped[str] = mapped_column(
+        Enum("postgres", "mysql", name="datasource_db_type"), default="postgres"
+    )
+    host: Mapped[str] = mapped_column(String(255), default="localhost")
+    port: Mapped[int] = mapped_column(Integer, default=5432)
+    database: Mapped[str] = mapped_column(String(255))
+    username: Mapped[str] = mapped_column(String(255))
+    password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class ScrapeJob(Base):
     __tablename__ = "scrape_jobs"
 

@@ -16,14 +16,14 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 async def hybrid_search(
     databank_id: str,
-    query_vector: list[float],
+    query_vector: list[float] | None,
     query_text: str,
     top_k: int,
     db: AsyncSession,
 ) -> list[dict]:
     # 1. Load all chunks for this databank (with embeddings)
     load_sql = text("""
-        SELECT id, content, document_id, metadata, embedding
+        SELECT id, content, document_id, metadata, embedding, embedding_model
         FROM document_chunks
         WHERE databank_id = :databank_id
           AND embedding IS NOT NULL
@@ -32,17 +32,22 @@ async def hybrid_search(
     result = await db.execute(load_sql, {"databank_id": databank_id})
     all_chunks = result.fetchall()
 
-    # 2. Vector search — in-memory cosine similarity
+    # 2. Vector search — in-memory cosine similarity.
+    # Rows embedded by a different model/dimensionality are skipped:
+    # cross-dim cosine scores are meaningless, not just noisy.
     vector_scores: dict[str, float] = {}
-    for row in all_chunks:
-        if not row.embedding:
-            continue
-        try:
-            chunk_vec = json.loads(row.embedding)
-            score = _cosine_similarity(query_vector, chunk_vec)
-            vector_scores[str(row.id)] = score
-        except (json.JSONDecodeError, TypeError):
-            continue
+    if query_vector:
+        for row in all_chunks:
+            if not row.embedding:
+                continue
+            try:
+                chunk_vec = json.loads(row.embedding)
+                if len(chunk_vec) != len(query_vector):
+                    continue
+                score = _cosine_similarity(query_vector, chunk_vec)
+                vector_scores[str(row.id)] = score
+            except (json.JSONDecodeError, TypeError):
+                continue
 
     # 3. Keyword search — PostgreSQL tsvector full-text
     keyword_sql = text("""
