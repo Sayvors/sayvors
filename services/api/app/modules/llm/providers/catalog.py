@@ -25,6 +25,7 @@ MODELS: list[ModelInfo] = [
     ModelInfo("grok:grok-3", "Grok-3", "grok", "grok-3", 131_072, 8_192),
     ModelInfo("grok:grok-3-mini", "Grok-3 Mini", "grok", "grok-3-mini", 131_072, 8_192),
     # ── Gemini (Google) ─────────────────────────────────
+    ModelInfo("gemini:gemini-3.6-flash", "Gemini 3.6 Flash", "gemini", "gemini-3.6-flash", 1_000_000, 65_536),
     ModelInfo("gemini:gemini-2.5-pro", "Gemini 2.5 Pro", "gemini", "gemini-2.5-pro", 1_000_000, 65_536),
     ModelInfo("gemini:gemini-2.5-flash", "Gemini 2.5 Flash", "gemini", "gemini-2.5-flash", 1_000_000, 65_536),
     ModelInfo("gemini:gemini-2.0-flash", "Gemini 2.0 Flash", "gemini", "gemini-2.0-flash", 1_000_000, 8_192),

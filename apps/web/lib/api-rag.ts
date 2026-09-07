@@ -140,6 +140,138 @@ export async function searchRag(databankId: string, query: string, topK?: number
   });
 }
 
+export interface AskTraceStep {
+  step: number;
+  thought: string;
+  tool: string | null;
+  args: Record<string, unknown>;
+  ms: number;
+  observation: string;
+}
+
+export interface AskCitation {
+  source: string;
+  kind: string;
+  detail: string;
+}
+
+export interface AskResponse {
+  answer: string;
+  citations: AskCitation[];
+  trace: AskTraceStep[];
+  steps_used: number;
+  model: string;
+}
+
+export async function askDatabank(databankId: string, question: string): Promise<AskResponse> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/ask`, {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
+}
+
 export async function deleteDocument(databankId: string, docId: string): Promise<void> {
   await apiFetch(`/api/v1/rag/databanks/${databankId}/documents/${docId}`, { method: "DELETE" });
+}
+
+/* ── Live database sources ─────────────────────────── */
+
+export interface DatabaseConnection {
+  db_type: "postgres" | "mysql";
+  host: string;
+  port?: number | null;
+  database: string;
+  username: string;
+  password?: string;
+}
+
+export interface DatabaseSource extends DatabaseConnection {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface TablePreview {
+  table: string;
+  columns: string[];
+  rows: unknown[][];
+  truncated: boolean;
+}
+
+export interface QueryResult {
+  columns: string[];
+  rows: unknown[][];
+  row_count: number;
+  truncated: boolean;
+}
+
+export async function testDatabaseSource(
+  databankId: string,
+  conn: DatabaseConnection
+): Promise<{ ok: boolean; version?: string | null; error?: string | null }> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/sources/test`, {
+    method: "POST",
+    body: JSON.stringify(conn),
+  });
+}
+
+export async function saveDatabaseSource(
+  databankId: string,
+  conn: DatabaseConnection & { name: string }
+): Promise<DatabaseSource> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/sources`, {
+    method: "POST",
+    body: JSON.stringify(conn),
+  });
+}
+
+export async function listDatabaseSources(databankId: string): Promise<{ sources: DatabaseSource[]; total: number }> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/sources`);
+}
+
+export async function deleteDatabaseSource(databankId: string, sourceId: string): Promise<void> {
+  await apiFetch(`/api/v1/rag/databanks/${databankId}/sources/${sourceId}`, { method: "DELETE" });
+}
+
+export async function fetchSourceSchema(
+  databankId: string,
+  sourceId: string
+): Promise<{ source_id: string; tables: { name: string; columns: number }[] }> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/sources/${sourceId}/schema`);
+}
+
+export async function previewSourceTable(
+  databankId: string,
+  sourceId: string,
+  table: string,
+  limit = 20
+): Promise<TablePreview> {
+  return apiFetch(
+    `/api/v1/rag/databanks/${databankId}/sources/${sourceId}/tables/${encodeURIComponent(table)}?limit=${limit}`
+  );
+}
+
+export async function runSourceQuery(
+  databankId: string,
+  sourceId: string,
+  sql: string,
+  limit = 200
+): Promise<QueryResult> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/sources/${sourceId}/query`, {
+    method: "POST",
+    body: JSON.stringify({ sql, limit }),
+  });
+}
+
+export async function ingestSourceQuery(
+  databankId: string,
+  sourceId: string,
+  sql: string,
+  name?: string,
+  limit = 500
+): Promise<unknown> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/sources/${sourceId}/ingest`, {
+    method: "POST",
+    body: JSON.stringify({ sql, name, limit }),
+  });
 }

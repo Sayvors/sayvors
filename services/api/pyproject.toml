@@ -27,6 +27,7 @@ dependencies = [
     "trafilatura>=2.0",
     "ollama>=0.4",
     "cryptography>=43.0",
+    "aiomysql>=0.2",
 ]
 
 [project.optional-dependencies]
