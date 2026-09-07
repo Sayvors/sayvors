@@ -152,6 +152,9 @@ async def delete_document(doc_id: str, user: User, db: AsyncSession) -> bool:
     await db.execute(
         DocumentChunk.__table__.delete().where(DocumentChunk.document_id == doc_id)
     )
+    await db.execute(
+        IngestJob.__table__.delete().where(IngestJob.document_id == doc_id)
+    )
     await db.delete(doc)
     await db.commit()
     return True
