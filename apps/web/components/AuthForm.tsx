@@ -285,6 +285,10 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     <>
       {/* header */}
       <div className="mb-8">
+        <Link href="/" aria-label="Sayvors home" className="mb-6 inline-flex items-center gap-2">
+          <Image src="/Sayvors_Icon.png" alt="" width={36} height={26} className="h-6 w-auto" />
+          <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={130} height={22} className="h-[22px] w-auto" priority />
+        </Link>
         <h1 className="text-[22px] font-semibold tracking-tight text-ink">
           {isLogin ? "Sign in" : stepTitle[step]}
         </h1>
