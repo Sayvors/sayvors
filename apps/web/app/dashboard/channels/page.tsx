@@ -28,8 +28,25 @@ interface AutoReply {
   custom_instructions?: string | null;
 }
 
+interface LocalithListing {
+  id: string;
+  name?: string;
+  google_id?: string;
+  source?: string;
+}
+
+interface LocalithConnection {
+  id: string;
+  listing_id: string;
+  listing_name: string;
+  listing_google_id: string | null;
+  last_synced_at: string | null;
+  created_at: string;
+}
+
 const GOOGLE_ERRORS: Record<string, string> = {
   no_business_account: "No Google Business Profile was found on that Google account.",
+  accounts_unavailable: "Google couldn't list your Business Profiles just now (rate limit or permissions). Please try again in a minute.",
   token_exchange_failed: "Google rejected the connection. Please try again.",
   invalid_state: "The connect session expired. Please click Connect again.",
   missing_code: "Google did not return an authorization code. Please try again.",
@@ -48,6 +65,13 @@ function ConnectHub() {
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [urlDismissed, setUrlDismissed] = useState(false);
+
+  // ── Localith state ──
+  const [localithListing, setLocalithListing] = useState<LocalithConnection | null>(null);
+  const [localithListings, setLocalithListings] = useState<LocalithListing[]>([]);
+  const [localithOpen, setLocalithOpen] = useState(false);
+  const [localithPick, setLocalithPick] = useState<string | null>(null);
+  const [localithBusy, setLocalithBusy] = useState(false);
 
   const connectedCount = params.get("google_connected");
   const googleError = params.get("google_error");
@@ -79,6 +103,20 @@ function ConnectHub() {
     } catch {
       /* history unavailable */
     }
+  }, []);
+
+  // ── Fetch existing Localith connection on mount ──
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const conn = await apiFetch("/api/v1/integrations/localith/connection");
+        if (!cancelled) setLocalithListing(conn);
+      } catch {
+        /* not connected — fine */
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -160,6 +198,58 @@ function ConnectHub() {
     }
   };
 
+  // ── Localith: fetch available listings ──
+  const openLocalithListings = async () => {
+    setLocalithOpen(true);
+    if (localithListings.length > 0) return;
+    try {
+      const data = await apiFetch("/api/v1/integrations/localith/listings");
+      setLocalithListings(data.listings ?? []);
+    } catch {
+      setBanner({ kind: "err", text: "Could not fetch Localith listings." });
+      setLocalithOpen(false);
+    }
+  };
+
+  // ── Localith: save chosen listing ──
+  const saveLocalith = async () => {
+    if (!localithPick) return;
+    const chosen = localithListings.find((l) => (l.id ?? l.google_id) === localithPick);
+    if (!chosen) return;
+    setLocalithBusy(true);
+    try {
+      const conn = await apiFetch("/api/v1/integrations/localith/connection", {
+        method: "PUT",
+        body: JSON.stringify({
+          listing_id: chosen.id ?? chosen.google_id,
+          listing_name: chosen.name ?? "Unknown listing",
+          listing_google_id: chosen.google_id ?? null,
+        }),
+      });
+      setLocalithListing(conn);
+      setLocalithOpen(false);
+      setBanner({ kind: "ok", text: "Localith connected!" });
+    } catch {
+      setBanner({ kind: "err", text: "Could not save Localith connection." });
+    } finally {
+      setLocalithBusy(false);
+    }
+  };
+
+  // ── Localith: disconnect ──
+  const disconnectLocalith = async () => {
+    setLocalithBusy(true);
+    try {
+      await apiFetch("/api/v1/integrations/localith/connection", { method: "DELETE" });
+      setLocalithListing(null);
+      setBanner({ kind: "ok", text: "Localith disconnected." });
+    } catch {
+      setBanner({ kind: "err", text: "Could not disconnect Localith." });
+    } finally {
+      setLocalithBusy(false);
+    }
+  };
+
   const googleChannels = channels.filter((c) => c.platform === "google_reviews");
 
   return (
@@ -236,11 +326,85 @@ function ConnectHub() {
         </div>
         </div>
 
+        {/* Localith — review middleware (no Google approval needed) */}
+        {localithListing ? (
+          <div className="flex items-center gap-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-500/20 dark:bg-emerald-500/[0.06]">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-emerald-200/60 dark:ring-emerald-500/20">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-emerald-600">
+                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[14px] font-semibold text-emerald-800 dark:text-emerald-300">
+                Localith
+              </p>
+              <p className="truncate text-[12px] text-emerald-700/60 dark:text-emerald-300/60">
+                {localithListing.listing_name}
+              </p>
+            </div>
+            <button
+              onClick={disconnectLocalith}
+              disabled={localithBusy}
+              className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-500/10 disabled:opacity-50"
+            >
+              {localithBusy ? <LogoLoader size={14} /> : "Disconnect"}
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-[20px] text-white shadow-sm">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
+                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-[14px] font-semibold text-ink dark:text-fog">Localith</p>
+              <p className="text-[12px] text-ink/40 dark:text-fog/40">Import reviews via middleware</p>
+            </div>
+            {localithOpen ? (
+              <div className="flex items-center gap-2">
+                <select
+                  value={localithPick ?? ""}
+                  onChange={(e) => setLocalithPick(e.target.value || null)}
+                  className="w-48 rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[12px] text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                >
+                  <option value="">Select listing...</option>
+                  {localithListings.map((l) => (
+                    <option key={l.id ?? l.google_id} value={l.id ?? l.google_id}>
+                      {l.name ?? l.id}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={saveLocalith}
+                  disabled={!localithPick || localithBusy}
+                  className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {localithBusy ? <span className="inline-flex items-center gap-1"><LogoLoader size={12} /> </span> : "Save"}
+                </button>
+                <button
+                  onClick={() => setLocalithOpen(false)}
+                  className="rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink/40 transition hover:bg-ink/[0.04] dark:text-fog/40"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={openLocalithListings}
+                className="rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90"
+              >
+                Connect
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Coming soon */}
         {[
-          { name: "Instagram", icon: "📸", color: "from-pink-500 to-purple-500" },
-          { name: "Facebook Messenger", icon: "👤", color: "from-blue-500 to-blue-600" },
-          { name: "X / Twitter", icon: "🐦", color: "from-sky-400 to-blue-500" },
+          { name: "Instagram", icon: "\u{1F4F8}", color: "from-pink-500 to-purple-500" },
+          { name: "Facebook Messenger", icon: "\u{1F464}", color: "from-blue-500 to-blue-600" },
+          { name: "X / Twitter", icon: "\u{1F426}", color: "from-sky-400 to-blue-500" },
         ].map((c) => (
           <div
             key={c.name}

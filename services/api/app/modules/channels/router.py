@@ -370,7 +370,9 @@ async def google_callback(
         accounts = await list_accounts(access_token)
     except GoogleReviewsError as e:
         logger.error("Google accounts fetch failed: %s", e)
-        return RedirectResponse(f"{base}?google_error=no_business_account")
+        # Don't lie to the user: surface the real cause (quota, auth, etc.)
+        # instead of the misleading "no_business_account" error.
+        return RedirectResponse(f"{base}?google_error=accounts_unavailable&detail={e.status_code}")
 
     if not accounts:
         return RedirectResponse(f"{base}?google_error=no_business_account")
