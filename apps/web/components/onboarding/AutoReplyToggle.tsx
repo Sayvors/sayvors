@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
+import LogoLoader from "@/components/LogoLoader";
 
 interface AutoReplyToggleProps {
   onComplete: () => void;
@@ -197,7 +198,9 @@ export default function AutoReplyToggle({ onComplete }: AutoReplyToggleProps) {
         disabled={saving}
         className="rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-30 disabled:cursor-not-allowed"
       >
-        {saving ? "Saving…" : "Save & Activate"}
+        {saving ? (
+          <span className="inline-flex items-center gap-2"><LogoLoader size={16} /> Saving…</span>
+        ) : "Save & Activate"}
       </button>
     </div>
   );

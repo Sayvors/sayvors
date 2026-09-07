@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import LogoLoader from "@/components/LogoLoader";
 
 export default function ProfileAbout({
   bio,
@@ -66,7 +67,9 @@ export default function ProfileAbout({
               disabled={saving || !dirty}
               className="rounded-lg bg-deep-violet px-3 py-1.5 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save"}
+              {saving ? (
+                <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving…</span>
+              ) : "Save"}
             </button>
           </div>
         )}

@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useEffect, useState, Suspense } from "react";
+import LogoLoader from "@/components/LogoLoader";
 
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
@@ -34,8 +35,7 @@ function VerifyEmailContent() {
       <div className="w-full max-w-sm rounded-2xl border border-ink/[0.06] bg-white p-8 text-center dark:border-fog/[0.06] dark:bg-ink">
         {status === "loading" && (
           <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-deep-violet border-t-transparent" />
-            <p className="text-[13px] text-ink/50 dark:text-fog/50">Verifying your email...</p>
+            <LogoLoader size={40} label="Verifying your email…" showText />
           </div>
         )}
         {status === "success" && (
@@ -73,7 +73,7 @@ export default function VerifyEmailPage() {
   return (
     <Suspense fallback={
       <div className="flex min-h-screen items-center justify-center bg-fog dark:bg-ink">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-deep-violet border-t-transparent" />
+        <LogoLoader size={40} />
       </div>
     }>
       <VerifyEmailContent />

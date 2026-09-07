@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { apiFetch, uploadFile } from "@/lib/api-rag";
+import LogoLoader from "@/components/LogoLoader";
 
 interface DatabankStepProps {
   onComplete: () => void;
@@ -97,7 +98,9 @@ export default function DatabankStep({ onComplete }: DatabankStepProps) {
         disabled={!databankName.trim() || submitting}
         className="rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-30 disabled:cursor-not-allowed"
       >
-        {submitting ? "Creating…" : files.length > 0 ? `Create & upload ${files.length} file${files.length === 1 ? "" : "s"}` : "Create Databank"}
+        {submitting ? (
+          <span className="inline-flex items-center gap-2"><LogoLoader size={16} /> Creating…</span>
+        ) : files.length > 0 ? `Create & upload ${files.length} file${files.length === 1 ? "" : "s"}` : "Create Databank"}
       </button>
     </div>
   );

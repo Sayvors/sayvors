@@ -695,12 +695,17 @@ async def generate_reply_for_review(
 
     from .review_reply import generate_review_reply
 
-    try:
-        reply_text = await generate_review_reply(
-            config, body.rating, body.review_text, body.reviewer_name, db
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+    custom_text = (body.custom_text or "").strip()
+    if custom_text:
+        # Merchant typed the reply themselves — skip the LLM entirely.
+        reply_text = custom_text
+    else:
+        try:
+            reply_text = await generate_review_reply(
+                config, body.rating, body.review_text, body.reviewer_name, db
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
 
     reply = ReviewReply(
         id=str(uuid.uuid4()),

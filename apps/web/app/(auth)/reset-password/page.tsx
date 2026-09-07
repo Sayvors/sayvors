@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { validatePassword } from "@/lib/validation";
 import { Suspense } from "react";
+import LogoLoader from "@/components/LogoLoader";
 
 function ResetPasswordContent() {
   const searchParams = useSearchParams();
@@ -126,7 +127,7 @@ export default function ResetPasswordPage() {
   return (
     <Suspense fallback={
       <div className="flex min-h-screen items-center justify-center bg-fog dark:bg-ink">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-deep-violet border-t-transparent" />
+        <LogoLoader size={40} />
       </div>
     }>
       <ResetPasswordContent />
