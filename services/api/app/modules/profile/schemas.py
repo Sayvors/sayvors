@@ -28,7 +28,7 @@ class ProfileUpdateRequest(BaseModel):
 
 class PreferencesUpdateRequest(BaseModel):
     theme: str = Field(..., pattern="^(light|dark|system)$")
-    language: str = Field(..., pattern="^(en|es|fr|de|ar|zh|ja)$")
+    language: str = Field(..., pattern="^(en|es|fr|de|ar|zh|ja|ur)$")
 
 
 class FeedbackRequest(BaseModel):

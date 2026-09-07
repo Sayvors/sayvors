@@ -61,13 +61,13 @@ export const GREETINGS: readonly string[] = [
   "Let's dive in",
 ];
 
-export function timeGreeting(now = new Date()): string {
+export function timeGreeting(now = new Date(), locale = "en"): string {
   const h = now.getHours();
+  if (locale === "ar") return h < 12 ? "صباح الخير" : "مساء الخير";
   if (h < 12) return "Good morning";
   if (h < 17) return "Good afternoon";
   return "Good evening";
 }
-
 /** Shuffle helper so the typewriter never runs the same order twice. */
 export function shuffled<T>(items: readonly T[]): T[] {
   const copy = [...items];
@@ -77,3 +77,21 @@ export function shuffled<T>(items: readonly T[]): T[] {
   }
   return copy;
 }
+
+/** Arabic pool — each fits "<greeting>, <name>" at any hour. */
+export const AR_GREETINGS: readonly string[] = [
+  "مرحباً",
+  "أهلاً",
+  "أهلاً بك",
+  "أهلاً بعودتك",
+  "مرحباً بعودتك",
+  "سعيد برؤيتك",
+  "مسرور برؤيتك",
+  "يومك سعيد",
+  "أتمنى لك يوماً موفقاً",
+  "هيا بنا ننجز",
+  "لنبدأ العمل",
+  "أخبار أعمالك هنا",
+  "نظرة على يومك",
+  "مساعدك جاهز",
+];

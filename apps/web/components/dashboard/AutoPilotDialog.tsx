@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import LogoLoader from "@/components/LogoLoader";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { PilotChannel, PilotState } from "@/lib/api-autopilot";
 
 export default function AutoPilotDialog({
@@ -20,6 +21,7 @@ export default function AutoPilotDialog({
   onConfirm: (on: boolean) => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [selected, setSelected] = useState(current === "on");
   const hasChannels = channels.length > 0;
 
@@ -34,7 +36,7 @@ export default function AutoPilotDialog({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Auto Pilot confirmation"
+        aria-label={t.pilot.dialogTitle}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Escape" && !saving) onClose();
@@ -49,15 +51,17 @@ export default function AutoPilotDialog({
             </svg>
           </span>
           <div className="flex-1">
-            <h2 className="text-[15px] font-bold text-ink dark:text-fog">Auto Pilot</h2>
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">{t.pilot.dialogTitle}</h2>
             <p className="text-[11px] text-ink/45 dark:text-fog/45">
-              One switch for all {channels.length} connected location{channels.length === 1 ? "" : "s"}
+              {channels.length === 1
+                ? t.pilot.locationsOne
+                : t.pilot.locationsMany.replace("{count}", String(channels.length))}
             </p>
           </div>
           <button
             onClick={onClose}
             disabled={saving}
-            aria-label="Close"
+            aria-label={t.pilot.close}
             className="rounded-lg p-1.5 text-ink/35 transition hover:bg-ink/[0.05] hover:text-ink disabled:opacity-40 dark:text-fog/40 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
           >
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
@@ -81,10 +85,10 @@ export default function AutoPilotDialog({
             </span>
             <span>
               <span className="block text-[13px] font-bold text-ink dark:text-fog">
-                Auto Pilot ON — AI answers everything
+                {t.pilot.enableTitle}
               </span>
               <span className="mt-0.5 block text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">
-                Every review gets an instant AI reply. Nothing waits for approval.
+                {t.pilot.enableDesc}
               </span>
             </span>
           </button>
@@ -103,19 +107,19 @@ export default function AutoPilotDialog({
             </span>
             <span>
               <span className="block text-[13px] font-bold text-ink dark:text-fog">
-                Manual approval — you decide each reply
+                {t.pilot.manualTitle}
               </span>
               <span className="mt-0.5 block text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">
-                Every review waits in your queue. For each one you choose: AI writes it, or you type it yourself.
+                {t.pilot.manualDesc}
               </span>
             </span>
           </button>
 
           {!hasChannels && (
             <p className="rounded-lg bg-ink/[0.03] px-3 py-2.5 text-center text-[12px] text-ink/55 dark:bg-fog/[0.05] dark:text-fog/55">
-              No locations connected yet.{" "}
+              {t.pilot.noChannels}{" "}
               <Link href="/dashboard/channels" onClick={onClose} className="font-semibold text-deep-violet hover:underline">
-                Connect one first
+                {t.pilot.connectFirst}
               </Link>
               .
             </p>
@@ -133,7 +137,7 @@ export default function AutoPilotDialog({
             disabled={saving}
             className="flex-1 rounded-lg border border-ink/10 px-4 py-2 text-[13px] font-semibold text-ink/60 transition hover:bg-ink/[0.03] disabled:opacity-40 dark:border-fog/10 dark:text-fog/60"
           >
-            Cancel
+            {t.common.cancel}
           </button>
           <button
             onClick={() => onConfirm(selected)}
@@ -142,10 +146,10 @@ export default function AutoPilotDialog({
           >
             {saving ? (
               <>
-                <LogoLoader size={16} /> Applying…
+                <LogoLoader size={16} /> {t.pilot.applying}
               </>
             ) : (
-              "Apply"
+              t.pilot.apply
             )}
           </button>
         </div>

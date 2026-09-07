@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import { LOCALES } from "@/lib/i18n/locales";
 import AutoPilotDialog from "@/components/dashboard/AutoPilotDialog";
 import {
   derivePilotState,
@@ -13,20 +15,11 @@ import {
   type PilotState,
 } from "@/lib/api-autopilot";
 
-const languages = [
-  { code: "en", label: "English", flag: "🇺🇸" },
-  { code: "es", label: "Spanish", flag: "🇪🇸" },
-  { code: "fr", label: "French", flag: "🇫🇷" },
-  { code: "de", label: "German", flag: "🇩🇪" },
-  { code: "ar", label: "Arabic", flag: "🇸🇦" },
-  { code: "ur", label: "Urdu", flag: "🇵🇰" },
-];
-
 export default function Header() {
   const { theme, toggle } = useTheme();
+  const { locale, setLocale, t } = useI18n();
   const [searchFocused, setSearchFocused] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
-  const [lang, setLang] = useState(languages[0]);
   const [createOpen, setCreateOpen] = useState(false);
   const langRef = useRef<HTMLDivElement>(null);
   const createRef = useRef<HTMLDivElement>(null);
@@ -115,8 +108,8 @@ export default function Header() {
           <input
             ref={searchRef}
             type="text"
-            placeholder="Search..."
-            aria-label="Search"
+            placeholder={t.header.search}
+            aria-label={t.header.searchLabel}
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
             className="h-8 w-56 rounded-md border border-deep-violet/[0.08] bg-deep-violet/[0.03] pl-8 pr-8 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:w-72 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.08] dark:border-deep-violet/[0.12] dark:bg-deep-violet/[0.06] dark:text-fog dark:placeholder:text-fog/30 dark:focus:bg-ink"
@@ -135,8 +128,8 @@ export default function Header() {
             setPilotError(null);
             setPilotOpen(true);
           }}
-          title="Auto Pilot — who answers reviews"
-          aria-label={`Auto Pilot is ${pilot === "on" ? "on" : pilot === "off" ? "off" : pilot}. Open Auto Pilot settings`}
+          title={`Auto Pilot — ${t.pilot.title}`}
+          aria-label={`Auto Pilot — ${t.pilot.title}: ${pilot}`}
           className="flex h-8 items-center gap-1.5 rounded-lg border border-ink/10 px-2.5 text-[12px] font-semibold text-ink/60 outline-none transition hover:border-deep-violet/30 hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:border-fog/10 dark:text-fog/60 dark:hover:text-fog"
         >
           <span
@@ -145,7 +138,7 @@ export default function Header() {
               pilot === "on" ? "bg-emerald-500" : pilot === "none" ? "bg-ink/20 dark:bg-fog/20" : "bg-amber-500"
             }`}
           />
-          Auto Pilot
+          {t.pilot.label}
           <span
             className={`rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
               pilot === "on"
@@ -155,7 +148,7 @@ export default function Header() {
                   : "bg-amber/10 text-amber-600"
             }`}
           >
-            {pilot === "on" ? "On" : pilot === "off" ? "Off" : pilot === "mixed" ? "Mixed" : "—"}
+            {pilot === "on" ? t.pilot.on : pilot === "off" ? t.pilot.off : pilot === "mixed" ? t.pilot.mixed : t.pilot.none}
           </span>
         </button>
 
@@ -167,18 +160,18 @@ export default function Header() {
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
             <path d="M8 3v10M3 8h10" strokeLinecap="round" />
           </svg>
-          Connect
+          {t.header.connect}
         </Link>
 
         {/* Subscribe to premium */}
         <button
-          aria-label="Subscribe to premium"
+          aria-label={t.header.subscribePremium}
           className="flex h-8 items-center gap-1.5 rounded-lg bg-amber-500 px-3 text-[12px] font-semibold text-white shadow-sm shadow-amber-500/25 transition hover:bg-amber-500/90 active:scale-[0.98]"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
           </svg>
-          Premium
+          {t.header.premium}
         </button>
 
         <div className="mx-1 h-5 w-px bg-deep-violet/[0.08]" />
@@ -187,9 +180,9 @@ export default function Header() {
         <div className="relative" ref={createRef}>
           <button
             onClick={() => setCreateOpen(!createOpen)}
-            aria-label="Create new"
+            aria-label={t.header.createNew}
             aria-expanded={createOpen}
-            title="Create new"
+            title={t.header.createNew}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
           >
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
@@ -198,18 +191,18 @@ export default function Header() {
           </button>
           {createOpen && (
             <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white py-1 shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
-              <CreateMenuItem label="New agent" href="/dashboard/agents/create" />
-              <CreateMenuItem label="New databank" href="/dashboard/databank" />
-              <CreateMenuItem label="New channel" href="/dashboard/channels" />
-              <CreateMenuItem label="New automation" href="/dashboard/automations" />
+              <CreateMenuItem label={t.header.newAgent} href="/dashboard/agents/create" />
+              <CreateMenuItem label={t.header.newDatabank} href="/dashboard/databank" />
+              <CreateMenuItem label={t.header.newChannel} href="/dashboard/channels" />
+              <CreateMenuItem label={t.header.newAutomation} href="/dashboard/automations" />
             </div>
           )}
         </div>
 
         {/* Notifications */}
         <button
-          aria-label="Notifications"
-          title="Notifications"
+          aria-label={t.header.notifications}
+          title={t.header.notifications}
           className="relative flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -222,9 +215,9 @@ export default function Header() {
         {/* Theme toggle */}
         <button
           onClick={toggle}
-          aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+          aria-label={theme === "light" ? t.header.switchToDark : t.header.switchToLight}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:text-deep-violet"
-          title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+          title={theme === "light" ? t.header.switchToDark : t.header.switchToLight}
         >
           {theme === "light" ? (
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -249,10 +242,10 @@ export default function Header() {
         <div className="relative" ref={langRef}>
           <button
             onClick={() => setLangOpen(!langOpen)}
-            aria-label="Change language"
+            aria-label={t.header.changeLanguage}
             aria-expanded={langOpen}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
-            title="Change language"
+            title={t.header.changeLanguage}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
               <circle cx="12" cy="12" r="10" />
@@ -262,16 +255,22 @@ export default function Header() {
           </button>
           {langOpen && (
             <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
-              {languages.map((l) => (
+              {LOCALES.map((l) => (
                 <button
                   key={l.code}
-                  onClick={() => { setLang(l); setLangOpen(false); }}
+                  onClick={() => { setLocale(l.code); setLangOpen(false); }}
+                  aria-current={locale === l.code ? "true" : undefined}
                   className={`flex w-full items-center gap-2 px-3 py-2 text-[12px] transition hover:bg-deep-violet/[0.04] ${
-                    lang.code === l.code ? "font-medium text-deep-violet" : "text-ink/60 dark:text-fog/60"
+                    locale === l.code ? "font-medium text-deep-violet" : "text-ink/60 dark:text-fog/60"
                   }`}
                 >
                   <span className="text-[14px]">{l.flag}</span>
                   {l.label}
+                  {locale === l.code && (
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto h-3 w-3" aria-hidden>
+                      <path d="M3 8.5l3.5 3.5 6.5-7" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
                 </button>
               ))}
             </div>
@@ -283,8 +282,8 @@ export default function Header() {
         {/* Settings */}
         <Link
           href="/dashboard/settings"
-          aria-label="Settings"
-          title="Settings"
+          aria-label={t.header.settings}
+          title={t.header.settings}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -296,8 +295,8 @@ export default function Header() {
         {/* Help */}
         <Link
           href="/dashboard/docs"
-          aria-label="Help and documentation"
-          title="Help and documentation"
+          aria-label={t.header.helpDocs}
+          title={t.header.helpDocs}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">

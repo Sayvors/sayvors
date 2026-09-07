@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
 
 interface ExecSummary {
@@ -19,8 +20,8 @@ interface ExecSummary {
 
 const quickActions = [
   {
-    title: "Connect a channel",
-    description: "Link Instagram, Facebook Messenger, X, or Google Reviews so your AI can start responding.",
+    titleKey: "connectTitle",
+    descKey: "connectDesc",
     href: "/dashboard/channels",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
@@ -31,8 +32,8 @@ const quickActions = [
     color: "from-deep-violet to-magenta",
   },
   {
-    title: "Create a Databank",
-    description: "Upload docs so your AI answers questions from your real knowledge base.",
+    titleKey: "databankTitle",
+    descKey: "databankDesc",
     href: "/dashboard/databank",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
@@ -44,8 +45,8 @@ const quickActions = [
     color: "from-magenta to-coral",
   },
   {
-    title: "Turn on Auto-Reply",
-    description: "Let your AI respond automatically on every connected channel.",
+    titleKey: "autoReplyTitle",
+    descKey: "autoReplyDesc",
     href: "/dashboard/automations",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
@@ -55,24 +56,25 @@ const quickActions = [
     ),
     color: "from-sky-400 to-blue-500",
   },
-];
+] as const;
 
-const statCards = [
-  { label: "Messages handled", value: "0", sub: "AI responses sent" },
-  { label: "Channels connected", value: "0", sub: "of 4 available" },
-  { label: "Reviews replied", value: "0", sub: "Google Reviews" },
-  { label: "Avg response time", value: "--", sub: "once connected" },
-];
+const statDefs = [
+  { labelKey: "messages", subKey: "messagesSub", value: "0" },
+  { labelKey: "channels", subKey: "channelsSub", value: "0" },
+  { labelKey: "reviews", subKey: "reviewsSub", value: "0" },
+  { labelKey: "responseTime", subKey: "responseTimeSub", value: "--" },
+] as const;
 
-const checklistItems = [
-  { id: "channel", label: "Connect your first channel", href: "/dashboard/channels" },
-  { id: "databank", label: "Upload docs to your Databank", href: "/dashboard/databank" },
-  { id: "auto-reply", label: "Turn on Auto-Reply", href: "/dashboard/automations" },
-];
+const checklistDefs = [
+  { id: "channel", labelKey: "stepConnect", href: "/dashboard/channels" },
+  { id: "databank", labelKey: "stepDatabank", href: "/dashboard/databank" },
+  { id: "auto-reply", labelKey: "stepAutoReply", href: "/dashboard/automations" },
+] as const;
 
 const CHECKLIST_KEY = "sayvors.onboarding.checklist";
 
 function ExecutiveSummaryBanner() {
+  const { t } = useI18n();
   const [summary, setSummary] = useState<ExecSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -91,7 +93,7 @@ function ExecutiveSummaryBanner() {
   if (!summary) return null;
   return (
     <section
-      aria-label="Sayvors AI business briefing"
+      aria-label={t.dashboard.briefing.title}
       className="relative overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet to-magenta p-5 text-white shadow-md shadow-deep-violet/20"
     >
       <div className="mb-2 flex items-center gap-2">
@@ -101,11 +103,11 @@ function ExecutiveSummaryBanner() {
             <path d="M9 21h6" strokeLinecap="round" />
           </svg>
         </span>
-        <h2 className="text-[13px] font-bold tracking-wide">Sayvors AI — Business Intelligence</h2>
+        <h2 className="text-[13px] font-bold tracking-wide">{t.dashboard.briefing.title}</h2>
         <span className="ml-auto flex items-center gap-3 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold">
-          <span title="Reputation score">Reputation {summary.reputation_score}</span>
+          <span title={t.dashboard.briefing.reputation}>{t.dashboard.briefing.reputation} {summary.reputation_score}</span>
           <span className="h-3 w-px bg-white/25" aria-hidden />
-          <span title="Business health score">Health {summary.health_score}</span>
+          <span title={t.dashboard.briefing.health}>{t.dashboard.briefing.health} {summary.health_score}</span>
         </span>
       </div>
       <p className="text-[13px] font-semibold leading-snug">{summary.headline}</p>
@@ -130,7 +132,7 @@ function ExecutiveSummaryBanner() {
         )}
       </ul>
       <p className="mt-2.5 border-t border-white/15 pt-2 text-[11px] text-white/75">
-        <span className="font-semibold">Recommended action:</span> {summary.recommended_action} · {summary.benchmark_text}
+        <span className="font-semibold">{t.dashboard.briefing.recommendedAction}</span> {summary.recommended_action} · {summary.benchmark_text}
       </p>
     </section>
   );
@@ -183,7 +185,13 @@ function writeChecklist(next: Record<string, boolean>) {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const { dir, t } = useI18n();
   const done = useSyncExternalStore(subscribeChecklist, readChecklist, getServerChecklist);
+
+  const checklistItems = checklistDefs.map((d) => ({
+    ...d,
+    label: t.dashboard.start[d.labelKey],
+  }));
 
   const toggleItem = useCallback((id: string) => {
     const current = readChecklist();
@@ -218,16 +226,16 @@ export default function DashboardPage() {
 
       {/* Header */}
       <div>
-        <Greeting name={user?.first_name ?? "there"} />
+        <Greeting name={user?.first_name ?? t.dashboard.greetingFallback} />
         <p className="mt-0.5 text-[12px] sm:text-[13px] text-ink/65">
-          Here&apos;s what&apos;s happening with your AI assistant.
+          {t.dashboard.subtitle}
         </p>
       </div>
 
       {/* Getting Started checklist — first thing a new user must see */}
       {showChecklist && (
         <section
-          aria-label="Getting started checklist"
+          aria-label={t.dashboard.start.title}
           className="relative overflow-hidden rounded-2xl bg-white p-5 shadow-md shadow-deep-violet/[0.08] ring-2 ring-deep-violet/30"
         >
           <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-deep-violet via-magenta to-coral" />
@@ -242,15 +250,15 @@ export default function DashboardPage() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[15px] font-bold text-ink">Start here — launch in 3 steps</h2>
+                <h2 className="text-[15px] font-bold text-ink">{t.dashboard.start.title}</h2>
                 <span className="rounded-full bg-deep-violet/[0.08] px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-deep-violet">
-                  {allDone ? "All set" : `${completed} of ${total} done`}
+                  {allDone ? t.dashboard.start.allSet : t.dashboard.start.doneOf.replace("{done}", String(completed)).replace("{total}", String(total))}
                 </span>
               </div>
               <p className="mt-0.5 text-[12px] text-ink/55">
                 {allDone
-                  ? "Your assistant is ready. Revisit any step below."
-                  : "Follow the steps in order — each one unlocks the next."}
+                  ? t.dashboard.start.subtitleDone
+                  : t.dashboard.start.subtitleTodo}
               </p>
             </div>
             {allDone && (
@@ -258,13 +266,13 @@ export default function DashboardPage() {
                 onClick={dismissChecklist}
                 className="rounded-lg px-2 py-1 text-[12px] font-semibold text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink"
               >
-                Dismiss
+                {t.dashboard.start.dismiss}
               </button>
             )}
           </div>
 
           {/* Progress bar */}
-          <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-deep-violet/[0.08]" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label="Setup progress">
+          <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-deep-violet/[0.08]" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label={t.dashboard.start.title}>
             <div
               className="h-full rounded-full bg-gradient-to-r from-deep-violet via-magenta to-coral transition-all duration-500"
               style={{ width: `${progress}%` }}
@@ -309,7 +317,7 @@ export default function DashboardPage() {
                       {item.label}
                       {isNext && !isDone && (
                         <span className="ml-2 rounded-full bg-deep-violet px-2 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-white">
-                          Up next
+                          {t.dashboard.start.upNext}
                         </span>
                       )}
                     </p>
@@ -319,24 +327,24 @@ export default function DashboardPage() {
                       href={item.href}
                       className="shrink-0 rounded-lg bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/30 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98]"
                     >
-                      Start
-                      <span aria-hidden> →</span>
+                      {t.dashboard.start.start}
+                      <span aria-hidden> {dir === "rtl" ? "←" : "→"}</span>
                     </Link>
                   ) : (
                     <div className="flex shrink-0 items-center gap-1">
                       <button
                         onClick={() => toggleItem(item.id)}
-                        aria-label={isDone ? `Reopen "${item.label}"` : `Mark "${item.label}" as done`}
-                        title={isDone ? "Reopen" : "Mark done"}
+                        aria-label={isDone ? t.dashboard.start.reopenStep.replace("{label}", item.label) : t.dashboard.start.markDone.replace("{label}", item.label)}
+                        title={isDone ? t.dashboard.start.reopen : t.dashboard.start.skip}
                         className={`rounded-lg px-2 py-1 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                           isDone ? "text-ink/35 hover:text-ink/60" : "text-deep-violet/70 hover:bg-deep-violet/[0.06] hover:text-deep-violet"
                         }`}
                       >
-                        {isDone ? "Reopen" : "Skip"}
+                        {isDone ? t.dashboard.start.reopen : t.dashboard.start.skip}
                       </button>
                       <Link
                         href={item.href}
-                        aria-label={`Open ${item.label}`}
+                        aria-label={t.dashboard.start.openStep.replace("{label}", item.label)}
                         className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/30 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                       >
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="h-3.5 w-3.5">
@@ -363,19 +371,19 @@ export default function DashboardPage() {
             <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${action.color} text-white shadow-sm transition-transform duration-200 group-hover:scale-105`}>
               {action.icon}
             </div>
-            <p className="text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">{action.title}</p>
-            <p className="mt-1 text-[12px] text-ink/50 leading-relaxed">{action.description}</p>
+            <p className="text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">{t.dashboard.actions[action.titleKey]}</p>
+            <p className="mt-1 text-[12px] text-ink/50 leading-relaxed">{t.dashboard.actions[action.descKey]}</p>
           </Link>
         ))}
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {statCards.map((stat) => (
-          <div key={stat.label} className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm transition hover:shadow-md hover:shadow-deep-violet/[0.06]">
-            <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-ink/55">{stat.label}</p>
+        {statDefs.map((stat) => (
+          <div key={stat.labelKey} className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm transition hover:shadow-md hover:shadow-deep-violet/[0.06]">
+            <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-ink/55">{t.dashboard.stats[stat.labelKey]}</p>
             <p className="mt-1 text-[20px] sm:text-[22px] font-bold text-ink">{stat.value}</p>
-            <p className="text-[10px] text-ink/40">{stat.sub}</p>
+            <p className="text-[10px] text-ink/40">{t.dashboard.stats[stat.subKey]}</p>
           </div>
         ))}
       </div>
