@@ -84,7 +84,28 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-signal,
-  .animate-signal-delay {
+  .animate-signal-delay,
+  .animate-float,
+  .animate-float-delay {
     animation: none;
   }
+}
+
+/* Gentle float for brand-panel chips */
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.animate-float {
+  animation: float-soft 6s ease-in-out infinite;
+}
+
+.animate-float-delay {
+  animation: float-soft 7s ease-in-out 1.2s infinite;
 }
