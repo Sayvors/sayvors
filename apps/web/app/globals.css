@@ -86,7 +86,8 @@ body {
   .animate-signal,
   .animate-signal-delay,
   .animate-float,
-  .animate-float-delay {
+  .animate-float-delay,
+  .animate-google-glow {
     animation: none;
   }
 }
@@ -108,4 +109,21 @@ body {
 
 .animate-float-delay {
   animation: float-soft 7s ease-in-out 1.2s infinite;
+}
+
+/* Google-colors glowing border (channels spotlight) */
+@keyframes google-glow-pan {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-google-glow {
+  background: linear-gradient(120deg, #4285f4, #ea4335, #fbbc05, #34a853, #4285f4);
+  background-size: 300% 300%;
+  animation: google-glow-pan 6s ease infinite;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
@@ -193,13 +194,34 @@ function ConnectHub() {
       {/* ── Available channels ── */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {/* Google Reviews — REAL connect */}
-        <div className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-red-500 text-[22px] text-white shadow-sm">
-            ★
+        <div className="animate-google-glow rounded-xl p-[2px] shadow-[0_0_28px_-8px_rgba(66,133,244,0.55)]">
+        <div className="relative flex items-center gap-4 rounded-[10px] bg-white p-4 dark:bg-ink">
+          <span className="absolute -top-2.5 left-4 rounded-full bg-gradient-to-r from-[#4285F4] to-[#34A853] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow-sm">
+            Recommended
+          </span>
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-ink/[0.08] dark:ring-fog/10">
+            <Image src="/google.svg" alt="Google" width={28} height={28} className="h-7 w-7" />
           </div>
           <div className="flex-1">
-            <p className="text-[14px] font-semibold text-ink dark:text-fog">Google Reviews</p>
-            <p className="text-[12px] text-ink/40 dark:text-fog/40">
+            <p className="text-[14px] font-semibold">
+              <span aria-hidden>
+                <span className="text-[#4285F4]">G</span>
+                <span className="text-[#EA4335]">o</span>
+                <span className="text-[#FBBC05]">o</span>
+                <span className="text-[#4285F4]">g</span>
+                <span className="text-[#34A853]">l</span>
+                <span className="text-[#EA4335]">e</span>
+              </span>
+              <span className="sr-only">Google</span>
+              <span className="text-ink dark:text-fog"> Reviews</span>
+            </p>
+            <p className="flex items-center gap-1.5 text-[12px] text-ink/40 dark:text-fog/40">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0" aria-hidden>
+                <path d="M3 9l1.5-5h15L21 9" />
+                <path d="M3 9h18v2a2.5 2.5 0 01-5 0 2.5 2.5 0 01-5 0 2.5 2.5 0 01-5 0V9z" />
+                <path d="M5 12.5V20h14v-7.5" />
+                <path d="M9 20v-5h6v5" />
+              </svg>
               {googleChannels.length > 0
                 ? `${googleChannels.length} location${googleChannels.length > 1 ? "s" : ""} connected`
                 : "AI replies to your reviews"}
@@ -211,6 +233,7 @@ function ConnectHub() {
           >
             {googleChannels.length > 0 ? "Add another" : "Connect"}
           </button>
+        </div>
         </div>
 
         {/* Coming soon */}
