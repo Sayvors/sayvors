@@ -15,6 +15,8 @@ interface User {
   email: string;
   email_verified: boolean;
   onboarded: boolean;
+  theme?: string;
+  language?: string;
 }
 
 interface AuthContextType {

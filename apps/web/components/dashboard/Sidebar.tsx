@@ -5,16 +5,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
-const bottomNav = [
-  { label: "Dashboard", icon: <LayoutIcon />, href: "/dashboard" },
-  { label: "Analytics", icon: <ChartIcon />, href: "/dashboard/analytics" },
-  { label: "Insights", icon: <InsightsIcon />, href: "/dashboard/insights" },
-  { label: "Growth", icon: <GrowthIcon />, href: "/dashboard/growth" },
-  { label: "Databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
-  { label: "Connect", icon: <LinkIcon />, href: "/dashboard/channels" },
-  { label: "Auto-Reply", icon: <AutoReplyIcon />, href: "/dashboard/automations" },
-];
+const NAV_ITEMS = [
+  { key: "dashboard", icon: <LayoutIcon />, href: "/dashboard" },
+  { key: "analytics", icon: <ChartIcon />, href: "/dashboard/analytics" },
+  { key: "insights", icon: <InsightsIcon />, href: "/dashboard/insights" },
+  { key: "growth", icon: <GrowthIcon />, href: "/dashboard/growth" },
+  { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
+  { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
+  { key: "autoReply", icon: <AutoReplyIcon />, href: "/dashboard/automations" },
+] as const;
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === "/dashboard";
@@ -26,7 +27,13 @@ export default function Sidebar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const displayName =
+    user && (user.first_name || user.last_name)
+      ? `${user.first_name} ${user.last_name}`.trim()
+      : t.account.fallbackName;
 
   const initials = user
     ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U"
@@ -68,16 +75,17 @@ export default function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto px-2 pt-3" aria-label="Main navigation">
+      <nav className="flex-1 overflow-y-auto px-2 pt-3" aria-label={t.nav.mainNavigation}>
         <div className="space-y-0.5">
-          {bottomNav.map((item) => {
+          {NAV_ITEMS.map((item) => {
+            const label = t.nav[item.key];
             const active = isActive(pathname, item.href);
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                title={collapsed ? item.label : undefined}
+                title={collapsed ? label : undefined}
                 className={`group relative flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
                   active
                     ? "bg-white/[0.1] text-white"
@@ -97,7 +105,7 @@ export default function Sidebar() {
                 >
                   {item.icon}
                 </span>
-                {!collapsed && <span className="flex-1">{item.label}</span>}
+                {!collapsed && <span className="flex-1">{label}</span>}
               </Link>
             );
           })}
@@ -114,20 +122,20 @@ export default function Sidebar() {
           >
             <div className="border-b border-white/[0.08] px-3 py-2.5">
               <p className="truncate text-[13px] font-medium text-white">
-                {user ? `${user.first_name} ${user.last_name}` : "User"}
+                {displayName}
               </p>
               <p className="truncate text-[11px] text-white/40">{user?.email ?? ""}</p>
             </div>
             <div className="py-1">
-              <SidebarMenuLink href="/dashboard/profile" label="My profile" />
-              <SidebarMenuLink href="/dashboard/settings" label="Settings" />
+              <SidebarMenuLink href="/dashboard/profile" label={t.account.myProfile} />
+              <SidebarMenuLink href="/dashboard/settings" label={t.account.settings} />
             </div>
             <div className="border-t border-white/[0.08] py-1">
               <button
                 onClick={() => logout()}
                 className="flex w-full items-center px-3 py-2 text-[12px] text-coral transition hover:bg-white/[0.06]"
               >
-                Sign out
+                {t.account.signOut}
               </button>
             </div>
           </div>
@@ -135,9 +143,9 @@ export default function Sidebar() {
         <div className={`flex items-center gap-1 p-2 ${collapsed ? "flex-col" : ""}`}>
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            aria-label="Account menu"
+            aria-label={t.account.menu}
             aria-expanded={menuOpen}
-            title={collapsed ? (user ? `${user.first_name} ${user.last_name}` : "Account") : undefined}
+            title={collapsed ? displayName : undefined}
             className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
               collapsed ? "justify-center" : ""
             }`}
@@ -148,7 +156,7 @@ export default function Sidebar() {
             {!collapsed && (
               <span className="min-w-0 flex-1 text-left">
                 <span className="block truncate text-[12px] font-medium text-white">
-                  {user ? `${user.first_name} ${user.last_name}` : "User"}
+                  {displayName}
                 </span>
                 <span className="block truncate text-[10px] text-white/40">
                   {user?.email ?? ""}
@@ -158,8 +166,8 @@ export default function Sidebar() {
           </button>
           <button
             onClick={() => setCollapsed(!collapsed)}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={collapsed ? t.nav.expand : t.nav.collapse}
+            title={collapsed ? t.nav.expand : t.nav.collapse}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/25 outline-none transition hover:bg-white/[0.08] hover:text-white/50 focus-visible:ring-2 focus-visible:ring-violet-light/60"
           >
             <svg
