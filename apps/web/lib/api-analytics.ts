@@ -281,7 +281,7 @@ export interface ReviewReplyDTO {
 
 export function generateReply(
   channelId: string,
-  body: { review_id: string; rating: number; review_text?: string | null; reviewer_name?: string | null }
+  body: { review_id: string; rating: number; review_text?: string | null; reviewer_name?: string | null; custom_text?: string }
 ): Promise<ReviewReplyDTO> {
   return apiFetch(`/api/v1/channels/${channelId}/reviews/generate`, {
     method: "POST",

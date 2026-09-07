@@ -1,8 +1,17 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
+import AutoPilotDialog from "@/components/dashboard/AutoPilotDialog";
+import {
+  derivePilotState,
+  fetchPilotChannels,
+  setPilot,
+  type PilotChannel,
+  type PilotState,
+} from "@/lib/api-autopilot";
 
 const languages = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -22,6 +31,43 @@ export default function Header() {
   const langRef = useRef<HTMLDivElement>(null);
   const createRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  /* ── Auto Pilot (global approval switch) ── */
+  const pathname = usePathname();
+  const [pilotChannels, setPilotChannels] = useState<PilotChannel[]>([]);
+  const [pilot, setPilotState] = useState<PilotState>("none");
+  const [pilotOpen, setPilotOpen] = useState(false);
+  const [pilotSaving, setPilotSaving] = useState(false);
+  const [pilotError, setPilotError] = useState<string | null>(null);
+
+  const refreshPilot = useCallback(async () => {
+    try {
+      const channels = await fetchPilotChannels();
+      setPilotChannels(channels);
+      setPilotState(derivePilotState(channels));
+    } catch {
+      /* backend down — pill stays neutral */
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync pilot state from API on mount/navigation
+    refreshPilot();
+  }, [refreshPilot, pathname]);
+
+  async function applyPilot(on: boolean) {
+    setPilotSaving(true);
+    setPilotError(null);
+    try {
+      await setPilot(on, pilotChannels);
+      await refreshPilot();
+      setPilotOpen(false);
+    } catch (e) {
+      setPilotError(e instanceof Error ? e.message.slice(0, 160) : "Could not apply. Try again.");
+    } finally {
+      setPilotSaving(false);
+    }
+  }
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -83,6 +129,36 @@ export default function Header() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-1">
+        {/* Auto Pilot */}
+        <button
+          onClick={() => {
+            setPilotError(null);
+            setPilotOpen(true);
+          }}
+          title="Auto Pilot — who answers reviews"
+          aria-label={`Auto Pilot is ${pilot === "on" ? "on" : pilot === "off" ? "off" : pilot}. Open Auto Pilot settings`}
+          className="flex h-8 items-center gap-1.5 rounded-lg border border-ink/10 px-2.5 text-[12px] font-semibold text-ink/60 outline-none transition hover:border-deep-violet/30 hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:border-fog/10 dark:text-fog/60 dark:hover:text-fog"
+        >
+          <span
+            aria-hidden
+            className={`h-1.5 w-1.5 rounded-full ${
+              pilot === "on" ? "bg-emerald-500" : pilot === "none" ? "bg-ink/20 dark:bg-fog/20" : "bg-amber-500"
+            }`}
+          />
+          Auto Pilot
+          <span
+            className={`rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
+              pilot === "on"
+                ? "bg-emerald/10 text-emerald-600"
+                : pilot === "none"
+                  ? "bg-ink/[0.05] text-ink/35 dark:text-fog/35"
+                  : "bg-amber/10 text-amber-600"
+            }`}
+          >
+            {pilot === "on" ? "On" : pilot === "off" ? "Off" : pilot === "mixed" ? "Mixed" : "—"}
+          </span>
+        </button>
+
         {/* Connect channel */}
         <Link
           href="/dashboard/channels"
@@ -231,6 +307,19 @@ export default function Header() {
           </svg>
         </Link>
       </div>
+
+      {pilotOpen && (
+        <AutoPilotDialog
+          channels={pilotChannels}
+          current={pilot}
+          saving={pilotSaving}
+          error={pilotError}
+          onConfirm={applyPilot}
+          onClose={() => {
+            if (!pilotSaving) setPilotOpen(false);
+          }}
+        />
+      )}
     </header>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
+import LogoLoader from "@/components/LogoLoader";
 import { getAccessToken } from "@/lib/auth-context";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -45,6 +46,7 @@ function ConnectHub() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [urlDismissed, setUrlDismissed] = useState(false);
 
   const connectedCount = params.get("google_connected");
   const googleError = params.get("google_error");
@@ -65,7 +67,18 @@ function ConnectHub() {
     }
     return null;
   }, [connectedCount, googleError]);
-  const activeBanner = banner ?? urlBanner;
+  const activeBanner = banner ?? (urlDismissed ? null : urlBanner);
+
+  const dismissBanner = useCallback(() => {
+    setBanner(null);
+    setUrlDismissed(true);
+    // Strip the OAuth result params so refresh/back never resurrects the banner.
+    try {
+      window.history.replaceState(null, "", "/dashboard/channels");
+    } catch {
+      /* history unavailable */
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -169,7 +182,7 @@ function ConnectHub() {
             <span>{activeBanner.text}</span>
             <button
               className="shrink-0 text-[12px] underline underline-offset-2"
-              onClick={() => setBanner(null)}
+              onClick={dismissBanner}
             >
               dismiss
             </button>
@@ -320,7 +333,9 @@ function ConnectHub() {
                       disabled={savingConfig}
                       className="rounded-lg bg-deep-violet px-3.5 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
                     >
-                      {savingConfig ? "Saving..." : "Save AI settings"}
+                      {savingConfig ? (
+                        <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span>
+                      ) : "Save AI settings"}
                     </button>
                   </div>
                 )}

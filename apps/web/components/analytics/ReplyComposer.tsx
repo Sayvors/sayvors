@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import LogoLoader from "@/components/LogoLoader";
 import {
   approveReply,
   editReply,
@@ -9,7 +10,7 @@ import {
   rejectReply,
 } from "@/lib/api-analytics";
 
-type Phase = "idle" | "generating" | "editing" | "publishing" | "done";
+type Phase = "idle" | "manual" | "generating" | "editing" | "publishing" | "done";
 
 const btn =
   "rounded-lg px-3 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-40";
@@ -85,24 +86,90 @@ export function ReplyComposer({
   if (phase === "idle" || phase === "generating") {
     return (
       <div className="mt-2">
-        <button
-          onClick={() => {
-            setPhase("generating");
-            run(() =>
-              generateReply(channelId, {
-                review_id: reviewId,
-                rating,
-                review_text: reviewText,
-                reviewer_name: reviewerName,
-              })
-            );
-          }}
-          disabled={busy}
-          className={`${btn} bg-deep-violet text-white shadow-sm shadow-deep-violet/20 hover:bg-deep-violet/90`}
-        >
-          {phase === "generating" ? "Drafting..." : "Reply with AI"}
-        </button>
+        <p className="mb-1.5 text-[11px] text-ink/45">How do you want to answer this review?</p>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => {
+              setPhase("generating");
+              run(() =>
+                generateReply(channelId, {
+                  review_id: reviewId,
+                  rating,
+                  review_text: reviewText,
+                  reviewer_name: reviewerName,
+                })
+              );
+            }}
+            disabled={busy}
+            className={`${btn} bg-deep-violet text-white shadow-sm shadow-deep-violet/20 hover:bg-deep-violet/90`}
+          >
+            {phase === "generating" ? (
+              <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Drafting...</span>
+            ) : "AI writes it"}
+          </button>
+          <button
+            onClick={() => {
+              setError(null);
+              setDraft("");
+              setPhase("manual");
+            }}
+            disabled={busy}
+            className={`${btn} border border-ink/10 text-ink/60 hover:border-deep-violet/30 hover:text-deep-violet`}
+          >
+            I&apos;ll type it
+          </button>
+        </div>
         {error && <p className="mt-1 text-[10px] text-coral">{error}</p>}
+      </div>
+    );
+  }
+
+  if (phase === "manual") {
+    const canSave = draft.trim().length >= 2;
+    return (
+      <div className="mt-2">
+        <p className="mb-1.5 text-[11px] text-ink/45">Type your reply — it will wait for approval like any other.</p>
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={3}
+          maxLength={2000}
+          placeholder="Thank you so much for visiting us…"
+          aria-label="Type your reply"
+          autoFocus
+          className="w-full resize-y rounded-lg border border-ink/10 bg-white p-2.5 text-[12px] leading-relaxed text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1]"
+        />
+        {error && <p className="mt-1 text-[10px] text-coral">{error}</p>}
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <button
+            onClick={() => {
+              setError(null);
+              setDraft("");
+              setPhase("idle");
+            }}
+            className={`${btn} text-ink/50 hover:bg-ink/[0.04]`}
+          >
+            Back
+          </button>
+          <button
+            onClick={() => {
+              setPhase("generating");
+              run(() =>
+                generateReply(channelId, {
+                  review_id: reviewId,
+                  rating,
+                  review_text: reviewText,
+                  reviewer_name: reviewerName,
+                  custom_text: draft.trim(),
+                })
+              );
+            }}
+            disabled={!canSave}
+            className={`${btn} bg-deep-violet text-white shadow-sm shadow-deep-violet/20 hover:bg-deep-violet/90 disabled:opacity-40`}
+          >
+            Save for approval
+          </button>
+        </div>
       </div>
     );
   }
@@ -134,7 +201,9 @@ export function ReplyComposer({
           disabled={busy}
           className={`${btn} bg-emerald text-white hover:bg-emerald/90`}
         >
-          {phase === "publishing" ? "Publishing..." : "Approve & publish"}
+          {phase === "publishing" ? (
+            <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Publishing...</span>
+          ) : "Approve & publish"}
         </button>
         <button
           onClick={() => {

@@ -10,6 +10,7 @@ import StepInstructions from "@/components/agents/wizard/StepInstructions";
 import StepKnowledge from "@/components/agents/wizard/StepKnowledge";
 import StepSave from "@/components/agents/wizard/StepSave";
 import { defaultWizardData, WIZARD_STEPS, type WizardData } from "@/lib/agent-wizard-data";
+import LogoLoader from "@/components/LogoLoader";
 
 export default function CreateAgentPage() {
   const [step, setStep] = useState(0);
@@ -102,7 +103,9 @@ export default function CreateAgentPage() {
             </span>
           )}
           {saveStatus === "saving" && (
-            <span className="text-[11px] text-ink/40 dark:text-fog/40">Saving...</span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-ink/40 dark:text-fog/40">
+              <LogoLoader size={14} /> Saving...
+            </span>
           )}
           <button
             onClick={handleSaveDraft}

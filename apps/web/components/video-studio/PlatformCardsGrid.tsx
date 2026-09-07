@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import LogoLoader from "@/components/LogoLoader";
 import PlatformCard from "./PlatformCard";
 import { platforms } from "./platforms";
 
@@ -99,7 +100,7 @@ export default function PlatformCardsGrid({ videoFile, videoUrl }: PlatformCards
           >
             {uploadingAll ? (
               <>
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+                <LogoLoader size={14} />
                 Uploading...
               </>
             ) : allUploaded ? (

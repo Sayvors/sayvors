@@ -94,6 +94,11 @@ class ReviewReplyGenerate(BaseModel):
     rating: int = Field(..., ge=1, le=5)
     review_text: str | None = Field(None, max_length=4000)
     reviewer_name: str | None = Field(None, max_length=255)
+    custom_text: str | None = Field(
+        None,
+        max_length=2000,
+        description="Merchant-typed reply text; when provided the LLM is skipped",
+    )
 
 
 class ReviewReplyEdit(BaseModel):

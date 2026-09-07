@@ -9,6 +9,7 @@ import ProfileLimits from "@/components/profile/ProfileLimits";
 import ProfilePreferences from "@/components/profile/ProfilePreferences";
 import ProfileSupport from "@/components/profile/ProfileSupport";
 import ProfileRatings from "@/components/profile/ProfileRatings";
+import LogoLoader from "@/components/LogoLoader";
 import {
   getProfile,
   getSessions,
@@ -137,13 +138,8 @@ export default function ProfilePage() {
   if (loading) {
     return (
       <div className="h-full overflow-y-auto bg-[#f3f0ff]">
-        <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6" aria-label="Loading profile">
-          <div className="h-5 w-40 animate-pulse rounded bg-ink/10" />
-          <div className="h-44 animate-pulse rounded-2xl bg-white/70" />
-          <div className="grid gap-5 lg:grid-cols-3">
-            <div className="h-64 animate-pulse rounded-2xl bg-white/70" />
-            <div className="h-64 animate-pulse rounded-2xl bg-white/70 lg:col-span-2" />
-          </div>
+        <div className="flex min-h-[60vh] items-center justify-center p-6">
+          <LogoLoader size={56} label="Loading profile…" showText />
         </div>
       </div>
     );

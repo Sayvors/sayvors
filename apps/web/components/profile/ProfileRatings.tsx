@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import LogoLoader from "@/components/LogoLoader";
 
 const FEATURES = [
   { id: "overall", label: "Overall experience" },
@@ -48,7 +49,11 @@ export default function ProfileRatings({
             <div key={f.id} className="flex items-center justify-between gap-3 py-3">
               <span className="text-[13px] font-medium text-ink">
                 {f.label}
-                {busy && <span className="ml-2 text-[10px] font-semibold text-ink/35">Saving…</span>}
+                {busy && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-semibold text-ink/35">
+                    <LogoLoader size={12} /> Saving…
+                  </span>
+                )}
               </span>
               <div className="flex items-center gap-0.5" role="radiogroup" aria-label={f.label}>
                 {[1, 2, 3, 4, 5].map((star) => {

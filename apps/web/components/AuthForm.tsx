@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth-context";
+import LogoLoader from "@/components/LogoLoader";
 
 type Mode = "login" | "signup";
 type FieldName = "firstName" | "lastName" | "email" | "password" | "confirm";
@@ -83,15 +84,6 @@ function Eye({ open }: { open: boolean }) {
   ) : (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-    </svg>
-  );
-}
-
-function Spinner() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 animate-spin">
-      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-20" />
-      <path d="M22 12a10 10 0 00-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
     </svg>
   );
 }
@@ -422,7 +414,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           <button type="submit" disabled={busy}
             className="h-11 flex-1 rounded-lg bg-ink text-[14px] font-medium text-white transition-all duration-200 hover:bg-ink/90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed">
             {busy ? (
-              <span className="inline-flex items-center gap-2"><Spinner /> {isLogin ? "Signing in..." : "Creating..."}</span>
+              <span className="inline-flex items-center gap-2"><LogoLoader size={18} /> {isLogin ? "Signing in..." : "Creating..."}</span>
             ) : isLogin ? "Sign in" : step === totalSteps - 1 ? "Create account" : "Continue"}
           </button>
         </div>

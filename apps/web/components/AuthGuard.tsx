@@ -3,6 +3,7 @@
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
+import LogoLoader from "@/components/LogoLoader";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -24,10 +25,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   if (!checked) {
     return (
       <div className="flex h-screen items-center justify-center bg-fog dark:bg-ink">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-deep-violet border-t-transparent" />
-          <p className="text-[12px] text-ink/40 dark:text-fog/40">Loading...</p>
-        </div>
+        <LogoLoader size={48} label="Loading…" showText />
       </div>
     );
   }
