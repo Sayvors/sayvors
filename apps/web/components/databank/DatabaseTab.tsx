@@ -298,6 +298,19 @@ export default function DatabaseTab({
               {testResult.ok ? `Connected — ${testResult.version}` : testResult.error}
             </div>
           )}
+
+          <details className="rounded-xl border border-ink/[0.06] bg-ink/[0.02]">
+            <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-ink/50 hover:text-ink/70">
+              Why connect a live database?
+            </summary>
+            <div className="space-y-2 border-t border-ink/[0.05] px-3 py-3 text-[12px] text-ink/60">
+              <p className="font-bold text-ink">When to use it</p>
+              <p>Your knowledge already lives in a database — a product catalog, support tickets, customer records, inventory, or a knowledge base table.</p>
+              <p className="mt-1"><span className="text-emerald-600">Use when</span> you want AI answers grounded in live data, not a static snapshot. Queries run against the real database at ask time.</p>
+              <p className="mt-0.5"><span className="text-amber-600">Watch out</span> only read-only queries are safe here. Credentials are stored encrypted and never shown again.</p>
+              <p className="mt-1"><span className="text-ink/50">vs. files:</span> files are simpler but go stale; a live database stays current without re-uploading.</p>
+            </div>
+          </details>
           {formError && <p role="alert" className="text-[12px] font-medium text-coral">{formError}</p>}
 
           <div className="flex gap-2">

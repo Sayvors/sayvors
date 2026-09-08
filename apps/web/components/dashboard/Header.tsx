@@ -192,7 +192,7 @@ export default function Header() {
           {createOpen && (
             <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white py-1 shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
               <CreateMenuItem label={t.header.newAgent} href="/dashboard/agents/create" />
-              <CreateMenuItem label={t.header.newDatabank} href="/dashboard/databank" />
+              <CreateMenuItem label={t.header.newDatabank} href="/dashboard/databank/new" />
               <CreateMenuItem label={t.header.newChannel} href="/dashboard/channels" />
               <CreateMenuItem label={t.header.newAutomation} href="/dashboard/automations" />
             </div>

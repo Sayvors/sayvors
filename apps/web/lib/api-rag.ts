@@ -58,6 +58,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
       const retryHeaders = { ...buildHeaders(isForm), ...(options.headers as Record<string, string>) };
       const retryRes = await fetch(`${API}${path}`, { ...options, headers: retryHeaders, credentials: "include" });
       if (!retryRes.ok) throw new Error(await retryRes.text());
+      if (retryRes.status === 204) return undefined;
       return retryRes.json();
     }
     // Don't redirect if already on an auth page — prevents infinite reload loop
@@ -68,6 +69,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
   }
 
   if (!res.ok) throw new Error(await res.text());
+  if (res.status === 204) return undefined;
   return res.json();
 }
 
