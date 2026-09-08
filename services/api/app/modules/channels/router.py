@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_db, get_current_user
 from ...config import settings
 from ..users.models import User
-from .models import Channel, ReviewReply, AutoReplyConfig
+from .models import BusinessService, Channel, ReviewReply, AutoReplyConfig, VerificationRecord
 from .schemas import (
     AutoReplyConfigResponse,
     AutoReplyConfigUpdate,
@@ -23,6 +23,11 @@ from .schemas import (
     ReviewReplyGenerate,
     ReviewReplyListResponse,
     ReviewReplyResponse,
+    ServiceCreate,
+    ServiceResponse,
+    ServiceUpdate,
+    VerificationRequest,
+    VerificationResponse,
 )
 from .service import (
     create_channel,
@@ -114,6 +119,144 @@ async def disconnect_channel(
     deleted = await delete_channel(channel_id, user, db)
     if not deleted:
         raise HTTPException(status_code=404, detail="Channel not found")
+
+
+async def _google_channel(channel_id: str, user: User, db: AsyncSession) -> Channel:
+    channel = await get_channel(channel_id, user, db)
+    if not channel or channel.platform != "google_reviews":
+        raise HTTPException(status_code=404, detail="Google channel not found")
+    return channel
+
+
+def _verification_response(record: VerificationRecord | None, channel_id: str) -> VerificationResponse:
+    return VerificationResponse(
+        channel_id=channel_id,
+        status=record.status if record else "unstarted",
+        method=record.method if record else None,
+        contact_target=record.contact_target if record else None,
+        attempts=record.attempts if record else 0,
+        requested_at=record.requested_at.isoformat() if record and record.requested_at else None,
+        verified_at=record.verified_at.isoformat() if record and record.verified_at else None,
+    )
+
+
+@router.get("/{channel_id}/verification", response_model=VerificationResponse)
+async def get_verification(
+    channel_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _google_channel(channel_id, user, db)
+    result = await db.execute(select(VerificationRecord).where(VerificationRecord.channel_id == channel_id))
+    return _verification_response(result.scalar_one_or_none(), channel_id)
+
+
+@router.post("/{channel_id}/verification", response_model=VerificationResponse)
+async def request_verification(
+    channel_id: str,
+    body: VerificationRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    channel = await _google_channel(channel_id, user, db)
+    result = await db.execute(select(VerificationRecord).where(VerificationRecord.channel_id == channel_id))
+    record = result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if record is None:
+        record = VerificationRecord(channel_id=channel_id)
+        db.add(record)
+    record.status = "requested"
+    record.method = body.method
+    record.contact_target = body.contact_target
+    record.attempts += 1
+    record.requested_at = now
+    await db.commit()
+    await db.refresh(record)
+    from ..outbox.service import enqueue_event
+    await enqueue_event("google.verification.requested", {"channel_id": channel.id, "method": body.method}, "google-business-events")
+    return _verification_response(record, channel_id)
+
+
+def _service_response(service: BusinessService) -> ServiceResponse:
+    return ServiceResponse(
+        id=service.id,
+        channel_id=service.channel_id,
+        name=service.name,
+        category=service.category,
+        description=service.description,
+        is_offered=service.is_offered,
+        source=service.source,
+    )
+
+
+@router.get("/{channel_id}/services")
+async def list_services(
+    channel_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _google_channel(channel_id, user, db)
+    result = await db.execute(
+        select(BusinessService).where(BusinessService.channel_id == channel_id).order_by(BusinessService.created_at)
+    )
+    return {"services": [_service_response(item) for item in result.scalars().all()], "predefined": []}
+
+
+@router.post("/{channel_id}/services", response_model=ServiceResponse, status_code=status.HTTP_201_CREATED)
+async def create_service(
+    channel_id: str,
+    body: ServiceCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _google_channel(channel_id, user, db)
+    service = BusinessService(channel_id=channel_id, **body.model_dump())
+    db.add(service)
+    await db.commit()
+    await db.refresh(service)
+    from ..outbox.service import enqueue_event
+    await enqueue_event("google.service.created", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
+    return _service_response(service)
+
+
+@router.put("/{channel_id}/services/{service_id}", response_model=ServiceResponse)
+async def update_service(
+    channel_id: str,
+    service_id: str,
+    body: ServiceUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _google_channel(channel_id, user, db)
+    result = await db.execute(select(BusinessService).where(BusinessService.id == service_id, BusinessService.channel_id == channel_id))
+    service = result.scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=404, detail="Service not found")
+    for key, value in body.model_dump(exclude_unset=True).items():
+        setattr(service, key, value)
+    await db.commit()
+    await db.refresh(service)
+    from ..outbox.service import enqueue_event
+    await enqueue_event("google.service.updated", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
+    return _service_response(service)
+
+
+@router.delete("/{channel_id}/services/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_service(
+    channel_id: str,
+    service_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _google_channel(channel_id, user, db)
+    result = await db.execute(select(BusinessService).where(BusinessService.id == service_id, BusinessService.channel_id == channel_id))
+    service = result.scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=404, detail="Service not found")
+    await db.delete(service)
+    await db.commit()
+    from ..outbox.service import enqueue_event
+    await enqueue_event("google.service.deleted", {"channel_id": channel_id, "service_id": service_id}, "google-business-events")
 
 
 @router.post("/{channel_id}/messages", response_model=ChannelMessageResponse, status_code=status.HTTP_201_CREATED)
