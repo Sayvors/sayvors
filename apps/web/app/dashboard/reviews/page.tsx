@@ -91,6 +91,7 @@ function ReviewsInner() {
   const [page, setPage] = useState(1);
   const [replyMode, setReplyMode] = useState<"manual" | "ai">("manual");
   const [aiLoading, setAiLoading] = useState(false);
+  const [breakdownStar, setBreakdownStar] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -290,18 +291,28 @@ function ReviewsInner() {
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                   <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Rating breakdown</h3>
-                  <p className="text-[11px] text-ink/35">Sayvors-derived.</p>
-                  <div className="mt-3 space-y-2">
+                  <p className="text-[11px] text-ink/35">Sayvors-derived · tap a row for detail.</p>
+                  <div className="mt-3 space-y-1">
                     {analytics.dist.map((d) => (
-                      <div key={d.stars} className="flex items-center gap-2">
+                      <button key={d.stars} onClick={() => setBreakdownStar(breakdownStar === d.stars ? null : d.stars)}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition ${breakdownStar === d.stars ? "bg-deep-violet/[0.06] ring-1 ring-deep-violet/25" : "hover:bg-ink/[0.03]"}`}>
                         <span className="w-8 text-[11px] font-medium text-ink/50">{d.stars} ★</span>
-                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
-                          <div className="h-full rounded-full bg-gradient-to-r from-[#FBBC05] to-[#EA4335]" style={{ width: `${analytics.total ? (d.count / analytics.total) * 100 : 0}%` }} />
-                        </div>
+                        <span className="h-2 flex-1 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
+                          <span className="block h-full rounded-full bg-gradient-to-r from-[#FBBC05] to-[#EA4335]" style={{ width: `${analytics.total ? (d.count / analytics.total) * 100 : 0}%` }} />
+                        </span>
                         <span className="w-8 text-right text-[11px] text-ink/50">{d.count}</span>
-                      </div>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`h-3 w-3 text-ink/30 transition-transform ${breakdownStar === d.stars ? "rotate-90" : ""}`}><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      </button>
                     ))}
                   </div>
+                  {breakdownStar !== null && (
+                    <StarDetail
+                      stars={breakdownStar}
+                      reviews={reviews}
+                      onClose={() => setBreakdownStar(null)}
+                      onOpen={(id) => { setBreakdownStar(null); openDetail(id); }}
+                    />
+                  )}
                 </div>
                 <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                   <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Reviews trend</h3>
@@ -479,6 +490,48 @@ function normalizeReviews(raw: unknown): ReviewItem[] | null {
     reviewReplyUrl: r.reviewReplyUrl ? String(r.reviewReplyUrl) : undefined,
     policyStatus: r.policyStatus === "FLAGGED" ? "FLAGGED" : r.policyStatus === "OK" ? "OK" : undefined,
   }));
+}
+
+function StarDetail({ stars, reviews, onClose, onOpen }: { stars: number; reviews: ReviewItem[]; onClose: () => void; onOpen: (id: string) => void }) {
+  const group = reviews.filter((r) => r.rating === stars);
+  const share = reviews.length ? Math.round((group.length / reviews.length) * 100) : 0;
+  const replied = group.filter((r) => r.reply).length;
+  const signals = topSignals(group.map((r) => r.comment));
+  const verdict = stars >= 4
+    ? "Strength — protect what earns these ratings."
+    : stars === 3
+      ? "Swing zone — small fixes convert these to 4–5★."
+      : "Risk zone — reply fast and fix the root cause.";
+  return (
+    <div className="mt-3 rounded-xl border border-deep-violet/20 bg-deep-violet/[0.03] p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[12px] font-bold text-ink dark:text-fog">{stars}★ detail · {group.length} reviews ({share}%)</p>
+        <button onClick={onClose} className="text-[11px] font-semibold text-ink/40 hover:text-ink">Close</button>
+      </div>
+      <p className="mt-1 text-[11px] text-ink/55 dark:text-fog/60">{verdict} Replied {replied}/{group.length}.</p>
+      {signals.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {signals.map((s) => (
+            <span key={s} className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-ink/60 ring-1 ring-ink/[0.06] dark:bg-ink">{s}</span>
+          ))}
+        </div>
+      )}
+      <div className="mt-2 space-y-1">
+        {group.slice(0, 3).map((r) => (
+          <button key={r.id} onClick={() => onOpen(r.id)} className="block w-full truncate rounded-lg bg-white px-2.5 py-1.5 text-left text-[11px] text-ink/70 ring-1 ring-ink/[0.05] hover:ring-deep-violet/30 dark:bg-ink dark:text-fog/70">
+            <span className="font-semibold text-ink dark:text-fog">{r.reviewer}</span> — “{r.comment}”
+          </button>
+        ))}
+        {group.length === 0 && <p className="text-[11px] text-ink/40">No reviews at this rating yet.</p>}
+      </div>
+    </div>
+  );
+}
+
+function topSignals(comments: string[]): string[] {
+  const lex = ["wait", "slow", "staff", "service", "clean", "price", "friendly", "quick", "helpful", "busy", "support", "quality"];
+  const counts = lex.map((w) => ({ w, c: comments.filter((t) => t.toLowerCase().includes(w)).length })).filter((x) => x.c > 0);
+  return counts.sort((a, b) => b.c - a.c).slice(0, 4).map((x) => `${x.w} ×${x.c}`);
 }
 
 function InsightCard({ review }: { review: ReviewItem }) {
