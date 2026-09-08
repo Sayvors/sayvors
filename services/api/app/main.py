@@ -34,7 +34,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         skip_prefixes = (
             "/api/v1/auth/login", "/api/v1/auth/signup", "/api/v1/auth/refresh",
             "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password",
-            "/api/v1/auth/verify-email", "/api/v1/auth/csrf-token",
+            "/api/v1/auth/verify-email", "/api/v1/auth/verify-otp", "/api/v1/auth/csrf-token",
+            "/api/v1/email/otp/",
             "/api/v1/channels/webhook/",
             "/health",
         )
