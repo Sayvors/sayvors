@@ -28,6 +28,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Google Business",
     items: [
       { key: "locations", icon: <LocationIcon />, href: "/dashboard/locations" },
+      { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
       { key: "businessInfo", icon: <BuildingIcon />, href: "/dashboard/business-info" },
       { key: "services", icon: <WrenchIcon />, href: "/dashboard/services" },
       { key: "media", icon: <PhotoIcon />, href: "/dashboard/media" },
@@ -37,8 +38,6 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "menu", icon: <MenuIcon />, href: "/dashboard/menu" },
       { key: "attributes", icon: <SlidersIcon />, href: "/dashboard/attributes" },
       { key: "googleUpdates", icon: <AlertIcon />, href: "/dashboard/google-updates" },
-      { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
-      { key: "access", icon: <UsersIcon />, href: "/dashboard/access" },
     ],
   },
   {
@@ -55,6 +54,12 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
       { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
       { key: "autoReply", icon: <AutoReplyIcon />, href: "/dashboard/automations" },
+    ],
+  },
+  {
+    label: "Management",
+    items: [
+      { key: "access", icon: <UsersIcon />, href: "/dashboard/access" },
     ],
   },
 ];
