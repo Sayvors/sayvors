@@ -104,6 +104,7 @@ function LocationsInner() {
     { key: "categories", label: "Categories" },
     { key: "hours", label: "Hours" },
     { key: "special-hours", label: "Special Hours" },
+    { key: "more-hours", label: "More Hours" },
     { key: "service-area", label: "Service Area" },
     { key: "attributes", label: "Attributes" },
     { key: "description", label: "Description" },
@@ -206,6 +207,9 @@ function LocationsInner() {
             )}
             {activeTab === "special-hours" && (
               <SpecialHoursTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Special hours saved." })} />
+            )}
+            {activeTab === "more-hours" && (
+              <MoreHoursTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "More hours saved." })} />
             )}
             {activeTab === "service-area" && (
               <ServiceAreaTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Service area saved." })} />
@@ -420,6 +424,45 @@ function SpecialHoursTab({ location, onSave }: { location: LocationOption | null
       <button onClick={addEntry} className="btn-secondary">+ Add Special Hours</button>
       <div className="flex justify-end pt-2">
         <button onClick={onSave} className="btn-primary">Save Special Hours</button>
+      </div>
+    </div>
+  );
+}
+
+const MORE_HOURS_OPTIONS = ["Access", "Brunch", "Delivery", "Dinner", "Happy Hour", "Lunch", "Takeout", "Drive-through"];
+
+function MoreHoursTab({ location, onSave }: { location: LocationOption | null; onSave: () => void }) {
+  const [entries, setEntries] = useState<{ type: string; open: string; close: string }[]>([]);
+  const addEntry = () => setEntries([...entries, { type: MORE_HOURS_OPTIONS[0], open: "09:00", close: "17:00" }]);
+  const removeEntry = (i: number) => setEntries(entries.filter((_, idx) => idx !== i));
+  const updateEntry = (i: number, field: string, value: string) => {
+    const next = [...entries];
+    (next[i] as any)[field] = value;
+    setEntries(next);
+  };
+
+  return (
+    <div className="space-y-5">
+      <SectionTitle title="More Hours" subtitle="Additional service hours (delivery, drive-through, takeout, etc.)." />
+      {entries.length === 0 && (
+        <p className="text-[12px] text-ink/35 dark:text-fog/35">No additional hours set. Add entries for services like delivery or drive-through.</p>
+      )}
+      {entries.map((entry, i) => (
+        <div key={i} className="flex items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+          <select value={entry.type} onChange={(e) => updateEntry(i, "type", e.target.value)} className="input-field w-40">
+            {MORE_HOURS_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+          </select>
+          <input type="time" value={entry.open} onChange={(e) => updateEntry(i, "open", e.target.value)} className="input-field w-28" />
+          <span className="text-[12px] text-ink/40">to</span>
+          <input type="time" value={entry.close} onChange={(e) => updateEntry(i, "close", e.target.value)} className="input-field w-28" />
+          <button onClick={() => removeEntry(i)} className="text-ink/30 transition hover:text-red-500 dark:text-fog/30">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
+          </button>
+        </div>
+      ))}
+      <button onClick={addEntry} className="btn-secondary">+ Add More Hours</button>
+      <div className="flex justify-end pt-2">
+        <button onClick={onSave} className="btn-primary">Save More Hours</button>
       </div>
     </div>
   );
