@@ -10,7 +10,14 @@ type View = { kind: "list" } | { kind: "create" } | { kind: "detail"; id: string
 
 interface PostItem {
   id: string;
-  summary: string;
+  title: string;
+  locationId: string;
+  locationName: string;
+  businessName: string;
+  description: string;
+  tags: string[];
+  keywords: string[];
+  images: string[];
   status: PostStatus;
   createdAt: string;
   scheduledAt?: string;
@@ -24,12 +31,28 @@ interface LocationOption {
 
 const MOCK_LOCATIONS: LocationOption[] = [
   { id: "loc_1", name: "Sayvors Al Malqa" },
+  { id: "loc_2", name: "Sayvors Olaya" },
 ];
 
 const MOCK_POSTS: PostItem[] = [
-  { id: "p1", summary: "Weekend offer: 20% off all services. Visit us today!", status: "LIVE", createdAt: "2026-09-01", views: 1840 },
-  { id: "p2", summary: "New branch opening soon in Olaya. Stay tuned!", status: "SCHEDULED", createdAt: "2026-09-05", scheduledAt: "2026-09-12T10:00", views: 0 },
-  { id: "p3", summary: "Eid timings updated. Check our holiday hours.", status: "ARCHIVED", createdAt: "2026-08-20", views: 920 },
+  {
+    id: "p1", title: "Weekend Offer — 20% Off", locationId: "loc_1", locationName: "Sayvors Al Malqa",
+    businessName: "Sayvors", description: "Weekend offer: 20% off all services. Visit us today and bring a friend!",
+    tags: ["offer", "weekend"], keywords: ["discount", "services", "riyadh"], images: ["offer-banner.jpg"],
+    status: "LIVE", createdAt: "2026-09-01", views: 1840,
+  },
+  {
+    id: "p2", title: "New Branch Opening Soon", locationId: "loc_2", locationName: "Sayvors Olaya",
+    businessName: "Sayvors", description: "New branch opening soon in Olaya. Stay tuned for launch offers!",
+    tags: ["announcement"], keywords: ["new branch", "olaya"], images: [],
+    status: "SCHEDULED", createdAt: "2026-09-05", scheduledAt: "2026-09-12T10:00", views: 0,
+  },
+  {
+    id: "p3", title: "Eid Timings Update", locationId: "loc_1", locationName: "Sayvors Al Malqa",
+    businessName: "Sayvors", description: "Eid timings updated. Check our holiday hours before visiting.",
+    tags: ["hours", "holiday"], keywords: ["eid", "timings"], images: [],
+    status: "ARCHIVED", createdAt: "2026-08-20", views: 920,
+  },
 ];
 
 export default function PostsPage() {
@@ -49,7 +72,15 @@ function PostsInner() {
   const [view, setView] = useState<View>({ kind: "list" });
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
-  const [summary, setSummary] = useState("");
+  const [title, setTitle] = useState("");
+  const [postLocationId, setPostLocationId] = useState("");
+  const [businessName, setBusinessName] = useState("");
+  const [description, setDescription] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [keywordInput, setKeywordInput] = useState("");
+  const [images, setImages] = useState<string[]>([]);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -60,8 +91,9 @@ function PostsInner() {
       try {
         const data = await apiFetch("/api/v1/locations/?limit=100");
         if (!cancelled) {
-          setLocations(data.locations ?? []);
-          if (data.locations?.length) setSelectedId(data.locations[0].id);
+          const locs = data.locations ?? MOCK_LOCATIONS;
+          setLocations(locs);
+          if (locs.length) setSelectedId(locs[0].id);
         }
       } catch {
         setLocations(MOCK_LOCATIONS);
@@ -79,7 +111,7 @@ function PostsInner() {
     (async () => {
       try {
         const data = await apiFetch(`/api/v1/locations/${selectedId}/posts`);
-        if (!cancelled) setPosts(data.posts ?? MOCK_POSTS);
+        if (!cancelled) setPosts(normalizePosts(data.posts) ?? MOCK_POSTS);
       } catch {
         if (!cancelled) setPosts(MOCK_POSTS);
       }
@@ -101,17 +133,35 @@ function PostsInner() {
 
   const activePost = view.kind === "detail" ? posts.find((p) => p.id === view.id) ?? null : null;
 
-  const openCreate = () => {
-    setSummary("");
+  const resetForm = (locId?: string) => {
+    setTitle("");
+    setPostLocationId(locId ?? selectedId ?? locations[0]?.id ?? "");
+    setBusinessName("Sayvors");
+    setDescription("");
+    setTags([]);
+    setTagInput("");
+    setKeywords([]);
+    setKeywordInput("");
+    setImages([]);
     setScheduleEnabled(false);
     setScheduledAt("");
+  };
+
+  const openCreate = () => {
+    resetForm();
     setView({ kind: "create" });
   };
 
   const openDetail = (id: string, editing = false) => {
     const p = posts.find((x) => x.id === id);
     if (!p) return;
-    setSummary(p.summary);
+    setTitle(p.title);
+    setPostLocationId(p.locationId);
+    setBusinessName(p.businessName);
+    setDescription(p.description);
+    setTags(p.tags);
+    setKeywords(p.keywords);
+    setImages(p.images);
     setScheduleEnabled(p.status === "SCHEDULED");
     setScheduledAt(p.scheduledAt ?? "");
     setView({ kind: "detail", id, editing });
@@ -119,23 +169,47 @@ function PostsInner() {
 
   const backToList = () => setView({ kind: "list" });
 
+  const addChip = (value: string, list: string[], setList: (v: string[]) => void) => {
+    const v = value.trim().toLowerCase();
+    if (v && !list.includes(v)) setList([...list, v]);
+  };
+
+  const handleFiles = (files: FileList | null) => {
+    if (!files) return;
+    const names = Array.from(files).slice(0, 5).map((f) => f.name);
+    setImages((prev) => [...prev, ...names].slice(0, 5));
+  };
+
+  const valid = title.trim() && businessName.trim() && description.trim() && postLocationId && (!scheduleEnabled || scheduledAt);
+
+  const payload = () => {
+    const loc = locations.find((l) => l.id === postLocationId);
+    return {
+      title: title.trim(),
+      locationId: postLocationId,
+      locationName: loc?.name ?? "",
+      businessName: businessName.trim(),
+      description: description.trim(),
+      tags,
+      keywords,
+      images,
+    };
+  };
+
   const handleCreate = async () => {
-    if (!summary.trim()) return;
-    if (scheduleEnabled && !scheduledAt) return;
+    if (!valid) return;
     setSubmitting(true);
     const status: PostStatus = scheduleEnabled ? "SCHEDULED" : "LIVE";
+    const base = payload();
     try {
       await apiFetch(`/api/v1/locations/${selectedId}/posts`, {
         method: "POST",
-        body: JSON.stringify({ summary: summary.trim(), status, scheduledAt: scheduleEnabled ? scheduledAt : undefined }),
+        body: JSON.stringify({ ...base, status, scheduledAt: scheduleEnabled ? scheduledAt : undefined }),
       });
       setPosts((prev) => [{
-        id: `p_${Date.now()}`,
-        summary: summary.trim(),
-        status,
-        scheduledAt: scheduleEnabled ? scheduledAt : undefined,
-        createdAt: new Date().toISOString().slice(0, 10),
-        views: 0,
+        id: `p_${Date.now()}`, ...base,
+        status, scheduledAt: scheduleEnabled ? scheduledAt : undefined,
+        createdAt: new Date().toISOString().slice(0, 10), views: 0,
       }, ...prev]);
       setView({ kind: "list" });
       setBanner({ kind: "ok", text: scheduleEnabled ? "Post scheduled. We will publish it via Google at that time." : "Post published." });
@@ -147,17 +221,17 @@ function PostsInner() {
   };
 
   const handleUpdate = async () => {
-    if (view.kind !== "detail" || !summary.trim()) return;
-    if (scheduleEnabled && !scheduledAt) return;
+    if (view.kind !== "detail" || !valid) return;
     setSubmitting(true);
     const status: PostStatus = scheduleEnabled ? "SCHEDULED" : activePost?.status === "ARCHIVED" ? "ARCHIVED" : "LIVE";
+    const base = payload();
     try {
       await apiFetch(`/api/v1/locations/${selectedId}/posts/${view.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ summary: summary.trim(), status, scheduledAt: scheduleEnabled ? scheduledAt : undefined }),
+        body: JSON.stringify({ ...base, status, scheduledAt: scheduleEnabled ? scheduledAt : undefined }),
       });
       setPosts((prev) => prev.map((p) => p.id === view.id
-        ? { ...p, summary: summary.trim(), status, scheduledAt: scheduleEnabled ? scheduledAt : undefined }
+        ? { ...p, ...base, status, scheduledAt: scheduleEnabled ? scheduledAt : undefined }
         : p));
       setView({ kind: "detail", id: view.id, editing: false });
       setBanner({ kind: "ok", text: "Post updated." });
@@ -260,7 +334,7 @@ function PostsInner() {
                     {tab === "scheduled" ? "No scheduled posts" : tab === "archived" ? "No archived posts" : "No posts yet"}
                   </p>
                   <p className="mt-1 max-w-sm text-center text-[12px] text-ink/30 dark:text-fog/30">
-                    {tab === "all" ? "Create your first post to appear on your Business Profile." : tab === "scheduled" ? "Schedule a post and we will publish it at that time." : "Deleted posts land here and can be restored."}
+                    Give it a title, description, tags, keywords and images.
                   </p>
                   {tab === "all" && (
                     <button onClick={openCreate} className="mt-4 rounded-xl bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white">+ Create Post</button>
@@ -271,14 +345,23 @@ function PostsInner() {
                   {filtered.map((p) => (
                     <button key={p.id} onClick={() => openDetail(p.id, false)} className="block w-full rounded-2xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/25 hover:shadow-sm dark:border-fog/[0.06] dark:bg-ink">
                       <span className="flex items-start justify-between gap-3">
-                        <span className="line-clamp-2 flex-1 text-[13px] leading-relaxed text-ink dark:text-fog">{p.summary}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[14px] font-bold text-ink dark:text-fog">{p.title}</span>
+                          <span className="mt-0.5 block text-[11px] text-ink/40 dark:text-fog/40">{p.businessName} · {p.locationName}</span>
+                        </span>
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${p.status === "LIVE" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" : p.status === "SCHEDULED" ? "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400" : "bg-ink/[0.05] text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40"}`}>
                           {p.status}
                         </span>
                       </span>
-                      <span className="mt-2 block text-[11px] text-ink/35 dark:text-fog/35">
-                        Created {p.createdAt} · {p.views.toLocaleString()} views
-                        {p.status === "SCHEDULED" && p.scheduledAt ? ` · Publishes ${new Date(p.scheduledAt).toLocaleString()}` : ""}
+                      <span className="mt-2 line-clamp-2 block text-[13px] leading-relaxed text-ink/70 dark:text-fog/70">{p.description}</span>
+                      <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {p.tags.slice(0, 3).map((t) => (
+                          <span key={t} className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet">#{t}</span>
+                        ))}
+                        {p.images.length > 0 && (
+                          <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06]">📷 {p.images.length}</span>
+                        )}
+                        <span className="ml-auto text-[11px] text-ink/35 dark:text-fog/35">{p.views.toLocaleString()} views{p.status === "SCHEDULED" && p.scheduledAt ? ` · ${new Date(p.scheduledAt).toLocaleString()}` : ""}</span>
                       </span>
                     </button>
                   ))}
@@ -288,84 +371,83 @@ function PostsInner() {
           )}
 
           {view.kind === "create" && (
-            <div className="rounded-2xl border border-ink/[0.06] bg-white p-6 dark:border-fog/[0.06] dark:bg-ink">
-              <h2 className="text-[15px] font-bold text-ink dark:text-fog">New post</h2>
-              <p className="mt-0.5 text-[12px] text-ink/40 dark:text-fog/40">Write once — publish now or schedule for later.</p>
-              <div className="mt-5 space-y-4">
-                <div>
-                  <label className="mb-1 block text-[12px] font-medium text-ink/50">Post text *</label>
-                  <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={5} maxLength={1500} placeholder="What do you want customers to know?" className="input-field resize-y" autoFocus />
-                  <p className="mt-1 text-right text-[10px] text-ink/30">{summary.length}/1500</p>
-                </div>
-                <label className="flex cursor-pointer items-center justify-between rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
-                  <span>
-                    <span className="block text-[13px] font-semibold text-ink dark:text-fog">Schedule for later</span>
-                    <span className="block text-[11px] text-ink/40">Stored in Sayvors, published via Google at that time.</span>
-                  </span>
-                  <span onClick={() => setScheduleEnabled(!scheduleEnabled)}
-                    className={`h-5 w-9 shrink-0 rounded-full transition ${scheduleEnabled ? "bg-deep-violet" : "bg-ink/15 dark:bg-fog/15"}`}>
-                    <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${scheduleEnabled ? "translate-x-[18px]" : "translate-x-0.5"}`} />
-                  </span>
-                </label>
-                {scheduleEnabled && (
-                  <div>
-                    <label className="mb-1 block text-[12px] font-medium text-ink/50">Publish at</label>
-                    <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} className="input-field" />
-                  </div>
-                )}
-                <div className="flex items-center justify-between pt-2">
-                  <button onClick={backToList} className="text-[12px] font-medium text-ink/40 hover:text-ink">Back to posts</button>
-                  <button onClick={handleCreate} disabled={!summary.trim() || (scheduleEnabled && !scheduledAt) || submitting} className="btn-primary disabled:opacity-50">
-                    {submitting ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : scheduleEnabled ? "Schedule Post" : "Publish Post"}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <PostForm
+              title={title} setTitle={setTitle}
+              postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
+              businessName={businessName} setBusinessName={setBusinessName}
+              description={description} setDescription={setDescription}
+              tags={tags} tagInput={tagInput} setTagInput={setTagInput}
+              onAddTag={() => { addChip(tagInput, tags, setTags); setTagInput(""); }}
+              onRemoveTag={(t) => setTags(tags.filter((x) => x !== t))}
+              keywords={keywords} keywordInput={keywordInput} setKeywordInput={setKeywordInput}
+              onAddKeyword={() => { addChip(keywordInput, keywords, setKeywords); setKeywordInput(""); }}
+              onRemoveKeyword={(k) => setKeywords(keywords.filter((x) => x !== k))}
+              images={images} onFiles={handleFiles} onRemoveImage={(n) => setImages(images.filter((x) => x !== n))}
+              scheduleEnabled={scheduleEnabled} setScheduleEnabled={setScheduleEnabled}
+              scheduledAt={scheduledAt} setScheduledAt={setScheduledAt}
+              onBack={backToList} onSubmit={handleCreate} submitting={submitting}
+              submitLabel={scheduleEnabled ? "Schedule Post" : "Publish Post"}
+              heading="New post" subheading="Title, location, description, tags, keywords and images."
+            />
           )}
 
           {view.kind === "detail" && activePost && (
             <div className="space-y-3">
-              <div className="rounded-2xl border border-ink/[0.06] bg-white p-6 dark:border-fog/[0.06] dark:bg-ink">
-                <div className="flex items-start justify-between gap-3">
-                  <h2 className="text-[15px] font-bold text-ink dark:text-fog">{view.editing ? "Edit post" : "Post"}</h2>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${activePost.status === "LIVE" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" : activePost.status === "SCHEDULED" ? "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400" : "bg-ink/[0.05] text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40"}`}>
-                    {activePost.status}
-                  </span>
-                </div>
-                {view.editing ? (
-                  <div className="mt-4 space-y-4">
-                    <div>
-                      <label className="mb-1 block text-[12px] font-medium text-ink/50">Post text *</label>
-                      <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={5} maxLength={1500} className="input-field resize-y" autoFocus />
+              {view.editing ? (
+                <PostForm
+                  title={title} setTitle={setTitle}
+                  postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
+                  businessName={businessName} setBusinessName={setBusinessName}
+                  description={description} setDescription={setDescription}
+                  tags={tags} tagInput={tagInput} setTagInput={setTagInput}
+                  onAddTag={() => { addChip(tagInput, tags, setTags); setTagInput(""); }}
+                  onRemoveTag={(t) => setTags(tags.filter((x) => x !== t))}
+                  keywords={keywords} keywordInput={keywordInput} setKeywordInput={setKeywordInput}
+                  onAddKeyword={() => { addChip(keywordInput, keywords, setKeywords); setKeywordInput(""); }}
+                  onRemoveKeyword={(k) => setKeywords(keywords.filter((x) => x !== k))}
+                  images={images} onFiles={handleFiles} onRemoveImage={(n) => setImages(images.filter((x) => x !== n))}
+                  scheduleEnabled={scheduleEnabled} setScheduleEnabled={setScheduleEnabled}
+                  scheduledAt={scheduledAt} setScheduledAt={setScheduledAt}
+                  onBack={() => openDetail(activePost.id, false)} onSubmit={handleUpdate} submitting={submitting}
+                  submitLabel="Save Changes" heading="Edit post" subheading="Update every field, then save."
+                />
+              ) : (
+                <div className="overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
+                  {activePost.images.length > 0 && (
+                    <div className="grid grid-cols-3 gap-1 bg-ink/[0.03] p-2 dark:bg-fog/[0.03]">
+                      {activePost.images.map((img) => (
+                        <div key={img} className="flex aspect-video items-center justify-center rounded-lg bg-gradient-to-br from-violet-soft/40 to-sky/20 px-2 text-center">
+                          <span className="truncate text-[10px] font-medium text-ink/50">{img}</span>
+                        </div>
+                      ))}
                     </div>
-                    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
-                      <span className="text-[13px] font-semibold text-ink dark:text-fog">Schedule for later</span>
-                      <span onClick={() => setScheduleEnabled(!scheduleEnabled)}
-                        className={`h-5 w-9 shrink-0 rounded-full transition ${scheduleEnabled ? "bg-deep-violet" : "bg-ink/15 dark:bg-fog/15"}`}>
-                        <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${scheduleEnabled ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                  )}
+                  <div className="p-6">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-[17px] font-bold text-ink dark:text-fog">{activePost.title}</h2>
+                        <p className="mt-0.5 text-[12px] text-ink/40 dark:text-fog/40">{activePost.businessName} · {activePost.locationName}</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${activePost.status === "LIVE" ? "bg-emerald-100 text-emerald-700" : activePost.status === "SCHEDULED" ? "bg-amber-100 text-amber-700" : "bg-ink/[0.05] text-ink/40"}`}>
+                        {activePost.status}
                       </span>
-                    </label>
-                    {scheduleEnabled && (
-                      <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} className="input-field" />
-                    )}
-                    <div className="flex items-center justify-between pt-1">
-                      <button onClick={() => openDetail(activePost.id, false)} className="text-[12px] font-medium text-ink/40 hover:text-ink">Cancel editing</button>
-                      <button onClick={handleUpdate} disabled={!summary.trim() || submitting} className="btn-primary disabled:opacity-50">
-                        {submitting ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : "Save Changes"}
-                      </button>
                     </div>
-                  </div>
-                ) : (
-                  <>
-                    <p className="mt-3 text-[14px] leading-relaxed text-ink dark:text-fog">{activePost.summary}</p>
+                    <p className="mt-3 text-[13px] leading-relaxed text-ink/80 dark:text-fog/80">{activePost.description}</p>
+                    {activePost.tags.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {activePost.tags.map((t) => (
+                          <span key={t} className="rounded-full bg-deep-violet/10 px-2.5 py-1 text-[11px] font-semibold text-deep-violet">#{t}</span>
+                        ))}
+                      </div>
+                    )}
+                    {activePost.keywords.length > 0 && (
+                      <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">Keywords: {activePost.keywords.join(", ")}</p>
+                    )}
                     <p className="mt-3 text-[11px] text-ink/35 dark:text-fog/35">
                       Created {activePost.createdAt} · {activePost.views.toLocaleString()} views
                       {activePost.status === "SCHEDULED" && activePost.scheduledAt ? ` · Publishes ${new Date(activePost.scheduledAt).toLocaleString()}` : ""}
                     </p>
-                    {activePost.status === "SCHEDULED" && (
-                      <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">Tenant-scheduled — stored locally, published via Google at that time.</p>
-                    )}
-                    <div className="mt-4 flex flex-wrap gap-2">
+                    <div className="mt-4 flex flex-wrap gap-2 border-t border-ink/[0.05] pt-4">
                       {activePost.status !== "ARCHIVED" && (
                         <button onClick={() => openDetail(activePost.id, true)} className="btn-secondary">Edit</button>
                       )}
@@ -378,12 +460,141 @@ function PostsInner() {
                         <button onClick={() => handleRestore(activePost.id)} className="btn-primary">Restore</button>
                       )}
                     </div>
-                  </>
-                )}
-              </div>
+                  </div>
+                </div>
+              )}
               <button onClick={backToList} className="text-[12px] font-medium text-ink/40 hover:text-ink">← Back to all posts</button>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function normalizePosts(raw: unknown): PostItem[] | null {
+  if (!Array.isArray(raw)) return null;
+  return raw.map((p: Record<string, unknown>, i: number) => ({
+    id: String(p.id ?? `p_${i}`),
+    title: String(p.title ?? p.summary ?? "Untitled post"),
+    locationId: String(p.locationId ?? p.location_id ?? "loc_1"),
+    locationName: String(p.locationName ?? p.location_name ?? ""),
+    businessName: String(p.businessName ?? p.business_name ?? "Sayvors"),
+    description: String(p.description ?? p.summary ?? ""),
+    tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
+    keywords: Array.isArray(p.keywords) ? p.keywords.map(String) : [],
+    images: Array.isArray(p.images) ? p.images.map(String) : [],
+    status: (p.status as PostStatus) ?? "LIVE",
+    createdAt: String(p.createdAt ?? p.created_at ?? new Date().toISOString().slice(0, 10)),
+    scheduledAt: p.scheduledAt ? String(p.scheduledAt) : p.scheduled_at ? String(p.scheduled_at) : undefined,
+    views: Number(p.views ?? 0),
+  }));
+}
+
+function PostForm(props: {
+  title: string; setTitle: (v: string) => void;
+  postLocationId: string; setPostLocationId: (v: string) => void; locations: LocationOption[];
+  businessName: string; setBusinessName: (v: string) => void;
+  description: string; setDescription: (v: string) => void;
+  tags: string[]; tagInput: string; setTagInput: (v: string) => void; onAddTag: () => void; onRemoveTag: (t: string) => void;
+  keywords: string[]; keywordInput: string; setKeywordInput: (v: string) => void; onAddKeyword: () => void; onRemoveKeyword: (k: string) => void;
+  images: string[]; onFiles: (f: FileList | null) => void; onRemoveImage: (n: string) => void;
+  scheduleEnabled: boolean; setScheduleEnabled: (v: boolean) => void;
+  scheduledAt: string; setScheduledAt: (v: string) => void;
+  onBack: () => void; onSubmit: () => void; submitting: boolean;
+  submitLabel: string; heading: string; subheading: string;
+}) {
+  const p = props;
+  return (
+    <div className="rounded-2xl border border-ink/[0.06] bg-white p-6 dark:border-fog/[0.06] dark:bg-ink">
+      <h2 className="text-[15px] font-bold text-ink dark:text-fog">{p.heading}</h2>
+      <p className="mt-0.5 text-[12px] text-ink/40 dark:text-fog/40">{p.subheading}</p>
+      <div className="mt-5 space-y-4">
+        <div>
+          <label className="mb-1 block text-[12px] font-medium text-ink/50">Title *</label>
+          <input value={p.title} onChange={(e) => p.setTitle(e.target.value)} placeholder="e.g. Weekend Offer — 20% Off" className="input-field" autoFocus />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-[12px] font-medium text-ink/50">Location *</label>
+            <select value={p.postLocationId} onChange={(e) => p.setPostLocationId(e.target.value)} className="input-field">
+              {p.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-[12px] font-medium text-ink/50">Business name *</label>
+            <input value={p.businessName} onChange={(e) => p.setBusinessName(e.target.value)} placeholder="Sayvors" className="input-field" />
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-[12px] font-medium text-ink/50">Description *</label>
+          <textarea value={p.description} onChange={(e) => p.setDescription(e.target.value)} rows={4} maxLength={1500} placeholder="Full post text customers will see..." className="input-field resize-y" />
+        </div>
+        <div>
+          <label className="mb-1 block text-[12px] font-medium text-ink/50">Tags</label>
+          <div className="flex flex-wrap gap-1.5">
+            {p.tags.map((t) => (
+              <span key={t} className="inline-flex items-center gap-1 rounded-full bg-deep-violet/10 px-2.5 py-1 text-[11px] font-semibold text-deep-violet">
+                #{t}
+                <button onClick={() => p.onRemoveTag(t)} className="opacity-50 hover:opacity-100">✕</button>
+              </span>
+            ))}
+          </div>
+          <div className="mt-2 flex gap-2">
+            <input value={p.tagInput} onChange={(e) => p.setTagInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && p.onAddTag()} placeholder="Add tag + Enter" className="input-field flex-1" />
+            <button onClick={p.onAddTag} className="btn-secondary">Add</button>
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-[12px] font-medium text-ink/50">Keywords</label>
+          <div className="flex flex-wrap gap-1.5">
+            {p.keywords.map((k) => (
+              <span key={k} className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-medium text-sky-700">
+                {k}
+                <button onClick={() => p.onRemoveKeyword(k)} className="opacity-50 hover:opacity-100">✕</button>
+              </span>
+            ))}
+          </div>
+          <div className="mt-2 flex gap-2">
+            <input value={p.keywordInput} onChange={(e) => p.setKeywordInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && p.onAddKeyword()} placeholder="Add keyword + Enter" className="input-field flex-1" />
+            <button onClick={p.onAddKeyword} className="btn-secondary">Add</button>
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-[12px] font-medium text-ink/50">Images (up to 5)</label>
+          <label className="flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-ink/[0.12] py-6 text-[12px] text-ink/40">
+            <span>Click to attach images</span>
+            <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => p.onFiles(e.target.files)} />
+          </label>
+          {p.images.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {p.images.map((n) => (
+                <span key={n} className="inline-flex items-center gap-1 rounded-lg bg-ink/[0.04] px-2 py-1 text-[11px] text-ink/60">
+                  {n}
+                  <button onClick={() => p.onRemoveImage(n)} className="opacity-50 hover:opacity-100">✕</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <label className="flex cursor-pointer items-center justify-between rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
+          <span>
+            <span className="block text-[13px] font-semibold text-ink dark:text-fog">Schedule for later</span>
+            <span className="block text-[11px] text-ink/40">Stored in Sayvors, published via Google at that time.</span>
+          </span>
+          <span onClick={() => p.setScheduleEnabled(!p.scheduleEnabled)}
+            className={`h-5 w-9 shrink-0 rounded-full transition ${p.scheduleEnabled ? "bg-deep-violet" : "bg-ink/15 dark:bg-fog/15"}`}>
+            <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${p.scheduleEnabled ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+          </span>
+        </label>
+        {p.scheduleEnabled && (
+          <input type="datetime-local" value={p.scheduledAt} onChange={(e) => p.setScheduledAt(e.target.value)} className="input-field" />
+        )}
+        <div className="flex items-center justify-between pt-1">
+          <button onClick={p.onBack} className="text-[12px] font-medium text-ink/40 hover:text-ink">Back</button>
+          <button onClick={p.onSubmit} disabled={p.submitting} className="btn-primary disabled:opacity-50">
+            {p.submitting ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : p.submitLabel}
+          </button>
         </div>
       </div>
     </div>
