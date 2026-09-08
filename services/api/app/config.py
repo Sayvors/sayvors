@@ -35,11 +35,10 @@ class Settings(BaseSettings):
     # ── Channel encryption ────────────────────────────────
     CHANNEL_ENCRYPTION_KEY: str = ""  # Falls back to JWT_SECRET if empty
 
-    # ── Email ────────────────────────────────────────────
-    SMTP_HOST: str = ""
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
+    # ── Email (Resend) ────────────────────────────────────────
+    # Server-side only. Never expose this to the frontend.
+    RESEND_API_KEY: str = ""
+    RESEND_FROM: str = "Sayvors <onboarding@resend.dev>"
     EMAIL_FROM: str = "noreply@sayvors.com"
     FRONTEND_URL: str = "http://localhost:3000"
 
