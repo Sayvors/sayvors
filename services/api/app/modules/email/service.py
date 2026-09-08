@@ -61,17 +61,67 @@ def _otp_key(email: str) -> str:
     return f"otp:{email.strip().lower()}"
 
 
+OTP_HTML = """<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F4F4F5;padding:32px 16px;">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+  <!-- Header -->
+  <tr><td style="padding:28px 40px;border-bottom:1px solid #EEEEF0;">
+    <div style="font-size:20px;font-weight:700;color:#1F2937;">Sayvors</div>
+    <div style="margin-top:4px;font-size:11px;font-weight:600;letter-spacing:3px;color:#A1A1AA;">EVERY LINE, ONE VOICE</div>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:40px;color:#1F2937;">
+    <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#1F2937;">Your verification code</h1>
+    <p style="margin:0 0 28px;font-size:15px;line-height:24px;color:#52525B;">Your Sayvors {purpose} code is:</p>
+    <div style="background-color:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;padding:20px;text-align:center;">
+      <span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#1F2937;font-family:'Courier New',Courier,monospace;">{code}</span>
+    </div>
+    <p style="margin:28px 0 0;font-size:14px;line-height:22px;color:#71717A;">This code expires in <strong style="color:#52525B;">10 minutes</strong>. If you didn't request it, you can safely ignore this email.</p>
+  </td></tr>
+
+  <!-- Footer with social icons -->
+  <tr>
+    <td style="padding:28px 40px;background-color:#FAFAFA;border-top:1px solid #EEEEF0;text-align:center;">
+      <p style="margin:0 0 16px;font-size:13px;font-weight:600;color:#52525B;">Follow Sayvors</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;"><tr>
+        <td style="padding:0 8px;">
+          <a href="https://www.linkedin.com/company/Sayvors"><img src="https://Sayvors.com/email-icons/linkedin.png" width="40" height="40" alt="LinkedIn" style="display:block;border:0;border-radius:8px;"></a>
+        </td>
+        <td style="padding:0 8px;">
+          <a href="https://twitter.com/Sayvors"><img src="https://Sayvors.com/email-icons/twitter.png" width="40" height="40" alt="Twitter / X" style="display:block;border:0;border-radius:8px;"></a>
+        </td>
+        <td style="padding:0 8px;">
+          <a href="https://www.facebook.com/Sayvors"><img src="https://Sayvors.com/email-icons/facebook.png" width="40" height="40" alt="Facebook" style="display:block;border:0;border-radius:8px;"></a>
+        </td>
+        <td style="padding:0 8px;">
+          <a href="https://www.instagram.com/Sayvors"><img src="https://Sayvors.com/email-icons/instagram.png" width="40" height="40" alt="Instagram" style="display:block;border:0;border-radius:8px;"></a>
+        </td>
+      </tr></table>
+      <p style="margin:16px 0 6px;font-size:12px;color:#A1A1AA;">
+        <a href="https://Sayvors.com" style="color:#71717A;text-decoration:none;font-weight:600;">Sayvors.com</a>
+      </p>
+      <p style="margin:0;font-size:12px;color:#A1A1AA;">EVERY LINE, ONE VOICE</p>
+      <p style="margin:6px 0 0;font-size:12px;color:#A1A1AA;">© Sayvors — Automated message, please do not reply.</p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>"""
+
+
 async def send_otp_email(email: str, purpose: str = "verification") -> None:
     """Generate a 6-digit code, store it in Redis for 10 min, and email it."""
     code = f"{secrets.randbelow(900000) + 100000}"
     redis = await get_redis()
     await redis.setex(_otp_key(email), OTP_TTL_SECONDS, code)
+    html = OTP_HTML.replace("{purpose}", purpose).replace("{code}", code)
     await send_email(
         email,
         f"Your Sayvors {purpose} code: {code}",
-        f"<p>Your Sayvors {purpose} code is:</p>"
-        f"<p style='font-size:28px;font-weight:bold;letter-spacing:6px'>{code}</p>"
-        f"<p>This code expires in 10 minutes. If you didn't request it, ignore this email.</p>",
+        html,
         text=f"Your Sayvors {purpose} code is: {code} (expires in 10 minutes)",
     )
 
