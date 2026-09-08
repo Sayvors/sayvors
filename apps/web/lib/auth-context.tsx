@@ -28,6 +28,8 @@ interface AuthContextType {
   forgotPassword: (email: string) => Promise<void>;
   resetPassword: (token: string, password: string) => Promise<void>;
   verifyEmail: (token: string) => Promise<void>;
+  verifyOtp: (email: string, code: string) => Promise<void>;
+  resendOtp: (email: string) => Promise<void>;
   refreshAuth: () => Promise<void>;
 }
 
@@ -90,7 +92,7 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
     }
     setAccessToken(null);
     // Don't redirect if already on an auth page — prevents infinite reload loop
-    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email")) {
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp")) {
       window.location.href = "/login";
     }
   }
@@ -165,7 +167,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Login failed");
+      const detail = (err as any).detail;
+      // Backend returns {code: "email_not_verified"} as 403 for gated accounts.
+      const error = new Error(typeof detail === "string" ? detail : detail?.message || "Login failed") as Error & { code?: string };
+      if (typeof detail === "object" && detail?.code) error.code = detail.code;
+      else if (res.status === 403) error.code = "email_not_verified";
+      throw error;
     }
 
     const result = await res.json();
@@ -221,6 +228,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await checkAuth();
   };
 
+  const verifyOtp = async (email: string, code: string) => {
+    const res = await apiFetch("/api/v1/auth/verify-otp", {
+      method: "POST",
+      body: JSON.stringify({ email, code }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(typeof err.detail === "string" ? err.detail : "Verification failed");
+    }
+  };
+
+  const resendOtp = async (email: string) => {
+    const res = await apiFetch("/api/v1/email/otp/request", {
+      method: "POST",
+      body: JSON.stringify({ email, purpose: "verification" }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(typeof err.detail === "string" ? err.detail : "Could not resend code");
+    }
+  };
+
   const refreshAuth = async () => {
     await checkAuth();
   };
@@ -236,6 +267,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         forgotPassword,
         resetPassword,
         verifyEmail,
+        verifyOtp,
+        resendOtp,
         refreshAuth,
       }}
     >
