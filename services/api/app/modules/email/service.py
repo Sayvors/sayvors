@@ -1,11 +1,13 @@
-"""Resend-based email service (server-side only).
+"""Email delivery service backed by Resend.
 
-Uses httpx directly against https://api.resend.com/emails so no extra
-dependency is needed. The API key lives in RESEND_API_KEY and must
-never be exposed to the frontend.
+This module centralizes all server-side email sending for Sayvors. It keeps the
+email provider credentials and sending logic away from the API layer and frontend,
+while offering a small, predictable set of helpers for OTP flows and transactional
+messages.
 
-Covers: OTP codes, account activation, password reset, welcome /
-greeting mails, and generic notifications.
+The service intentionally writes to Redis for transient OTP state and uses Resend's
+HTTP API for delivery, which avoids introducing a separate dependency and keeps the
+infrastructure simple.
 """
 
 from __future__ import annotations
@@ -25,11 +27,27 @@ OTP_TTL_SECONDS = 10 * 60
 
 
 def _configured() -> bool:
+    """Return True when the required Resend API key is configured."""
+
     return bool(settings.RESEND_API_KEY.strip())
 
 
 async def send_email(to: str | list[str], subject: str, html: str, text: str | None = None) -> str:
-    """Send one email via Resend. Returns the Resend message id. Raises on failure."""
+    """Send a single email using the Resend API.
+
+    Args:
+        to: One recipient or a list of recipients.
+        subject: Email subject line.
+        html: HTML content to send to Resend.
+        text: Optional plain-text content used as a fallback.
+
+    Returns:
+        The Resend message identifier for the sent email.
+
+    Raises:
+        RuntimeError: If the API key is missing or Resend rejects the request.
+    """
+
     if not _configured():
         raise RuntimeError("Server is missing RESEND_API_KEY in .env.")
     payload: dict = {
@@ -58,6 +76,8 @@ async def send_email(to: str | list[str], subject: str, html: str, text: str | N
 # ── OTP ────────────────────────────────────────────────
 
 def _otp_key(email: str) -> str:
+    """Create the Redis key used to store a transient one-time password."""
+
     return f"otp:{email.strip().lower()}"
 
 
@@ -87,16 +107,16 @@ OTP_HTML = """<table role="presentation" width="100%" cellpadding="0" cellspacin
       <p style="margin:0 0 16px;font-size:13px;font-weight:600;color:#52525B;">Follow Sayvors</p>
       <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;"><tr>
         <td style="padding:0 8px;">
-          <a href="https://www.linkedin.com/company/Sayvors"><img src="https://Sayvors.com/email-icons/linkedin.png" width="40" height="40" alt="LinkedIn" style="display:block;border:0;border-radius:8px;"></a>
+          <a href="https://www.linkedin.com/company/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/linkedin.svg" width="40" height="40" alt="LinkedIn" style="display:block;border:0;border-radius:8px;"></a>
         </td>
         <td style="padding:0 8px;">
-          <a href="https://twitter.com/Sayvors"><img src="https://Sayvors.com/email-icons/twitter.png" width="40" height="40" alt="Twitter / X" style="display:block;border:0;border-radius:8px;"></a>
+          <a href="https://twitter.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/x.svg" width="40" height="40" alt="X" style="display:block;border:0;border-radius:8px;"></a>
         </td>
         <td style="padding:0 8px;">
-          <a href="https://www.facebook.com/Sayvors"><img src="https://Sayvors.com/email-icons/facebook.png" width="40" height="40" alt="Facebook" style="display:block;border:0;border-radius:8px;"></a>
+          <a href="https://www.facebook.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg" width="40" height="40" alt="Facebook" style="display:block;border:0;border-radius:8px;"></a>
         </td>
         <td style="padding:0 8px;">
-          <a href="https://www.instagram.com/Sayvors"><img src="https://Sayvors.com/email-icons/instagram.png" width="40" height="40" alt="Instagram" style="display:block;border:0;border-radius:8px;"></a>
+          <a href="https://www.instagram.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/instagram.svg" width="40" height="40" alt="Instagram" style="display:block;border:0;border-radius:8px;"></a>
         </td>
       </tr></table>
       <p style="margin:16px 0 6px;font-size:12px;color:#A1A1AA;">
@@ -113,7 +133,13 @@ OTP_HTML = """<table role="presentation" width="100%" cellpadding="0" cellspacin
 
 
 async def send_otp_email(email: str, purpose: str = "verification") -> None:
-    """Generate a 6-digit code, store it in Redis for 10 min, and email it."""
+    """Create and send a one-time passcode for email verification.
+
+    The generated code is stored in Redis for 10 minutes, then the HTML/plain-text
+    version is sent through Resend. If the same email requests a new code, the
+    newest value replaces the older one.
+    """
+
     code = f"{secrets.randbelow(900000) + 100000}"
     redis = await get_redis()
     await redis.setex(_otp_key(email), OTP_TTL_SECONDS, code)
@@ -127,7 +153,12 @@ async def send_otp_email(email: str, purpose: str = "verification") -> None:
 
 
 async def verify_otp(email: str, code: str) -> bool:
-    """True + consume the code on match, False otherwise."""
+    """Validate a stored OTP and consume it on success.
+
+    Returns True only when the provided code matches the Redis value for the email.
+    A successful match deletes the underlying key so the OTP cannot be reused.
+    """
+
     redis = await get_redis()
     stored = await redis.get(_otp_key(email))
     if stored and stored.strip() == code.strip():
@@ -139,6 +170,8 @@ async def verify_otp(email: str, code: str) -> bool:
 # ── Templated mails ────────────────────────────────────
 
 async def send_activation_email(email: str, name: str, activation_url: str) -> str:
+    """Send a welcome/activation email with a direct account activation link."""
+
     return await send_email(
         email,
         "Activate your Sayvors account",
@@ -151,6 +184,8 @@ async def send_activation_email(email: str, name: str, activation_url: str) -> s
 
 
 async def send_password_reset_email(email: str, name: str, reset_url: str) -> str:
+    """Send a password reset email containing a secure recovery URL."""
+
     return await send_email(
         email,
         "Reset your Sayvors password",
@@ -163,6 +198,8 @@ async def send_password_reset_email(email: str, name: str, reset_url: str) -> st
 
 
 async def send_welcome_email(email: str, name: str) -> str:
+    """Send a branded onboarding email after account creation."""
+
     return await send_email(
         email,
         f"Welcome to Sayvors, {name}! 🎉",
@@ -175,6 +212,12 @@ async def send_welcome_email(email: str, name: str) -> str:
 
 
 async def send_notification_email(email: str, subject: str, message: str, cta_url: str | None = None) -> str:
+    """Send a generic internal notification email to a user.
+
+    This is intended for system notifications, alerts, and other non-public
+    transactional communications. When provided, a CTA link is included in the HTML.
+    """
+
     cta = f"<p><a href='{cta_url}'>View in Sayvors</a></p>" if cta_url else ""
     return await send_email(
         email,
