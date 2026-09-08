@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
 type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative";
-type View = { kind: "list" } | { kind: "detail"; id: string };
+type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number };
 
 interface ReviewItem {
   id: string;
@@ -91,7 +91,6 @@ function ReviewsInner() {
   const [page, setPage] = useState(1);
   const [replyMode, setReplyMode] = useState<"manual" | "ai">("manual");
   const [aiLoading, setAiLoading] = useState(false);
-  const [breakdownStar, setBreakdownStar] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +156,7 @@ function ReviewsInner() {
   });
 
   const active = view.kind === "detail" ? reviews.find((r) => r.id === view.id) ?? null : null;
+  const starGroup = view.kind === "star" ? reviews.filter((r) => r.rating === view.stars) : [];
 
   const openDetail = (id: string) => {
     const r = reviews.find((x) => x.id === id);
@@ -277,6 +277,14 @@ function ReviewsInner() {
             </nav>
           )}
 
+          {view.kind === "star" && (
+            <nav className="flex items-center gap-1.5 text-[12px] text-ink/40 dark:text-fog/40">
+              <button onClick={() => setView({ kind: "list" })} className="font-medium hover:text-deep-violet">Reviews</button>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <span className="font-semibold text-ink dark:text-fog">{view.stars}★ insights</span>
+            </nav>
+          )}
+
           {view.kind === "list" && (
             <>
               {/* Insights */}
@@ -294,25 +302,17 @@ function ReviewsInner() {
                   <p className="text-[11px] text-ink/35">Sayvors-derived · tap a row for detail.</p>
                   <div className="mt-3 space-y-1">
                     {analytics.dist.map((d) => (
-                      <button key={d.stars} onClick={() => setBreakdownStar(breakdownStar === d.stars ? null : d.stars)}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition ${breakdownStar === d.stars ? "bg-deep-violet/[0.06] ring-1 ring-deep-violet/25" : "hover:bg-ink/[0.03]"}`}>
+                      <button key={d.stars} onClick={() => setView({ kind: "star", stars: d.stars })}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-ink/[0.03]">
                         <span className="w-8 text-[11px] font-medium text-ink/50">{d.stars} ★</span>
                         <span className="h-2 flex-1 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
                           <span className="block h-full rounded-full bg-gradient-to-r from-[#FBBC05] to-[#EA4335]" style={{ width: `${analytics.total ? (d.count / analytics.total) * 100 : 0}%` }} />
                         </span>
                         <span className="w-8 text-right text-[11px] text-ink/50">{d.count}</span>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`h-3 w-3 text-ink/30 transition-transform ${breakdownStar === d.stars ? "rotate-90" : ""}`}><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3 text-ink/30"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
                       </button>
                     ))}
                   </div>
-                  {breakdownStar !== null && (
-                    <StarDetail
-                      stars={breakdownStar}
-                      reviews={reviews}
-                      onClose={() => setBreakdownStar(null)}
-                      onOpen={(id) => { setBreakdownStar(null); openDetail(id); }}
-                    />
-                  )}
                 </div>
                 <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                   <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Reviews trend</h3>
@@ -386,6 +386,16 @@ function ReviewsInner() {
                 </>
               )}
             </>
+          )}
+
+          {view.kind === "star" && (
+            <StarInsightPage
+              stars={view.stars}
+              group={starGroup}
+              total={reviews.length}
+              onBack={() => setView({ kind: "list" })}
+              onOpen={(id) => openDetail(id)}
+            />
           )}
 
           {view.kind === "detail" && active && (
@@ -492,9 +502,8 @@ function normalizeReviews(raw: unknown): ReviewItem[] | null {
   }));
 }
 
-function StarDetail({ stars, reviews, onClose, onOpen }: { stars: number; reviews: ReviewItem[]; onClose: () => void; onOpen: (id: string) => void }) {
-  const group = reviews.filter((r) => r.rating === stars);
-  const share = reviews.length ? Math.round((group.length / reviews.length) * 100) : 0;
+function StarInsightPage({ stars, group, total, onBack, onOpen }: { stars: number; group: ReviewItem[]; total: number; onBack: () => void; onOpen: (id: string) => void }) {
+  const share = total ? Math.round((group.length / total) * 100) : 0;
   const replied = group.filter((r) => r.reply).length;
   const signals = topSignals(group.map((r) => r.comment));
   const verdict = stars >= 4
@@ -502,28 +511,59 @@ function StarDetail({ stars, reviews, onClose, onOpen }: { stars: number; review
     : stars === 3
       ? "Swing zone — small fixes convert these to 4–5★."
       : "Risk zone — reply fast and fix the root cause.";
+  const action = stars >= 4
+    ? "Thank them quickly and invite them back."
+    : stars === 3
+      ? "Acknowledge the friction and state one concrete fix."
+      : "Apologize with a concrete fix, then address the root cause operationally.";
   return (
-    <div className="mt-3 rounded-xl border border-deep-violet/20 bg-deep-violet/[0.03] p-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[12px] font-bold text-ink dark:text-fog">{stars}★ detail · {group.length} reviews ({share}%)</p>
-        <button onClick={onClose} className="text-[11px] font-semibold text-ink/40 hover:text-ink">Close</button>
-      </div>
-      <p className="mt-1 text-[11px] text-ink/55 dark:text-fog/60">{verdict} Replied {replied}/{group.length}.</p>
-      {signals.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {signals.map((s) => (
-            <span key={s} className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-ink/60 ring-1 ring-ink/[0.06] dark:bg-ink">{s}</span>
-          ))}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="text-[17px] font-bold text-ink dark:text-fog">{stars}★ insights</h2>
+          <p className="text-[12px] text-ink/55 dark:text-fog/60">{group.length} reviews · {share}% of total · replied {replied}/{group.length}</p>
         </div>
-      )}
-      <div className="mt-2 space-y-1">
-        {group.slice(0, 3).map((r) => (
-          <button key={r.id} onClick={() => onOpen(r.id)} className="block w-full truncate rounded-lg bg-white px-2.5 py-1.5 text-left text-[11px] text-ink/70 ring-1 ring-ink/[0.05] hover:ring-deep-violet/30 dark:bg-ink dark:text-fog/70">
-            <span className="font-semibold text-ink dark:text-fog">{r.reviewer}</span> — “{r.comment}”
-          </button>
-        ))}
-        {group.length === 0 && <p className="text-[11px] text-ink/40">No reviews at this rating yet.</p>}
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${stars >= 4 ? "bg-emerald-100 text-emerald-700" : stars === 3 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+          {stars >= 4 ? "High" : stars === 3 ? "Mixed" : "Low"}
+        </span>
       </div>
+      <div className="grid gap-3 lg:grid-cols-3">
+        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <h3 className="mb-2 text-[14px] font-bold text-ink">Overview</h3>
+          <p className="text-[12px] leading-relaxed text-ink/60">{verdict}</p>
+          <p className="mt-3 text-[12px] text-ink/60">Share <span className="font-bold text-ink">{share}%</span> · response <span className="font-bold text-ink">{group.length ? Math.round((replied / group.length) * 100) : 0}%</span></p>
+        </section>
+        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <h3 className="mb-2 text-[14px] font-bold text-ink">Top signals</h3>
+          {signals.length ? (
+            <ul className="space-y-2">
+              {signals.map((s) => (
+                <li key={s} className="rounded-lg bg-ink/[0.04] px-2.5 py-1.5 text-[12px] font-semibold text-ink/70">{s}</li>
+              ))}
+            </ul>
+          ) : <p className="text-[12px] text-ink/40">No reviews at this rating yet.</p>}
+        </section>
+        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <h3 className="mb-2 text-[14px] font-bold text-ink">Recommended action</h3>
+          <p className="text-[12px] leading-relaxed text-ink/60">{action}</p>
+          <p className="mt-3 text-[11px] text-ink/40">Sayvors-derived from retrieved reviews.</p>
+        </section>
+      </div>
+      <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+        <h3 className="mb-2 text-[13px] font-semibold text-ink dark:text-fog">Matching reviews</h3>
+        {group.length === 0 ? (
+          <p className="py-4 text-center text-[12px] text-ink/40">No reviews at this rating yet.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {group.map((r) => (
+              <button key={r.id} onClick={() => onOpen(r.id)} className="block w-full truncate rounded-lg px-2.5 py-2 text-left text-[12px] text-ink/70 ring-1 ring-ink/[0.05] hover:ring-deep-violet/30 dark:text-fog/70">
+                <span className="font-semibold text-ink dark:text-fog">{r.reviewer}</span> — “{r.comment}”
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <button onClick={onBack} className="text-[12px] font-medium text-ink/40 hover:text-ink">← Back to reviews</button>
     </div>
   );
 }
