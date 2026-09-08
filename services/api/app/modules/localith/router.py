@@ -59,7 +59,7 @@ async def get_local_listings(
     try:
         listings = await service.list_local_listings()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Localith unreachable: {e}")
+        raise HTTPException(status_code=502, detail=f"Localith listings request failed: {type(e).__name__}: {e}")
     return {"listings": listings}
 
 
@@ -74,6 +74,20 @@ async def test_listing(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Localith rejected listing: {e}")
     return {"ok": True, "sample_count": len(items)}
+
+
+@router.post("/sync")
+async def sync_my_connection(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync the selected Localith listing into the normal Sayvors pipeline."""
+    try:
+        return await service.sync_connection(user, db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Localith sync failed: {e}")
 
 
 @router.get("/connection", response_model=ConnectionResponse | None)

@@ -71,6 +71,9 @@ class Settings(BaseSettings):
 
     # ── Localith (EmbedSocial) ──────────────────────────────
     LOCALITH_API_KEY: str = ""
+    LOCALITH_BASE_URL: str = "https://embedsocial.com/app/api"
+    LOCALITH_ITEMS_PATH: str = "rest/v1/items"
+    BUSINESS_DATA_PROVIDER: str = "localith"
 
     model_config = {"env_file": ".env"}
 

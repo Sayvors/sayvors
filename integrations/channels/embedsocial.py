@@ -49,11 +49,20 @@ class InternalReview:
 
 def _config() -> tuple[str, str, str]:
     key = os.environ.get("LOCALITH_API_KEY", "")
+    base = os.environ.get("LOCALITH_BASE_URL", "")
+    items_path = os.environ.get("LOCALITH_ITEMS_PATH", "")
+    if not key or not base or not items_path:
+        try:
+            from app.config import settings
+
+            key = key or settings.LOCALITH_API_KEY
+            base = base or settings.LOCALITH_BASE_URL
+            items_path = items_path or settings.LOCALITH_ITEMS_PATH
+        except ImportError:
+            pass
     if not key:
         raise RuntimeError("Set LOCALITH_API_KEY (Localith Account > API key).")
-    base = os.environ.get("LOCALITH_BASE_URL", "https://embedsocial.com/app/api").rstrip("/")
-    items_path = os.environ.get("LOCALITH_ITEMS_PATH", "rest/v1/items")
-    return base, key, items_path
+    return (base or "https://embedsocial.com/app/api").rstrip("/"), key, items_path or "rest/v1/items"
 
 
 def _get(path: str, params: dict | None = None, timeout: int = 30) -> dict | list:

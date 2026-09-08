@@ -227,8 +227,15 @@ function ConnectHub() {
         }),
       });
       setLocalithListing(conn);
+      try {
+        await apiFetch("/api/v1/integrations/localith/sync", { method: "POST" });
+      } catch {
+        setBanner({ kind: "ok", text: "Localith connected. Initial review sync will retry later." });
+        setLocalithOpen(false);
+        return;
+      }
       setLocalithOpen(false);
-      setBanner({ kind: "ok", text: "Localith connected!" });
+      setBanner({ kind: "ok", text: "Localith connected and review sync started." });
     } catch {
       setBanner({ kind: "err", text: "Could not save Localith connection." });
     } finally {
