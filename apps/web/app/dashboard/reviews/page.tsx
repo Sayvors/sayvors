@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
 type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative";
-type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number };
+type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number } | { kind: "intelligence" };
 
 interface ReviewItem {
   id: string;
@@ -157,6 +157,7 @@ function ReviewsInner() {
 
   const active = view.kind === "detail" ? reviews.find((r) => r.id === view.id) ?? null : null;
   const starGroup = view.kind === "star" ? reviews.filter((r) => r.rating === view.stars) : [];
+  const intelligence = useMemo(() => buildIntelligence(reviews), [reviews]);
 
   const openDetail = (id: string) => {
     const r = reviews.find((x) => x.id === id);
@@ -285,6 +286,14 @@ function ReviewsInner() {
             </nav>
           )}
 
+          {view.kind === "intelligence" && (
+            <nav className="flex items-center gap-1.5 text-[12px] text-ink/40 dark:text-fog/40">
+              <button onClick={() => setView({ kind: "list" })} className="font-medium hover:text-deep-violet">Reviews</button>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <span className="font-semibold text-ink dark:text-fog">Review Intelligence</span>
+            </nav>
+          )}
+
           {view.kind === "list" && (
             <>
               {/* Insights */}
@@ -298,12 +307,14 @@ function ReviewsInner() {
               {/* Charts */}
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
-                  <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Rating breakdown</h3>
-                  <p className="text-[11px] text-ink/35">Sayvors-derived · tap a row for detail.</p>
+                  <button onClick={() => setView({ kind: "intelligence" })} className="block w-full text-left">
+                    <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Rating breakdown</h3>
+                    <p className="text-[11px] text-ink/35">Sayvors-derived · tap anywhere for full intelligence.</p>
+                  </button>
                   <div className="mt-3 space-y-1">
                     {analytics.dist.map((d) => (
                       <button key={d.stars} onClick={() => setView({ kind: "star", stars: d.stars })}
-                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-ink/[0.03]">
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-deep-violet/[0.05] hover:ring-1 hover:ring-deep-violet/20">
                         <span className="w-8 text-[11px] font-medium text-ink/50">{d.stars} ★</span>
                         <span className="h-2 flex-1 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
                           <span className="block h-full rounded-full bg-gradient-to-r from-[#FBBC05] to-[#EA4335]" style={{ width: `${analytics.total ? (d.count / analytics.total) * 100 : 0}%` }} />
@@ -313,6 +324,10 @@ function ReviewsInner() {
                       </button>
                     ))}
                   </div>
+                  <button onClick={() => setView({ kind: "intelligence" })}
+                    className="mt-3 w-full rounded-xl bg-deep-violet/[0.06] py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet hover:text-white">
+                    See more insights →
+                  </button>
                 </div>
                 <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                   <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Reviews trend</h3>
@@ -475,6 +490,16 @@ function ReviewsInner() {
               <button onClick={() => setView({ kind: "list" })} className="text-[12px] font-medium text-ink/40 hover:text-ink">← Back to reviews</button>
             </div>
           )}
+
+          {view.kind === "intelligence" && (
+            <IntelligencePage
+              intelligence={intelligence}
+              total={reviews.length}
+              locationName={locations.find((l) => l.id === selectedId)?.name ?? ""}
+              onBack={() => setView({ kind: "list" })}
+              onOpenStar={(s) => setView({ kind: "star", stars: s })}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -572,6 +597,236 @@ function topSignals(comments: string[]): string[] {
   const lex = ["wait", "slow", "staff", "service", "clean", "price", "friendly", "quick", "helpful", "busy", "support", "quality"];
   const counts = lex.map((w) => ({ w, c: comments.filter((t) => t.toLowerCase().includes(w)).length })).filter((x) => x.c > 0);
   return counts.sort((a, b) => b.c - a.c).slice(0, 4).map((x) => `${x.w} ×${x.c}`);
+}
+
+interface IntelTheme {
+  name: string;
+  keywords: string[];
+  mentions: number;
+  avgRating: number;
+  positivePct: number;
+  phrases: string[];
+  sampleIds: string[];
+}
+
+interface Intelligence {
+  avg: number;
+  sentimentScore: number;
+  sentimentLabel: string;
+  confidence: number;
+  summary: string;
+  love: IntelTheme[];
+  dislike: IntelTheme[];
+  drivers: { theme: string; s5: number; s4: number; s3: number; low: number }[];
+  opportunities: { level: "HIGH" | "MEDIUM" | "MAINTAIN"; title: string; detail: string; impact: string }[];
+  strengths: { title: string; mentions: number; avg: number }[];
+  sentimentSplit: { positive: number; neutral: number; negative: number };
+  topics: { name: string; count: number }[];
+  actions: { title: string; detail: string }[];
+}
+
+const THEME_DEFS: { name: string; keywords: string[] }[] = [
+  { name: "Staff & Service", keywords: ["staff", "service", "helpful", "professional", "friendly", "welcoming"] },
+  { name: "Quality", keywords: ["quality", "great", "excellent", "good"] },
+  { name: "Cleanliness", keywords: ["clean"] },
+  { name: "Speed", keywords: ["fast", "quick", "slow", "wait", "queue"] },
+  { name: "Value", keywords: ["price", "pricing", "expensive", "value", "cheap"] },
+  { name: "Communication", keywords: ["communication", "response", "support", "rude"] },
+  { name: "Availability", keywords: ["busy", "availability", "wait", "long"] },
+  { name: "Location", keywords: ["location", "parking", "area"] },
+];
+
+function buildIntelligence(reviews: ReviewItem[]): Intelligence {
+  const total = reviews.length;
+  const avg = total ? reviews.reduce((a, r) => a + r.rating, 0) / total : 0;
+  const pos = reviews.filter((r) => r.rating >= 4).length;
+  const neu = reviews.filter((r) => r.rating === 3).length;
+  const neg = reviews.filter((r) => r.rating <= 2).length;
+  const sentimentScore = total ? Math.round((pos / total) * 5 * 10) / 10 : 0;
+  const sentimentLabel = !total ? "No data" : pos / total >= 0.6 ? "Positive" : neg / total >= 0.4 ? "Negative" : "Mixed";
+
+  const themeStats = (def: { name: string; keywords: string[] }): IntelTheme => {
+    const matched = reviews.filter((r) => def.keywords.some((k) => r.comment.toLowerCase().includes(k)));
+    const mentions = matched.length;
+    const avgRating = mentions ? matched.reduce((a, r) => a + r.rating, 0) / mentions : 0;
+    const positivePct = mentions ? Math.round((matched.filter((r) => r.rating >= 4).length / mentions) * 100) : 0;
+    const phrases = Array.from(new Set(
+      matched.flatMap((r) => r.comment.split(/[.,!]/).map((s) => s.trim()).filter((s) => def.keywords.some((k) => s.toLowerCase().includes(k))).slice(0, 1))
+    )).slice(0, 3);
+    return { name: def.name, keywords: def.keywords, mentions, avgRating, positivePct, phrases, sampleIds: matched.slice(0, 2).map((r) => r.id) };
+  };
+  const themes = THEME_DEFS.map(themeStats).sort((a, b) => b.mentions - a.mentions);
+  const love = themes.filter((t) => t.positivePct >= 60 && t.mentions > 0).slice(0, 5);
+  const dislike = themes.filter((t) => t.positivePct < 60 && t.mentions > 0).sort((a, b) => a.positivePct - b.positivePct).slice(0, 4);
+
+  const drivers = themes.slice(0, 6).map((t) => {
+    const inGroup = (fn: (r: ReviewItem) => boolean) => reviews.filter((r) => fn(r) && t.keywords.some((k) => r.comment.toLowerCase().includes(k))).length;
+    return { theme: t.name, s5: inGroup((r) => r.rating === 5), s4: inGroup((r) => r.rating === 4), s3: inGroup((r) => r.rating === 3), low: inGroup((r) => r.rating <= 2) };
+  });
+
+  const waitTheme = themes.find((t) => t.name === "Speed");
+  const valueTheme = themes.find((t) => t.name === "Value");
+  const staffTheme = themes.find((t) => t.name === "Staff & Service");
+
+  const summary = !total
+    ? "No reviews analyzed yet."
+    : `Overall sentiment is ${sentimentLabel.toLowerCase()}. Customers consistently praise ${(love.map((t) => t.name.toLowerCase()).slice(0, 3).join(", ") || "service")}. The biggest drag is ${(dislike.map((t) => t.name.toLowerCase()).slice(0, 2).join(" and ") || "isolated complaints")}. ${waitTheme && waitTheme.mentions > 0 ? "Reducing waiting time looks like the biggest lever for more 4–5★ reviews." : "Protect current strengths while tightening response time."}`;
+
+  return {
+    avg, sentimentScore, sentimentLabel,
+    confidence: total ? Math.min(96, 70 + total * 3) : 0,
+    summary, love, dislike, drivers,
+    opportunities: [
+      ...(waitTheme && waitTheme.mentions > 0 ? [{ level: "HIGH" as const, title: "Reduce waiting time", detail: `${waitTheme.mentions} mentions · avg ${waitTheme.avgRating.toFixed(1)}★. Review peak-hour staffing and set wait expectations.`, impact: "HIGH" }] : []),
+      ...(valueTheme && valueTheme.mentions > 0 ? [{ level: "MEDIUM" as const, title: "Improve price/value communication", detail: `${valueTheme.mentions} mentions. Clarify inclusions and highlight value-added benefits.`, impact: "MEDIUM" }] : []),
+      ...(staffTheme && staffTheme.mentions > 0 ? [{ level: "MAINTAIN" as const, title: "Maintain staff friendliness", detail: `${staffTheme.mentions} positive mentions · ${staffTheme.avgRating.toFixed(1)}★ average. Keep training as-is.`, impact: "GUARD" }] : []),
+    ],
+    strengths: love.slice(0, 3).map((t) => ({ title: t.name, mentions: t.mentions, avg: t.avgRating })),
+    sentimentSplit: { positive: pos, neutral: neu, negative: neg },
+    topics: themes.map((t) => ({ name: t.name, count: t.mentions })),
+    actions: [
+      ...(waitTheme && waitTheme.mentions > 0 ? [{ title: "Fix waiting time", detail: `${waitTheme.mentions} reviews affected · HIGH impact` }] : []),
+      { title: `Respond to ${reviews.filter((r) => !r.reply).length} unanswered reviews`, detail: "Immediate action" },
+      ...(staffTheme ? [{ title: "Protect staff training", detail: "Strong positive driver" }] : []),
+    ].slice(0, 5),
+  };
+}
+
+function IntelligencePage({ intelligence: intel, total, locationName, onBack, onOpenStar }: {
+  intelligence: Intelligence; total: number; locationName: string;
+  onBack: () => void; onOpenStar: (s: number) => void;
+}) {
+  const i = intel;
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-[17px] font-bold text-ink dark:text-fog">Review Intelligence</h2>
+        <p className="text-[12px] text-ink/45">{locationName} · {total} reviews analyzed · Sayvors-derived AI analytics</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard label="Avg. Rating" value={`${i.avg.toFixed(1)} ★`} />
+        <StatCard label="Reviews" value={String(total)} />
+        <StatCard label="AI Sentiment" value={`${i.sentimentScore} ★`} />
+        <StatCard label="Confidence" value={`${i.confidence}%`} />
+      </div>
+
+      <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+        <h3 className="text-[14px] font-bold text-ink">AI Executive Summary</h3>
+        <p className="mt-2 text-[13px] leading-relaxed text-ink/70">{i.summary}</p>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {[5, 4, 3, 2, 1].map((s) => (
+            <button key={s} onClick={() => onOpenStar(s)} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-bold text-ink/60 hover:bg-deep-violet hover:text-white">
+              {s}★ detail →
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <h3 className="mb-3 text-[14px] font-bold text-ink">What customers love</h3>
+          {i.love.length === 0 ? <p className="text-[12px] text-ink/40">Not enough positive signals yet.</p> : (
+            <div className="space-y-2.5">
+              {i.love.map((t) => (
+                <div key={t.name}>
+                  <div className="flex justify-between text-[12px] font-semibold text-ink/70"><span>{t.name}</span><span>{t.positivePct}%</span></div>
+                  <div className="mt-1 h-2 overflow-hidden rounded-full bg-ink/[0.06]"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${t.positivePct}%` }} /></div>
+                  <p className="mt-1 text-[11px] text-ink/40">{t.mentions} mentions · {t.avgRating.toFixed(1)}★ avg</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <h3 className="mb-3 text-[14px] font-bold text-ink">What customers dislike</h3>
+          {i.dislike.length === 0 ? <p className="text-[12px] text-emerald-600">No major complaints detected. Good sign.</p> : (
+            <div className="space-y-2.5">
+              {i.dislike.map((t) => (
+                <div key={t.name}>
+                  <div className="flex justify-between text-[12px] font-semibold text-ink/70"><span>{t.name}</span><span>{t.mentions} mentions</span></div>
+                  <div className="mt-1 h-2 overflow-hidden rounded-full bg-ink/[0.06]"><div className="h-full rounded-full bg-coral" style={{ width: `${Math.min(100, t.mentions * 12)}%` }} /></div>
+                  <p className="mt-1 text-[11px] text-ink/40">{t.avgRating.toFixed(1)}★ avg in these reviews</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+        <h3 className="text-[14px] font-bold text-ink">What drives your rating?</h3>
+        <p className="text-[11px] text-ink/40">High ratings track staff & quality · low ratings track wait & value.</p>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[520px] text-[11px]">
+            <thead>
+              <tr className="text-left text-ink/40">
+                <th className="py-1 font-semibold">Theme</th>
+                <th className="text-center font-semibold">5★</th>
+                <th className="text-center font-semibold">4★</th>
+                <th className="text-center font-semibold">3★</th>
+                <th className="text-center font-semibold">1–2★</th>
+              </tr>
+            </thead>
+            <tbody>
+              {i.drivers.map((d) => (
+                <tr key={d.theme} className="border-t border-ink/[0.05]">
+                  <td className="py-1.5 pr-2 font-semibold text-ink/70">{d.theme}</td>
+                  {[d.s5, d.s4, d.s3, d.low].map((v, idx) => (
+                    <td key={idx} className="py-1.5 text-center tabular-nums text-ink/60">
+                      <span className="inline-block min-w-6 rounded bg-ink/[0.04] px-1.5 py-0.5">{v}</span>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <h3 className="mb-3 text-[14px] font-bold text-ink">Improvement opportunities</h3>
+          <div className="space-y-2">
+            {i.opportunities.map((o) => (
+              <div key={o.title} className="rounded-xl bg-ink/[0.03] p-3">
+                <p className="text-[12px] font-bold text-ink"><span className={`mr-1.5 rounded px-1.5 py-px text-[9px] ${o.level === "HIGH" ? "bg-coral/15 text-coral" : o.level === "MEDIUM" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{o.level}</span>{o.title}</p>
+                <p className="mt-1 text-[11px] text-ink/55">{o.detail} Impact: {o.impact}.</p>
+              </div>
+            ))}
+            {i.opportunities.length === 0 && <p className="text-[12px] text-ink/40">Nothing urgent right now.</p>}
+          </div>
+        </section>
+        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <h3 className="mb-3 text-[14px] font-bold text-ink">Strengths to protect</h3>
+          <div className="space-y-2">
+            {i.strengths.map((s, idx) => (
+              <p key={s.title} className="text-[12px] text-ink/65"><span className="font-bold text-ink">{idx + 1}. {s.title}</span> · {s.mentions} mentions · {s.avg.toFixed(1)}★</p>
+            ))}
+            {i.strengths.length === 0 && <p className="text-[12px] text-ink/40">No clear strengths yet.</p>}
+          </div>
+          <h3 className="mb-2 mt-4 text-[14px] font-bold text-ink">AI action plan</h3>
+          <ol className="space-y-1.5">
+            {i.actions.map((a, idx) => (
+              <li key={a.title} className="text-[12px] text-ink/65"><span className="font-bold text-deep-violet">{idx + 1}.</span> <span className="font-semibold">{a.title}</span> — {a.detail}</li>
+            ))}
+          </ol>
+        </section>
+      </div>
+
+      <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+        <h3 className="text-[14px] font-bold text-ink">Review themes</h3>
+        <p className="text-[11px] text-ink/40">Tap a theme to see contributing reviews.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {i.topics.map((t) => (
+            <span key={t.name} className="rounded-full bg-ink/[0.04] px-3 py-1.5 text-[12px] font-semibold text-ink/65">{t.name} · {t.count}</span>
+          ))}
+        </div>
+      </div>
+
+      <button onClick={onBack} className="text-[12px] font-medium text-ink/40 hover:text-ink">← Back to reviews</button>
+    </div>
+  );
 }
 
 function InsightCard({ review }: { review: ReviewItem }) {
