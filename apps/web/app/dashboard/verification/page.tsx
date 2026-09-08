@@ -179,7 +179,7 @@ function VerificationInner() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-[20px] font-bold text-ink dark:text-fog">Verification</h1>
-          <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">Verify your Google Business Profile.</p>
+          <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">Verify your <GoogleText /> Business Profile.</p>
         </div>
         <div className="relative">
           <select value={selectedId ?? ""} onChange={(e) => setSelectedId(e.target.value)}
@@ -240,7 +240,7 @@ function VerificationInner() {
           <MethodCard icon={<SmsIcon />} color="sky" title="SMS" desc="Text message with code" badge="Instant" onClick={() => setStep("sms-enter")} />
           <MethodCard icon={<EmailIcon />} color="violet" title="Email" desc="Code sent to business email" badge="Instant" onClick={() => setStep("email-enter")} />
           <MethodCard icon={<VideoIcon />} color="amber" title="Video" desc="Record your business location" badge="1–3 days" onClick={() => setStep("video-intro")} />
-          <MethodCard icon={<LiveCallIcon />} color="rose" title="Live Call" desc="Video call with Google agent" badge="Schedule" onClick={() => setStep("live-intro")} />
+          <MethodCard icon={<LiveCallIcon />} color="rose" title="Live Call" desc={<>Video call with <GoogleText /> agent</>} badge="Schedule" onClick={() => setStep("live-intro")} />
         </div>
       )}
 
@@ -356,14 +356,14 @@ function VerificationInner() {
       {/* ── Video Pending ── */}
       {step === "video-pending" && (
         <FlowCard title="Video Submitted" desc="Your video is under review.">
-          <PendingState icon={<VideoIcon />} text="Google typically reviews within 1–3 business days. We'll notify you of the result." />
+          <PendingState icon={<VideoIcon />} text={<><GoogleText /> typically reviews within 1–3 business days. We'll notify you of the result.</>} />
           <FlowActions onBack={reset} confirmLabel="Back to Methods" onConfirm={reset} />
         </FlowCard>
       )}
 
       {/* ── Live Call Intro ── */}
       {step === "live-intro" && (
-        <FlowCard title="Live Video Call" desc="Join a live video call with a Google agent to verify your location.">
+        <FlowCard title="Live Video Call" desc={<>Join a live video call with a <GoogleText /> agent to verify your location.</>}>
           <div className="space-y-2">
             {["A Google agent will guide you through the call", "Show your business signage and interior", "Have your business documents ready", "Call takes approximately 5–10 minutes"].map((tip, i) => (
               <div key={i} className="flex items-start gap-2 text-[12px] text-ink/50 dark:text-fog/50">
@@ -402,10 +402,23 @@ function VerificationInner() {
   );
 }
 
-/* ── Shared Components ──────────────────────────── */
+/* ── Components ──────────────────────────────────── */
+
+function GoogleText() {
+  return (
+    <span className="inline-flex">
+      <span className="text-[#4285F4]">G</span>
+      <span className="text-[#EA4335]">o</span>
+      <span className="text-[#FBBC05]">o</span>
+      <span className="text-[#4285F4]">g</span>
+      <span className="text-[#34A853]">l</span>
+      <span className="text-[#EA4335]">e</span>
+    </span>
+  );
+}
 
 function MethodCard({ icon, color, title, desc, badge, onClick }: {
-  icon: React.ReactNode; color: string; title: string; desc: string; badge: string; onClick: () => void;
+  icon: React.ReactNode; color: string; title: string; desc: React.ReactNode; badge: string; onClick: () => void;
 }) {
   const colors: Record<string, { bg: string; ring: string }> = {
     violet: { bg: "bg-deep-violet/10", ring: "hover:ring-deep-violet/20" },
@@ -430,7 +443,7 @@ function MethodCard({ icon, color, title, desc, badge, onClick }: {
   );
 }
 
-function FlowCard({ title, desc, children }: { title: string; desc: string; children: React.ReactNode }) {
+function FlowCard({ title, desc, children }: { title: string; desc: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-ink/[0.06] bg-white p-6 dark:border-fog/[0.06] dark:bg-ink">
       <h2 className="text-[16px] font-bold text-ink dark:text-fog">{title}</h2>
@@ -463,7 +476,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function PendingState({ icon, text }: { icon: React.ReactNode; text: string }) {
+function PendingState({ icon, text }: { icon: React.ReactNode; text: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/20 dark:bg-amber-500/[0.06]">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400">
