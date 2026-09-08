@@ -294,18 +294,39 @@ async def verify_email_endpoint(
 async def verify_otp_endpoint(
     body: VerifyOtpRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     ip = get_client_ip(request)
+    user_agent = request.headers.get("user-agent", "")
     if not await rate_limit(f"verify-otp:{ip}", 10, 60):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     try:
-        ok = await verify_signup_otp(str(body.email), body.code, db)
+        result = await verify_signup_otp(str(body.email), body.code, db, user_agent, ip)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if not ok:
-        raise HTTPException(status_code=400, detail="Invalid or expired code.")
-    return {"message": "Email verified successfully", "email_verified": True}
+
+    refresh_token = result.pop("refresh_token")
+    response.set_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=settings.REFRESH_COOKIE_MAX_AGE,
+        path="/",
+    )
+    csrf_token = generate_csrf_token()
+    response.set_cookie(
+        key=settings.CSRF_COOKIE_NAME,
+        value=csrf_token,
+        httponly=False,
+        secure=True,
+        samesite="lax",
+        max_age=settings.REFRESH_COOKIE_MAX_AGE,
+        path="/",
+    )
+    return result
 
 
 @router.get("/me")

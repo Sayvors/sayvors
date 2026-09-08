@@ -405,22 +405,61 @@ async def verify_email(token: str, db: AsyncSession) -> bool:
     return True
 
 
-async def verify_signup_otp(email: str, code: str, db: AsyncSession) -> bool:
-    """Check the signup OTP and mark the user verified. Wrong code -> False."""
+async def verify_signup_otp(
+    email: str, code: str, db: AsyncSession, user_agent: str = "", ip: str = ""
+) -> dict:
+    """Check the signup OTP, mark the user verified, and sign them in.
+
+    Returns the same session payload as login() so the frontend can
+    take the user straight to the dashboard.
+    """
     from ...modules.email.service import verify_otp
 
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     if not user:
         raise ValueError("No account with that email")
-    if user.email_verified:
-        return True
-    if not await verify_otp(email, code):
-        return False
-    user.email_verified = True
+    if not user.email_verified:
+        if not await verify_otp(email, code):
+            raise ValueError("Invalid or expired code.")
+        user.email_verified = True
+        await log_email_verified(user.id, user.email)
+
+    access_token = create_access_token(user.id)
+    refresh_raw = create_refresh_token(user.id)
+    refresh = RefreshToken(
+        user_id=user.id,
+        token_hash=hash_token(refresh_raw),
+        fingerprint=create_token_fingerprint(user_agent, ip),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS),
+        user_agent=user_agent[:500],
+        ip_address=ip[:45],
+    )
+    db.add(refresh)
     await db.commit()
-    await log_email_verified(user.id, user.email)
-    return True
+
+    try:
+        from ...modules.redis.client import get_redis
+        redis = await get_redis()
+        session_data = {"user_id": user.id, "ip": ip, "user_agent": user_agent[:200]}
+        await store_session(user.id, user.id, session_data, settings.JWT_REFRESH_EXPIRATION_DAYS * 86400)
+    except Exception:
+        pass
+
+    await log_login(user.id, user.email, ip, user_agent[:200])
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_raw,
+        "user": {
+            "id": user.id,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+            "email_verified": user.email_verified,
+            "onboarded": user.onboarded,
+        },
+    }
 
 
 async def get_user_sessions(user_id: str, db: AsyncSession) -> list[dict]:
