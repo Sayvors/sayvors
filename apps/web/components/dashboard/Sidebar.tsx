@@ -7,15 +7,57 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 
-const NAV_ITEMS = [
-  { key: "dashboard", icon: <LayoutIcon />, href: "/dashboard" },
-  { key: "analytics", icon: <ChartIcon />, href: "/dashboard/analytics" },
-  { key: "insights", icon: <InsightsIcon />, href: "/dashboard/insights" },
-  { key: "growth", icon: <GrowthIcon />, href: "/dashboard/growth" },
-  { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
-  { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
-  { key: "autoReply", icon: <AutoReplyIcon />, href: "/dashboard/automations" },
-] as const;
+interface NavItem {
+  key: string;
+  icon: React.ReactNode;
+  href: string;
+}
+
+interface NavGroup {
+  label?: string;
+  items: NavItem[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { key: "dashboard", icon: <LayoutIcon />, href: "/dashboard" },
+    ],
+  },
+  {
+    label: "Google Business",
+    items: [
+      { key: "locations", icon: <LocationIcon />, href: "/dashboard/locations" },
+      { key: "businessInfo", icon: <BuildingIcon />, href: "/dashboard/business-info" },
+      { key: "services", icon: <WrenchIcon />, href: "/dashboard/services" },
+      { key: "media", icon: <PhotoIcon />, href: "/dashboard/media" },
+      { key: "posts", icon: <MegaphoneIcon />, href: "/dashboard/posts" },
+      { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
+      { key: "qa", icon: <QuestionIcon />, href: "/dashboard/qa" },
+      { key: "menu", icon: <MenuIcon />, href: "/dashboard/menu" },
+      { key: "attributes", icon: <SlidersIcon />, href: "/dashboard/attributes" },
+      { key: "googleUpdates", icon: <AlertIcon />, href: "/dashboard/google-updates" },
+      { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
+      { key: "access", icon: <UsersIcon />, href: "/dashboard/access" },
+    ],
+  },
+  {
+    label: "Insights",
+    items: [
+      { key: "analytics", icon: <ChartIcon />, href: "/dashboard/analytics" },
+      { key: "insights", icon: <InsightsIcon />, href: "/dashboard/insights" },
+      { key: "growth", icon: <GrowthIcon />, href: "/dashboard/growth" },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [
+      { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
+      { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
+      { key: "autoReply", icon: <AutoReplyIcon />, href: "/dashboard/automations" },
+    ],
+  },
+];
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === "/dashboard";
@@ -55,7 +97,6 @@ export default function Sidebar() {
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset transient menu on navigation
     setMenuOpen(false);
   }, [pathname]);
 
@@ -75,41 +116,56 @@ export default function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto px-2 pt-3" aria-label={t.nav.mainNavigation}>
-        <div className="space-y-0.5">
-          {NAV_ITEMS.map((item) => {
-            const label = t.nav[item.key];
-            const active = isActive(pathname, item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                title={collapsed ? label : undefined}
-                className={`group relative flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
-                  active
-                    ? "bg-white/[0.1] text-white"
-                    : "text-white/50 hover:bg-white/[0.08] hover:text-white"
-                }`}
-              >
-                <span
-                  aria-hidden
-                  className={`absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-violet-light to-magenta transition-opacity ${
-                    active ? "opacity-100" : "opacity-0"
-                  }`}
-                />
-                <span
-                  className={`h-4 w-4 shrink-0 transition-colors ${
-                    active ? "text-white" : "text-white/30 group-hover:text-white/60"
-                  }`}
-                >
-                  {item.icon}
-                </span>
-                {!collapsed && <span className="flex-1">{label}</span>}
-              </Link>
-            );
-          })}
-        </div>
+      <nav className="flex-1 overflow-y-auto px-2 pt-3 pb-4" aria-label={t.nav.mainNavigation}>
+        {NAV_GROUPS.map((group, gi) => (
+          <div key={gi}>
+            {group.label && !collapsed && (
+              <p className="mb-1 px-2.5 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-widest text-white/25">
+                {group.label}
+              </p>
+            )}
+            {group.label && collapsed && gi > 0 && (
+              <div className="mx-2 my-2 border-t border-white/[0.06]" />
+            )}
+            <div className="space-y-0.5">
+              {group.items.map((item) => {
+                const label = (t.nav as Record<string, string>)[item.key] ?? item.key;
+                const active = isActive(pathname, item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    title={collapsed ? label : undefined}
+                    className={`group relative flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
+                      active
+                        ? "bg-white/[0.1] text-white"
+                        : "text-white/50 hover:bg-white/[0.08] hover:text-white"
+                    }`}
+                  >
+                    <span
+                      aria-hidden
+                      className={`absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-violet-light to-magenta transition-opacity ${
+                        active ? "opacity-100" : "opacity-0"
+                      }`}
+                    />
+                    <span
+                      className={`h-4 w-4 shrink-0 transition-colors ${
+                        active ? "text-white" : "text-white/30 group-hover:text-white/60"
+                      }`}
+                    >
+                      {item.icon}
+                    </span>
+                    {!collapsed && <span className="flex-1 truncate">{label}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+            {gi < NAV_GROUPS.length - 1 && (
+              <div className="mx-2 my-2 border-t border-white/[0.06]" />
+            )}
+          </div>
+        ))}
       </nav>
 
       {/* Account + collapse */}
@@ -201,7 +257,7 @@ function SidebarMenuLink({ href, label }: { href: string; label: string }) {
 
 function LayoutIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="7" height="7" rx="1" />
       <rect x="14" y="3" width="7" height="7" rx="1" />
       <rect x="14" y="14" width="7" height="7" rx="1" />
@@ -210,19 +266,134 @@ function LayoutIcon() {
   );
 }
 
+function LocationIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
+      <circle cx="12" cy="10" r="3" />
+    </svg>
+  );
+}
+
+function BuildingIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 22V4a2 2 0 012-2h8a2 2 0 012 2v18z" />
+      <path d="M6 12H4a2 2 0 00-2 2v6a2 2 0 002 2h2" />
+      <path d="M18 9h2a2 2 0 012 2v9a2 2 0 01-2 2h-2" />
+      <path d="M10 6h4" /><path d="M10 10h4" /><path d="M10 14h4" /><path d="M10 18h4" />
+    </svg>
+  );
+}
+
+function WrenchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
+    </svg>
+  );
+}
+
+function PhotoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="M21 15l-5-5L5 21" />
+    </svg>
+  );
+}
+
+function MegaphoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 11l18-5v12L3 13v-2z" />
+      <path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
+    </svg>
+  );
+}
+
+function StarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+  );
+}
+
+function QuestionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
+    </svg>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h18" /><path d="M3 12h18" /><path d="M3 18h18" />
+      <circle cx="7" cy="6" r="1" fill="currentColor" />
+      <circle cx="7" cy="12" r="1" fill="currentColor" />
+      <circle cx="7" cy="18" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function SlidersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" />
+      <line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" />
+      <line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" />
+      <line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" />
+      <line x1="17" y1="16" x2="23" y2="16" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+function ShieldCheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  );
+}
+
+function UsersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 00-3-3.87" />
+      <path d="M16 3.13a4 4 0 010 7.75" />
+    </svg>
+  );
+}
+
 function ChartIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-      <path d="M18 20V10" />
-      <path d="M12 20V4" />
-      <path d="M6 20v-6" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 20V10" /><path d="M12 20V4" /><path d="M6 20v-6" />
     </svg>
   );
 }
 
 function InsightsIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="11" cy="11" r="8" />
       <path d="M21 21l-4.35-4.35" />
       <path d="M11 8v3l2 2" />
@@ -232,7 +403,7 @@ function InsightsIcon() {
 
 function GrowthIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M23 6l-9.5 9.5-5-5L1 18" />
       <path d="M17 6h6v6" />
     </svg>
@@ -241,7 +412,7 @@ function GrowthIcon() {
 
 function DatabaseIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <ellipse cx="12" cy="5" rx="9" ry="3" />
       <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
       <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
@@ -251,7 +422,7 @@ function DatabaseIcon() {
 
 function LinkIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
       <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
     </svg>
@@ -260,7 +431,7 @@ function LinkIcon() {
 
 function AutoReplyIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
       <path d="M8 10h8M8 14h4" />
     </svg>
