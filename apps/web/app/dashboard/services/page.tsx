@@ -15,6 +15,7 @@ interface ServiceItem {
   id: string;
   name: string;
   category: string;
+  description?: string;
   is_offered: boolean;
   is_custom: boolean;
 }
@@ -44,10 +45,12 @@ function ServicesInner() {
   const [search, setSearch] = useState("");
   const [customName, setCustomName] = useState("");
   const [customCategory, setCustomCategory] = useState("");
+  const [customDescription, setCustomDescription] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
   const [editing, setEditing] = useState<ServiceItem | null>(null);
   const [editName, setEditName] = useState("");
   const [editCategory, setEditCategory] = useState("");
+  const [editDescription, setEditDescription] = useState("");
 
   const selectedLocation = locations.find((l) => l.id === selectedId);
 
@@ -109,12 +112,14 @@ function ServicesInner() {
       id: `custom_${Date.now()}`,
       name: customName.trim(),
       category: customCategory.trim() || "Custom",
+      description: customDescription.trim() || undefined,
       is_offered: true,
       is_custom: true,
     };
     setServices((prev) => [...prev, newSvc]);
     setCustomName("");
     setCustomCategory("");
+    setCustomDescription("");
     setShowAdd(false);
     setHasChanges(true);
   };
@@ -128,11 +133,12 @@ function ServicesInner() {
     setEditing(svc);
     setEditName(svc.name);
     setEditCategory(svc.category);
+    setEditDescription(svc.description ?? "");
   };
 
   const saveEdit = () => {
     if (!editing || !editName.trim()) return;
-    setServices((prev) => prev.map((s) => s.id === editing.id ? { ...s, name: editName.trim(), category: editCategory.trim() || s.category } : s));
+    setServices((prev) => prev.map((s) => s.id === editing.id ? { ...s, name: editName.trim(), category: editCategory.trim() || s.category, description: editDescription.trim() || undefined } : s));
     setEditing(null);
     setHasChanges(true);
   };
@@ -344,6 +350,10 @@ function ServicesInner() {
                     <label className="mb-1 block text-[12px] font-medium text-ink/50 dark:text-fog/50">Category</label>
                     <input value={customCategory} onChange={(e) => setCustomCategory(e.target.value)} placeholder="e.g. Repair, Consulting" className="input-field" />
                   </div>
+                  <div>
+                    <label className="mb-1 block text-[12px] font-medium text-ink/50 dark:text-fog/50">Description</label>
+                    <textarea value={customDescription} onChange={(e) => setCustomDescription(e.target.value)} rows={3} maxLength={300} placeholder="Short description customers will see..." className="input-field resize-y" />
+                  </div>
                 </div>
               )}
             </div>
@@ -376,6 +386,10 @@ function ServicesInner() {
               <div>
                 <label className="mb-1 block text-[12px] font-medium text-ink/50 dark:text-fog/50">Category</label>
                 <input value={editCategory} onChange={(e) => setEditCategory(e.target.value)} placeholder="e.g. Salon, Repair" className="input-field" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[12px] font-medium text-ink/50 dark:text-fog/50">Description</label>
+                <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={3} maxLength={300} placeholder="Short description customers will see..." className="input-field resize-y" />
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => toggleOffered(editing.id)} className="text-[12px] text-ink/40 hover:text-ink dark:text-fog/40 dark:hover:text-fog">
@@ -413,6 +427,9 @@ function ServiceRow({ svc, source, onToggle, onEdit, onDelete }: {
           </span>
         </div>
         <p className="mt-0.5 truncate text-[11px] text-ink/35 dark:text-fog/35">Category: {svc.category} · Status: {svc.is_offered ? "Offered" : "Not offered"}</p>
+        {svc.description && (
+          <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-ink/45 dark:text-fog/45">{svc.description}</p>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
         <button onClick={onEdit} aria-label="Edit service" className="rounded-md p-1.5 text-ink/30 transition hover:bg-ink/[0.05] hover:text-deep-violet dark:text-fog/30">
