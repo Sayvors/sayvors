@@ -449,6 +449,8 @@ function ReviewsInner() {
                   </div>
                 </div>
               </div>
+
+              <InsightCard review={active} />
               <button onClick={() => setView({ kind: "list" })} className="text-[12px] font-medium text-ink/40 hover:text-ink">← Back to reviews</button>
             </div>
           )}
@@ -477,6 +479,90 @@ function normalizeReviews(raw: unknown): ReviewItem[] | null {
     reviewReplyUrl: r.reviewReplyUrl ? String(r.reviewReplyUrl) : undefined,
     policyStatus: r.policyStatus === "FLAGGED" ? "FLAGGED" : r.policyStatus === "OK" ? "OK" : undefined,
   }));
+}
+
+function InsightCard({ review }: { review: ReviewItem }) {
+  const insight = explainReview(review);
+  return (
+    <div className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-[13px] font-bold text-ink dark:text-fog">Why this rating?</h3>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${insight.tone === "high" ? "bg-emerald-100 text-emerald-700" : insight.tone === "low" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+          {insight.tone === "high" ? "High" : insight.tone === "low" ? "Low" : "Mixed"}
+        </span>
+      </div>
+      <p className="mt-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">{insight.summary}</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl bg-emerald-50/60 p-3 dark:bg-emerald-500/[0.06]">
+          <p className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">What lifted it</p>
+          {insight.positives.length ? (
+            <ul className="mt-1.5 space-y-1">
+              {insight.positives.map((x) => <li key={x} className="text-[11px] text-emerald-800 dark:text-emerald-200">+ {x}</li>)}
+            </ul>
+          ) : <p className="mt-1 text-[11px] text-ink/40">No clear positive signals.</p>}
+        </div>
+        <div className="rounded-xl bg-red-50/60 p-3 dark:bg-red-500/[0.06]">
+          <p className="text-[11px] font-bold text-red-700 dark:text-red-300">What dragged it</p>
+          {insight.negatives.length ? (
+            <ul className="mt-1.5 space-y-1">
+              {insight.negatives.map((x) => <li key={x} className="text-[11px] text-red-800 dark:text-red-200">− {x}</li>)}
+            </ul>
+          ) : <p className="mt-1 text-[11px] text-ink/40">No clear negative signals.</p>}
+        </div>
+      </div>
+      <div className="mt-3 rounded-xl bg-ink/[0.03] p-3 dark:bg-fog/[0.04]">
+        <p className="text-[11px] font-bold text-ink dark:text-fog">Overall result</p>
+        <p className="mt-1 text-[12px] text-ink/60 dark:text-fog/60">{insight.result}</p>
+        <p className="mt-2 text-[11px] font-semibold text-deep-violet">Next: {insight.action}</p>
+      </div>
+      <p className="mt-2 text-[10px] text-ink/30">Explainable heuristics from rating + comment text · {review.locationName} · {review.createdAt}{review.reply ? " · replied" : " · unanswered"}.</p>
+    </div>
+  );
+}
+
+function explainReview(r: ReviewItem): { tone: "high" | "low" | "mixed"; summary: string; positives: string[]; negatives: string[]; result: string; action: string } {
+  const text = r.comment.toLowerCase();
+  const posLex: Record<string, string> = {
+    great: "praised overall service", excellent: "called service excellent", helpful: "mentioned helpful staff",
+    quick: "liked fast response", friendly: "found staff friendly", clean: "liked cleanliness",
+    recommend: "would recommend", good: "positive overall tone", fast: "liked speed",
+  };
+  const negLex: Record<string, string> = {
+    wait: "complained about waiting", slow: "felt service was slow", rude: "felt staff was rude",
+    bad: "negative overall tone", poor: "rated support poorly", long: "mentioned long delays",
+    busy: "felt staff was too busy", dirty: "flagged cleanliness", expensive: "felt pricing was high",
+    unhappy: "expressed unhappiness",
+  };
+  const positives = Object.entries(posLex).filter(([k]) => text.includes(k)).map(([, v]) => v);
+  const negatives = Object.entries(negLex).filter(([k]) => text.includes(k)).map(([, v]) => v);
+  if (r.rating >= 4 && negatives.length === 0) {
+    return {
+      tone: "high",
+      summary: `This is high because the customer gave ${r.rating}★ with${positives.length ? "" : "out"} explicit praise signals. High ratings like this lift the location average and response-rate health.`,
+      positives: positives.length ? positives : ["high star rating itself"],
+      negatives,
+      result: `Positive outcome for ${r.locationName}. ${r.reply ? "Already replied — good for trust." : "Reply to lock in loyalty."}`,
+      action: r.reply ? "No urgent fix; thank them and invite them back." : "Post a warm thank-you reply today.",
+    };
+  }
+  if (r.rating <= 2) {
+    return {
+      tone: "low",
+      summary: `This is low because the customer gave ${r.rating}★${negatives.length ? " and the text points at specific pain" : " even without detailed text"}. Low ratings drag the average and need a fast, empathetic reply.`,
+      positives,
+      negatives: negatives.length ? negatives : ["low star rating without detail"],
+      result: `At-risk signal for ${r.locationName}. ${r.reply ? "Reply exists — monitor for follow-up." : "Unanswered — highest priority."}`,
+      action: "Reply with apology + concrete fix, then address the root cause operationally.",
+    };
+  }
+  return {
+    tone: "mixed",
+    summary: `This sits in the middle at ${r.rating}★ — not angry, not delighted. These reviews usually hide one fixable friction point.`,
+    positives: positives.length ? positives : ["neutral-to-positive tone"],
+    negatives: negatives.length ? negatives : ["no strong complaint detected"],
+    result: `Neutral outcome. Small fix at ${r.locationName} could convert this customer to 4–5★.`,
+    action: "Acknowledge the feedback and state one specific improvement.",
+  };
 }
 
 function Stars({ rating }: { rating: number }) {
