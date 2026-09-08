@@ -39,7 +39,7 @@ function VerifyOtpInner() {
     try {
       await verifyOtp(email.trim(), code.trim());
       setDone(true);
-      setTimeout(() => router.push("/login"), 1500);
+      setTimeout(() => router.push("/dashboard"), 1500);
     } catch (err: any) {
       setError(err.message || "Verification failed");
     } finally {
@@ -68,7 +68,7 @@ function VerifyOtpInner() {
           <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6"><path d="M4.5 12.75l6 6 9-13.5" /></svg>
         </div>
         <h2 className="mt-4 text-lg font-semibold text-ink">Email verified!</h2>
-        <p className="mt-1.5 text-[13px] text-ink/55">Taking you to sign in...</p>
+        <p className="mt-1.5 text-[13px] text-ink/55">Taking you to your dashboard...</p>
       </div>
     );
   }

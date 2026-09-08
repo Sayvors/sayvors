@@ -238,6 +238,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const err = await res.json();
       throw new Error(typeof err.detail === "string" ? err.detail : "Verification failed");
     }
+
+    const result = await res.json();
+    if (result.access_token) setAccessToken(result.access_token);
+    if (result.user) setUser(result.user);
   };
 
   const resendOtp = async (email: string) => {
