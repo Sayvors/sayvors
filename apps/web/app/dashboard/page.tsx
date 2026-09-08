@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
+import { fetchOverview, fetchTimeseries, type Overview, type TimeseriesPoint } from "@/lib/api-analytics";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
+import { MetricChart, RatingDistribution } from "@/components/analytics/Charts";
 
 interface ExecSummary {
   headline: string;
@@ -136,6 +138,98 @@ function ExecutiveSummaryBanner() {
       </p>
     </section>
   );
+}
+
+type DashboardChannel = { id: string; platform: string; display_name: string | null };
+type DashboardService = { is_offered: boolean };
+
+function BusinessPulse() {
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [points, setPoints] = useState<TimeseriesPoint[]>([]);
+  const [channels, setChannels] = useState<DashboardChannel[]>([]);
+  const [channelId, setChannelId] = useState("");
+  const [serviceCount, setServiceCount] = useState(0);
+  const [offeredCount, setOfferedCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPulse() {
+      try {
+        const channelData = await apiFetch("/api/v1/channels/?limit=100");
+        const googleChannels = (channelData.channels ?? []).filter(
+          (channel: DashboardChannel) => channel.platform === "google_reviews"
+        );
+        const [nextOverview, nextPoints, serviceResults] = await Promise.all([
+          fetchOverview(30, channelId || null),
+          fetchTimeseries(30, channelId || null),
+          Promise.all((channelId ? googleChannels.filter((channel: DashboardChannel) => channel.id === channelId) : googleChannels).map((channel: DashboardChannel) => apiFetch(`/api/v1/channels/${channel.id}/services`))),
+        ]);
+        if (cancelled) return;
+        const allServices = serviceResults.flatMap((result) => (result.services ?? []) as DashboardService[]);
+        setChannels(googleChannels);
+        setOverview(nextOverview);
+        setPoints(nextPoints);
+        setServiceCount(allServices.length);
+        setOfferedCount(allServices.filter((service) => service.is_offered).length);
+      } catch {
+        if (!cancelled) {
+          setOverview(null);
+          setPoints([]);
+          setChannels([]);
+          setServiceCount(0);
+          setOfferedCount(0);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void loadPulse();
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId]);
+
+  const totalReviews = overview?.total_reviews ?? 0;
+  const ratingDistribution = overview?.rating_distribution ?? {};
+
+  return (
+    <section aria-label="Business pulse" className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="text-[16px] font-bold text-ink">Business pulse</h2>
+          <p className="mt-0.5 text-[12px] text-ink/50">A quick view of your connected businesses and customer activity.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {channels.length > 0 && <select value={channelId} onChange={(event) => { setLoading(true); setChannelId(event.target.value); }} aria-label="Business scope" className="rounded-lg border border-ink/[0.08] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 outline-none focus:border-deep-violet/30"><option value="">All businesses</option>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.display_name || "Unnamed business"}</option>)}</select>}
+          <span className="text-[11px] font-semibold text-ink/40">Last 30 days</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <PulseStat label="Total reviews" value={totalReviews} detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"} color="text-amber-600" />
+        <PulseStat label="Connected businesses" value={channels.length} detail={channels.length ? "Google Business channels" : "No Google channel yet"} color="text-deep-violet" />
+        <PulseStat label="Services offered" value={offeredCount} detail={serviceCount ? `${serviceCount} services configured` : "No service data yet"} color="text-emerald-600" />
+        <PulseStat label="Working hours" value="--" detail="Not configured yet" color="text-sky-600" />
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr]">
+        {loading ? <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" /> : <MetricChart points={points} />}
+        <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <h3 className="mb-4 text-[14px] font-bold text-ink">Review ratings</h3>
+          <RatingDistribution distribution={ratingDistribution} total={totalReviews} />
+          <div className="mt-5 border-t border-ink/[0.06] pt-4">
+            <div className="flex items-center justify-between text-[11px] text-ink/45"><span>Response rate</span><strong className="text-ink">{overview ? `${Math.round(overview.response_rate)}%` : "--"}</strong></div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/[0.06]"><div className="h-full rounded-full bg-emerald" style={{ width: `${Math.min(100, overview?.response_rate ?? 0)}%` }} /></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PulseStat({ label, value, detail, color }: { label: string; value: number | string; detail: string; color: string }) {
+  return <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">{label}</p><p className={`mt-1 text-[22px] font-bold ${color}`}>{value}</p><p className="truncate text-[10px] text-ink/40">{detail}</p></div>;
 }
 
 const EMPTY_CHECKLIST: Record<string, boolean> = {};
@@ -376,6 +470,8 @@ export default function DashboardPage() {
           </Link>
         ))}
       </div>
+
+      <BusinessPulse />
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

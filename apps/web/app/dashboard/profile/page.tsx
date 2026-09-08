@@ -7,41 +7,23 @@ import ProfileAbout from "@/components/profile/ProfileAbout";
 import ProfileAccount from "@/components/profile/ProfileAccount";
 import ProfileLimits from "@/components/profile/ProfileLimits";
 import ProfilePreferences from "@/components/profile/ProfilePreferences";
-import ProfileSupport from "@/components/profile/ProfileSupport";
-import ProfileRatings from "@/components/profile/ProfileRatings";
 import LogoLoader from "@/components/LogoLoader";
 import {
   getProfile,
-  getSessions,
   getUsage,
-  submitFeedback,
   updatePreferences,
   updateProfile,
   type Profile,
-  type Session,
   type UsageItem,
 } from "@/lib/api-profile";
-
-const TABS = [
-  { id: "overview", label: "Overview" },
-  { id: "account", label: "Account" },
-  { id: "preferences", label: "Preferences" },
-  { id: "usage", label: "Usage" },
-  { id: "feedback", label: "Feedback" },
-] as const;
-
-type TabId = (typeof TABS)[number]["id"];
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [usage, setUsage] = useState<UsageItem[]>([]);
   const [usageCached, setUsageCached] = useState(false);
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [tab, setTab] = useState<TabId>("overview");
   const [loading, setLoading] = useState(true);
   const [usageLoading, setUsageLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [ratingKey, setRatingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -54,15 +36,13 @@ export default function ProfilePage() {
     setLoading(true);
     setError(null);
     try {
-      const [p, u, s] = await Promise.all([
+      const [p, u] = await Promise.all([
         getProfile(),
         getUsage().catch(() => ({ items: [], cached: false })),
-        getSessions().catch(() => ({ sessions: [] })),
       ]);
       setProfile(p);
       setUsage(u.items ?? []);
       setUsageCached(!!u.cached);
-      setSessions(s.sessions ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load profile.");
     } finally {
@@ -124,17 +104,6 @@ export default function ProfilePage() {
     }
   }
 
-  async function handleRate(category: string, stars: number) {
-    setRatingKey(category);
-    try {
-      const res = await submitFeedback(category, stars);
-      setProfile((p) => (p ? { ...p, feedback: res.feedback } : p));
-      notify("Thanks for the feedback.");
-    } finally {
-      setRatingKey(null);
-    }
-  }
-
   if (loading) {
     return (
       <div className="h-full overflow-y-auto bg-[#f3f0ff]">
@@ -164,88 +133,57 @@ export default function ProfilePage() {
     );
   }
 
+  const profileFields = [profile.first_name, profile.last_name, profile.email, profile.business_name, profile.phone, profile.bio];
+  const completedFields = profileFields.filter((value) => Boolean(value?.trim())).length;
+  const profileCompletion = Math.round((completedFields / profileFields.length) * 100);
   return (
     <div className="h-full overflow-y-auto bg-[#f3f0ff]">
-      <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Profile" }]} />
-            <h1 className="mt-1 text-[20px] font-bold text-ink sm:text-[22px]">Profile</h1>
+            <h1 className="mt-2 text-[24px] font-black tracking-tight text-ink sm:text-[28px]">Your profile</h1>
             <p className="mt-0.5 text-[12px] text-ink/60 sm:text-[13px]">
-              Identity, preferences, usage, and feedback — saved to your account, cached in Redis, and published to Kafka.
+              Keep your Sayvors workspace identity, preferences, and account settings in one place.
             </p>
           </div>
           <button
             onClick={loadAll}
-            className="rounded-lg border border-ink/15 bg-white px-3 py-1.5 text-[12px] font-semibold text-ink/70 shadow-sm transition hover:border-deep-violet/40 hover:text-deep-violet"
+            className="rounded-xl border border-ink/10 bg-white px-4 py-2 text-[12px] font-bold text-ink/65 shadow-sm transition hover:border-deep-violet/40 hover:text-deep-violet"
           >
-            Refresh
+            Refresh data
           </button>
         </div>
 
-        <div
-          role="tablist"
-          aria-label="Profile sections"
-          className="flex gap-1 overflow-x-auto rounded-xl border border-ink/10 bg-white p-1 shadow-sm"
-        >
-          {TABS.map((t) => {
-            const active = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={active}
-                onClick={() => setTab(t.id)}
-                className={`flex-1 whitespace-nowrap rounded-lg px-3 py-2 text-[12px] font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
-                  active ? "bg-deep-violet text-white shadow" : "text-ink/55 hover:bg-fog hover:text-ink"
-                }`}
-              >
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="grid items-start gap-5 lg:grid-cols-3">
-          <div className="space-y-5 lg:col-span-1">
-            <ProfileHeader profile={profile} onEdit={() => setTab("account")} />
-            <ProfileSupport sessions={sessions} />
+        <div className="space-y-5">
+          <div className="space-y-4">
+            <ProfileHeader profile={profile} onEdit={() => document.getElementById("profile-account")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
+            <section className="rounded-2xl border border-white bg-white/80 p-4 shadow-[0_10px_26px_rgba(58,39,120,0.06)]">
+              <div className="flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/45">Profile strength</span><strong className="text-[14px] text-deep-violet">{profileCompletion}%</strong></div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-deep-violet/10"><div className="h-full rounded-full bg-gradient-to-r from-deep-violet via-magenta to-coral transition-all" style={{ width: `${profileCompletion}%` }} /></div>
+              <p className="mt-2 text-[11px] leading-relaxed text-ink/45">Add your business and phone details to make your workspace easier to recognize.</p>
+            </section>
           </div>
 
-          <div className="space-y-5 lg:col-span-2" role="tabpanel">
-            {tab === "overview" && (
-              <>
-                <ProfileAbout
-                  bio={profile.bio}
-                  businessName={profile.business_name}
-                  saving={saving}
-                  onSave={handleAboutSave}
-                />
-                <ProfileLimits items={usage} cached={usageCached} loading={usageLoading} onRefresh={refreshUsage} />
-              </>
-            )}
-
-            {tab === "account" && (
+          <main className="min-w-0 space-y-5">
+            <ProfileAbout
+              bio={profile.bio}
+              businessName={profile.business_name}
+              saving={saving}
+              onSave={handleAboutSave}
+            />
+            <div id="profile-account">
               <ProfileAccount profile={profile} saving={saving} onSave={handleAccountSave} />
-            )}
+            </div>
+            <ProfilePreferences
+              theme={profile.theme}
+              language={profile.language}
+              saving={saving}
+              onSave={handlePreferences}
+            />
+            <ProfileLimits items={usage} cached={usageCached} loading={usageLoading} onRefresh={refreshUsage} />
 
-            {tab === "preferences" && (
-              <ProfilePreferences
-                theme={profile.theme}
-                language={profile.language}
-                saving={saving}
-                onSave={handlePreferences}
-              />
-            )}
-
-            {tab === "usage" && (
-              <ProfileLimits items={usage} cached={usageCached} loading={usageLoading} onRefresh={refreshUsage} />
-            )}
-
-            {tab === "feedback" && (
-              <ProfileRatings ratings={profile.feedback ?? {}} savingKey={ratingKey} onRate={handleRate} />
-            )}
-          </div>
+          </main>
         </div>
 
         {toast && (
