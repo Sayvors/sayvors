@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
-type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "analytics";
+type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative";
 type View = { kind: "list" } | { kind: "detail"; id: string };
 
 interface ReviewItem {
@@ -31,8 +31,9 @@ const MOCK_LOCATIONS: LocationOption[] = [
   { id: "loc_2", name: "Sayvors Olaya" },
 ];
 
-const MOCK_REVIEWS: ReviewItem[] = [
-  {
+const PAGE_SIZE = 4;
+
+const MOCK_REVIEWS: ReviewItem[] = [  {
     id: "r1", locationId: "loc_1", locationName: "Sayvors Al Malqa",
     reviewer: "John Smith", rating: 5, comment: "Great service and very helpful staff. Highly recommended!",
     createdAt: "2026-09-08", reply: "Thank you for visiting us!",
@@ -87,6 +88,9 @@ function ReviewsInner() {
   const [replyDraft, setReplyDraft] = useState("");
   const [replying, setReplying] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [page, setPage] = useState(1);
+  const [replyMode, setReplyMode] = useState<"manual" | "ai">("manual");
+  const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,7 +160,28 @@ function ReviewsInner() {
   const openDetail = (id: string) => {
     const r = reviews.find((x) => x.id === id);
     setReplyDraft(r?.reply ?? "");
+    setReplyMode("manual");
     setView({ kind: "detail", id });
+  };
+
+  const generateAiReply = async () => {
+    if (view.kind !== "detail") return;
+    const r = reviews.find((x) => x.id === view.id);
+    if (!r) return;
+    setAiLoading(true);
+    setReplyMode("ai");
+    // Frontend-only draft; backend AI endpoint can replace this later.
+    await new Promise((res) => setTimeout(res, 900));
+    const tone = r.rating >= 4
+      ? `Thank you so much, ${r.reviewer}! We're thrilled you enjoyed ${r.locationName}.`
+      : r.rating === 3
+        ? `Thanks for your honest feedback, ${r.reviewer}. We'll work on doing better at ${r.locationName}.`
+        : `We're really sorry about your experience, ${r.reviewer}. Our team at ${r.locationName} will reach out and make this right.`;
+    const extra = r.rating >= 4
+      ? " Hope to see you again soon!"
+      : " Please give us another chance to improve.";
+    setReplyDraft(`${tone}${extra}`);
+    setAiLoading(false);
   };
 
   const saveReply = async (isEdit: boolean) => {
@@ -192,12 +217,24 @@ function ReviewsInner() {
     const dist = [5, 4, 3, 2, 1].map((s) => ({ stars: s, count: reviews.filter((r) => r.rating === s).length }));
     const avg = total ? reviews.reduce((a, r) => a + r.rating, 0) / total : 0;
     const replied = reviews.filter((r) => r.reply).length;
-    const now = new Date("2026-09-08");
     const thisMonth = reviews.filter((r) => r.createdAt.slice(0, 7) === "2026-09").length;
     const lastMonth = reviews.filter((r) => r.createdAt.slice(0, 7) === "2026-08").length;
-    void now;
-    return { total, dist, avg, replied, responseRate: total ? Math.round((replied / total) * 100) : 0, thisMonth, lastMonth };
+    const months = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"].map((m) => ({
+      label: m.slice(5),
+      count: reviews.filter((r) => r.createdAt.slice(0, 7) === m).length,
+    }));
+    const maxMonth = Math.max(1, ...months.map((m) => m.count));
+    return { total, dist, avg, replied, responseRate: total ? Math.round((replied / total) * 100) : 0, thisMonth, lastMonth, months, maxMonth };
   }, [reviews]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  const pickTab = (t: ReviewTab) => {
+    setTab(t);
+    setPage(1);
+  };
 
   if (loading) return <div className="flex h-full items-center justify-center"><LogoLoader size={32} /></div>;
 
@@ -213,7 +250,7 @@ function ReviewsInner() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
-              <select value={selectedId ?? ""} onChange={(e) => setSelectedId(e.target.value)}
+              <select value={selectedId ?? ""} onChange={(e) => { setSelectedId(e.target.value); setPage(1); setView({ kind: "list" }); }}
                 className="w-52 appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog">
                 {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
@@ -241,74 +278,101 @@ function ReviewsInner() {
 
           {view.kind === "list" && (
             <>
+              {/* Insights */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <StatCard label="Average Rating" value={`${analytics.avg.toFixed(1)} ★`} />
+                <StatCard label="Total Reviews" value={String(analytics.total)} />
+                <StatCard label="Response Rate" value={`${analytics.responseRate}%`} />
+                <StatCard label="Unanswered" value={String(counts.unanswered)} />
+              </div>
+
+              {/* Charts */}
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+                  <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Rating breakdown</h3>
+                  <p className="text-[11px] text-ink/35">Sayvors-derived.</p>
+                  <div className="mt-3 space-y-2">
+                    {analytics.dist.map((d) => (
+                      <div key={d.stars} className="flex items-center gap-2">
+                        <span className="w-8 text-[11px] font-medium text-ink/50">{d.stars} ★</span>
+                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
+                          <div className="h-full rounded-full bg-gradient-to-r from-[#FBBC05] to-[#EA4335]" style={{ width: `${analytics.total ? (d.count / analytics.total) * 100 : 0}%` }} />
+                        </div>
+                        <span className="w-8 text-right text-[11px] text-ink/50">{d.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+                  <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Reviews trend</h3>
+                  <p className="text-[11px] text-ink/35">Last 6 months · this {analytics.thisMonth} / last {analytics.lastMonth}.</p>
+                  <div className="mt-3 flex h-24 items-end gap-2">
+                    {analytics.months.map((m) => (
+                      <div key={m.label} className="flex flex-1 flex-col items-center gap-1">
+                        <div className="flex w-full flex-1 items-end rounded-md bg-ink/[0.04] dark:bg-fog/[0.05]">
+                          <div className="w-full rounded-md bg-deep-violet/70" style={{ height: `${Math.max(6, (m.count / analytics.maxMonth) * 100)}%` }} />
+                        </div>
+                        <span className="text-[9px] text-ink/40">{m.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <div className="flex gap-1 overflow-x-auto rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
                 {([
-                  { key: "all", label: `All Reviews (${counts.all})` },
+                  { key: "all", label: `All (${counts.all})` },
                   { key: "unanswered", label: `Unanswered (${counts.unanswered})` },
                   { key: "replied", label: `Replied (${counts.replied})` },
                   { key: "positive", label: `Positive (${counts.positive})` },
                   { key: "negative", label: `Negative (${counts.negative})` },
-                  { key: "analytics", label: "Review Analytics" },
                 ] as const).map((t) => (
-                  <button key={t.key} onClick={() => setTab(t.key)}
+                  <button key={t.key} onClick={() => pickTab(t.key)}
                     className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-[12px] font-semibold transition ${tab === t.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"}`}>
                     {t.label}
                   </button>
                 ))}
               </div>
 
-              {tab === "analytics" ? (
-                <div className="space-y-3">
-                  <div className="grid grid-cols-3 gap-3">
-                    <StatCard label="Average Rating" value={`${analytics.avg.toFixed(1)} ★`} />
-                    <StatCard label="Total Reviews" value={String(analytics.total)} />
-                    <StatCard label="Response Rate" value={`${analytics.responseRate}%`} />
-                  </div>
-                  <div className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
-                    <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Rating breakdown</h3>
-                    <p className="text-[11px] text-ink/35">Sayvors-derived from retrieved reviews.</p>
-                    <div className="mt-3 space-y-2">
-                      {analytics.dist.map((d) => (
-                        <div key={d.stars} className="flex items-center gap-2">
-                          <span className="w-8 text-[11px] font-medium text-ink/50">{d.stars} ★</span>
-                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
-                            <div className="h-full rounded-full bg-gradient-to-r from-[#FBBC05] to-[#EA4335]" style={{ width: `${analytics.total ? (d.count / analytics.total) * 100 : 0}%` }} />
-                          </div>
-                          <span className="w-8 text-right text-[11px] text-ink/50">{d.count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    <StatCard label="Unanswered" value={String(counts.unanswered)} />
-                    <StatCard label="This month" value={String(analytics.thisMonth)} />
-                    <StatCard label="Last month" value={String(analytics.lastMonth)} />
-                  </div>
-                </div>
-              ) : filtered.length === 0 ? (
+              {filtered.length === 0 ? (
                 <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
                   <p className="text-[14px] font-medium text-ink/40">No reviews in this view</p>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {filtered.map((r) => (
-                    <button key={r.id} onClick={() => openDetail(r.id)} className="block w-full rounded-2xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/25 hover:shadow-sm dark:border-fog/[0.06] dark:bg-ink">
-                      <span className="flex items-start justify-between gap-3">
-                        <span>
-                          <span className="block text-[13px] font-bold text-ink dark:text-fog">{r.reviewer}</span>
-                          <span className="block text-[10px] text-ink/35">{r.locationName} · {r.createdAt}</span>
+                <>
+                  <div className="space-y-2">
+                    {paged.map((r) => (
+                      <button key={r.id} onClick={() => openDetail(r.id)} className="block w-full rounded-2xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/25 hover:shadow-sm dark:border-fog/[0.06] dark:bg-ink">
+                        <span className="flex items-start justify-between gap-3">
+                          <span>
+                            <span className="block text-[13px] font-bold text-ink dark:text-fog">{r.reviewer}</span>
+                            <span className="block text-[10px] text-ink/35">{r.locationName} · {r.createdAt}</span>
+                          </span>
+                          <Stars rating={r.rating} />
                         </span>
-                        <Stars rating={r.rating} />
-                      </span>
-                      <span className="mt-2 line-clamp-2 block text-[13px] leading-relaxed text-ink/70">“{r.comment}”</span>
-                      <span className="mt-2 block text-[11px]">
-                        {r.reply
-                          ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">Replied</span>
-                          : <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">Needs reply</span>}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                        <span className="mt-2 line-clamp-2 block text-[13px] leading-relaxed text-ink/70">“{r.comment}”</span>
+                        <span className="mt-2 block text-[11px]">
+                          {r.reply
+                            ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">Replied</span>
+                            : <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">Needs reply</span>}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between pt-1">
+                    <p className="text-[11px] text-ink/40">Page {safePage} of {totalPages} · {filtered.length} reviews</p>
+                    <div className="flex gap-1">
+                      <button onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage <= 1} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Prev</button>
+                      {Array.from({ length: totalPages }).slice(0, 5).map((_, i) => (
+                        <button key={i} onClick={() => setPage(i + 1)}
+                          className={`rounded-lg px-2.5 py-1.5 text-[12px] font-semibold ${safePage === i + 1 ? "bg-deep-violet text-white" : "text-ink/50 hover:bg-ink/[0.04]"}`}>
+                          {i + 1}
+                        </button>
+                      ))}
+                      <button onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage >= totalPages} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Next</button>
+                    </div>
+                  </div>
+                </>
               )}
             </>
           )}
@@ -327,23 +391,43 @@ function ReviewsInner() {
 
                 <div className="mt-5 border-t border-ink/[0.05] pt-4">
                   <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Your reply</h3>
-                  {active.reply && !replyEditing(active.reply, replyDraft) ? (
+                  <div className="mt-2 flex gap-1 rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.05]">
+                    <button onClick={() => setReplyMode("manual")}
+                      className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${replyMode === "manual" ? "bg-white text-deep-violet shadow-sm dark:bg-ink" : "text-ink/45"}`}>
+                      Write myself
+                    </button>
+                    <button onClick={() => generateAiReply()}
+                      className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${replyMode === "ai" ? "bg-white text-deep-violet shadow-sm dark:bg-ink" : "text-ink/45"}`}>
+                      Write with AI
+                    </button>
+                  </div>
+                  {active.reply && !replyEditing(active.reply, replyDraft) && replyMode === "manual" ? (
                     <div className="mt-2 rounded-xl bg-ink/[0.03] p-3 dark:bg-fog/[0.04]">
                       <p className="text-[13px] text-ink dark:text-fog">“{active.reply}”</p>
                       {active.replyUpdatedAt && <p className="mt-1 text-[10px] text-ink/35">Replied {active.replyUpdatedAt}</p>}
                     </div>
                   ) : null}
-                  <textarea
-                    value={replyDraft}
-                    onChange={(e) => setReplyDraft(e.target.value)}
-                    rows={3}
-                    maxLength={1000}
-                    placeholder={active.reply ? "Edit your reply..." : "Write your reply..."}
-                    className="input-field mt-2 resize-y"
-                  />
+                  {aiLoading ? (
+                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-deep-violet/15 bg-deep-violet/[0.04] p-3">
+                      <LogoLoader size={16} />
+                      <p className="text-[12px] text-ink/50">AI is drafting a reply...</p>
+                    </div>
+                  ) : (
+                    <textarea
+                      value={replyDraft}
+                      onChange={(e) => { setReplyDraft(e.target.value); setReplyMode("manual"); }}
+                      rows={3}
+                      maxLength={1000}
+                      placeholder={replyMode === "ai" ? "AI draft — edit if you like, then submit..." : active.reply ? "Edit your reply..." : "Write your reply..."}
+                      className="input-field mt-2 resize-y"
+                    />
+                  )}
+                  {replyMode === "ai" && !aiLoading && (
+                    <button onClick={() => generateAiReply()} className="mt-1 text-[11px] font-semibold text-deep-violet hover:underline">Regenerate AI draft</button>
+                  )}
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <button onClick={() => saveReply(!!active.reply)} disabled={!replyDraft.trim() || replying} className="btn-primary disabled:opacity-50">
-                      {replying ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : active.reply ? "Edit Reply" : "Reply"}
+                    <button onClick={() => saveReply(!!active.reply)} disabled={!replyDraft.trim() || replying || aiLoading} className="btn-primary disabled:opacity-50">
+                      {replying ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : "Submit"}
                     </button>
                     {active.reply && (
                       <button onClick={() => deleteReply(active.id)} className="rounded-xl border border-red-200 px-4 py-2 text-[12px] font-semibold text-red-600 hover:bg-red-50">
@@ -351,7 +435,7 @@ function ReviewsInner() {
                       </button>
                     )}
                   </div>
-                  <p className="mt-2 text-[10px] text-ink/30">You can reply, edit or delete your reply. Customer reviews cannot be deleted or edited.</p>
+                  <p className="mt-2 text-[10px] text-ink/30">Type yourself, or tap Write with AI and just hit Submit. Customer reviews cannot be deleted or edited.</p>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 border-t border-ink/[0.05] pt-4 text-[11px]">
