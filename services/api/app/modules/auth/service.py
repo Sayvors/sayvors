@@ -88,6 +88,15 @@ async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str
 
     await log_signup(user.id, user.email, ip, user_agent[:200])
 
+    # Gate sign-in on email verification: send the OTP now. A send
+    # failure must not fail signup — the user can resend from login.
+    try:
+        from ...modules.email.service import send_otp_email
+        await send_otp_email(user.email, "signup")
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("OTP email failed for %s", user.email)
+
     return {
         "access_token": access_token,
         "refresh_token": refresh_raw,
@@ -123,6 +132,15 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
         await db.commit()
         await log_login_failed(body.email, ip, user_agent[:200], "invalid_credentials")
         raise ValueError("Invalid email or password")
+
+    if not user.email_verified:
+        # Resend the OTP so the user is never stuck, then refuse sign-in.
+        try:
+            from ...modules.email.service import send_otp_email
+            await send_otp_email(user.email, "signup")
+        except Exception:
+            pass
+        raise ValueError("EMAIL_NOT_VERIFIED: verify the code sent to your email first.")
 
     user.failed_login_attempts = 0
     user.locked_until = None
@@ -383,6 +401,24 @@ async def verify_email(token: str, db: AsyncSession) -> bool:
     user.email_verified = True
     await db.commit()
 
+    await log_email_verified(user.id, user.email)
+    return True
+
+
+async def verify_signup_otp(email: str, code: str, db: AsyncSession) -> bool:
+    """Check the signup OTP and mark the user verified. Wrong code -> False."""
+    from ...modules.email.service import verify_otp
+
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise ValueError("No account with that email")
+    if user.email_verified:
+        return True
+    if not await verify_otp(email, code):
+        return False
+    user.email_verified = True
+    await db.commit()
     await log_email_verified(user.id, user.email)
     return True
 

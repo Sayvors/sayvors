@@ -11,6 +11,7 @@ from .schemas import (
     ForgotPasswordRequest,
     ResetPasswordRequest,
     VerifyEmailRequest,
+    VerifyOtpRequest,
     LogoutRequest,
 )
 from .service import (
@@ -21,6 +22,7 @@ from .service import (
     forgot_password,
     reset_password,
     verify_email,
+    verify_signup_otp,
     get_user_sessions,
 )
 
@@ -136,6 +138,11 @@ async def login_endpoint(
     try:
         result = await login(body, db, user_agent, ip)
     except ValueError as e:
+        if str(e).startswith("EMAIL_NOT_VERIFIED"):
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "email_not_verified", "message": str(e).split(": ", 1)[-1]},
+            )
         raise HTTPException(status_code=401, detail=str(e))
 
     refresh_token = result.pop("refresh_token")
@@ -281,6 +288,24 @@ async def verify_email_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"message": "Email verified successfully"}
+
+
+@router.post("/verify-otp")
+async def verify_otp_endpoint(
+    body: VerifyOtpRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    ip = get_client_ip(request)
+    if not await rate_limit(f"verify-otp:{ip}", 10, 60):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    try:
+        ok = await verify_signup_otp(str(body.email), body.code, db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired code.")
+    return {"message": "Email verified successfully", "email_verified": True}
 
 
 @router.get("/me")
