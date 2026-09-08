@@ -61,7 +61,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
       return retryRes.json();
     }
     // Don't redirect if already on an auth page — prevents infinite reload loop
-    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email")) {
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp")) {
       window.location.href = "/login";
     }
     throw new Error("Unauthorized");

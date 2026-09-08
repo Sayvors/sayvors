@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth-context";
 import LogoLoader from "@/components/LogoLoader";
@@ -170,6 +171,7 @@ function Select({
 
 export default function AuthForm({ mode }: { mode: Mode }) {
   const { signup, login } = useAuth();
+  const router = useRouter();
   const isLogin = mode === "login";
   const [step, setStep] = useState(0);
   const [v, setV] = useState<FormValues>(defaultValues);
@@ -215,6 +217,10 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         await login({ email: v.email.trim(), password: v.password });
         setDone(true);
       } catch (err: any) {
+        if (err.code === "email_not_verified") {
+          router.push(`/verify-otp?email=${encodeURIComponent(v.email.trim())}`);
+          return;
+        }
         setError(err.message || "Login failed");
       } finally {
         setBusy(false);
@@ -255,14 +261,20 @@ export default function AuthForm({ mode }: { mode: Mode }) {
             <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6"><path d="M4.5 12.75l6 6 9-13.5" /></svg>
           </div>
         </div>
-        <h2 className="text-lg font-semibold text-ink">{isLogin ? "Welcome back" : "You\u2019re in!"}</h2>
+        <h2 className="text-lg font-semibold text-ink">{isLogin ? "Welcome back" : "Check your email"}</h2>
         <p className="mt-1.5 text-[13px] text-ink/55">
-          {isLogin ? "Redirecting you to dashboard..." : "Check your email for verification link."}
+          {isLogin ? "Redirecting you to dashboard..." : "We sent a 6-digit verification code. Enter it to activate your account."}
         </p>
         <div className="mt-7 flex w-full flex-col gap-2.5">
-          <Link href="/dashboard" className="flex h-11 items-center justify-center rounded-lg bg-ink text-[14px] font-medium text-white transition-all duration-200 hover:bg-ink/90 active:scale-[0.98]">
-            Go to dashboard
-          </Link>
+          {isLogin ? (
+            <Link href="/dashboard" className="flex h-11 items-center justify-center rounded-lg bg-ink text-[14px] font-medium text-white transition-all duration-200 hover:bg-ink/90 active:scale-[0.98]">
+              Go to dashboard
+            </Link>
+          ) : (
+            <Link href={`/verify-otp?email=${encodeURIComponent(v.email.trim())}`} className="flex h-11 items-center justify-center rounded-lg bg-ink text-[14px] font-medium text-white transition-all duration-200 hover:bg-ink/90 active:scale-[0.98]">
+              Enter verification code
+            </Link>
+          )}
           <button type="button" onClick={() => { setV(defaultValues); setDone(false); setStep(0); }}
             className="flex h-11 items-center justify-center rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/60 transition-all duration-200 hover:bg-ink/[0.03] hover:border-ink/20 active:scale-[0.98]">
             Back to {isLogin ? "sign in" : "sign up"}
