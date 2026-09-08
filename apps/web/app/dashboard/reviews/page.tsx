@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
 type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative";
-type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number } | { kind: "intelligence" };
+type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
 
 interface ReviewItem {
   id: string;
@@ -282,7 +282,13 @@ function ReviewsInner() {
             <nav className="flex items-center gap-1.5 text-[12px] text-ink/40 dark:text-fog/40">
               <button onClick={() => setView({ kind: "list" })} className="font-medium hover:text-deep-violet">Reviews</button>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              <span className="font-semibold text-ink dark:text-fog">{view.stars}★ insights</span>
+              {view.from === "intelligence" ? (
+                <>
+                  <button onClick={() => setView({ kind: "intelligence" })} className="font-medium hover:text-deep-violet">Review Intelligence</button>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </>
+              ) : null}
+              <span className="font-semibold text-ink dark:text-fog">{view.stars}★ details</span>
             </nav>
           )}
 
@@ -313,7 +319,7 @@ function ReviewsInner() {
                   </button>
                   <div className="mt-3 space-y-1">
                     {analytics.dist.map((d) => (
-                      <button key={d.stars} onClick={() => setView({ kind: "star", stars: d.stars })}
+                      <button key={d.stars} onClick={() => setView({ kind: "star", stars: d.stars, from: "list" })}
                         className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-deep-violet/[0.05] hover:ring-1 hover:ring-deep-violet/20">
                         <span className="w-8 text-[11px] font-medium text-ink/50">{d.stars} ★</span>
                         <span className="h-2 flex-1 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
@@ -408,7 +414,7 @@ function ReviewsInner() {
               stars={view.stars}
               group={starGroup}
               total={reviews.length}
-              onBack={() => setView({ kind: "list" })}
+              onBack={() => setView(view.from === "intelligence" ? { kind: "intelligence" } : { kind: "list" })}
               onOpen={(id) => openDetail(id)}
             />
           )}
@@ -497,7 +503,7 @@ function ReviewsInner() {
               total={reviews.length}
               locationName={locations.find((l) => l.id === selectedId)?.name ?? ""}
               onBack={() => setView({ kind: "list" })}
-              onOpenStar={(s) => setView({ kind: "star", stars: s })}
+              onOpenStar={(s) => setView({ kind: "star", stars: s, from: "intelligence" })}
             />
           )}
         </div>
