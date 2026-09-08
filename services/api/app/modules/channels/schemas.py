@@ -26,6 +26,47 @@ class ChannelListResponse(BaseModel):
     total: int
 
 
+class VerificationRequest(BaseModel):
+    method: str = Field(..., pattern="^(phone|sms|email|postcard|video|live_video)$")
+    contact_target: str | None = Field(None, max_length=255)
+
+
+class VerificationResponse(BaseModel):
+    channel_id: str
+    status: str
+    method: str | None
+    contact_target: str | None
+    attempts: int
+    requested_at: str | None
+    verified_at: str | None
+    provider_managed: bool = True
+
+
+class ServiceCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    category: str = Field("Custom", min_length=1, max_length=120)
+    description: str | None = Field(None, max_length=500)
+    is_offered: bool = True
+    source: str = Field("custom", pattern="^(custom|google)$")
+
+
+class ServiceUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    category: str | None = Field(None, min_length=1, max_length=120)
+    description: str | None = Field(None, max_length=500)
+    is_offered: bool | None = None
+
+
+class ServiceResponse(BaseModel):
+    id: str
+    channel_id: str
+    name: str
+    category: str
+    description: str | None
+    is_offered: bool
+    source: str
+
+
 class ChannelMessageSend(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
     content_type: str = "text"
