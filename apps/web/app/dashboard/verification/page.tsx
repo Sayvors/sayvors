@@ -184,64 +184,80 @@ function VerificationInner() {
       {!status?.verified && !status?.pending && (
         <div className="space-y-3">
           <h3 className="text-[14px] font-semibold text-ink dark:text-fog">Choose Verification Method</h3>
-          <p className="text-[12px] text-ink/40 dark:text-fog/40">Google will verify your connection to this business.</p>
+          <p className="text-[12px] text-ink/40 dark:text-fog/40">Google will verify your connection to this business location.</p>
 
           <div className="grid gap-3">
             {/* Postcard */}
-            <button
+            <MethodCard
+              icon={<MailIcon />}
+              iconBg="bg-deep-violet/10"
+              iconColor="text-deep-violet"
+              title="Postcard by Mail"
+              desc="Receive a postcard with a verification code at your business address."
+              badge="5–14 days"
               onClick={() => requestVerification("postcard")}
               disabled={requesting}
-              className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/20 hover:bg-deep-violet/[0.02] dark:border-fog/[0.06] dark:bg-ink dark:hover:border-deep-violet/20"
-            >
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-deep-violet/10">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-deep-violet">
-                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                  <polyline points="22,6 12,13 2,6" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <p className="text-[13px] font-semibold text-ink dark:text-fog">Postcard by Mail</p>
-                <p className="text-[11px] text-ink/40 dark:text-fog/40">Receive a postcard with a verification code. Takes 5–14 days.</p>
-              </div>
-              <span className="rounded-full bg-deep-violet px-3 py-1 text-[11px] font-semibold text-white">Select</span>
-            </button>
+            />
 
             {/* Phone */}
-            <button
+            <MethodCard
+              icon={<PhoneIcon />}
+              iconBg="bg-emerald-100 dark:bg-emerald-500/10"
+              iconColor="text-emerald-600 dark:text-emerald-400"
+              title="Phone Call"
+              desc="Receive an automated call with a verification code."
+              badge="Instant"
               onClick={() => requestVerification("phone")}
               disabled={requesting}
-              className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/20 hover:bg-deep-violet/[0.02] dark:border-fog/[0.06] dark:bg-ink dark:hover:border-deep-violet/20"
-            >
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-100 dark:bg-emerald-500/10">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-emerald-600 dark:text-emerald-400">
-                  <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <p className="text-[13px] font-semibold text-ink dark:text-fog">Phone Call</p>
-                <p className="text-[11px] text-ink/40 dark:text-fog/40">Receive an automated call with a code. Instant.</p>
-              </div>
-              <span className="rounded-full bg-deep-violet px-3 py-1 text-[11px] font-semibold text-white">Select</span>
-            </button>
+            />
+
+            {/* SMS */}
+            <MethodCard
+              icon={<SmsIcon />}
+              iconBg="bg-sky-100 dark:bg-sky-500/10"
+              iconColor="text-sky-600 dark:text-sky-400"
+              title="SMS / Text Message"
+              desc="Receive a text message with a verification code."
+              badge="Instant"
+              onClick={() => requestVerification("sms")}
+              disabled={requesting}
+            />
 
             {/* Email */}
-            <button
+            <MethodCard
+              icon={<EmailIcon />}
+              iconBg="bg-violet-100 dark:bg-violet-500/10"
+              iconColor="text-violet-600 dark:text-violet-400"
+              title="Email"
+              desc="Receive a code at your registered business email address."
+              badge="Instant"
               onClick={() => requestVerification("email")}
               disabled={requesting}
-              className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/20 hover:bg-deep-violet/[0.02] dark:border-fog/[0.06] dark:bg-ink dark:hover:border-deep-violet/20"
-            >
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-100 dark:bg-sky-500/10">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-sky-600 dark:text-sky-400">
-                  <rect x="2" y="4" width="20" height="16" rx="2" />
-                  <path d="M22 7l-8.97 5.7a1.94 1.94 0 01-2.06 0L2 7" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <p className="text-[13px] font-semibold text-ink dark:text-fog">Email</p>
-                <p className="text-[11px] text-ink/40 dark:text-fog/40">Receive a code at your registered business email. Instant.</p>
-              </div>
-              <span className="rounded-full bg-deep-violet px-3 py-1 text-[11px] font-semibold text-white">Select</span>
-            </button>
+            />
+
+            {/* Video */}
+            <MethodCard
+              icon={<VideoIcon />}
+              iconBg="bg-amber-100 dark:bg-amber-500/10"
+              iconColor="text-amber-600 dark:text-amber-400"
+              title="Video Verification"
+              desc="Record a short video of your business location and signage."
+              badge="Review in 1–3 days"
+              onClick={() => requestVerification("video")}
+              disabled={requesting}
+            />
+
+            {/* Live Video Call */}
+            <MethodCard
+              icon={<LiveCallIcon />}
+              iconBg="bg-rose-100 dark:bg-rose-500/10"
+              iconColor="text-rose-600 dark:text-rose-400"
+              title="Live Video Call"
+              desc="Join a live video call with a Google agent to verify your location."
+              badge="Schedule required"
+              onClick={() => requestVerification("live_video")}
+              disabled={requesting}
+            />
           </div>
 
           {requesting && (
@@ -272,5 +288,86 @@ function VerificationInner() {
         </ul>
       </div>
     </div>
+  );
+}
+
+/* ── Components ─────────────────────────────────── */
+
+function MethodCard({ icon, iconBg, iconColor, title, desc, badge, onClick, disabled }: {
+  icon: React.ReactNode; iconBg: string; iconColor: string; title: string; desc: string;
+  badge: string; onClick: () => void; disabled: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/20 hover:bg-deep-violet/[0.02] disabled:opacity-50 dark:border-fog/[0.06] dark:bg-ink dark:hover:border-deep-violet/20"
+    >
+      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${iconBg} ${iconColor}`}>
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[13px] font-semibold text-ink dark:text-fog">{title}</p>
+        <p className="text-[11px] text-ink/40 dark:text-fog/40">{desc}</p>
+      </div>
+      <span className="shrink-0 rounded-full bg-ink/[0.04] px-2 py-0.5 text-[10px] font-medium text-ink/40 dark:bg-fog/[0.04] dark:text-fog/40">{badge}</span>
+      <span className="shrink-0 rounded-full bg-deep-violet px-3 py-1 text-[11px] font-semibold text-white">Select</span>
+    </button>
+  );
+}
+
+/* ── Icons ──────────────────────────────────────── */
+
+function MailIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+      <polyline points="22,6 12,13 2,6" />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+      <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
+    </svg>
+  );
+}
+
+function SmsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+      <path d="M8 10h8M8 14h4" />
+    </svg>
+  );
+}
+
+function EmailIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="M22 7l-8.97 5.7a1.94 1.94 0 01-2.06 0L2 7" />
+    </svg>
+  );
+}
+
+function VideoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+      <polygon points="23 7 16 12 23 17 23 7" />
+      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+    </svg>
+  );
+}
+
+function LiveCallIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+      <path d="M15.6 11.6L22 7v10l-6.4-4.5" />
+      <rect x="2" y="7" width="15" height="10" rx="2" />
+      <circle cx="9.5" cy="12" r="1" fill="currentColor" />
+    </svg>
   );
 }
