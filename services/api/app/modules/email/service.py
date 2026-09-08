@@ -22,7 +22,6 @@ from ..redis.client import get_redis
 
 logger = logging.getLogger(__name__)
 
-RESEND_URL = "https://api.resend.com/emails"
 OTP_TTL_SECONDS = 10 * 60
 
 
@@ -60,7 +59,7 @@ async def send_email(to: str | list[str], subject: str, html: str, text: str | N
         payload["text"] = text
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
-            RESEND_URL,
+            settings.RESEND_URL,
             headers={
                 "Authorization": f"Bearer {settings.RESEND_API_KEY}",
                 "Content-Type": "application/json",

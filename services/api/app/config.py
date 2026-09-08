@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     # ── Email (Resend) ────────────────────────────────────────
     # Server-side only. Never expose this to the frontend.
     RESEND_API_KEY: str = ""
+    RESEND_URL: str = "https://api.resend.com/emails"
     RESEND_FROM: str = "Sayvors <noreply@sayvors.com>"
     EMAIL_FROM: str = "noreply@sayvors.com"
     FRONTEND_URL: str = "http://localhost:3000"

@@ -88,6 +88,22 @@ export default function CrawlerTab({ onCrawl }: CrawlerTabProps) {
           >
             Add to Queue
           </button>
+
+          <details className="rounded-xl border border-ink/[0.06] bg-ink/[0.02]">
+            <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-ink/50 hover:text-ink/70">
+              Single page vs. full site — which one?
+            </summary>
+            <div className="space-y-2 border-t border-ink/[0.05] px-3 py-3 text-[12px] text-ink/60">
+              <p className="font-bold text-ink">Single page</p>
+              <p>Indexes only the page you paste. Fast, predictable, and safe for one-off articles, help articles, or PDFs.</p>
+              <p className="mt-1"><span className="text-emerald-600">Use when</span> you want exactly one URL and nothing else.</p>
+              <p className="mt-0.5"><span className="text-amber-600">Watch out</span> linked pages are not followed, so a knowledge base spread across many URLs needs Full site.</p>
+              <p className="mt-1 font-bold text-ink">Full site</p>
+              <p>Follows internal links and crawls the whole domain up to a depth limit. Best for docs, blogs, and help centers.</p>
+              <p className="mt-1"><span className="text-emerald-600">Use when</span> your knowledge lives across many pages of one site.</p>
+              <p className="mt-0.5"><span className="text-amber-600">Watch out</span> large sites can take a while and may pull in navigation pages you do not want. Point it at a docs sub-path if the site is big.</p>
+            </div>
+          </details>
         </div>
       </div>
 

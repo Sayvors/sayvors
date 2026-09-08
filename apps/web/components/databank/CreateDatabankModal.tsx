@@ -191,6 +191,39 @@ export default function CreateDatabankModal({ isOpen, onClose, onCreate, creatin
                   </button>
                 );
               })}
+
+              {/* Why choose this? — per-option documentation */}
+              <details open className="mt-2 rounded-xl border border-ink/[0.06] bg-ink/[0.02]">
+                <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-ink/50 hover:text-ink/70">
+                  Why choose which option? — scenarios &amp; trade-offs
+                </summary>
+                <div className="space-y-3 border-t border-ink/[0.05] px-3 py-3 text-[12px] text-ink/60">
+                  <div>
+                    <p className="font-bold text-ink">Upload files</p>
+                    <p className="mt-0.5">Best when your knowledge already exists as documents: handbooks, SOPs, product specs, support tickets, PDFs, slide decks.</p>
+                    <p className="mt-1"><span className="text-emerald-600">Use when</span> you have a handful of files and want them indexed immediately.</p>
+                    <p className="mt-0.5"><span className="text-amber-600">Watch out</span> 50MB per file; not designed for thousands of files.</p>
+                  </div>
+                  <div>
+                    <p className="font-bold text-ink">Web crawler</p>
+                    <p className="mt-0.5">Best when your knowledge lives on a website: docs, help centers, blog posts, knowledge bases.</p>
+                    <p className="mt-1"><span className="text-emerald-600">Use when</span> you want Sayvors to stay current as the site changes.</p>
+                    <p className="mt-0.5"><span className="text-amber-600">Watch out</span> crawl depth is 1–5; depth 2 is usually enough. Large sites may need a sitemap or targeted sub-paths.</p>
+                  </div>
+                  <div>
+                    <p className="font-bold text-ink">Live database</p>
+                    <p className="mt-0.5">Best when your knowledge is in a database: product catalog, customer records, support tickets, inventory.</p>
+                    <p className="mt-1"><span className="text-emerald-600">Use when</span> you need AI to answer questions grounded in live data, not a snapshot.</p>
+                    <p className="mt-0.5"><span className="text-amber-600">Watch out</span> you connect after creation — credentials are stored encrypted.</p>
+                  </div>
+                  <div>
+                    <p className="font-bold text-ink">Start empty</p>
+                    <p className="mt-0.5">Best when you want to build the databank first and add sources later, or when you are not sure yet.</p>
+                    <p className="mt-1"><span className="text-emerald-600">Use when</span> you want to name and describe the databank now, then come back with files or a URL.</p>
+                    <p className="mt-0.5"><span className="text-amber-600">Watch out</span> an empty databank returns no answers until you add content.</p>
+                  </div>
+                </div>
+              </details>
             </div>
           )}
 

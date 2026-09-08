@@ -433,6 +433,8 @@ async def google_callback(
                 status="active",
                 metadata_json=_json.dumps({"location_id": location_id, "account_name": account_name}),
             )
+            db.add(channel)
+            created += 1
 
     await db.commit()
     logger.info("Google Reviews connect: created %d channels for user %s", created, user_id)

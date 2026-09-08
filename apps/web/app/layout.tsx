@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Sayvors",
-  description: "One Voice. One Line.",
+  description: "EVERY LINE. ONE VOICE",
   icons: "/Sayvors_Icon.png",
 };
 

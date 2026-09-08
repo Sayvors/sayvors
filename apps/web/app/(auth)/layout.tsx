@@ -58,7 +58,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
               AI customer platform
             </p>
             <h1 className="min-h-[4.6rem] text-[2rem] font-bold leading-[1.15] tracking-tight text-white">
-              <Typewriter phrases={["One Voice.\nOne Line."]} label="One Voice. One Line." />
+              <Typewriter phrases={["EVERY LINE.\nONE VOICE."]} label="EVERY LINE. ONE VOICE" />
             </h1>
             <p className="mt-3 max-w-xs text-[14px] leading-relaxed text-white/50">
               The customer platform built for modern teams.
