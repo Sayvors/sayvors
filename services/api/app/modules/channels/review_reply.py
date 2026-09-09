@@ -122,7 +122,17 @@ async def generate_review_reply(
         max_tokens=300,
         stream=False,
     )
-    resp = await provider.complete(req)
+    try:
+        resp = await provider.complete(req)
+    except ProviderError:
+        # Configured model unreachable (no key, 403, …) — one retry on Groq.
+        if config.model == "groq:oss-120b":
+            raise
+        logger.warning("Reply model %s failed; retrying on groq:oss-120b", config.model)
+        provider = get_provider_for_model("groq:oss-120b")
+        api_model, _ = _resolve_model("groq:oss-120b")
+        req.model = api_model
+        resp = await provider.complete(req)
     reply = resp.content.strip()
     if not reply:
         raise ProviderError(config.model, "Empty reply generated", 502)

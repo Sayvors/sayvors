@@ -43,6 +43,36 @@ interface LocalithConn {
   average_rating?: number;
 }
 
+interface FullProfile {
+  listing_id: string;
+  name: string;
+  address?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  maps_url?: string | null;
+  status: string;
+  is_verified?: boolean | null;
+  description?: string | null;
+  categories: { primary?: string; additional?: string[] };
+  hours: { regular?: Record<string, { open: string; close: string; closed: boolean }>; special?: { date: string; hours: string; reason: string }[]; more?: { type: string; open: string; close: string }[] };
+  service_area: string[];
+  attributes: Record<string, string>;
+  google_synced: string[];
+  updated_at?: string | null;
+}
+
+function SourceBadge({ google }: { google: boolean }) {
+  return google ? (
+    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+      Synced to Google
+    </span>
+  ) : (
+    <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.06] dark:text-fog/45">
+      Stored in Sayvors
+    </span>
+  );
+}
+
 function CompletenessCard({ profile }: { profile: LocalithConn }) {
   const essentials: { label: string; done: boolean; hint?: string }[] = [
     { label: "Business name", done: !!profile.listing_name },
@@ -89,8 +119,23 @@ export default function LocationsPage() {
   const [activeTab, setActiveTab] = useState<string>("details");
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [localith, setLocalith] = useState<LocalithConn | null>(null);
+  const [fullProfile, setFullProfile] = useState<FullProfile | null>(null);
 
   const showBanner = (kind: "ok" | "err", text: string) => setBanner({ kind, text });
+
+  const saveProfile = async (patch: Record<string, unknown>, okText: string) => {
+    if (!selectedId) return;
+    try {
+      const updated = await apiFetch(`/api/v1/locations/${selectedId}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      });
+      setFullProfile(updated as FullProfile);
+      showBanner("ok", okText);
+    } catch (e) {
+      showBanner("err", e instanceof Error ? e.message.slice(0, 160) : "Could not save.");
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -139,6 +184,24 @@ export default function LocationsPage() {
   }, []);
 
   const selectedLocation = locations.find((l) => l.id === selectedId) ?? locations[0] ?? null;
+
+  // Load the merged profile (Google snapshot + Sayvors store) per location.
+  useEffect(() => {
+    if (!selectedId) {
+      setFullProfile(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiFetch(`/api/v1/locations/${selectedId}`);
+        if (!cancelled) setFullProfile(data as FullProfile);
+      } catch {
+        if (!cancelled) setFullProfile(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedId]);
 
 
   const tabs = [
@@ -243,25 +306,46 @@ export default function LocationsPage() {
               />
             )}
             {activeTab === "categories" && (
-              <CategoriesTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Categories updated." })} />
+              <CategoriesTab
+                initial={fullProfile?.categories}
+                onSave={(patch) => saveProfile({ categories: patch }, "Categories saved.")}
+              />
             )}
             {activeTab === "hours" && (
-              <HoursTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Hours saved." })} />
+              <HoursTab
+                initial={fullProfile?.hours?.regular}
+                onSave={(regular) => saveProfile({ hours: { regular } }, "Hours saved.")}
+              />
             )}
             {activeTab === "special-hours" && (
-              <SpecialHoursTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Special hours saved." })} />
+              <SpecialHoursTab
+                initial={fullProfile?.hours?.special}
+                onSave={(special) => saveProfile({ hours: { special } }, "Special hours saved.")}
+              />
             )}
             {activeTab === "more-hours" && (
-              <MoreHoursTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "More hours saved." })} />
+              <MoreHoursTab
+                initial={fullProfile?.hours?.more}
+                onSave={(more) => saveProfile({ hours: { more } }, "More hours saved.")}
+              />
             )}
             {activeTab === "service-area" && (
-              <ServiceAreaTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Service area saved." })} />
+              <ServiceAreaTab
+                initial={fullProfile?.service_area}
+                onSave={(service_area) => saveProfile({ service_area }, "Service area saved.")}
+              />
             )}
             {activeTab === "attributes" && (
-              <AttributesTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Attributes saved." })} />
+              <AttributesTab
+                initial={fullProfile?.attributes}
+                onSave={(attributes) => saveProfile({ attributes }, "Attributes saved.")}
+              />
             )}
             {activeTab === "description" && (
-              <DescriptionTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Description saved." })} />
+              <DescriptionTab
+                initial={fullProfile?.description ?? ""}
+                onSave={(description) => saveProfile({ description }, "Description saved to Google via Localith.")}
+              />
             )}
             {activeTab === "google-updates" && (
               <GoogleUpdatesTab />
@@ -327,7 +411,10 @@ function DetailsTab({
 
   return (
     <div className="space-y-5">
-      <SectionTitle title="Business Details" subtitle="Edit your location's core information." />
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="Business Details" subtitle="Edit your location's core information." />
+        <SourceBadge google={!!profile} />
+      </div>
       {profile && (
         <p className="-mt-2 text-[11px] text-ink/45 dark:text-fog/45">
           Synced from Google via Localith
@@ -373,11 +460,20 @@ function DetailsTab({
   );
 }
 
-function CategoriesTab({ location, onSave }: { location: LocationOption | null; onSave: () => void }) {
-  const [primary, setPrimary] = useState("");
-  const [additional, setAdditional] = useState<string[]>([]);
+function CategoriesTab({ initial, onSave }: {
+  initial?: { primary?: string; additional?: string[] };
+  onSave: (patch: { primary: string; additional: string[] }) => Promise<void>;
+}) {
+  const [primary, setPrimary] = useState(initial?.primary ?? "");
+  const [additional, setAdditional] = useState<string[]>(initial?.additional ?? []);
   const [newCat, setNewCat] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setPrimary(initial?.primary ?? "");
+    setAdditional(initial?.additional ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initial)]);
 
   const addCategory = () => {
     if (newCat.trim() && !additional.includes(newCat.trim())) {
@@ -388,9 +484,21 @@ function CategoriesTab({ location, onSave }: { location: LocationOption | null; 
 
   const removeCategory = (cat: string) => setAdditional(additional.filter((c) => c !== cat));
 
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave({ primary: primary.trim(), additional });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <SectionTitle title="Categories" subtitle="Your business categories on Google." />
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="Categories" subtitle="Your business categories on Google." />
+        <SourceBadge google={false} />
+      </div>
       <Field label="Primary Category">
         <input value={primary} onChange={(e) => setPrimary(e.target.value)} className="input-field" />
       </Field>
@@ -411,24 +519,49 @@ function CategoriesTab({ location, onSave }: { location: LocationOption | null; 
         </div>
       </Field>
       <div className="flex justify-end pt-2">
-        <button onClick={onSave} className="btn-primary">Save Categories</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+          {saving ? "Saving..." : "Save Categories"}
+        </button>
       </div>
     </div>
   );
 }
 
-function HoursTab({ location, onSave }: { location: LocationOption | null; onSave: () => void }) {
+function HoursTab({ initial, onSave }: {
+  initial?: Record<string, { open: string; close: string; closed: boolean }>;
+  onSave: (regular: Record<string, { open: string; close: string; closed: boolean }>) => Promise<void>;
+}) {
+  const blank = () => Object.fromEntries(HOURS_DAYS.map((d) => [d, { open: "", close: "", closed: false }]));
   const [hours, setHours] = useState<Record<string, { open: string; close: string; closed: boolean }>>(
-    Object.fromEntries(HOURS_DAYS.map((d) => [d, { open: "", close: "", closed: false }]))
+    { ...blank(), ...(initial ?? {}) }
   );
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
+    setHours({ ...blank(), ...(initial ?? {}) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initial)]);
 
   const updateDay = (day: string, field: string, value: string | boolean) => {
     setHours({ ...hours, [day]: { ...hours[day], [field]: value } });
   };
 
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(hours);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <SectionTitle title="Regular Hours" subtitle="Set your standard opening hours for each day." />
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="Regular Hours" subtitle="Set your standard opening hours for each day." />
+        <SourceBadge google={false} />
+      </div>
       <div className="space-y-2">
         {HOURS_DAYS.map((day) => (
           <div key={day} className="flex items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
@@ -455,14 +588,20 @@ function HoursTab({ location, onSave }: { location: LocationOption | null; onSav
         ))}
       </div>
       <div className="flex justify-end pt-2">
-        <button onClick={onSave} className="btn-primary">Save Hours</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+          {saving ? "Saving..." : "Save Hours"}
+        </button>
       </div>
     </div>
   );
 }
 
-function SpecialHoursTab({ location, onSave }: { location: LocationOption | null; onSave: () => void }) {
-  const [entries, setEntries] = useState<{ date: string; hours: string; reason: string }[]>([]);
+function SpecialHoursTab({ initial, onSave }: {
+  initial?: { date: string; hours: string; reason: string }[];
+  onSave: (special: { date: string; hours: string; reason: string }[]) => Promise<void>;
+}) {
+  const [entries, setEntries] = useState<{ date: string; hours: string; reason: string }[]>(initial ?? []);
+  const [saving, setSaving] = useState(false);
   const addEntry = () => setEntries([...entries, { date: "", hours: "09:00 - 17:00", reason: "" }]);
   const removeEntry = (i: number) => setEntries(entries.filter((_, idx) => idx !== i));
   const updateEntry = (i: number, field: string, value: string) => {
@@ -471,9 +610,27 @@ function SpecialHoursTab({ location, onSave }: { location: LocationOption | null
     setEntries(next);
   };
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
+    setEntries(initial ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initial)]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(entries);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <SectionTitle title="Special / Holiday Hours" subtitle="Override regular hours for specific dates (holidays, events)." />
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="Special / Holiday Hours" subtitle="Override regular hours for specific dates (holidays, events)." />
+        <SourceBadge google={false} />
+      </div>
       {entries.map((entry, i) => (
         <div key={i} className="flex items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
           <input type="date" value={entry.date} onChange={(e) => updateEntry(i, "date", e.target.value)} className="input-field w-40" />
@@ -486,7 +643,9 @@ function SpecialHoursTab({ location, onSave }: { location: LocationOption | null
       ))}
       <button onClick={addEntry} className="btn-secondary">+ Add Special Hours</button>
       <div className="flex justify-end pt-2">
-        <button onClick={onSave} className="btn-primary">Save Special Hours</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+          {saving ? "Saving..." : "Save Special Hours"}
+        </button>
       </div>
     </div>
   );
@@ -494,8 +653,12 @@ function SpecialHoursTab({ location, onSave }: { location: LocationOption | null
 
 const MORE_HOURS_OPTIONS = ["Access", "Brunch", "Delivery", "Dinner", "Happy Hour", "Lunch", "Takeout", "Drive-through"];
 
-function MoreHoursTab({ location, onSave }: { location: LocationOption | null; onSave: () => void }) {
-  const [entries, setEntries] = useState<{ type: string; open: string; close: string }[]>([]);
+function MoreHoursTab({ initial, onSave }: {
+  initial?: { type: string; open: string; close: string }[];
+  onSave: (more: { type: string; open: string; close: string }[]) => Promise<void>;
+}) {
+  const [entries, setEntries] = useState<{ type: string; open: string; close: string }[]>(initial ?? []);
+  const [saving, setSaving] = useState(false);
   const addEntry = () => setEntries([...entries, { type: MORE_HOURS_OPTIONS[0], open: "09:00", close: "17:00" }]);
   const removeEntry = (i: number) => setEntries(entries.filter((_, idx) => idx !== i));
   const updateEntry = (i: number, field: string, value: string) => {
@@ -504,9 +667,27 @@ function MoreHoursTab({ location, onSave }: { location: LocationOption | null; o
     setEntries(next);
   };
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
+    setEntries(initial ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initial)]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(entries);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <SectionTitle title="More Hours" subtitle="Additional service hours (delivery, drive-through, takeout, etc.)." />
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="More Hours" subtitle="Additional service hours (delivery, drive-through, takeout, etc.)." />
+        <SourceBadge google={false} />
+      </div>
       {entries.length === 0 && (
         <p className="text-[12px] text-ink/35 dark:text-fog/35">No additional hours set. Add entries for services like delivery or drive-through.</p>
       )}
@@ -525,15 +706,27 @@ function MoreHoursTab({ location, onSave }: { location: LocationOption | null; o
       ))}
       <button onClick={addEntry} className="btn-secondary">+ Add More Hours</button>
       <div className="flex justify-end pt-2">
-        <button onClick={onSave} className="btn-primary">Save More Hours</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+          {saving ? "Saving..." : "Save More Hours"}
+        </button>
       </div>
     </div>
   );
 }
 
-function ServiceAreaTab({ location, onSave }: { location: LocationOption | null; onSave: () => void }) {
-  const [areas, setAreas] = useState<string[]>([]);
+function ServiceAreaTab({ initial, onSave }: {
+  initial?: string[];
+  onSave: (areas: string[]) => Promise<void>;
+}) {
+  const [areas, setAreas] = useState<string[]>(initial ?? []);
   const [newArea, setNewArea] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
+    setAreas(initial ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initial)]);
 
   const addArea = () => {
     if (newArea.trim() && !areas.includes(newArea.trim())) {
@@ -542,9 +735,21 @@ function ServiceAreaTab({ location, onSave }: { location: LocationOption | null;
     }
   };
 
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(areas);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <SectionTitle title="Service Area" subtitle="Define the geographic areas your business serves." />
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="Service Area" subtitle="Define the geographic areas your business serves." />
+        <SourceBadge google={false} />
+      </div>
       <div className="flex flex-wrap gap-2 mb-3">
         {areas.map((area) => (
           <span key={area} className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[12px] font-medium text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">
@@ -560,44 +765,115 @@ function ServiceAreaTab({ location, onSave }: { location: LocationOption | null;
         <button onClick={addArea} className="btn-secondary">Add</button>
       </div>
       <div className="flex justify-end pt-2">
-        <button onClick={onSave} className="btn-primary">Save Service Area</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+          {saving ? "Saving..." : "Save Service Area"}
+        </button>
       </div>
     </div>
   );
 }
 
-function AttributesTab({ location, onSave }: { location: LocationOption | null; onSave: () => void }) {
-  const [attrs, setAttrs] = useState<Record<string, string>>({});
+function AttributesTab({ initial, onSave }: {
+  initial?: Record<string, string>;
+  onSave: (attrs: Record<string, string>) => Promise<void>;
+}) {
+  const [attrs, setAttrs] = useState<Record<string, string>>(initial ?? {});
+  const [newKey, setNewKey] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
+    setAttrs(initial ?? {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initial)]);
+
+  const addAttr = () => {
+    const k = newKey.trim();
+    if (k && !(k in attrs)) {
+      setAttrs({ ...attrs, [k]: newValue.trim() });
+      setNewKey("");
+      setNewValue("");
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(attrs);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
-      <SectionTitle title="Attributes" subtitle="Category-specific attributes (accessibility, amenities, payment, etc.)." />
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="Attributes" subtitle="Category-specific attributes (accessibility, amenities, payment, etc.)." />
+        <SourceBadge google={false} />
+      </div>
       <div className="space-y-3">
         {Object.entries(attrs).length === 0 && <p className="text-[12px] text-ink/35 dark:text-fog/35">No attributes stored yet.</p>}
         {Object.entries(attrs).map(([key, value]) => (
-          <div key={key} className="grid grid-cols-[160px_1fr] items-center gap-3">
+          <div key={key} className="grid grid-cols-[160px_1fr_auto] items-center gap-3">
             <span className="text-[13px] font-medium text-ink dark:text-fog">{key}</span>
             <input
               value={value}
               onChange={(e) => setAttrs({ ...attrs, [key]: e.target.value })}
               className="input-field"
             />
+            <button
+              onClick={() => setAttrs(Object.fromEntries(Object.entries(attrs).filter(([k]) => k !== key)))}
+              aria-label={`Remove ${key}`}
+              className="text-ink/30 transition hover:text-red-500 dark:text-fog/30"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
+            </button>
           </div>
         ))}
       </div>
+      <div className="flex gap-2">
+        <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="Attribute name..." className="input-field w-40" />
+        <input value={newValue} onChange={(e) => setNewValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="Value..." className="input-field flex-1" />
+        <button onClick={addAttr} className="btn-secondary">Add</button>
+      </div>
       <div className="flex justify-end pt-2">
-        <button onClick={onSave} className="btn-primary">Save Attributes</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+          {saving ? "Saving..." : "Save Attributes"}
+        </button>
       </div>
     </div>
   );
 }
 
-function DescriptionTab({ location, onSave }: { location: LocationOption | null; onSave: () => void }) {
-  const [desc, setDesc] = useState("");
+function DescriptionTab({ initial, onSave }: {
+  initial?: string;
+  onSave: (description: string) => Promise<void>;
+}) {
+  const [desc, setDesc] = useState(initial ?? "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
+    setDesc(initial ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(initial)]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(desc.trim());
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
-      <SectionTitle title="Business Description" subtitle="Tell customers what your business is about." />
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="Business Description" subtitle="Tell customers what your business is about." />
+        <SourceBadge google />
+      </div>
       <textarea
         value={desc}
         onChange={(e) => setDesc(e.target.value)}
@@ -607,7 +883,9 @@ function DescriptionTab({ location, onSave }: { location: LocationOption | null;
       />
       <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">{desc.length}/750</p>
       <div className="flex justify-end pt-2">
-        <button onClick={onSave} className="btn-primary">Save Description</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+          {saving ? "Saving..." : "Save Description"}
+        </button>
       </div>
     </div>
   );

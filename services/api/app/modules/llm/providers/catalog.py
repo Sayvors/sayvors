@@ -37,13 +37,16 @@ MODELS: list[ModelInfo] = [
     # ── DeepSeek ────────────────────────────────────────
     ModelInfo("deepseek:deepseek-chat", "DeepSeek Chat", "deepseek", "deepseek-chat", 64_000, 8_192),
     ModelInfo("deepseek:deepseek-reasoner", "DeepSeek Reasoner", "deepseek", "deepseek-reasoner", 64_000, 8_192),
+    # ── GroqCloud (OpenAI-compatible, free tier, no card) ──
+    ModelInfo("groq:oss-120b", "GPT OSS 120B (Groq)", "groq", "openai/gpt-oss-120b", 131_072, 65_536),
+    ModelInfo("groq:oss-20b", "GPT OSS 20B (Groq)", "groq", "openai/gpt-oss-20b", 131_072, 65_536),
     # ── Ollama (local) ──────────────────────────────────
     ModelInfo("ollama:llama3.1", "Llama 3.1 (local)", "ollama", "llama3.1", 128_000, 4_096),
     ModelInfo("ollama:mistral", "Mistral (local)", "ollama", "mistral", 32_000, 4_096),
     ModelInfo("ollama:qwen3", "Qwen3 (local)", "ollama", "qwen3", 32_000, 4_096),
 ]
 
-PROVIDERS = ["openai", "grok", "gemini", "kimi", "deepseek", "ollama"]
+PROVIDERS = ["openai", "grok", "gemini", "kimi", "deepseek", "groq", "ollama"]
 
 
 def get_model_by_id(model_id: str) -> ModelInfo | None:

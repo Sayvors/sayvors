@@ -25,6 +25,14 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: "Insights",
+    items: [
+      { key: "analytics", icon: <ChartIcon />, href: "/dashboard/analytics" },
+      { key: "insights", icon: <InsightsIcon />, href: "/dashboard/insights" },
+      { key: "growth", icon: <GrowthIcon />, href: "/dashboard/growth" },
+    ],
+  },
+  {
     label: "Google Business",
     items: [
       { key: "locations", icon: <LocationIcon />, href: "/dashboard/locations" },
@@ -37,14 +45,6 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "menu", icon: <MenuIcon />, href: "/dashboard/menu" },
       { key: "attributes", icon: <SlidersIcon />, href: "/dashboard/attributes" },
       { key: "googleUpdates", icon: <AlertIcon />, href: "/dashboard/google-updates" },
-    ],
-  },
-  {
-    label: "Insights",
-    items: [
-      { key: "analytics", icon: <ChartIcon />, href: "/dashboard/analytics" },
-      { key: "insights", icon: <InsightsIcon />, href: "/dashboard/insights" },
-      { key: "growth", icon: <GrowthIcon />, href: "/dashboard/growth" },
     ],
   },
   {

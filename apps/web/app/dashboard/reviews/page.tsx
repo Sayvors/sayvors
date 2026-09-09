@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
+import GoogleReviewCard from "@/components/reviews/GoogleReviewCard";
 
 type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
@@ -172,6 +173,52 @@ function ReviewsInner() {
   const starGroup = view.kind === "star" ? reviews.filter((r) => r.rating === view.stars) : [];
   const intelligence = useMemo(() => buildIntelligence(reviews), [reviews]);
 
+  // Stored intelligence (analyze once, serve from DB; re-run on demand).
+  const [aiIntel, setAiIntel] = useState<{
+    intel: Intelligence; source: string; model: string | null; ragUsed: boolean;
+    analyzedAt: string | null; stale: boolean; newCount: number;
+  } | null>(null);
+  const [intelLoading, setIntelLoading] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  useEffect(() => {
+    if (view.kind !== "intelligence") return;
+    let cancelled = false;
+    setIntelLoading(true);
+    (async () => {
+      try {
+        const loc = locations.find((l) => l.id === selectedId);
+        const q = loc?.channelId ? `?channel_id=${encodeURIComponent(loc.channelId)}&days=90` : "?days=90";
+        const data = await apiFetch(`/api/v1/analytics/review-intelligence${q}`);
+        if (!cancelled) setAiIntel(data ? mergeAiIntel(data, intelligence) : null);
+      } catch {
+        if (!cancelled) setAiIntel(null);
+      } finally {
+        if (!cancelled) setIntelLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, selectedId]);
+
+  const runAnalysis = async () => {
+    setAnalyzing(true);
+    try {
+      const loc = locations.find((l) => l.id === selectedId);
+      const data = await apiFetch("/api/v1/analytics/review-intelligence/analyze", {
+        method: "POST",
+        body: JSON.stringify({ channel_id: loc?.channelId ?? null, days: 90 }),
+      }, 180000); // LLM analysis can take a while on first run
+      setAiIntel(mergeAiIntel(data, intelligence));
+      setBanner({ kind: "ok", text: "Analysis updated and stored." });
+    } catch {
+      setBanner({ kind: "err", text: "Analysis failed — try again in a minute." });
+    } finally {
+      setAnalyzing(false);
+      setTimeout(() => setBanner(null), 3000);
+    }
+  };
+
   const openDetail = (id: string) => {
     setReplyDraft("");
     setReplyMode("manual");
@@ -188,6 +235,7 @@ function ReviewsInner() {
       const data = await apiFetch("/api/v1/llm/chat", {
         method: "POST",
         body: JSON.stringify({
+          model: "groq:oss-120b",
           system_prompt: "You write short, warm Google review replies for a local business. One short paragraph, no placeholders, no surrounding quotes.",
           messages: [{ content: `Write a reply to this ${r.rating}-star Google review for ${r.locationName} from ${r.reviewer}: "${r.comment}"` }],
         }),
@@ -391,21 +439,21 @@ function ReviewsInner() {
                 <>
                   <div className="space-y-2">
                     {paged.map((r) => (
-                      <button key={r.id} onClick={() => openDetail(r.id)} className="block w-full rounded-2xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/25 hover:shadow-sm dark:border-fog/[0.06] dark:bg-ink">
-                        <span className="flex items-start justify-between gap-3">
-                          <span>
-                            <span className="block text-[13px] font-bold text-ink dark:text-fog">{r.reviewer}</span>
-                            <span className="block text-[10px] text-ink/35">{r.locationName} · {r.createdAt}</span>
-                          </span>
-                          <Stars rating={r.rating} />
-                        </span>
-                        <span className="mt-2 line-clamp-2 block text-[13px] leading-relaxed text-ink/70">“{r.comment}”</span>
-                        <span className="mt-2 block text-[11px]">
-                          {r.replied
-                            ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">Replied</span>
-                            : <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">Needs reply</span>}
-                        </span>
-                      </button>
+                      <GoogleReviewCard
+                        key={r.id}
+                        review={{
+                          id: r.id,
+                          reviewer: r.reviewer,
+                          rating: r.rating,
+                          comment: r.comment,
+                          createdAt: r.createdAt,
+                          locationName: r.locationName,
+                          replied: r.replied,
+                          sentiment: r.sentiment,
+                          reviewUrl: r.reviewUrl,
+                        }}
+                        onOpen={openDetail}
+                      />
                     ))}
                   </div>
                   <div className="flex items-center justify-between pt-1">
@@ -519,9 +567,13 @@ function ReviewsInner() {
 
           {view.kind === "intelligence" && (
             <IntelligencePage
-              intelligence={intelligence}
+              intelligence={aiIntel?.intel ?? intelligence}
               total={reviews.length}
               locationName={locations.find((l) => l.id === selectedId)?.name ?? ""}
+              aiMeta={aiIntel ? { source: aiIntel.source, model: aiIntel.model, ragUsed: aiIntel.ragUsed, analyzedAt: aiIntel.analyzedAt, stale: aiIntel.stale, newCount: aiIntel.newCount } : null}
+              aiLoading={intelLoading}
+              analyzing={analyzing}
+              onAnalyze={() => runAnalysis()}
               onBack={() => setView({ kind: "list" })}
               onOpenStar={(s) => setView({ kind: "star", stars: s, from: "intelligence" })}
             />
@@ -591,7 +643,7 @@ function StarInsightPage({ stars, group, total, onBack, onOpen }: { stars: numbe
                 <li key={s} className="rounded-lg bg-ink/[0.04] px-2.5 py-1.5 text-[12px] font-semibold text-ink/70">{s}</li>
               ))}
             </ul>
-          ) : <p className="text-[12px] text-ink/40">No reviews at this rating yet.</p>}
+          ) : <p className="text-[12px] text-ink/40">{group.length ? "No strong word signals in these reviews." : "No reviews at this rating yet."}</p>}
         </section>
         <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
           <h3 className="mb-2 text-[14px] font-bold text-ink">Recommended action</h3>
@@ -621,7 +673,19 @@ function StarInsightPage({ stars, group, total, onBack, onOpen }: { stars: numbe
 function topSignals(comments: string[]): string[] {
   const lex = ["wait", "slow", "staff", "service", "clean", "price", "friendly", "quick", "helpful", "busy", "support", "quality"];
   const counts = lex.map((w) => ({ w, c: comments.filter((t) => t.toLowerCase().includes(w)).length })).filter((x) => x.c > 0);
-  return counts.sort((a, b) => b.c - a.c).slice(0, 4).map((x) => `${x.w} ×${x.c}`);
+  if (counts.length) {
+    return counts.sort((a, b) => b.c - a.c).slice(0, 4).map((x) => `${x.w} ×${x.c}`);
+  }
+  // No lexicon hits — fall back to the most frequent meaningful words
+  // actually present in the comments, so the panel never lies about data.
+  const stop = new Set(["that", "this", "with", "from", "have", "still", "they", "them", "your", "about", "there", "their", "what", "when", "which", "were", "been", "very", "just", "will", "would", "could", "should", "much", "more", "most", "than", "then", "also", "well", "even", "only", "into", "over", "such", "using", "star", "rating", "only"]);
+  const freq = new Map<string, number>();
+  for (const t of comments) {
+    for (const w of t.toLowerCase().match(/[a-z]{4,}/g) ?? []) {
+      if (!stop.has(w)) freq.set(w, (freq.get(w) ?? 0) + 1);
+    }
+  }
+  return [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([w, c]) => `${w} ×${c}`);
 }
 
 interface IntelTheme {
@@ -717,16 +781,106 @@ function buildIntelligence(reviews: ReviewItem[]): Intelligence {
   };
 }
 
-function IntelligencePage({ intelligence: intel, total, locationName, onBack, onOpenStar }: {
+function mergeAiIntel(data: {
+  source: string; model: string | null;
+  summary: string;
+  themes: { name: string; mentions: number; avg_rating: number; positive_pct: number; phrases: string[]; trend: string }[];
+  opportunities: { level: "HIGH" | "MEDIUM" | "MAINTAIN"; title: string; detail: string; impact: string }[];
+  strengths: { title: string; mentions: number; avg: number }[];
+  actions: { title: string; detail: string }[];
+  rag_used: boolean;
+  analyzed_at: string | null;
+  stale: boolean;
+  current_count: number;
+  review_count: number;
+}, base: Intelligence): {
+  intel: Intelligence; source: string; model: string | null; ragUsed: boolean;
+  analyzedAt: string | null; stale: boolean; newCount: number;
+} {
+  const toTheme = (t: (typeof data.themes)[number]): IntelTheme => ({
+    name: t.name, keywords: [], mentions: t.mentions,
+    avgRating: t.avg_rating, positivePct: t.positive_pct,
+    phrases: t.phrases ?? [], sampleIds: [],
+  });
+  const themes = data.themes.map(toTheme);
+  return {
+    intel: {
+      ...base,
+      summary: data.summary || base.summary,
+      love: themes.filter((t) => t.positivePct >= 60 && t.mentions > 0).slice(0, 5),
+      dislike: themes.filter((t) => t.positivePct < 60 && t.mentions > 0)
+        .sort((a, b) => a.positivePct - b.positivePct).slice(0, 4),
+      opportunities: data.opportunities.length ? data.opportunities : base.opportunities,
+      strengths: data.strengths.length
+        ? data.strengths.map((s) => ({ title: s.title, mentions: s.mentions, avg: s.avg }))
+        : base.strengths,
+      actions: data.actions.length ? data.actions : base.actions,
+      topics: themes.map((t) => ({ name: t.name, count: t.mentions })),
+    },
+    source: data.source,
+    model: data.model,
+    ragUsed: data.rag_used,
+    analyzedAt: data.analyzed_at ?? null,
+    stale: data.stale === true,
+    newCount: Math.max(0, (data.current_count ?? 0) - (data.review_count ?? 0)),
+  };
+}
+
+function ThemeBars({ topics }: { topics: { name: string; count: number }[] }) {
+  const max = Math.max(1, ...topics.map((t) => t.count));
+  if (!topics.length) return <p className="text-[12px] text-ink/40">No themes detected yet.</p>;
+  return (
+    <div className="space-y-1.5">
+      {topics.slice(0, 8).map((t) => (
+        <div key={t.name} className="flex items-center gap-2">
+          <span className="w-32 truncate text-[11px] font-semibold capitalize text-ink/70">{t.name}</span>
+          <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-ink/[0.06]">
+            <span className="block h-full rounded-full bg-gradient-to-r from-deep-violet to-magenta" style={{ width: `${Math.max(4, (t.count / max) * 100)}%` }} />
+          </span>
+          <span className="w-8 text-right text-[11px] tabular-nums text-ink/50">×{t.count}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, aiLoading, analyzing, onAnalyze, onBack, onOpenStar }: {
   intelligence: Intelligence; total: number; locationName: string;
+  aiMeta: { source: string; model: string | null; ragUsed: boolean; analyzedAt: string | null; stale: boolean; newCount: number } | null;
+  aiLoading: boolean;
+  analyzing: boolean;
+  onAnalyze: () => void;
   onBack: () => void; onOpenStar: (s: number) => void;
 }) {
   const i = intel;
+  const badge = aiLoading || analyzing
+    ? { text: analyzing ? "Analyzing…" : "Loading analysis…", cls: "bg-deep-violet/10 text-deep-violet" }
+    : aiMeta
+      ? aiMeta.source === "ai"
+        ? { text: `AI-analyzed${aiMeta.ragUsed ? " · RAG-grounded" : ""}`, cls: "bg-emerald-100 text-emerald-700" }
+        : { text: "Rule-based", cls: "bg-ink/[0.05] text-ink/50" }
+      : { text: "Not analyzed yet", cls: "bg-amber-100 text-amber-700" };
+  const analyzedLabel = aiMeta?.analyzedAt
+    ? `Analyzed ${new Date(aiMeta.analyzedAt).toLocaleString()}${aiMeta.stale ? ` · ${aiMeta.newCount} new review(s) since` : ""}`
+    : null;
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-[17px] font-bold text-ink dark:text-fog">Review Intelligence</h2>
-        <p className="text-[12px] text-ink/45">{locationName} · {total} reviews analyzed · Sayvors-derived AI analytics</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-[17px] font-bold text-ink dark:text-fog">
+            Review Intelligence
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badge.cls}`}>{badge.text}</span>
+          </h2>
+          <p className="text-[12px] text-ink/45">{locationName} · {total} reviews analyzed · {aiMeta?.source === "ai" ? `AI analysis${aiMeta.model ? ` (${aiMeta.model})` : ""}` : "Sayvors-derived analytics"}</p>
+          {analyzedLabel && <p className="mt-0.5 text-[11px] text-ink/40">{analyzedLabel}</p>}
+        </div>
+        <button
+          onClick={onAnalyze}
+          disabled={analyzing || aiLoading}
+          className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-50"
+        >
+          {analyzing ? "Analyzing…" : aiMeta ? "Analyze again" : "Analyze reviews"}
+        </button>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -841,7 +995,8 @@ function IntelligencePage({ intelligence: intel, total, locationName, onBack, on
 
       <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
         <h3 className="text-[14px] font-bold text-ink">Review themes</h3>
-        <p className="text-[11px] text-ink/40">Tap a theme to see contributing reviews.</p>
+        <p className="text-[11px] text-ink/40">Mentions per theme · tap a theme chip below to see contributing reviews.</p>
+        <div className="mt-3"><ThemeBars topics={i.topics} /></div>
         <div className="mt-3 flex flex-wrap gap-2">
           {i.topics.map((t) => (
             <span key={t.name} className="rounded-full bg-ink/[0.04] px-3 py-1.5 text-[12px] font-semibold text-ink/65">{t.name} · {t.count}</span>

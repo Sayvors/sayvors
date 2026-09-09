@@ -5,6 +5,58 @@ from app.modules.channels.models import ReviewReply
 
 
 @pytest.mark.asyncio
+async def test_review_intelligence_empty(client):
+    r = client.get("/api/v1/analytics/review-intelligence?days=90", headers={"host": "localhost"})
+    assert r.status_code == 200
+    assert r.json() is None
+
+
+@pytest.mark.asyncio
+async def test_review_intelligence_analyze_and_serve(client, db, channel_id, user_id, monkeypatch):
+    from app.modules.analytics import intelligence_ai as intelligence_ai_mod
+
+    report = {
+        "source": "fallback", "model": None,
+        "stats": {"total": 1, "avg_rating": 4.0,
+                  "distribution": {"5": 0, "4": 1, "3": 0, "2": 0, "1": 0},
+                  "positive": 1, "neutral": 0, "negative": 0,
+                  "replied": 0, "unanswered": 1, "response_rate": 0},
+        "summary": "Canned summary.",
+        "themes": [{"name": "quality", "mentions": 1, "avg_rating": 4.0,
+                    "positive_pct": 100, "phrases": [], "trend": "stable"}],
+        "opportunities": [], "strengths": [], "actions": [],
+        "rag_used": False, "rag_chunks": 0, "rag_bank": None,
+        "fallback_reason": "test",
+        "analyzed_at": "2026-09-09T00:00:00+00:00",
+        "review_count": 1, "current_count": 1, "stale": False,
+    }
+
+    async def _fake_analyze(db_, user_, channel_id=None, days=90, databank_id=None):
+        return report
+
+    async def _fake_stored(db_, user_id_, channel_id=None, days=90):
+        return report
+
+    monkeypatch.setattr(intelligence_ai_mod, "analyze_and_store", _fake_analyze)
+    monkeypatch.setattr(intelligence_ai_mod, "get_stored_report", _fake_stored)
+
+    r = client.post(
+        "/api/v1/analytics/review-intelligence/analyze",
+        json={"days": 90},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["summary"] == "Canned summary."
+    assert body["stats"]["total"] == 1
+    assert body["themes"][0]["name"] == "quality"
+
+    r = client.get("/api/v1/analytics/review-intelligence?days=90", headers={"host": "localhost"})
+    assert r.status_code == 200
+    assert r.json()["analyzed_at"] == "2026-09-09T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
 async def test_overview_empty(client):
     r = client.get("/api/v1/analytics/overview?days=30")
     assert r.status_code == 200

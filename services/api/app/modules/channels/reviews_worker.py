@@ -8,6 +8,10 @@ auto-reply enabled are turned into replies:
   - rating <  config.min_rating_auto  -> generated and queued as
                                          `pending_approval` for the merchant
 
+Mock policy: GOOGLE_REVIEWS_MOCK mode NEVER persists anything. Fabricated
+sample reviews used to be written as inbound messages and pipeline events —
+that path is removed. In mock mode polling a channel is a logged no-op.
+
 Leasing: each poll claims its channel via an atomic UPDATE on
 `polling_locked_until`, so multiple worker instances never double-process
 the same channel. The lock expires on its own (crash-safe).
@@ -157,55 +161,54 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
     stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
 
     mock_mode = settings.GOOGLE_REVIEWS_MOCK
+    if mock_mode:
+        logger.info(
+            "Reviews poll: mock mode — skipping persistence for channel %s",
+            channel.id,
+        )
+        return stats
     client = None
 
-    if not mock_mode:
-        access_token = decrypt_token(channel.access_token) if channel.access_token else None
-        refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
-        if not access_token and not refresh_token:
-            logger.error("Channel %s has no tokens; skipping", channel.id)
-            return stats
+    access_token = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access_token and not refresh_token:
+        logger.error("Channel %s has no tokens; skipping", channel.id)
+        return stats
 
-        client = GoogleReviewsClient(access_token or "", refresh_token)
-        # Seed the client with the stored expiry so it can refresh proactively
-        # before the first API call (avoids the first request always hitting 401).
-        client.set_known_expiry(channel.token_expires_at)
-        # Register a persister so any refresh-driven token is encrypted + written
-        # back to the DB row — subsequent worker passes won't re-refresh.
-        from .service import encrypt_token as _encrypt_token
+    client = GoogleReviewsClient(access_token or "", refresh_token)
+    # Seed the client with stored expiry so it can refresh proactively
+    # before the first API call (avoids the first request always hitting 401).
+    client.set_known_expiry(channel.token_expires_at)
+    # Register a persister so any refresh-driven token is encrypted + written
+    # back to the DB row — subsequent worker passes won't re-refresh.
+    from .service import encrypt_token as _encrypt_token
 
-        async def _persist_token(new_access_token: str, new_expires_at) -> None:
-            channel.access_token = _encrypt_token(new_access_token)
-            channel.token_expires_at = new_expires_at
-            db.add(channel)
-            try:
-                await db.commit()
-            except Exception as e:
-                logger.error("Failed to persist refreshed token for %s: %s", channel.id, e)
-                await db.rollback()
+    async def _persist_token(new_access_token: str, new_expires_at) -> None:
+        channel.access_token = _encrypt_token(new_access_token)
+        channel.token_expires_at = new_expires_at
+        db.add(channel)
+        try:
+            await db.commit()
+        except Exception as e:
+            logger.error("Failed to persist refreshed token for %s: %s", channel.id, e)
+            await db.rollback()
 
-        client.set_token_persister(_persist_token)
+    client.set_token_persister(_persist_token)
 
     try:
-        if mock_mode:
-            reviews = _mock_reviews(channel.id)
-        else:
-            # No need to pre-refresh here — GoogleReviewsClient._authed_request
-            # refreshes proactively (when token_expires_at is within leeway)
-            # and reactively (on 401). Both paths persist via the persister above.
-            account_id = channel.platform_user_id or ""
-            # Location is stored in channel metadata: {"location_id": "..."}
-            location_id = _channel_meta(channel).get("location_id", "")
-            if not account_id or not location_id:
-                # Fall back: list locations and use the first.
-                locations = await client.list_locations(account_id) if account_id else []
-                if not locations:
-                    logger.warning("Channel %s: no account/location configured", channel.id)
-                    return stats
-                location_id = locations[0]["name"].split("/")[3]
-            reviews = await client.list_reviews(
-                account_id, location_id, updated_after=config.last_polled_at
-            )
+        account_id = channel.platform_user_id or ""
+        # Location is stored in channel metadata: {"location_id": "..."}
+        location_id = _channel_meta(channel).get("location_id", "")
+        if not account_id or not location_id:
+            # Fall back: list locations and use the first.
+            locations = await client.list_locations(account_id) if account_id else []
+            if not locations:
+                logger.warning("Channel %s: no account/location configured", channel.id)
+                return stats
+            location_id = locations[0]["name"].split("/")[3]
+        reviews = await client.list_reviews(
+            account_id, location_id, updated_after=config.last_polled_at
+        )
 
         for review in reviews:
             stats["reviews"] += 1
@@ -244,8 +247,7 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             )
             if not needs_approval:
                 try:
-                    if not mock_mode:
-                        await client.reply_to_review(review.review_id, reply_text)
+                    await client.reply_to_review(review.review_id, reply_text)
                     stats["replied"] += 1
                 except GoogleReviewsError as e:
                     stats["errors"] += 1
@@ -303,38 +305,6 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
     finally:
         if client:
             await client.close()
-
-
-def _mock_reviews(channel_id: str) -> list:
-    """Deterministic sample reviews for GOOGLE_REVIEWS_MOCK dev mode."""
-    from .google_reviews import GoogleReview
-
-    return [
-        GoogleReview(
-            review_id=f"mock/accounts/111/locations/{channel_id[:8]}/reviews/five-star-001",
-            rating=5,
-            text="Absolutely loved the service! The staff were friendly and everything was ready on time. Will definitely come back.",
-            reviewer_name="Aisha K.",
-            updated_at=None,
-            has_reply=False,
-        ),
-        GoogleReview(
-            review_id=f"mock/accounts/111/locations/{channel_id[:8]}/reviews/four-star-001",
-            rating=4,
-            text="Good experience overall. Prices are fair and the quality is solid, though the wait was a bit long.",
-            reviewer_name="Daniel M.",
-            updated_at=None,
-            has_reply=False,
-        ),
-        GoogleReview(
-            review_id=f"mock/accounts/111/locations/{channel_id[:8]}/reviews/one-star-001",
-            rating=1,
-            text="Very disappointed. My order was wrong twice and nobody answered the phone when I called to fix it.",
-            reviewer_name="Sara T.",
-            updated_at=None,
-            has_reply=False,
-        ),
-    ]
 
 
 async def poll_once() -> dict:

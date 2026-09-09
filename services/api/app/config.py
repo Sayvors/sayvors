@@ -3,6 +3,11 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors"
+    # AsyncPG pool: workers hold sessions across network calls (Localith,
+    # Groq), so size generously and fail fast instead of hanging forever.
+    DB_POOL_SIZE: int = 10
+    DB_POOL_MAX_OVERFLOW: int = 10
+    DB_POOL_TIMEOUT_SECONDS: int = 30
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_EXPIRATION_MINUTES: int = 15
@@ -67,6 +72,7 @@ class Settings(BaseSettings):
     MOONSHOT_API_KEY: str = ""      # Kimi
     DEEPSEEK_API_KEY: str = ""
     GEMINI_API_KEY: str = ""        # Google Gemini
+    GROQ_API_KEY: str = ""          # GroqCloud (OpenAI-compatible, free tier)
     OLLAMA_API_KEY: str = ""        # local Ollama (optional)
 
     # ── Localith (EmbedSocial) ──────────────────────────────
@@ -76,7 +82,7 @@ class Settings(BaseSettings):
     BUSINESS_DATA_PROVIDER: str = "localith"
     # Background auto-sync: every connected listing is re-synced on this
     # cadence (profile + reviews + metrics). Manual "Sync now" still works.
-    LOCALITH_SYNC_INTERVAL_SECONDS: int = 300  # 5 min
+    LOCALITH_SYNC_INTERVAL_SECONDS: int = 100  # 1 min
 
     model_config = {"env_file": ".env"}
 

@@ -80,17 +80,17 @@ function ReviewCard({ review, onReplied }: { review: ReviewInsight; onReplied: (
 
       {(review.topics.length > 0 || review.problems.length > 0 || review.products.length > 0) && (
         <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {review.problems.map((p) => (
+          {(review.problems ?? []).map((p) => (
             <span key={`pr-${p.name}`} className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_STYLES[p.severity] ?? SEVERITY_STYLES.low}`}>
               {p.name}
             </span>
           ))}
-          {review.topics.map((t) => (
+          {(review.topics ?? []).map((t) => (
             <span key={`t-${t.name}`} className="rounded-md bg-deep-violet/[0.05] px-1.5 py-0.5 text-[10px] text-ink/50">
               {t.name}
             </span>
           ))}
-          {review.products.map((p) => (
+          {(review.products ?? []).map((p) => (
             <span key={`p-${p.name}`} className="rounded-md bg-magenta/[0.07] px-1.5 py-0.5 text-[10px] text-magenta">
               {p.name}
             </span>
@@ -129,6 +129,11 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
 
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current);
+    // No-op when the query didn't actually change — notably on mount and
+    // across StrictMode remounts (refs don't reset there, so a ref guard
+    // can't be trusted). This kills the redundant refetch that flashed
+    // skeletons over already-loaded content.
+    if (searchInput.trim() === search) return;
     debounce.current = setTimeout(() => {
       setSearch(searchInput.trim());
       setPage(0);
@@ -137,7 +142,7 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
     return () => {
       if (debounce.current) clearTimeout(debounce.current);
     };
-  }, [searchInput]);
+  }, [searchInput, search]);
 
   useEffect(() => {
     let cancelled = false;

@@ -831,14 +831,19 @@ async def generate_reply_for_review(
         config = AutoReplyConfig(channel_id=channel.id)
         db.add(config)
 
-    duplicate = await db.execute(
-        select(ReviewReply.id).where(
+    existing = await db.execute(
+        select(ReviewReply).where(
             ReviewReply.channel_id == channel.id,
             ReviewReply.review_id == body.review_id,
         ).limit(1)
     )
-    if duplicate.scalar_one_or_none():
+    existing_reply = existing.scalar_one_or_none()
+    if existing_reply is not None and existing_reply.status in ("pending_approval", "posted"):
         raise HTTPException(status_code=409, detail="A reply already exists for this review")
+    if existing_reply is not None:
+        # Dead draft (rejected/failed) — clear it so a fresh one can be made.
+        await db.delete(existing_reply)
+        await db.flush()
 
     from .review_reply import generate_review_reply
 

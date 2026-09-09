@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PeriodComparison(BaseModel):
@@ -89,6 +89,72 @@ class ReviewInsightItem(BaseModel):
 class ReviewInsightListResponse(BaseModel):
     total: int
     items: list[ReviewInsightItem]
+
+
+# ── AI Review Intelligence (LLM + RAG, verified) ──────────────
+
+class IntelThemeOut(BaseModel):
+    name: str
+    mentions: int
+    avg_rating: float
+    positive_pct: int
+    phrases: list[str] = []
+    trend: str = "stable"
+
+
+class IntelOpportunityOut(BaseModel):
+    level: str
+    title: str
+    detail: str
+    impact: str
+
+
+class IntelStrengthOut(BaseModel):
+    title: str
+    mentions: int
+    avg: float
+
+
+class IntelActionOut(BaseModel):
+    title: str
+    detail: str
+
+
+class IntelStatsOut(BaseModel):
+    total: int
+    avg_rating: float
+    distribution: dict[str, int]
+    positive: int
+    neutral: int
+    negative: int
+    replied: int
+    unanswered: int
+    response_rate: int
+
+
+class ReviewIntelligenceResponse(BaseModel):
+    source: str  # "ai" | "fallback"
+    model: str | None = None
+    stats: IntelStatsOut
+    summary: str
+    themes: list[IntelThemeOut] = []
+    opportunities: list[IntelOpportunityOut] = []
+    strengths: list[IntelStrengthOut] = []
+    actions: list[IntelActionOut] = []
+    rag_used: bool = False
+    rag_chunks: int = 0
+    rag_bank: str | None = None
+    fallback_reason: str | None = None
+    analyzed_at: str | None = None
+    review_count: int = 0
+    current_count: int = 0
+    stale: bool = False
+
+
+class AnalyzeIntelligenceRequest(BaseModel):
+    channel_id: str | None = None
+    days: int = Field(90, ge=1, le=365)
+    databank_id: str | None = None
 
 
 # ── Understand pillar ──────────────────────────────────────────────────

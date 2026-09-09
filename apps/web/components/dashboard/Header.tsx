@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { LOCALES } from "@/lib/i18n/locales";
+import { useAuth } from "@/lib/auth-context";
 import AutoPilotDialog from "@/components/dashboard/AutoPilotDialog";
 import {
   derivePilotState,
@@ -21,9 +22,21 @@ export default function Header() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const langRef = useRef<HTMLDivElement>(null);
   const createRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const { user, logout } = useAuth();
+
+  const displayName =
+    user && (user.first_name || user.last_name)
+      ? `${user.first_name} ${user.last_name}`.trim()
+      : t.account.fallbackName;
+
+  const initials = user
+    ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U"
+    : "U";
 
   /* ── Auto Pilot (global approval switch) ── */
   const pathname = usePathname();
@@ -66,6 +79,7 @@ export default function Header() {
     function handleClick(e: MouseEvent) {
       if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false);
       if (createRef.current && !createRef.current.contains(e.target as Node)) setCreateOpen(false);
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -279,32 +293,46 @@ export default function Header() {
 
         <div className="mx-1 h-5 w-px bg-deep-violet/[0.08]" />
 
-        {/* Settings */}
-        <Link
-          href="/dashboard/settings"
-          aria-label={t.header.settings}
-          title={t.header.settings}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" />
-          </svg>
-        </Link>
-
-        {/* Help */}
-        <Link
-          href="/dashboard/docs"
-          aria-label={t.header.helpDocs}
-          title={t.header.helpDocs}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/40 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-deep-violet/[0.1] dark:hover:text-deep-violet"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-            <line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-        </Link>
+        {/* Profile */}
+        <div className="relative" ref={profileRef}>
+          <button
+            onClick={() => setProfileOpen(!profileOpen)}
+            aria-label={t.account.menu}
+            aria-expanded={profileOpen}
+            title={t.account.menu}
+            className="flex h-8 items-center gap-1.5 rounded-lg pl-1.5 pr-2 outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:hover:bg-deep-violet/[0.1]"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-violet-light to-magenta text-[10px] font-semibold text-white">
+              {initials}
+            </span>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={`h-3 w-3 text-ink/40 transition-transform ${profileOpen ? "rotate-180" : ""}`} aria-hidden>
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </button>
+          {profileOpen && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
+              <div className="border-b border-deep-violet/[0.06] px-3 py-2.5">
+                <p className="truncate text-[13px] font-medium text-ink dark:text-fog">{displayName}</p>
+                <p className="truncate text-[11px] text-ink/40 dark:text-fog/40">{user?.email ?? ""}</p>
+              </div>
+              <div className="py-1">
+                <ProfileMenuItem label={t.account.myProfile} href="/dashboard/profile" />
+                <ProfileMenuItem label={t.header.settings} href="/dashboard/settings" />
+              </div>
+              <div className="border-t border-deep-violet/[0.06] py-1">
+                <button
+                  onClick={() => { setProfileOpen(false); logout(); }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-[12px] text-coral transition hover:bg-deep-violet/[0.04]"
+                >
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5" aria-hidden>
+                    <path d="M6 8H2M4 6l4-4M4 14l4 4M10 8h4" />
+                  </svg>
+                  {t.account.signOut}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {pilotOpen && (
@@ -332,6 +360,17 @@ function CreateMenuItem({ label, href }: { label: string; href: string }) {
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3 w-3 text-ink/30 dark:text-fog/30">
         <path d="M8 3v10M3 8h10" strokeLinecap="round" />
       </svg>
+      {label}
+    </Link>
+  );
+}
+
+function ProfileMenuItem({ label, href }: { label: string; href: string }) {
+  return (
+    <Link
+      href={href}
+      className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-ink/60 transition hover:bg-deep-violet/[0.04] hover:text-ink focus-visible:bg-deep-violet/[0.04] focus-visible:outline-none dark:text-fog/60 dark:hover:text-fog"
+    >
       {label}
     </Link>
   );

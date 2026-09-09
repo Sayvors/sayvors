@@ -115,3 +115,46 @@ class LocationDailyMetric(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class ReviewIntelligenceReport(Base):
+    """Cached AI review-intelligence analysis (analyze once, serve many).
+
+    One row per (user, channel scope, window). Recomputed only when the
+    user presses Analyze — the UI serves this row otherwise.
+    """
+
+    __tablename__ = "review_intelligence_reports"
+    __table_args__ = (
+        UniqueConstraint("user_id", "channel_id", "days", name="uq_intel_report_scope"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    # "" means all channels; otherwise the channel id.
+    channel_id: Mapped[str] = mapped_column(String(36), default="")
+    days: Mapped[int] = mapped_column(Integer, default=90)
+
+    source: Mapped[str] = mapped_column(String(16), default="fallback")  # ai | fallback
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    themes: Mapped[list] = mapped_column(JSON, default=list)
+    opportunities: Mapped[list] = mapped_column(JSON, default=list)
+    strengths: Mapped[list] = mapped_column(JSON, default=list)
+    actions: Mapped[list] = mapped_column(JSON, default=list)
+    stats: Mapped[dict] = mapped_column(JSON, default=dict)
+    rag_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    rag_chunks: Mapped[int] = mapped_column(Integer, default=0)
+    rag_bank: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    fallback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Review count at analysis time (staleness signal).
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
