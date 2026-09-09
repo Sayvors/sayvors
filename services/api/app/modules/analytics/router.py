@@ -11,6 +11,7 @@ from . import benchmark, growth, intelligence, service, summary
 from .models import ReviewInsight
 from .schemas import (
     AcquisitionResponse,
+    AnalyzeIntelligenceRequest,
     BenchmarkResponse,
     ExecutiveSummaryResponse,
     OpportunitiesResponse,
@@ -19,6 +20,7 @@ from .schemas import (
     ProductsResponse,
     ReviewInsightItem,
     ReviewInsightListResponse,
+    ReviewIntelligenceResponse,
     TimeseriesPoint,
     TimeseriesResponse,
     TopicsResponse,
@@ -139,6 +141,41 @@ async def list_review_insights(
         total=total,
         items=[ReviewInsightItem.model_validate(r) for r in items],
     )
+
+
+@router.get("/review-intelligence", response_model=ReviewIntelligenceResponse | None)
+async def get_review_intelligence(
+    channel_id: str | None = Query(None),
+    days: int = Query(90, ge=1, le=365),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stored intelligence report (no re-analysis). Null when never analyzed."""
+    from .intelligence_ai import get_stored_report
+
+    stored = await get_stored_report(db, user.id, channel_id, days)
+    if stored is None:
+        return None
+    stored["stats"]["distribution"] = {
+        str(k): v for k, v in stored["stats"]["distribution"].items()
+    }
+    return stored
+
+
+@router.post("/review-intelligence/analyze", response_model=ReviewIntelligenceResponse)
+async def analyze_review_intelligence(
+    body: AnalyzeIntelligenceRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run the AI analysis now and store it (replaces any previous report)."""
+    from .intelligence_ai import analyze_and_store
+
+    result = await analyze_and_store(db, user, body.channel_id, body.days, body.databank_id)
+    result["stats"]["distribution"] = {
+        str(k): v for k, v in result["stats"]["distribution"].items()
+    }
+    return result
 
 
 # ── Understand pillar ──────────────────────────────────────────────────

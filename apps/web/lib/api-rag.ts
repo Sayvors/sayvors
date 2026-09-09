@@ -11,11 +11,14 @@ function getCsrfToken(): string | null {
 }
 
 async function tryRefresh(): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
   try {
     const res = await fetch(`${API}/api/v1/auth/refresh`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
     });
     if (res.ok) {
       const data = await res.json();
@@ -25,6 +28,8 @@ async function tryRefresh(): Promise<boolean> {
     return false;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -38,7 +43,7 @@ function buildHeaders(isForm = false): Record<string, string> {
   return headers;
 }
 
-export async function apiFetch(path: string, options: RequestInit = {}): Promise<any> {
+export async function apiFetch(path: string, options: RequestInit = {}, timeoutMs = 60000): Promise<any> {
   const method = options.method || "GET";
   const isForm = options.body instanceof FormData;
   const headers = {
@@ -46,31 +51,46 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
     ...(options.headers as Record<string, string>),
   };
 
-  const res = await fetch(`${API}${path}`, {
-    ...options,
-    headers,
-    credentials: "include",
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const doFetch = (hdrs: Record<string, string>) =>
+    fetch(`${API}${path}`, {
+      ...options,
+      headers: hdrs,
+      credentials: "include",
+      signal: options.signal ?? controller.signal,
+    });
 
-  if (res.status === 401 && path !== "/api/v1/auth/refresh") {
-    const refreshed = await tryRefresh();
-    if (refreshed) {
-      const retryHeaders = { ...buildHeaders(isForm), ...(options.headers as Record<string, string>) };
-      const retryRes = await fetch(`${API}${path}`, { ...options, headers: retryHeaders, credentials: "include" });
-      if (!retryRes.ok) throw new Error(await retryRes.text());
-      if (retryRes.status === 204) return undefined;
-      return retryRes.json();
+  try {
+    const res = await doFetch(headers);
+
+    if (res.status === 401 && path !== "/api/v1/auth/refresh") {
+      const refreshed = await tryRefresh();
+      if (refreshed) {
+        const retryHeaders = { ...buildHeaders(isForm), ...(options.headers as Record<string, string>) };
+        const retryRes = await doFetch(retryHeaders);
+        if (!retryRes.ok) throw new Error(await retryRes.text());
+        if (retryRes.status === 204) return undefined;
+        return retryRes.json();
+      }
+      // Don't redirect if already on an auth page — prevents infinite reload loop
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp")) {
+        window.location.href = "/login";
+      }
+      throw new Error("Unauthorized");
     }
-    // Don't redirect if already on an auth page — prevents infinite reload loop
-    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp")) {
-      window.location.href = "/login";
+
+    if (!res.ok) throw new Error(await res.text());
+    if (res.status === 204) return undefined;
+    return res.json();
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("Request timed out — the server took too long. Try again.");
     }
-    throw new Error("Unauthorized");
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-
-  if (!res.ok) throw new Error(await res.text());
-  if (res.status === 204) return undefined;
-  return res.json();
 }
 
 export async function uploadFile(databankId: string, file: File): Promise<any> {
@@ -169,7 +189,7 @@ export async function askDatabank(databankId: string, question: string): Promise
   return apiFetch(`/api/v1/rag/databanks/${databankId}/ask`, {
     method: "POST",
     body: JSON.stringify({ question }),
-  });
+  }, 300000); // agentic RAG can take minutes
 }
 
 export async function deleteDocument(databankId: string, docId: string): Promise<void> {

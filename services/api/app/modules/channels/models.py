@@ -92,8 +92,8 @@ class AutoReplyConfig(Base):
     )
     # Free-text brand voice / house rules injected into every reply prompt
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # LLM model id (provider catalog id, e.g. "openai:gpt-4o-mini")
-    model: Mapped[str] = mapped_column(String(100), default="openai:gpt-4o-mini")
+    # LLM model id (provider catalog id, e.g. "groq:oss-120b")
+    model: Mapped[str] = mapped_column(String(100), default="groq:oss-120b")
     # Polling lease (atomic claim across worker instances)
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     polling_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -168,7 +168,7 @@ class ReviewReply(Base):
     reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reply_text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
-        Enum("posted", "pending_approval", "failed", name="review_reply_status"),
+        Enum("posted", "pending_approval", "failed", "rejected", name="review_reply_status"),
         default="pending_approval",
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

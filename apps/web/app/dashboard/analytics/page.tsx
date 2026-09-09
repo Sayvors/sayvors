@@ -48,7 +48,12 @@ function SummaryStrip({ overview }: { overview: Overview }) {
     text: `${overview.sentiment.positive_pct}% positive sentiment across all reviews`,
   });
   if (overview.unanswered > 0) {
-    items.push({ tone: "bad", text: `${overview.unanswered} reviews still need a reply` });
+    items.push({
+      tone: "bad",
+      text: overview.unanswered === 1
+        ? "1 review still needs a reply"
+        : `${overview.unanswered} reviews still need a reply`,
+    });
   }
   if (g.customer_actions > 0) {
     items.push({ tone: "good", text: `${g.customer_actions} customer actions from Google this period` });

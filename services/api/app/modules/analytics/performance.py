@@ -7,9 +7,12 @@ Business Profile Performance API and upserts them into
 Kafka through the outbox so downstream systems can react to fresh data.
 
 Kafka/Google outages degrade gracefully: the loop logs and retries.
+
+Mock policy: GOOGLE_REVIEWS_MOCK mode NEVER persists anything. Fabricated
+metrics used to be written into this table and surfaced as real dashboard
+numbers — that path is removed. In mock mode the sync is a logged no-op.
 """
 import asyncio
-import hashlib
 import json
 import logging
 import uuid
@@ -44,23 +47,14 @@ def _channel_meta(channel: Channel) -> dict:
         return {}
 
 
-def _mock_timeseries(channel_id: str, start_date, end_date) -> dict[str, list[tuple]]:
-    """Deterministic pseudo-random daily metrics for GOOGLE_REVIEWS_MOCK mode."""
-    out: dict[str, list[tuple]] = {m: [] for m in _METRIC_COLUMNS}
-    day = start_date
-    while day <= end_date:
-        seed = int(hashlib.sha256(f"{channel_id}:{day.isoformat()}".encode()).hexdigest()[:8], 16)
-        out["BUSINESS_IMPRESSIONS_DESKTOP"].append((day, 40 + seed % 60))
-        out["BUSINESS_IMPRESSIONS_MOBILE"].append((day, 120 + (seed >> 8) % 180))
-        out["WEBSITE_CLICKS"].append((day, 8 + (seed >> 16) % 30))
-        out["CALL_CLICKS"].append((day, 2 + (seed >> 24) % 12))
-        out["DIRECTION_REQUESTS"].append((day, 5 + (seed >> 12) % 25))
-        day += timedelta(days=1)
-    return out
-
-
 async def _sync_channel(channel: Channel) -> int:
     """Sync one channel; returns the number of days upserted."""
+    if settings.GOOGLE_REVIEWS_MOCK:
+        logger.info(
+            "Performance sync: mock mode — skipping persistence for channel %s",
+            channel.id,
+        )
+        return 0
     location_id = _channel_meta(channel).get("location_id", "")
     if not location_id:
         logger.warning("Performance sync: channel %s has no location_id", channel.id)
@@ -69,20 +63,17 @@ async def _sync_channel(channel: Channel) -> int:
     end_date = datetime.now(timezone.utc).date() - timedelta(days=1)  # Google lags ~1 day
     start_date = end_date - timedelta(days=settings.ANALYTICS_PERFORMANCE_DAYS_BACK)
 
-    if settings.GOOGLE_REVIEWS_MOCK:
-        series = _mock_timeseries(channel.id, start_date, end_date)
-    else:
-        access_token = decrypt_token(channel.access_token) if channel.access_token else None
-        refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
-        if not access_token and not refresh_token:
-            logger.warning("Performance sync: channel %s has no tokens", channel.id)
-            return 0
-        client = GoogleReviewsClient(access_token or "", refresh_token)
-        client.set_known_expiry(channel.token_expires_at)
-        try:
-            series = await client.fetch_performance_timeseries(location_id, start_date, end_date)
-        finally:
-            await client.close()
+    access_token = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access_token and not refresh_token:
+        logger.warning("Performance sync: channel %s has no tokens", channel.id)
+        return 0
+    client = GoogleReviewsClient(access_token or "", refresh_token)
+    client.set_known_expiry(channel.token_expires_at)
+    try:
+        series = await client.fetch_performance_timeseries(location_id, start_date, end_date)
+    finally:
+        await client.close()
 
     days_touched: set = set()
     async with async_session() as db:

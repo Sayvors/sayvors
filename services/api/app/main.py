@@ -17,6 +17,7 @@ from .modules.rag.router import router as rag_router
 from .modules.analytics.router import router as analytics_router
 from .modules.profile.router import router as profile_router
 from .modules.localith.router import router as localith_router
+from .modules.locations.router import router as locations_router
 from .modules.email.router import router as email_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
@@ -173,6 +174,7 @@ app.include_router(kafka_router)
 app.include_router(rag_router)
 app.include_router(profile_router)
 app.include_router(localith_router)
+app.include_router(locations_router)
 app.include_router(email_router)
 
 

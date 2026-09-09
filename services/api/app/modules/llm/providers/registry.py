@@ -11,6 +11,7 @@ PROVIDER_CONFIGS: dict[str, dict] = {
     "grok": {"key": "XAI_API_KEY"},
     "kimi": {"key": "MOONSHOT_API_KEY"},
     "deepseek": {"key": "DEEPSEEK_API_KEY"},
+    "groq": {"key": "GROQ_API_KEY"},
     "ollama": {"key": "OLLAMA_API_KEY", "optional": True},
     "gemini": {"key": "GEMINI_API_KEY"},
 }

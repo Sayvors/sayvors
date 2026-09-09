@@ -14,7 +14,7 @@ from ..llm.providers.registry import get_provider_for_model
 
 logger = logging.getLogger(__name__)
 
-ENRICHMENT_MODEL = "openai:gpt-4o-mini"
+ENRICHMENT_MODEL = "groq:oss-120b"
 
 SYSTEM_PROMPT = """You are a review analytics engine. Analyse the customer review and
 respond with STRICT JSON only (no markdown fences, no commentary).
