@@ -32,7 +32,9 @@ interface LocalithListing {
   id: string;
   name?: string;
   google_id?: string;
+  googleId?: string;
   source?: string;
+  address?: string;
 }
 
 interface LocalithConnection {
@@ -42,16 +44,43 @@ interface LocalithConnection {
   listing_google_id: string | null;
   last_synced_at: string | null;
   created_at: string;
+  address?: string | null;
+  phone_number?: string | null;
+  website_url?: string | null;
+  maps_url?: string | null;
+  store_code?: string | null;
+  is_verified?: boolean | null;
+  is_disabled?: boolean | null;
+  is_suspended?: boolean | null;
+  total_reviews?: number;
+  average_rating?: number;
+  last_review_on?: string | null;
+  last_reply_on?: string | null;
+  profile_synced_at?: string | null;
+  metrics_start?: string | null;
+  metrics_end?: string | null;
+  metrics_synced_at?: string | null;
 }
 
-const GOOGLE_ERRORS: Record<string, string> = {
-  no_business_account: "No Google Business Profile was found on that Google account.",
+interface LocalithProfile {
+  connection: LocalithConnection;
+  listing: Record<string, unknown>;
+  metrics: { listings?: Record<string, number | string | null>[] };
+  item_metrics: { listings?: Record<string, number | string | null>[] };
+}
+
+const GOOGLE_ERRORS: Record<string, string> = {  no_business_account: "No Google Business Profile was found on that Google account.",
   accounts_unavailable: "Google couldn't list your Business Profiles just now (rate limit or permissions). Please try again in a minute.",
   token_exchange_failed: "Google rejected the connection. Please try again.",
   invalid_state: "The connect session expired. Please click Connect again.",
   missing_code: "Google did not return an authorization code. Please try again.",
   access_denied: "You cancelled the Google consent screen.",
 };
+
+function num(v: unknown): number {
+  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+  return Number.isFinite(n) ? n : 0;
+}
 
 function ConnectHub() {
   const params = useSearchParams();
@@ -72,6 +101,7 @@ function ConnectHub() {
   const [localithOpen, setLocalithOpen] = useState(false);
   const [localithPick, setLocalithPick] = useState<string | null>(null);
   const [localithBusy, setLocalithBusy] = useState(false);
+  const [localithProfile, setLocalithProfile] = useState<LocalithProfile | null>(null);
 
   const connectedCount = params.get("google_connected");
   const googleError = params.get("google_error");
@@ -114,6 +144,15 @@ function ConnectHub() {
         if (!cancelled) setLocalithListing(conn);
       } catch {
         /* not connected — fine */
+      }
+      try {
+        const prof = await apiFetch("/api/v1/integrations/localith/profile");
+        if (!cancelled && prof) {
+          setLocalithProfile(prof);
+          if (prof.connection) setLocalithListing(prof.connection);
+        }
+      } catch {
+        /* no snapshot yet — fine */
       }
     })();
     return () => { cancelled = true; };
@@ -214,30 +253,62 @@ function ConnectHub() {
   // ── Localith: save chosen listing ──
   const saveLocalith = async () => {
     if (!localithPick) return;
-    const chosen = localithListings.find((l) => (l.id ?? l.google_id) === localithPick);
+    const keyOf = (l: LocalithListing) => l.id ?? l.googleId ?? l.google_id;
+    const chosen = localithListings.find((l) => keyOf(l) === localithPick);
     if (!chosen) return;
     setLocalithBusy(true);
     try {
       const conn = await apiFetch("/api/v1/integrations/localith/connection", {
         method: "PUT",
         body: JSON.stringify({
-          listing_id: chosen.id ?? chosen.google_id,
+          listing_id: chosen.id ?? chosen.googleId ?? chosen.google_id,
           listing_name: chosen.name ?? "Unknown listing",
-          listing_google_id: chosen.google_id ?? null,
+          listing_google_id: chosen.googleId ?? chosen.google_id ?? null,
         }),
       });
       setLocalithListing(conn);
       try {
-        await apiFetch("/api/v1/integrations/localith/sync", { method: "POST" });
+        const syncRes = await apiFetch("/api/v1/integrations/localith/sync", { method: "POST" });
+        const prof = await apiFetch("/api/v1/integrations/localith/profile");
+        if (prof) {
+          setLocalithProfile(prof);
+          if (prof.connection) setLocalithListing(prof.connection);
+        }
+        const bits: string[] = [];
+        if (syncRes?.profile_synced) bits.push("profile");
+        if (typeof syncRes?.fetched === "number") bits.push(`${syncRes.fetched} review(s)`);
+        if (syncRes?.metrics_synced) bits.push("metrics");
+        setBanner({ kind: "ok", text: `Localith connected — synced ${bits.join(" · ") || "nothing yet"}.` });
       } catch {
-        setBanner({ kind: "ok", text: "Localith connected. Initial review sync will retry later." });
+        setBanner({ kind: "ok", text: "Localith connected. Initial sync will retry later." });
         setLocalithOpen(false);
         return;
       }
       setLocalithOpen(false);
-      setBanner({ kind: "ok", text: "Localith connected and review sync started." });
     } catch {
       setBanner({ kind: "err", text: "Could not save Localith connection." });
+    } finally {
+      setLocalithBusy(false);
+    }
+  };
+
+  // ── Localith: re-sync everything ──
+  const resyncLocalith = async () => {
+    setLocalithBusy(true);
+    try {
+      const syncRes = await apiFetch("/api/v1/integrations/localith/sync", { method: "POST" });
+      const prof = await apiFetch("/api/v1/integrations/localith/profile");
+      if (prof) {
+        setLocalithProfile(prof);
+        if (prof.connection) setLocalithListing(prof.connection);
+      }
+      const bits: string[] = [];
+      if (syncRes?.profile_synced) bits.push("profile");
+      if (typeof syncRes?.fetched === "number") bits.push(`${syncRes.fetched} review(s)`);
+      if (syncRes?.metrics_synced) bits.push("metrics");
+      setBanner({ kind: "ok", text: `Localith re-synced: ${bits.join(" · ") || "nothing new"}.` });
+    } catch {
+      setBanner({ kind: "err", text: "Localith sync failed — try again in a minute." });
     } finally {
       setLocalithBusy(false);
     }
@@ -249,6 +320,7 @@ function ConnectHub() {
     try {
       await apiFetch("/api/v1/integrations/localith/connection", { method: "DELETE" });
       setLocalithListing(null);
+      setLocalithProfile(null);
       setBanner({ kind: "ok", text: "Localith disconnected." });
     } catch {
       setBanner({ kind: "err", text: "Could not disconnect Localith." });
@@ -335,27 +407,108 @@ function ConnectHub() {
 
         {/* Localith — review middleware (no Google approval needed) */}
         {localithListing ? (
-          <div className="flex items-center gap-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-500/20 dark:bg-emerald-500/[0.06]">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-emerald-200/60 dark:ring-emerald-500/20">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-emerald-600">
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-              </svg>
+          <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-500/20 dark:bg-emerald-500/[0.06]">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-emerald-200/60 dark:ring-emerald-500/20">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-emerald-600">
+                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="flex items-center gap-1.5 text-[14px] font-semibold text-emerald-800 dark:text-emerald-300">
+                  Localith
+                  {localithListing.is_verified === true && (
+                    <span className="rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Verified</span>
+                  )}
+                  {localithListing.is_suspended === true && (
+                    <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-600">Suspended</span>
+                  )}
+                </p>
+                <p className="truncate text-[12px] font-medium text-emerald-700/80 dark:text-emerald-300/80">
+                  {localithListing.listing_name}
+                </p>
+                {localithListing.address && (
+                  <p className="truncate text-[11px] text-emerald-700/60 dark:text-emerald-300/60">
+                    {localithListing.address}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={resyncLocalith}
+                disabled={localithBusy}
+                className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {localithBusy ? <LogoLoader size={14} /> : "Sync now"}
+              </button>
+              <button
+                onClick={disconnectLocalith}
+                disabled={localithBusy}
+                className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-500/10 disabled:opacity-50"
+              >
+                Disconnect
+              </button>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[14px] font-semibold text-emerald-800 dark:text-emerald-300">
-                Localith
-              </p>
-              <p className="truncate text-[12px] text-emerald-700/60 dark:text-emerald-300/60">
-                {localithListing.listing_name}
-              </p>
+
+            {/* Profile snapshot */}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-emerald-800/80 dark:text-emerald-200/80">
+              {typeof localithListing.total_reviews === "number" && (
+                <span>★ {localithListing.average_rating?.toFixed(1) ?? "–"} · {localithListing.total_reviews} review(s)</span>
+              )}
+              {localithListing.phone_number && <span>☎ {localithListing.phone_number}</span>}
+              {localithListing.website_url && (
+                <a href={localithListing.website_url} target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2 hover:opacity-80">
+                  Website
+                </a>
+              )}
+              {localithListing.maps_url && (
+                <a href={localithListing.maps_url} target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2 hover:opacity-80">
+                  Google Maps
+                </a>
+              )}
+              {localithListing.last_synced_at && (
+                <span className="ml-auto opacity-70">
+                  Synced {new Date(localithListing.last_synced_at).toLocaleString()}
+                </span>
+              )}
             </div>
-            <button
-              onClick={disconnectLocalith}
-              disabled={localithBusy}
-              className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-500/10 disabled:opacity-50"
-            >
-              {localithBusy ? <LogoLoader size={14} /> : "Disconnect"}
-            </button>
+
+            {/* Metrics snapshot (trailing window) */}
+            {(() => {
+              const perf = localithProfile?.metrics?.listings?.[0];
+              const rev = localithProfile?.item_metrics?.listings?.[0];
+              if (!perf && !rev) return null;
+              const impressions = perf
+                ? num(perf.googleMapsDesktop) + num(perf.googleMapsMobile) + num(perf.googleSearchDesktop) + num(perf.googleSearchMobile)
+                : 0;
+              const cells: [string, string][] = [];
+              if (perf) {
+                cells.push(["Impressions", String(impressions)]);
+                cells.push(["Website clicks", String(num(perf.websiteClicks))]);
+                cells.push(["Calls", String(num(perf.callClicks))]);
+                cells.push(["Directions", String(num(perf.directions))]);
+              }
+              if (rev) {
+                cells.push(["Replies", String(num(rev.numberReplies))]);
+                cells.push(["👍/😐/👎", `${num(rev.positiveReviews)}/${num(rev.neutralReviews)}/${num(rev.negativeReviews)}`]);
+              }
+              return (
+                <div>
+                  <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700/60 dark:text-emerald-300/60">
+                    Last {localithListing.metrics_start && localithListing.metrics_end
+                      ? `${localithListing.metrics_start} → ${localithListing.metrics_end}`
+                      : "30 days"}
+                  </p>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                    {cells.map(([label, value]) => (
+                      <div key={label} className="rounded-lg bg-white/70 px-2 py-1.5 text-center ring-1 ring-emerald-200/50 dark:bg-emerald-500/[0.08]">
+                        <p className="text-[14px] font-bold text-emerald-900 dark:text-emerald-100">{value}</p>
+                        <p className="text-[9px] font-medium uppercase tracking-wide text-emerald-700/60 dark:text-emerald-300/60">{label}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         ) : (
           <div className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
@@ -377,7 +530,7 @@ function ConnectHub() {
                 >
                   <option value="">Select listing...</option>
                   {localithListings.map((l) => (
-                    <option key={l.id ?? l.google_id} value={l.id ?? l.google_id}>
+                    <option key={l.id ?? l.googleId ?? l.google_id} value={l.id ?? l.googleId ?? l.google_id}>
                       {l.name ?? l.id}
                     </option>
                   ))}

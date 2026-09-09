@@ -15,59 +15,18 @@ interface ReviewItem {
   rating: number;
   comment: string;
   createdAt: string;
-  reply?: string;
-  replyUpdatedAt?: string;
-  reviewReplyUrl?: string;
-  policyStatus?: "OK" | "FLAGGED";
+  replied: boolean;
+  sentiment?: string;
+  reviewUrl?: string;
 }
 
 interface LocationOption {
   id: string;
   name: string;
+  channelId?: string;
 }
 
-const MOCK_LOCATIONS: LocationOption[] = [
-  { id: "loc_1", name: "Sayvors Al Malqa" },
-  { id: "loc_2", name: "Sayvors Olaya" },
-];
-
 const PAGE_SIZE = 4;
-
-const MOCK_REVIEWS: ReviewItem[] = [  {
-    id: "r1", locationId: "loc_1", locationName: "Sayvors Al Malqa",
-    reviewer: "John Smith", rating: 5, comment: "Great service and very helpful staff. Highly recommended!",
-    createdAt: "2026-09-08", reply: "Thank you for visiting us!",
-    replyUpdatedAt: "2026-09-08", reviewReplyUrl: "https://g.page/review/r1/reply",
-    policyStatus: "OK",
-  },
-  {
-    id: "r2", locationId: "loc_1", locationName: "Sayvors Al Malqa",
-    reviewer: "Sara Ahmed", rating: 5, comment: "Excellent service, quick response.",
-    createdAt: "2026-09-06",
-  },
-  {
-    id: "r3", locationId: "loc_2", locationName: "Sayvors Olaya",
-    reviewer: "Omar K.", rating: 2, comment: "Waited too long, staff seemed busy.",
-    createdAt: "2026-09-04", reply: "Sorry about the wait — we are fixing staffing this week.",
-    replyUpdatedAt: "2026-09-05", policyStatus: "OK",
-  },
-  {
-    id: "r4", locationId: "loc_1", locationName: "Sayvors Al Malqa",
-    reviewer: "Lina M.", rating: 1, comment: "Not happy with the support.",
-    createdAt: "2026-09-02",
-  },
-  {
-    id: "r5", locationId: "loc_2", locationName: "Sayvors Olaya",
-    reviewer: "Fahad R.", rating: 4, comment: "Good experience overall.",
-    createdAt: "2026-08-28", reply: "Thanks Fahad!",
-    replyUpdatedAt: "2026-08-29", policyStatus: "OK",
-  },
-  {
-    id: "r6", locationId: "loc_1", locationName: "Sayvors Al Malqa",
-    reviewer: "Nora S.", rating: 3, comment: "Average, could be better.",
-    createdAt: "2026-08-20",
-  },
-];
 
 export default function ReviewsPage() {
   return (
@@ -91,20 +50,59 @@ function ReviewsInner() {
   const [page, setPage] = useState(1);
   const [replyMode, setReplyMode] = useState<"manual" | "ai">("manual");
   const [aiLoading, setAiLoading] = useState(false);
+  const [channelNames, setChannelNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch("/api/v1/locations/?limit=100");
+        // Real location: the Localith-connected listing first.
+        try {
+          const prof = await apiFetch("/api/v1/integrations/localith/profile");
+          if (!cancelled && prof?.connection) {
+            const c = prof.connection as { listing_id: string; listing_name: string };
+            const locs = [{ id: c.listing_id, name: c.listing_name }];
+            try {
+              const ch = await apiFetch("/api/v1/channels/?limit=100");
+              const names: Record<string, string> = {};
+              for (const channel of ch.channels ?? []) {
+                if (channel?.id) names[channel.id] = channel.display_name ?? c.listing_name;
+              }
+              if (!cancelled) setChannelNames(names);
+            } catch {
+              /* names stay empty — location name is used as fallback */
+            }
+            if (!cancelled) {
+              setLocations(locs);
+              setSelectedId(locs[0].id);
+              return;
+            }
+          }
+        } catch {
+          /* no Localith connection — fall through to channels */
+        }
+        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const googleChannels = (data.channels ?? [])
+          .filter((channel: { platform: string }) => channel.platform === "google_reviews")
+          .map((channel: { id: string; display_name: string | null }) => ({
+            id: channel.id,
+            name: channel.display_name ?? "Google location",
+            channelId: channel.id,
+          }));
         if (!cancelled) {
-          const locs = data.locations ?? MOCK_LOCATIONS;
-          setLocations(locs);
-          if (locs.length) setSelectedId(locs[0].id);
+          const names: Record<string, string> = {};
+          for (const channel of data.channels ?? []) {
+            if (channel?.id) names[channel.id] = channel.display_name ?? "Google location";
+          }
+          setChannelNames(names);
+          setLocations(googleChannels);
+          if (googleChannels.length) setSelectedId(googleChannels[0].id);
         }
       } catch {
-        setLocations(MOCK_LOCATIONS);
-        setSelectedId(MOCK_LOCATIONS[0].id);
+        if (!cancelled) {
+          setLocations([]);
+          setSelectedId(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -112,27 +110,42 @@ function ReviewsInner() {
     return () => { cancelled = true; };
   }, []);
 
-  const fetchReviews = async () => {
-    if (!selectedId) return;
+  const loadInsights = async (channelId?: string) => {
+    const q = channelId ? `?channel_id=${encodeURIComponent(channelId)}&limit=200` : "?limit=200";
+    const data = await apiFetch(`/api/v1/analytics/reviews/insights${q}`);
+    return mapInsights(data.items, channelNames, locations.find((l) => l.id === selectedId)?.name ?? "");
+  };
+
+  const fetchReviews = async (withSync: boolean) => {
     setRefreshing(true);
     try {
-      const data = await apiFetch(`/api/v1/locations/${selectedId}/reviews`);
-      setReviews(normalizeReviews(data.reviews) ?? MOCK_REVIEWS);
+      if (withSync) {
+        try {
+          await apiFetch("/api/v1/integrations/localith/sync", { method: "POST" });
+        } catch {
+          /* sync failed — still show whatever is stored */
+        }
+      }
+      const loc = locations.find((l) => l.id === selectedId);
+      setReviews(await loadInsights(loc?.channelId));
+      if (withSync) setBanner({ kind: "ok", text: "Reconciled with Localith." });
     } catch {
-      setReviews(MOCK_REVIEWS);
+      setReviews([]);
+      setBanner({ kind: "err", text: "Could not load reviews. Is the backend running?" });
+    } finally {
+      setRefreshing(false);
     }
-    setRefreshing(false);
   };
 
   useEffect(() => {
-    if (!selectedId) return;
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch(`/api/v1/locations/${selectedId}/reviews`);
-        if (!cancelled) setReviews(normalizeReviews(data.reviews) ?? MOCK_REVIEWS);
+        const loc = locations.find((l) => l.id === selectedId);
+        const items = await loadInsights(loc?.channelId);
+        if (!cancelled) setReviews(items);
       } catch {
-        if (!cancelled) setReviews(MOCK_REVIEWS);
+        if (!cancelled) setReviews([]);
       }
     })();
     return () => { cancelled = true; };
@@ -141,15 +154,15 @@ function ReviewsInner() {
 
   const counts = useMemo(() => ({
     all: reviews.length,
-    unanswered: reviews.filter((r) => !r.reply).length,
-    replied: reviews.filter((r) => r.reply).length,
+    unanswered: reviews.filter((r) => !r.replied).length,
+    replied: reviews.filter((r) => r.replied).length,
     positive: reviews.filter((r) => r.rating >= 4).length,
     negative: reviews.filter((r) => r.rating <= 2).length,
   }), [reviews]);
 
   const filtered = reviews.filter((r) => {
-    if (tab === "unanswered") return !r.reply;
-    if (tab === "replied") return !!r.reply;
+    if (tab === "unanswered") return !r.replied;
+    if (tab === "replied") return r.replied;
     if (tab === "positive") return r.rating >= 4;
     if (tab === "negative") return r.rating <= 2;
     return true;
@@ -160,8 +173,7 @@ function ReviewsInner() {
   const intelligence = useMemo(() => buildIntelligence(reviews), [reviews]);
 
   const openDetail = (id: string) => {
-    const r = reviews.find((x) => x.id === id);
-    setReplyDraft(r?.reply ?? "");
+    setReplyDraft("");
     setReplyMode("manual");
     setView({ kind: "detail", id });
   };
@@ -172,53 +184,54 @@ function ReviewsInner() {
     if (!r) return;
     setAiLoading(true);
     setReplyMode("ai");
-    // Frontend-only draft; backend AI endpoint can replace this later.
-    await new Promise((res) => setTimeout(res, 900));
-    const tone = r.rating >= 4
-      ? `Thank you so much, ${r.reviewer}! We're thrilled you enjoyed ${r.locationName}.`
-      : r.rating === 3
-        ? `Thanks for your honest feedback, ${r.reviewer}. We'll work on doing better at ${r.locationName}.`
-        : `We're really sorry about your experience, ${r.reviewer}. Our team at ${r.locationName} will reach out and make this right.`;
-    const extra = r.rating >= 4
-      ? " Hope to see you again soon!"
-      : " Please give us another chance to improve.";
-    setReplyDraft(`${tone}${extra}`);
-    setAiLoading(false);
+    try {
+      const data = await apiFetch("/api/v1/llm/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          system_prompt: "You write short, warm Google review replies for a local business. One short paragraph, no placeholders, no surrounding quotes.",
+          messages: [{ content: `Write a reply to this ${r.rating}-star Google review for ${r.locationName} from ${r.reviewer}: "${r.comment}"` }],
+        }),
+      });
+      const text = data?.message?.content?.trim();
+      if (!text) throw new Error("empty draft");
+      setReplyDraft(text);
+    } catch {
+      // Offline template fallback when the LLM is unreachable.
+      const tone = r.rating >= 4
+        ? `Thank you so much, ${r.reviewer}! We're thrilled you enjoyed ${r.locationName}.`
+        : r.rating === 3
+          ? `Thanks for your honest feedback, ${r.reviewer}. We'll work on doing better at ${r.locationName}.`
+          : `We're really sorry about your experience, ${r.reviewer}. Our team at ${r.locationName} will reach out and make this right.`;
+      const extra = r.rating >= 4
+        ? " Hope to see you again soon!"
+        : " Please give us another chance to improve.";
+      setReplyDraft(`${tone}${extra}`);
+      setBanner({ kind: "err", text: "AI unreachable — used an offline template instead." });
+      setTimeout(() => setBanner(null), 3000);
+    } finally {
+      setAiLoading(false);
+    }
   };
 
-  const saveReply = async (isEdit: boolean) => {
+  const copyDraft = async () => {
     if (view.kind !== "detail" || !replyDraft.trim()) return;
     setReplying(true);
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/reviews/${view.id}/reply`, {
-        method: isEdit ? "PATCH" : "POST",
-        body: JSON.stringify({ reply: replyDraft.trim() }),
-      });
-    } catch { /* optimistic, frontend-only for now */ }
-    setReviews((prev) => prev.map((r) => r.id === view.id
-      ? { ...r, reply: replyDraft.trim(), replyUpdatedAt: new Date().toISOString().slice(0, 10), policyStatus: "OK" as const }
-      : r));
-    setReplying(false);
-    setBanner({ kind: "ok", text: isEdit ? "Reply updated." : "Reply posted." });
-    setTimeout(() => setBanner(null), 2500);
-  };
-
-  const deleteReply = async (id: string) => {
-    if (!confirm("Delete your reply to this review? The review itself stays.")) return;
-    try {
-      await apiFetch(`/api/v1/locations/${selectedId}/reviews/${id}/reply`, { method: "DELETE" });
-    } catch { /* optimistic */ }
-    setReviews((prev) => prev.map((r) => r.id === id ? { ...r, reply: undefined, replyUpdatedAt: undefined } : r));
-    setReplyDraft("");
-    setBanner({ kind: "ok", text: "Reply deleted." });
-    setTimeout(() => setBanner(null), 2500);
+      await navigator.clipboard.writeText(replyDraft.trim());
+      setBanner({ kind: "ok", text: "Draft copied — paste it in Google or Localith to publish." });
+    } catch {
+      setBanner({ kind: "err", text: "Could not copy — select the text manually." });
+    } finally {
+      setReplying(false);
+      setTimeout(() => setBanner(null), 3000);
+    }
   };
 
   const analytics = useMemo(() => {
     const total = reviews.length;
     const dist = [5, 4, 3, 2, 1].map((s) => ({ stars: s, count: reviews.filter((r) => r.rating === s).length }));
     const avg = total ? reviews.reduce((a, r) => a + r.rating, 0) / total : 0;
-    const replied = reviews.filter((r) => r.reply).length;
+    const replied = reviews.filter((r) => r.replied).length;
     const thisMonth = reviews.filter((r) => r.createdAt.slice(0, 7) === "2026-09").length;
     const lastMonth = reviews.filter((r) => r.createdAt.slice(0, 7) === "2026-08").length;
     const months = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"].map((m) => ({
@@ -258,7 +271,7 @@ function ReviewsInner() {
               </select>
               <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </div>
-            <button onClick={fetchReviews} disabled={refreshing} className="btn-secondary disabled:opacity-50">
+            <button onClick={() => fetchReviews(true)} disabled={refreshing} className="btn-secondary disabled:opacity-50">
               {refreshing ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Syncing...</span> : "Reconcile"}
             </button>
           </div>
@@ -368,7 +381,11 @@ function ReviewsInner() {
 
               {filtered.length === 0 ? (
                 <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
-                  <p className="text-[14px] font-medium text-ink/40">No reviews in this view</p>
+                  <p className="text-[14px] font-medium text-ink/40">
+                    {reviews.length === 0 && tab === "all"
+                      ? "No reviews yet — press Reconcile after syncing your listing."
+                      : "No reviews in this view"}
+                  </p>
                 </div>
               ) : (
                 <>
@@ -384,7 +401,7 @@ function ReviewsInner() {
                         </span>
                         <span className="mt-2 line-clamp-2 block text-[13px] leading-relaxed text-ink/70">“{r.comment}”</span>
                         <span className="mt-2 block text-[11px]">
-                          {r.reply
+                          {r.replied
                             ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">Replied</span>
                             : <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">Needs reply</span>}
                         </span>
@@ -433,63 +450,66 @@ function ReviewsInner() {
 
                 <div className="mt-5 border-t border-ink/[0.05] pt-4">
                   <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Your reply</h3>
-                  <div className="mt-2 flex gap-1 rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.05]">
-                    <button onClick={() => setReplyMode("manual")}
-                      className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${replyMode === "manual" ? "bg-white text-deep-violet shadow-sm dark:bg-ink" : "text-ink/45"}`}>
-                      Write myself
-                    </button>
-                    <button onClick={() => generateAiReply()}
-                      className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${replyMode === "ai" ? "bg-white text-deep-violet shadow-sm dark:bg-ink" : "text-ink/45"}`}>
-                      Write with AI
-                    </button>
-                  </div>
-                  {active.reply && !replyEditing(active.reply, replyDraft) && replyMode === "manual" ? (
-                    <div className="mt-2 rounded-xl bg-ink/[0.03] p-3 dark:bg-fog/[0.04]">
-                      <p className="text-[13px] text-ink dark:text-fog">“{active.reply}”</p>
-                      {active.replyUpdatedAt && <p className="mt-1 text-[10px] text-ink/35">Replied {active.replyUpdatedAt}</p>}
-                    </div>
-                  ) : null}
-                  {aiLoading ? (
-                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-deep-violet/15 bg-deep-violet/[0.04] p-3">
-                      <LogoLoader size={16} />
-                      <p className="text-[12px] text-ink/50">AI is drafting a reply...</p>
+                  {active.replied ? (
+                    <div className="mt-2 rounded-xl bg-emerald-50 p-3 dark:bg-emerald-500/10">
+                      <p className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-300">Replied on Google</p>
+                      <p className="mt-0.5 text-[11px] text-emerald-700/70 dark:text-emerald-300/70">This review already has a published reply.</p>
                     </div>
                   ) : (
-                    <textarea
-                      value={replyDraft}
-                      onChange={(e) => { setReplyDraft(e.target.value); setReplyMode("manual"); }}
-                      rows={3}
-                      maxLength={1000}
-                      placeholder={replyMode === "ai" ? "AI draft — edit if you like, then submit..." : active.reply ? "Edit your reply..." : "Write your reply..."}
-                      className="input-field mt-2 resize-y"
-                    />
+                    <>
+                      <div className="mt-2 flex gap-1 rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.05]">
+                        <button onClick={() => setReplyMode("manual")}
+                          className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${replyMode === "manual" ? "bg-white text-deep-violet shadow-sm dark:bg-ink" : "text-ink/45"}`}>
+                          Write myself
+                        </button>
+                        <button onClick={() => generateAiReply()}
+                          className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${replyMode === "ai" ? "bg-white text-deep-violet shadow-sm dark:bg-ink" : "text-ink/45"}`}>
+                          Write with AI
+                        </button>
+                      </div>
+                      {aiLoading ? (
+                        <div className="mt-2 flex items-center gap-2 rounded-xl border border-deep-violet/15 bg-deep-violet/[0.04] p-3">
+                          <LogoLoader size={16} />
+                          <p className="text-[12px] text-ink/50">AI is drafting a reply...</p>
+                        </div>
+                      ) : (
+                        <textarea
+                          value={replyDraft}
+                          onChange={(e) => { setReplyDraft(e.target.value); setReplyMode("manual"); }}
+                          rows={3}
+                          maxLength={1000}
+                          placeholder={replyMode === "ai" ? "AI draft — edit if you like, then copy..." : "Write your reply..."}
+                          className="input-field mt-2 resize-y"
+                        />
+                      )}
+                      {replyMode === "ai" && !aiLoading && (
+                        <button onClick={() => generateAiReply()} className="mt-1 text-[11px] font-semibold text-deep-violet hover:underline">Regenerate AI draft</button>
+                      )}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button onClick={() => copyDraft()} disabled={!replyDraft.trim() || replying || aiLoading} className="btn-primary disabled:opacity-50">
+                          {replying ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Copying...</span> : "Copy draft"}
+                        </button>
+                      </div>
+                      <p className="mt-2 text-[10px] text-ink/30">Direct reply posting isn&apos;t available via API yet — copy the draft and publish it from your Google or Localith dashboard.</p>
+                    </>
                   )}
-                  {replyMode === "ai" && !aiLoading && (
-                    <button onClick={() => generateAiReply()} className="mt-1 text-[11px] font-semibold text-deep-violet hover:underline">Regenerate AI draft</button>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button onClick={() => saveReply(!!active.reply)} disabled={!replyDraft.trim() || replying || aiLoading} className="btn-primary disabled:opacity-50">
-                      {replying ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : "Submit"}
-                    </button>
-                    {active.reply && (
-                      <button onClick={() => deleteReply(active.id)} className="rounded-xl border border-red-200 px-4 py-2 text-[12px] font-semibold text-red-600 hover:bg-red-50">
-                        Delete Reply
-                      </button>
-                    )}
-                  </div>
-                  <p className="mt-2 text-[10px] text-ink/30">Type yourself, or tap Write with AI and just hit Submit. Customer reviews cannot be deleted or edited.</p>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 border-t border-ink/[0.05] pt-4 text-[11px]">
                   <div>
-                    <p className="text-ink/40">Policy status</p>
-                    <p className="font-semibold text-ink dark:text-fog">{active.policyStatus ?? "—"}</p>
+                    <p className="text-ink/40">Sentiment</p>
+                    <p className="font-semibold capitalize text-ink dark:text-fog">{active.sentiment ?? "—"}</p>
                   </div>
                   <div>
-                    <p className="text-ink/40">Reply URL</p>
-                    <p className="truncate font-semibold text-ink dark:text-fog">{active.reviewReplyUrl ?? "—"}</p>
+                    <p className="text-ink/40">Review date</p>
+                    <p className="truncate font-semibold text-ink dark:text-fog">{active.createdAt || "—"}</p>
                   </div>
                 </div>
+                {active.reviewUrl && (
+                  <a href={active.reviewUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-[12px] font-semibold text-deep-violet underline underline-offset-2 hover:opacity-80">
+                    View on Google →
+                  </a>
+                )}
               </div>
 
               <InsightCard review={active} />
@@ -512,30 +532,29 @@ function ReviewsInner() {
   );
 }
 
-function replyEditing(saved: string, draft: string) {
-  return saved !== draft;
-}
-
-function normalizeReviews(raw: unknown): ReviewItem[] | null {
-  if (!Array.isArray(raw)) return null;
-  return raw.map((r: Record<string, unknown>, i: number) => ({
-    id: String(r.id ?? `r_${i}`),
-    locationId: String(r.locationId ?? r.location_id ?? "loc_1"),
-    locationName: String(r.locationName ?? r.location_name ?? ""),
-    reviewer: String(r.reviewer ?? r.reviewer_name ?? "Customer"),
-    rating: Number(r.rating ?? r.star_rating ?? 5),
-    comment: String(r.comment ?? r.text ?? ""),
-    createdAt: String(r.createdAt ?? r.created_at ?? ""),
-    reply: r.reply ? String(r.reply) : undefined,
-    replyUpdatedAt: r.replyUpdatedAt ? String(r.replyUpdatedAt) : undefined,
-    reviewReplyUrl: r.reviewReplyUrl ? String(r.reviewReplyUrl) : undefined,
-    policyStatus: r.policyStatus === "FLAGGED" ? "FLAGGED" : r.policyStatus === "OK" ? "OK" : undefined,
-  }));
+function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbackName: string): ReviewItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((it: unknown, i: number) => {
+    const r = (it ?? {}) as Record<string, unknown>;
+    const channelId = String(r.channel_id ?? "");
+    return {
+      id: String(r.id ?? r.review_id ?? `insight_${i}`),
+      locationId: channelId,
+      locationName: channelNames[channelId] ?? fallbackName,
+      reviewer: String(r.reviewer_name ?? "Google user"),
+      rating: Number(r.rating ?? 0),
+      comment: String(r.review_text ?? "(star rating only)"),
+      createdAt: String(r.review_updated_at ?? r.created_at ?? "").slice(0, 10),
+      replied: r.replied === true,
+      sentiment: typeof r.sentiment === "string" ? r.sentiment : undefined,
+      reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
+    };
+  });
 }
 
 function StarInsightPage({ stars, group, total, onBack, onOpen }: { stars: number; group: ReviewItem[]; total: number; onBack: () => void; onOpen: (id: string) => void }) {
   const share = total ? Math.round((group.length / total) * 100) : 0;
-  const replied = group.filter((r) => r.reply).length;
+  const replied = group.filter((r) => r.replied).length;
   const signals = topSignals(group.map((r) => r.comment));
   const verdict = stars >= 4
     ? "Strength — protect what earns these ratings."
@@ -692,7 +711,7 @@ function buildIntelligence(reviews: ReviewItem[]): Intelligence {
     topics: themes.map((t) => ({ name: t.name, count: t.mentions })),
     actions: [
       ...(waitTheme && waitTheme.mentions > 0 ? [{ title: "Fix waiting time", detail: `${waitTheme.mentions} reviews affected · HIGH impact` }] : []),
-      { title: `Respond to ${reviews.filter((r) => !r.reply).length} unanswered reviews`, detail: "Immediate action" },
+      { title: `Respond to ${reviews.filter((r) => !r.replied).length} unanswered reviews`, detail: "Immediate action" },
       ...(staffTheme ? [{ title: "Protect staff training", detail: "Strong positive driver" }] : []),
     ].slice(0, 5),
   };
@@ -869,7 +888,7 @@ function InsightCard({ review }: { review: ReviewItem }) {
         <p className="mt-1 text-[12px] text-ink/60 dark:text-fog/60">{insight.result}</p>
         <p className="mt-2 text-[11px] font-semibold text-deep-violet">Next: {insight.action}</p>
       </div>
-      <p className="mt-2 text-[10px] text-ink/30">Explainable heuristics from rating + comment text · {review.locationName} · {review.createdAt}{review.reply ? " · replied" : " · unanswered"}.</p>
+      <p className="mt-2 text-[10px] text-ink/30">Explainable heuristics from rating + comment text · {review.locationName} · {review.createdAt}{review.replied ? " · replied" : " · unanswered"}.</p>
     </div>
   );
 }
@@ -895,8 +914,8 @@ function explainReview(r: ReviewItem): { tone: "high" | "low" | "mixed"; summary
       summary: `This is high because the customer gave ${r.rating}★ with${positives.length ? "" : "out"} explicit praise signals. High ratings like this lift the location average and response-rate health.`,
       positives: positives.length ? positives : ["high star rating itself"],
       negatives,
-      result: `Positive outcome for ${r.locationName}. ${r.reply ? "Already replied — good for trust." : "Reply to lock in loyalty."}`,
-      action: r.reply ? "No urgent fix; thank them and invite them back." : "Post a warm thank-you reply today.",
+      result: `Positive outcome for ${r.locationName}. ${r.replied ? "Already replied — good for trust." : "Reply to lock in loyalty."}`,
+      action: r.replied ? "No urgent fix; thank them and invite them back." : "Post a warm thank-you reply today.",
     };
   }
   if (r.rating <= 2) {
@@ -905,7 +924,7 @@ function explainReview(r: ReviewItem): { tone: "high" | "low" | "mixed"; summary
       summary: `This is low because the customer gave ${r.rating}★${negatives.length ? " and the text points at specific pain" : " even without detailed text"}. Low ratings drag the average and need a fast, empathetic reply.`,
       positives,
       negatives: negatives.length ? negatives : ["low star rating without detail"],
-      result: `At-risk signal for ${r.locationName}. ${r.reply ? "Reply exists — monitor for follow-up." : "Unanswered — highest priority."}`,
+      result: `At-risk signal for ${r.locationName}. ${r.replied ? "Reply exists — monitor for follow-up." : "Unanswered — highest priority."}`,
       action: "Reply with apology + concrete fix, then address the root cause operationally.",
     };
   }

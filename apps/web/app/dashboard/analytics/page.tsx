@@ -87,6 +87,90 @@ function SummaryStrip({ overview }: { overview: Overview }) {
   );
 }
 
+/* ── Google presence (Localith snapshot — live even with 0 reviews) ── */
+
+interface PresenceData {
+  listingName: string;
+  windowLabel: string;
+  searchViews: number;
+  mapViews: number;
+  websiteClicks: number;
+  directionRequests: number;
+  phoneCalls: number;
+  publishedPosts: number;
+  avgPostingTime: number;
+  avgResponseTimeH: number;
+  responsePct: number;
+  totalReviews: number;
+  averageRating: number;
+}
+
+function num(v: unknown): number {
+  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function presenceFromProfile(prof: {
+  connection?: { listing_name?: string; metrics_start?: string | null; metrics_end?: string | null; total_reviews?: number; average_rating?: number };
+  metrics?: { listings?: Record<string, number | string | null>[] };
+  item_metrics?: { listings?: Record<string, number | string | null>[] };
+} | null): PresenceData | null {
+  const perf = prof?.metrics?.listings?.[0];
+  const rev = prof?.item_metrics?.listings?.[0];
+  if (!perf && !rev) return null;
+  const conn = prof?.connection ?? {};
+  return {
+    listingName: conn.listing_name ?? "",
+    windowLabel: conn.metrics_start && conn.metrics_end ? `${conn.metrics_start} → ${conn.metrics_end}` : "last 30 days",
+    searchViews: num(perf?.googleSearchDesktop) + num(perf?.googleSearchMobile),
+    mapViews: num(perf?.googleMapsDesktop) + num(perf?.googleMapsMobile),
+    websiteClicks: num(perf?.websiteClicks),
+    directionRequests: num(perf?.directions),
+    phoneCalls: num(perf?.callClicks),
+    publishedPosts: num(perf?.numPublishedPosts),
+    avgPostingTime: num(perf?.avgPostingTime),
+    avgResponseTimeH: num(perf?.avgReviewResponseTime),
+    responsePct: num(perf?.reviewResponsePercentage),
+    totalReviews: num(rev?.numberOfReviews ?? conn.total_reviews),
+    averageRating: num(rev?.averageRating ?? conn.average_rating),
+  };
+}
+
+function PresenceSection({ presence }: { presence: PresenceData }) {
+  const p = presence;
+  const cells: { label: string; value: string; sub?: string }[] = [
+    { label: "Search views", value: String(p.searchViews) },
+    { label: "Map views", value: String(p.mapViews) },
+    { label: "Website clicks", value: String(p.websiteClicks) },
+    { label: "Direction requests", value: String(p.directionRequests) },
+    { label: "Phone calls", value: String(p.phoneCalls) },
+    { label: "Published posts", value: String(p.publishedPosts) },
+    { label: "Avg posting time", value: String(p.avgPostingTime) },
+    { label: "Avg response time", value: `${p.avgResponseTimeH}h` },
+    { label: "Response percentage", value: `${p.responsePct}%` },
+    { label: "Total reviews", value: String(p.totalReviews) },
+    { label: "Average rating", value: `${p.averageRating.toFixed(1)} / 5` },
+    { label: "Impressions", value: String(p.searchViews + p.mapViews), sub: "search + maps" },
+  ];
+  return (
+    <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-[14px] font-bold text-ink">Google presence{p.listingName ? ` — ${p.listingName}` : ""}</h3>
+        <p className="text-[11px] text-ink/40">{p.windowLabel} · via Localith</p>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {cells.map((c) => (
+          <div key={c.label} className="rounded-xl bg-ink/[0.03] px-3 py-2.5 text-center">
+            <p className="text-[18px] font-bold text-ink">{c.value}</p>
+            <p className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-ink/45">{c.label}</p>
+            {c.sub && <p className="text-[9px] text-ink/30">{c.sub}</p>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /* ── Page ─────────────────────────────────────────────────────────── */
 
 export default function AnalyticsPage() {
@@ -96,6 +180,7 @@ export default function AnalyticsPage() {
   const [channelId, setChannelId] = useState<string | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
+  const [presence, setPresence] = useState<PresenceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -103,11 +188,16 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchOverview(days, channelId), fetchTimeseries(days, channelId)])
-      .then(([o, t]) => {
+    Promise.all([
+      fetchOverview(days, channelId),
+      fetchTimeseries(days, channelId),
+      apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
+    ])
+      .then(([o, t, prof]) => {
         if (cancelled) return;
         setOverview(o);
         setPoints(t);
+        setPresence(presenceFromProfile(prof));
         setError(false);
         hasLoadedOnce.current = true;
       })
@@ -137,6 +227,7 @@ export default function AnalyticsPage() {
   }, []);
 
   const hasData = !!overview && overview.total_reviews > 0;
+  const hasPresence = !!presence;
   const rangeBtn = (active: boolean) =>
     `rounded-md px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
       active ? "bg-white text-deep-violet shadow-sm" : "text-ink/45 hover:text-ink/70"
@@ -204,8 +295,8 @@ export default function AnalyticsPage() {
             Retry
           </button>
         </div>
-      ) : !hasData && !loading ? (
-        /* Empty state */
+      ) : !hasData && !hasPresence && !loading ? (
+        /* Empty state — no reviews and no connected listing */
         <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-6 w-6" aria-hidden>
@@ -226,6 +317,24 @@ export default function AnalyticsPage() {
         </div>
       ) : (
         <div className="space-y-5">
+          {/* Google presence — live from Localith even before the first review */}
+          {presence && <PresenceSection presence={presence} />}
+          {!hasData && !loading && (
+            <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-white bg-white/80 py-10 text-center backdrop-blur-sm">
+              <p className="text-[14px] font-bold text-ink">No review data yet</p>
+              <p className="max-w-sm text-[12px] text-ink/50">
+                Review insights, sentiment and charts will appear here as reviews come in.
+              </p>
+              <Link
+                href="/dashboard/channels"
+                className="mt-1 rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
+              >
+                Check connection
+              </Link>
+            </div>
+          )}
+          {hasData && (
+          <>
           {/* KPI cards */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard
@@ -326,6 +435,8 @@ export default function AnalyticsPage() {
 
           {/* Review inbox */}
           <ReviewInbox channelId={channelId} refreshToken={refreshToken} />
+          </>
+          )}
         </div>
       )}
     </div>

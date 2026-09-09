@@ -30,6 +30,54 @@ interface LocationOption {
   status: string;
 }
 
+interface LocalithConn {
+  listing_id: string;
+  listing_name: string;
+  address?: string | null;
+  phone_number?: string | null;
+  website_url?: string | null;
+  maps_url?: string | null;
+  is_verified?: boolean | null;
+  is_suspended?: boolean | null;
+  total_reviews?: number;
+  average_rating?: number;
+}
+
+function CompletenessCard({ profile }: { profile: LocalithConn }) {
+  const essentials: { label: string; done: boolean; hint?: string }[] = [
+    { label: "Business name", done: !!profile.listing_name },
+    { label: "Address", done: !!profile.address },
+    { label: "Website URL", done: !!profile.website_url },
+    { label: "Phone number", done: !!profile.phone_number, hint: !profile.phone_number ? "Add phone number" : undefined },
+  ];
+  const done = essentials.filter((e) => e.done).length;
+  return (
+    <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-[14px] font-bold text-ink dark:text-fog">Profile completeness</h2>
+        <p className="text-[11px] font-semibold text-ink/45 dark:text-fog/45">{done} of {essentials.length} essentials</p>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
+        <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all" style={{ width: `${(done / essentials.length) * 100}%` }} />
+      </div>
+      <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
+        {essentials.map((e) => (
+          <li key={e.label} className="flex items-center gap-2 text-[12px]">
+            <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${e.done ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+              {e.done ? "✓" : "•"}
+            </span>
+            <span className="font-medium text-ink/70 dark:text-fog/70">{e.label}</span>
+            {e.hint && <span className="text-[11px] font-semibold text-amber-600">· {e.hint}</span>}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 border-t border-ink/[0.05] pt-2 text-[11px] text-ink/40 dark:text-fog/40">
+        ★ {(profile.average_rating ?? 0).toFixed(1)} · {profile.total_reviews ?? 0} reviews · Description, hours &amp; category aren&apos;t returned by the Localith API.
+      </p>
+    </div>
+  );
+}
+
 const HOURS_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 /* ΓöÇΓöÇ Page ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
@@ -40,26 +88,49 @@ export default function LocationsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>("details");
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [localith, setLocalith] = useState<LocalithConn | null>(null);
+
+  const showBanner = (kind: "ok" | "err", text: string) => setBanner({ kind, text });
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch("/api/v1/channels/?limit=100");
-        const googleChannels = (data.channels ?? [])
-          .filter((channel: { platform: string }) => channel.platform === "google_reviews")
-          .map((channel: { id: string; display_name: string | null; status: string }) => ({
-            id: channel.id,
-            name: channel.display_name ?? "",
-            address: "",
-            status: channel.status,
-          }));
-        if (!cancelled) {
-          setLocations(googleChannels);
-          if (googleChannels.length) setSelectedId(googleChannels[0].id);
+        // Localith snapshot first — it carries the real address/phone/website.
+        try {
+          const prof = await apiFetch("/api/v1/integrations/localith/profile");
+          if (!cancelled && prof?.connection) {
+            const c = prof.connection as LocalithConn;
+            setLocalith(c);
+            setLocations([{
+              id: c.listing_id,
+              name: c.listing_name,
+              address: c.address ?? "",
+              status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
+            }]);
+            setSelectedId(c.listing_id);
+            return;
+          }
+        } catch {
+          /* no Localith connection — fall through to channels */
         }
-      } catch {
-        setLocations([]);
+        try {
+          const data = await apiFetch("/api/v1/channels/?limit=100");
+          const googleChannels = (data.channels ?? [])
+            .filter((channel: { platform: string }) => channel.platform === "google_reviews")
+            .map((channel: { id: string; display_name: string | null; status: string }) => ({
+              id: channel.id,
+              name: channel.display_name ?? "",
+              address: "",
+              status: channel.status,
+            }));
+          if (!cancelled) {
+            setLocations(googleChannels);
+            if (googleChannels.length) setSelectedId(googleChannels[0].id);
+          }
+        } catch {
+          setLocations([]);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -127,6 +198,9 @@ export default function LocationsPage() {
         </div>
       )}
 
+      {/* Profile completeness (Localith snapshot) */}
+      {localith && <CompletenessCard profile={localith} />}
+
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <LogoLoader size={32} />
@@ -153,7 +227,20 @@ export default function LocationsPage() {
           {/* Tab content */}
           <div className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
             {activeTab === "details" && (
-              <DetailsTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Details saved." })} />
+              <DetailsTab
+                location={selectedLocation}
+                profile={localith}
+                onSave={(text, kind) => showBanner(kind ?? "ok", text)}
+                onProfile={(c) => {
+                  setLocalith(c);
+                  setLocations([{
+                    id: c.listing_id,
+                    name: c.listing_name,
+                    address: c.address ?? "",
+                    status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
+                  }]);
+                }}
+              />
             )}
             {activeTab === "categories" && (
               <CategoriesTab location={selectedLocation} onSave={() => setBanner({ kind: "ok", text: "Categories updated." })} />
@@ -189,22 +276,50 @@ export default function LocationsPage() {
 
 /* ΓöÇΓöÇ Tab Panels ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
-function DetailsTab({ location, onSave }: { location: LocationOption | null; onSave: () => void }) {
+function DetailsTab({
+  location,
+  profile,
+  onSave,
+  onProfile,
+}: {
+  location: LocationOption | null;
+  profile: LocalithConn | null;
+  onSave: (text: string, kind?: "ok" | "err") => void;
+  onProfile: (c: LocalithConn) => void;
+}) {
   const [name, setName] = useState(location?.name ?? "");
   const [address, setAddress] = useState(location?.address ?? "");
-  const [phone, setPhone] = useState("");
-  const [website, setWebsite] = useState("");
+  const [phone, setPhone] = useState(profile?.phone_number ?? "");
+  const [website, setWebsite] = useState(profile?.website_url ?? "");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setName(location?.name ?? "");
     setAddress(location?.address ?? "");
-  }, [location?.id]);
+    setPhone(profile?.phone_number ?? "");
+    setWebsite(profile?.website_url ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location?.id, profile?.listing_id]);
 
   const handleSave = async () => {
+    if (!profile) {
+      onSave("Details saved.");
+      return;
+    }
     setSaving(true);
     try {
-      onSave();
+      const updated = await apiFetch("/api/v1/integrations/localith/listing", {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: name.trim() || undefined,
+          phone_number: phone.trim() || undefined,
+          website_url: website.trim() || undefined,
+        }),
+      });
+      onProfile(updated as LocalithConn);
+      onSave("Details saved to Google via Localith.", "ok");
+    } catch (e) {
+      onSave(e instanceof Error ? e.message.slice(0, 160) : "Could not save details.", "err");
     } finally {
       setSaving(false);
     }
@@ -213,11 +328,25 @@ function DetailsTab({ location, onSave }: { location: LocationOption | null; onS
   return (
     <div className="space-y-5">
       <SectionTitle title="Business Details" subtitle="Edit your location's core information." />
+      {profile && (
+        <p className="-mt-2 text-[11px] text-ink/45 dark:text-fog/45">
+          Synced from Google via Localith
+          {profile.maps_url && (
+            <> · <a href={profile.maps_url} target="_blank" rel="noreferrer" className="font-semibold text-deep-violet underline underline-offset-2">View on Maps</a></>
+          )}
+        </p>
+      )}
       <Field label="Business Name">
         <input value={name} onChange={(e) => setName(e.target.value)} className="input-field" />
       </Field>
       <Field label="Address">
-        <input value={address} onChange={(e) => setAddress(e.target.value)} className="input-field" />
+        <input
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          readOnly={!!profile}
+          title={profile ? "Address is synced from Google — edit it in your Google Business dashboard" : undefined}
+          className={`input-field ${profile ? "opacity-60" : ""}`}
+        />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Phone">
