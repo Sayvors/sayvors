@@ -7,13 +7,18 @@ Google approval; once native Google API access lands, the same shape
 goes to the Google adapter.
 
 Endpoint map (from the public Localith n8n community node source):
-    https://raw.githubusercontent.com/localithai/n8n-nodes-localith/main/nodes/Localith/Localith.node.ts
+    https://github.com/localithai/n8n-nodes-localith (nodes/Localith/Localith.node.ts)
     baseURL: https://embedsocial.com/app/api
-    items:            /rest/v1/items           (individual reviews)
-    listings:         /rest/v1/listings        (connected locations)
-    listing_metrics:  /rest/v1/listing_metrics (needs query params)
-    item_metrics:     /rest/v1/listing_item_metrics
-    publish_media:    /rest/v1/content_publishing_media (POST only)
+    items:            GET   /rest/v1/items           (individual reviews)
+                      query: page, pageSize (max 100), sourceId, sort (+field/-field)
+    listings:         GET   /rest/v1/listings        (connected locations)
+                      query: address, name, page, pageSize, sort
+    listing detail:   GET   /rest/v1/listings/{listingId}
+    listing update:   PATCH /rest/v1/listings/{listingId}  (write — not used by sync)
+    listing_metrics:  GET   /rest/v1/listing_metrics (REQUIRES startDate & endDate DD-MM-YYYY)
+                      query: startDate*, endDate*, sourceId, page, pageSize
+    item_metrics:     GET   /rest/v1/listing_item_metrics (same required dates)
+    publish_media:    POST  /rest/v1/content_publishing_media (write — not used by sync)
 
 Auth is a single bearer token (Account > API key in the Localith dashboard).
 
@@ -44,6 +49,8 @@ class InternalReview:
     reviewer: str | None = None
     published_at: str | None = None
     source_name: str | None = None
+    review_url: str | None = None
+    has_replies: bool = False
     raw: dict = field(default_factory=dict)
 
 
@@ -83,20 +90,117 @@ def _get(path: str, params: dict | None = None, timeout: int = 30) -> dict | lis
 
 
 def fetch_items(limit: int = 50, listing_id: str | None = None) -> list[dict]:
-    """Pull synced review items. Returns raw items as returned by Localith."""
+    """Pull synced review items. Returns raw items as returned by Localith.
+
+    Uses the official query params (page/pageSize/sourceId/sort). ``limit``
+    is split across pages of at most 100.
+    """
     _base, _key, items_path = _config()
-    params: dict = {"limit": limit, "page": 1}
-    if listing_id:
-        params["listing_id"] = listing_id
-    payload = _get(items_path, params)
+    out: list[dict] = []
+    page = 1
+    remaining = max(1, limit)
+    while remaining > 0:
+        params: dict = {
+            "page": page,
+            "pageSize": min(100, remaining),
+            "sort": "-originalCreatedOn",
+        }
+        if listing_id:
+            params["sourceId"] = listing_id
+        payload = _get(items_path, params)
+        batch = _unwrap_list(payload)
+        if not batch:
+            break
+        out.extend(batch)
+        remaining -= len(batch)
+        if len(batch) < min(100, remaining + len(batch)):
+            break
+        page += 1
+        if page > 50:  # safety cap: 50 pages x 100
+            break
+    return out
+
+
+def fetch_all_items(listing_id: str | None = None, max_pages: int = 50) -> list[dict]:
+    """Pull every review item, following pages until a short/empty page."""
+    _base, _key, items_path = _config()
+    out: list[dict] = []
+    for page in range(1, max_pages + 1):
+        params: dict = {"page": page, "pageSize": 100, "sort": "-originalCreatedOn"}
+        if listing_id:
+            params["sourceId"] = listing_id
+        batch = _unwrap_list(_get(items_path, params))
+        if not batch:
+            break
+        out.extend(batch)
+        if len(batch) < 100:
+            break
+    return out
+
+
+def _unwrap_list(payload: dict | list) -> list[dict]:
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
         for envelope in ("data", "items", "results", "reviews"):
             if isinstance(payload.get(envelope), list):
                 return payload[envelope]
-        return []
     return []
+
+
+def _patch(path: str, body: dict, timeout: int = 30) -> dict | list:
+    base, key, _ = _config()
+    url = f"{base}/{path.lstrip('/')}"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        method="PATCH",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {key}",
+            "User-Agent": "sayvors-spike/1.0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        return json.loads(resp.read().decode("utf-8"))
+
+
+# Fields the PATCH /rest/v1/listings/{id} endpoint accepts, mapped from
+# our snake_case names to the API's body properties.
+UPDATABLE_FIELDS = {
+    "name": "name",
+    "description": "description",
+    "phone_number": "phoneNumber",
+    "website_url": "websiteUrl",
+    "city": "address.city",
+    "country": "address.country",
+    "street": "address.streetLines[0]",
+}
+
+
+def build_update_body(fields: dict) -> dict:
+    """Map snake_case editable fields to the Localith PATCH body shape."""
+    body: dict = {}
+    for key, value in fields.items():
+        prop = UPDATABLE_FIELDS.get(key)
+        if prop is None or value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        body[prop] = value.strip() if isinstance(value, str) else value
+    return body
+
+
+def update_listing(listing_id: str, fields: dict) -> dict:
+    """Update a listing's editable profile fields. Returns the API response."""
+    body = build_update_body(fields)
+    if not body:
+        raise ValueError("No updatable fields provided.")
+    payload = _patch(
+        f"rest/v1/listings/{urllib.parse.quote(listing_id, safe='')}", body
+    )
+    return payload if isinstance(payload, dict) else {}
 
 
 def fetch_listings() -> list[dict]:
@@ -108,6 +212,105 @@ def fetch_listings() -> list[dict]:
     if isinstance(payload, dict) and isinstance(payload.get("data"), list):
         return payload["data"]
     return []
+
+
+def fetch_listing_detail(listing_id: str) -> dict:
+    """Pull one listing with the full profile snapshot.
+
+    Live shape (2026-09): id, googleId, name, storeCode, url, isVerified,
+    isDisabled, isSuspended, phoneNumber, address, websiteUrl, totalReviews,
+    averageRating, lastReviewOn, lastReplyOn.
+    """
+    payload = _get(f"rest/v1/listings/{urllib.parse.quote(listing_id, safe='')}", {})
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def normalize_listing(raw: dict) -> dict:
+    """Map a raw listing payload to Sayvors' snake_case snapshot shape.
+
+    Tolerates camelCase (googleId) and snake_case (google_id) variants.
+    Unknown extra keys are kept inside ``raw`` by the caller, not here.
+    """
+    return {
+        "listing_id": str(raw.get("id") or raw.get("listing_id") or ""),
+        "google_id": raw.get("googleId") or raw.get("google_id"),
+        "name": raw.get("name"),
+        "store_code": raw.get("storeCode") or raw.get("store_code"),
+        "maps_url": raw.get("url"),
+        "is_verified": raw.get("isVerified", raw.get("is_verified")),
+        "is_disabled": raw.get("isDisabled", raw.get("is_disabled")),
+        "is_suspended": raw.get("isSuspended", raw.get("is_suspended")),
+        "phone_number": raw.get("phoneNumber") or raw.get("phone_number"),
+        "address": raw.get("address"),
+        "website_url": raw.get("websiteUrl") or raw.get("website_url"),
+        "total_reviews": raw.get("totalReviews", raw.get("total_reviews", 0)),
+        "average_rating": raw.get("averageRating", raw.get("average_rating", 0.0)),
+        "last_review_on": raw.get("lastReviewOn") or raw.get("last_review_on"),
+        "last_reply_on": raw.get("lastReplyOn") or raw.get("last_reply_on"),
+    }
+
+
+def _ddmmyyyy(value) -> str:
+    """Format a date/datetime/ISO string as DD-MM-YYYY for the metrics endpoints."""
+    import datetime as _dt
+
+    if isinstance(value, (_dt.datetime, _dt.date)):
+        d = value
+    else:
+        d = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if isinstance(d, _dt.datetime):
+            d = d.date()
+    return d.strftime("%d-%m-%Y")
+
+
+def fetch_listing_metrics(
+    start,
+    end,
+    listing_id: str | None = None,
+    page_size: int = 100,
+) -> dict:
+    """Daily performance metrics summarized over [start, end].
+
+    Returns ``{"dateRange": {...}, "listings": [...]}`` where each listing row
+    carries googleMapsDesktop/Mobile, googleSearchDesktop/Mobile, messages,
+    directions, callClicks, websiteClicks, bookings, foodOrders,
+    foodMenuClicks, numPublishedPosts, avgPostingTime, avgReviewResponseTime,
+    reviewResponsePercentage.
+    """
+    params: dict = {
+        "startDate": _ddmmyyyy(start),
+        "endDate": _ddmmyyyy(end),
+        "pageSize": page_size,
+    }
+    if listing_id:
+        params["sourceId"] = listing_id
+    payload = _get("rest/v1/listing_metrics", params)
+    return payload if isinstance(payload, dict) else {}
+
+
+def fetch_item_metrics(
+    start,
+    end,
+    listing_id: str | None = None,
+    page_size: int = 100,
+) -> dict:
+    """Review metrics summarized over [start, end].
+
+    Each listing row carries numberOfReviews, averageRating, per-star counts,
+    numberReplies, latestReviewOn, positive/neutral/negative splits and
+    yesterday/week/month/year counts.
+    """
+    params: dict = {
+        "startDate": _ddmmyyyy(start),
+        "endDate": _ddmmyyyy(end),
+        "pageSize": page_size,
+    }
+    if listing_id:
+        params["sourceId"] = listing_id
+    payload = _get("rest/v1/listing_item_metrics", params)
+    return payload if isinstance(payload, dict) else {}
 
 
 # Back-compat name used by the spike runner
@@ -135,10 +338,29 @@ def to_internal_review(item: dict) -> InternalReview:
         reviewer_name = (
             reviewer.get("name")
             or reviewer.get("displayName")
+            or reviewer.get("display_name")
             or reviewer.get("full_name")
+            or reviewer.get("author_name")
         )
     else:
         reviewer_name = reviewer or None
+    if not reviewer_name:
+        reviewer_name = (
+            item.get("reviewer_name")
+            or item.get("reviewerName")
+            or item.get("author_name")
+            or item.get("authorName")
+        )
+
+    published_at = (
+        item.get("created_at")
+        or item.get("originalCreatedOn")
+        or item.get("createdOn")
+        or item.get("publishedOn")
+        or item.get("reviewCreatedOn")
+        or item.get("date")
+        or item.get("timestamp")
+    )
 
     return InternalReview(
         external_id=str(
@@ -147,10 +369,29 @@ def to_internal_review(item: dict) -> InternalReview:
         platform=str(
             item.get("source") or item.get("platform") or "google_reviews"
         ).lower(),
-        rating=_to_int_rating(item.get("rating") or item.get("stars") or 5),
-        text=item.get("text") or item.get("comment") or item.get("message"),
+        rating=_to_int_rating(
+            item.get("rating") or item.get("stars") or item.get("starRating") or 5
+        ),
+        text=(
+            item.get("text")
+            or item.get("captionText")
+            or item.get("caption")
+            or item.get("comment")
+            or item.get("message")
+            or item.get("review_text")
+            or item.get("reviewText")
+            or item.get("body")
+            or item.get("content")
+        ),
         reviewer=reviewer_name,
-        published_at=item.get("created_at") or item.get("date") or item.get("timestamp"),
+        published_at=published_at,
         source_name=item.get("location") or item.get("page") or item.get("account"),
+        review_url=(
+            item.get("reviewLink")
+            or item.get("review_url")
+            or item.get("reviewUrl")
+            or item.get("url")
+        ),
+        has_replies=bool(item.get("replies")),
         raw=item,
     )

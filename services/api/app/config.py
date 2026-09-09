@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     LOCALITH_BASE_URL: str = "https://embedsocial.com/app/api"
     LOCALITH_ITEMS_PATH: str = "rest/v1/items"
     BUSINESS_DATA_PROVIDER: str = "localith"
+    # Background auto-sync: every connected listing is re-synced on this
+    # cadence (profile + reviews + metrics). Manual "Sync now" still works.
+    LOCALITH_SYNC_INTERVAL_SECONDS: int = 300  # 5 min
 
     model_config = {"env_file": ".env"}
 

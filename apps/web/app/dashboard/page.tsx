@@ -60,13 +60,6 @@ const quickActions = [
   },
 ] as const;
 
-const statDefs = [
-  { labelKey: "messages", subKey: "messagesSub", value: "0" },
-  { labelKey: "channels", subKey: "channelsSub", value: "0" },
-  { labelKey: "reviews", subKey: "reviewsSub", value: "0" },
-  { labelKey: "responseTime", subKey: "responseTimeSub", value: "--" },
-] as const;
-
 const checklistDefs = [
   { id: "channel", labelKey: "stepConnect", href: "/dashboard/channels" },
   { id: "databank", labelKey: "stepDatabank", href: "/dashboard/databank" },
@@ -94,9 +87,10 @@ function ExecutiveSummaryBanner() {
 
   if (!summary) return null;
   return (
-    <section
+    <Link
+      href="/dashboard/analytics"
       aria-label={t.dashboard.briefing.title}
-      className="relative overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet to-magenta p-5 text-white shadow-md shadow-deep-violet/20"
+      className="group relative block overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet to-magenta p-5 text-white shadow-md shadow-deep-violet/20 outline-none transition duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-white/60"
     >
       <div className="mb-2 flex items-center gap-2">
         <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/15">
@@ -136,7 +130,7 @@ function ExecutiveSummaryBanner() {
       <p className="mt-2.5 border-t border-white/15 pt-2 text-[11px] text-white/75">
         <span className="font-semibold">{t.dashboard.briefing.recommendedAction}</span> {summary.recommended_action} · {summary.benchmark_text}
       </p>
-    </section>
+    </Link>
   );
 }
 
@@ -207,29 +201,42 @@ function BusinessPulse() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <PulseStat label="Total reviews" value={totalReviews} detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"} color="text-amber-600" />
-        <PulseStat label="Connected businesses" value={channels.length} detail={channels.length ? "Google Business channels" : "No Google channel yet"} color="text-deep-violet" />
-        <PulseStat label="Services offered" value={offeredCount} detail={serviceCount ? `${serviceCount} services configured` : "No service data yet"} color="text-emerald-600" />
-        <PulseStat label="Working hours" value="--" detail="Not configured yet" color="text-sky-600" />
+        <PulseStat label="Total reviews" value={totalReviews} detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"} color="text-amber-600" href="/dashboard/reviews" />
+        <PulseStat label="Connected businesses" value={channels.length} detail={channels.length ? "Google Business channels" : "No Google channel yet"} color="text-deep-violet" href="/dashboard/locations" />
+        <PulseStat label="Services offered" value={offeredCount} detail={serviceCount ? `${serviceCount} services configured` : "No service data yet"} color="text-emerald-600" href="/dashboard/services" />
+        <PulseStat label="Working hours" value="--" detail="Not configured yet" color="text-sky-600" href="/dashboard/locations" />
       </div>
 
       <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr]">
-        {loading ? <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" /> : <MetricChart points={points} />}
-        <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-          <h3 className="mb-4 text-[14px] font-bold text-ink">Review ratings</h3>
+        <Link href="/dashboard/analytics" aria-label="Open analytics" className="group block rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+          {loading ? <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" /> : <span className="block rounded-2xl transition duration-200 group-hover:-translate-y-0.5 group-hover:shadow-lg group-hover:shadow-deep-violet/[0.08]"><MetricChart points={points} /></span>}
+        </Link>
+        <Link href="/dashboard/reviews" aria-label="Open reviews" className="group block rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+          <h3 className="mb-4 text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">Review ratings</h3>
           <RatingDistribution distribution={ratingDistribution} total={totalReviews} />
           <div className="mt-5 border-t border-ink/[0.06] pt-4">
             <div className="flex items-center justify-between text-[11px] text-ink/45"><span>Response rate</span><strong className="text-ink">{overview ? `${Math.round(overview.response_rate)}%` : "--"}</strong></div>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/[0.06]"><div className="h-full rounded-full bg-emerald" style={{ width: `${Math.min(100, overview?.response_rate ?? 0)}%` }} /></div>
           </div>
-        </div>
+        </Link>
       </div>
     </section>
   );
 }
 
-function PulseStat({ label, value, detail, color }: { label: string; value: number | string; detail: string; color: string }) {
-  return <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">{label}</p><p className={`mt-1 text-[22px] font-bold ${color}`}>{value}</p><p className="truncate text-[10px] text-ink/40">{detail}</p></div>;
+function PulseStat({ label, value, detail, color, href }: { label: string; value: number | string; detail: string; color: string; href?: string }) {
+  const cls = "group block rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40";
+  const inner = (
+    <>
+      <p className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-ink/50">
+        <span>{label}</span>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="h-3 w-3 text-ink/25 transition group-hover:translate-x-0.5 group-hover:text-deep-violet"><path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </p>
+      <p className={`mt-1 text-[22px] font-bold ${color}`}>{value}</p>
+      <p className="truncate text-[10px] text-ink/40">{detail}</p>
+    </>
+  );
+  return href ? <Link href={href} aria-label={label} className={cls}>{inner}</Link> : <div className={cls}>{inner}</div>;
 }
 
 const EMPTY_CHECKLIST: Record<string, boolean> = {};
@@ -277,6 +284,13 @@ function writeChecklist(next: Record<string, boolean>) {
   checklistListeners.forEach((listener) => listener());
 }
 
+function fmtResponseTime(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return "--";
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86_400) return `${(seconds / 3600).toFixed(1)}h`;
+  return `${(seconds / 86_400).toFixed(1)}d`;
+}
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const { dir, t } = useI18n();
@@ -313,6 +327,44 @@ export default function DashboardPage() {
     setDismissed(true);
   }, []);
   const showChecklist = !allDone || !dismissed;
+
+  const [dashStats, setDashStats] = useState<{ messages: number; channels: number; replied: number; responseTime: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const chData = await apiFetch("/api/v1/channels/?limit=100");
+        const google = (chData.channels ?? []).filter((c: { platform: string }) => c.platform === "google_reviews");
+        const msgTotals = await Promise.all(
+          google.map((c: { id: string }) =>
+            apiFetch(`/api/v1/channels/${c.id}/messages?limit=1`).then((d) => d.total ?? 0).catch(() => 0)
+          )
+        );
+        const o = await fetchOverview(30, null).catch(() => null);
+        if (!cancelled) {
+          setDashStats({
+            messages: msgTotals.reduce((a: number, b: number) => a + b, 0),
+            channels: google.length,
+            replied: o ? Math.max(0, o.total_reviews - o.unanswered) : 0,
+            responseTime: fmtResponseTime(o?.avg_response_seconds),
+          });
+        }
+      } catch {
+        if (!cancelled) setDashStats(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const statCards = [
+    { labelKey: "messages", subKey: "messagesSub", value: dashStats ? String(dashStats.messages) : "0", href: "/dashboard/channels" },
+    { labelKey: "channels", subKey: "channelsSub", value: dashStats ? String(dashStats.channels) : "0", href: "/dashboard/channels" },
+    { labelKey: "reviews", subKey: "reviewsSub", value: dashStats ? String(dashStats.replied) : "0", href: "/dashboard/reviews" },
+    { labelKey: "responseTime", subKey: "responseTimeSub", value: dashStats ? dashStats.responseTime : "--", href: "/dashboard/reviews" },
+  ] as const;
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-5 bg-[#f3f0ff]">
       {/* AI Executive Summary */}
@@ -475,12 +527,20 @@ export default function DashboardPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {statDefs.map((stat) => (
-          <div key={stat.labelKey} className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm transition hover:shadow-md hover:shadow-deep-violet/[0.06]">
-            <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-ink/55">{t.dashboard.stats[stat.labelKey]}</p>
-            <p className="mt-1 text-[20px] sm:text-[22px] font-bold text-ink">{stat.value}</p>
+        {statCards.map((stat) => (
+          <Link
+            key={stat.labelKey}
+            href={stat.href}
+            aria-label={t.dashboard.stats[stat.labelKey]}
+            className="group rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+          >
+            <p className="flex items-center justify-between text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-ink/55">
+              <span>{t.dashboard.stats[stat.labelKey]}</span>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="h-3 w-3 text-ink/25 transition group-hover:translate-x-0.5 group-hover:text-deep-violet"><path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </p>
+            <p className="mt-1 text-[20px] sm:text-[22px] font-bold text-ink transition-colors group-hover:text-deep-violet">{stat.value}</p>
             <p className="text-[10px] text-ink/40">{t.dashboard.stats[stat.subKey]}</p>
-          </div>
+          </Link>
         ))}
       </div>
 

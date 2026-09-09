@@ -3,6 +3,10 @@ the real listings from your Localith account. Single-shared-key mode
 for v1 — the API key is read from LOCALITH_API_KEY in the server env
 and used for all connections. The (user_id, listing_id) mapping is
 what we persist.
+
+Full sync pulls everything the read API offers for the connected
+listing: profile snapshot (detail), all review items (paginated),
+performance metrics summary and review metrics summary.
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ import importlib.util
 import logging
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -57,8 +61,82 @@ async def list_local_items(listing_id: str, limit: int = 50) -> list[dict]:
     return await asyncio.to_thread(embedsocial.fetch_items, limit, listing_id)
 
 
-async def sync_connection(user: User, db: AsyncSession) -> dict[str, int | str]:
-    """Sync one tenant's Localith listing into Sayvors' normal review pipeline."""
+async def get_listing_detail(listing_id: str) -> dict:
+    """Fetch the full profile snapshot for one listing."""
+    if not _key_present():
+        raise RuntimeError("Server is missing LOCALITH_API_KEY in .env.")
+    return await asyncio.to_thread(embedsocial.fetch_listing_detail, listing_id)
+
+
+def _parse_dt(value: object) -> datetime | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _as_int(value: object, default: int = 0) -> int:
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_bool(value: object) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return bool(value)
+
+
+def apply_listing_snapshot(connection, raw: dict) -> None:
+    """Copy a raw listing detail payload onto a LocalithConnection."""
+    norm = embedsocial.normalize_listing(raw)
+    connection.listing_name = norm["name"] or connection.listing_name
+    if norm["google_id"]:
+        connection.listing_google_id = str(norm["google_id"])
+    connection.address = norm["address"]
+    connection.phone_number = norm["phone_number"]
+    connection.website_url = norm["website_url"]
+    connection.maps_url = norm["maps_url"]
+    connection.store_code = norm["store_code"]
+    connection.is_verified = _as_bool(norm["is_verified"])
+    connection.is_disabled = _as_bool(norm["is_disabled"])
+    connection.is_suspended = _as_bool(norm["is_suspended"])
+    connection.total_reviews = _as_int(norm["total_reviews"])
+    connection.average_rating = _as_float(norm["average_rating"])
+    connection.last_review_on = _parse_dt(norm["last_review_on"])
+    connection.last_reply_on = _parse_dt(norm["last_reply_on"])
+    connection.raw_listing_json = raw
+    connection.profile_synced_at = datetime.now(timezone.utc)
+
+
+async def sync_connection(
+    user: User, db: AsyncSession, metrics_days_back: int = 30
+) -> dict[str, int | str]:
+    """Sync one tenant's Localith listing into Sayvors' normal review pipeline.
+
+    Pulls everything the read API offers:
+      1. listing detail -> profile snapshot columns on the connection
+      2. all review items (paginated) -> ReviewInsight rows + review events
+      3. performance metrics summary (last N days) -> raw snapshot
+      4. review metrics summary (last N days) -> raw snapshot
+    """
     from .models import LocalithConnection
 
     result = await db.execute(
@@ -93,7 +171,17 @@ async def sync_connection(user: User, db: AsyncSession) -> dict[str, int | str]:
         db.add(channel)
         await db.flush()
 
-    items = await list_local_items(connection.listing_id, limit=500)
+    # 1. Profile snapshot — every field the detail endpoint returns.
+    detail = await get_listing_detail(connection.listing_id)
+    if detail:
+        apply_listing_snapshot(connection, detail)
+        channel.display_name = connection.listing_name
+        channel.platform_user_id = connection.listing_google_id or connection.listing_id
+
+    # 2. All review items, paginated (100/page, newest first).
+    items = await asyncio.to_thread(
+        embedsocial.fetch_all_items, connection.listing_id
+    )
     synced = 0
     for item in items:
         review_id = str(item.get("id") or item.get("review_id") or item.get("uid") or "")
@@ -119,8 +207,50 @@ async def sync_connection(user: User, db: AsyncSession) -> dict[str, int | str]:
                 enrichment_status="pending",
                 review_updated_at=datetime.now(timezone.utc),
             )
+            if review.review_url:
+                insight.review_url = review.review_url
+            if review.has_replies:
+                insight.replied = True
+                insight.replied_at = datetime.now(timezone.utc)
             db.add(insight)
             synced += 1
+        else:
+            # Backfill fields that older syncs didn't capture (never
+            # overwrites enriched/curated data — only fills gaps).
+            touched = False
+            if not insight.review_text and review.text:
+                insight.review_text = review.text
+                touched = True
+            if not insight.reviewer_name and review.reviewer:
+                insight.reviewer_name = review.reviewer
+                touched = True
+            if not insight.review_url and review.review_url:
+                insight.review_url = review.review_url
+                touched = True
+            if review.has_replies and not insight.replied:
+                insight.replied = True
+                insight.replied_at = datetime.now(timezone.utc)
+                touched = True
+            if touched:
+                synced += 1
+
+    # 3+4. Metrics summaries over the trailing window.
+    end = date.today()
+    start = end - timedelta(days=max(1, metrics_days_back))
+    metrics = await asyncio.to_thread(
+        embedsocial.fetch_listing_metrics, start, end, connection.listing_id
+    )
+    item_metrics = await asyncio.to_thread(
+        embedsocial.fetch_item_metrics, start, end, connection.listing_id
+    )
+    if metrics:
+        connection.raw_metrics_json = metrics
+    if item_metrics:
+        connection.raw_item_metrics_json = item_metrics
+    if metrics or item_metrics:
+        connection.metrics_start = start
+        connection.metrics_end = end
+        connection.metrics_synced_at = datetime.now(timezone.utc)
 
     connection.last_synced_at = datetime.now(timezone.utc)
     await db.commit()
@@ -144,7 +274,15 @@ async def sync_connection(user: User, db: AsyncSession) -> dict[str, int | str]:
             topic="review-events",
         )
 
-    return {"channel_id": channel.id, "fetched": len(items), "new_reviews": synced}
+    return {
+        "channel_id": channel.id,
+        "fetched": len(items),
+        "new_reviews": synced,
+        "profile_synced": bool(detail),
+        "metrics_synced": bool(metrics or item_metrics),
+        "metrics_start": start.isoformat(),
+        "metrics_end": end.isoformat(),
+    }
 
 
 def now_utc() -> datetime:

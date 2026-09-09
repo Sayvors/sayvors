@@ -112,6 +112,10 @@ async def lifespan(app: FastAPI):
     from .modules.channels.reviews_worker import run_google_reviews_worker
     reviews_task = asyncio.create_task(run_google_reviews_worker())
 
+    # Start the Localith background auto-sync (profile + reviews + metrics)
+    from .modules.localith.worker import run_localith_sync_worker
+    localith_sync_task = asyncio.create_task(run_localith_sync_worker())
+
     # Start the analytics pipeline: Kafka consumer (review enrichment +
     # daily rollups) and Google performance metrics sync worker
     from .modules.analytics.consumer import run_analytics_consumer
@@ -129,6 +133,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     retention_task.cancel()
     reviews_task.cancel()
+    localith_sync_task.cancel()
     analytics_consumer_task.cancel()
     performance_sync_task.cancel()
     await outbox_worker.stop()

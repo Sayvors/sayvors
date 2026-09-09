@@ -62,19 +62,18 @@ f6a7b8c9d0e1  localith_connections         ← NEW
 ```
 
 ## Localith Integration (current work)
-- **Adapter:** `integrations/channels/embedsocial.py` — `fetch_listings()`, `fetch_items()`
-- **Key:** `LOCALITH_API_KEY=es3dfbe0793d8fabac128ac458110d9e` (shared across all Sayvors users for v1)
-- **Listing proved:** `Sayvors-Al Malqa` (google_id: 118011331498513777216)
-- **Items:** returns `[]` (reviews not synced to Localith yet)
-- **DB table:** `localith_connections` (user_id FK, listing_id, listing_name, listing_google_id, last_synced_at)
-- **Router:** `app/modules/localith/router.py` — 6 endpoints:
-  - `GET /api/v1/integrations/localith/config` — key presence check
-  - `GET /api/v1/integrations/localith/listings` — list available listings
-  - `POST /api/v1/integrations/localith/test` — probe a listing id
-  - `GET /api/v1/integrations/localith/connection` — user's saved connection
-  - `PUT /api/v1/integrations/localith/connection` — save/update connection
-  - `DELETE /api/v1/integrations/localith/connection` — remove connection
-- **UI:** `apps/web/app/dashboard/channels/page.tsx` — Localith card in channel grid, connect flow, disconnect
+- **Adapter:** `integrations/channels/embedsocial.py` — listings, listing detail, items (paginated),
+  listing_metrics + listing_item_metrics (require DD-MM-YYYY dates), update_listing (PATCH), publish stub
+- **Key:** `LOCALITH_API_KEY` in `.env` (shared across all Sayvors users for v1)
+- **Listing proved:** `Sayvors-Al Malqa` (googleId `ChIJi0iBWpblLj4RYFeIukBn_OI`), verified, 0 reviews
+- **DB table:** `localith_connections` + profile snapshot cols + raw JSON snapshots (listing/metrics/item_metrics)
+  — migrations `f6a7b8c9d0e1` → `g7h8i9j0k1l2`, heads merged in `a091b0730d72`
+- **Router:** `app/modules/localith/router.py` — config, listings, test, connection CRUD, `POST /sync`
+  (profile+reviews+metrics), `GET /profile` (full snapshot), `PATCH /listing` (write-back to Google)
+- **Worker:** `app/modules/localith/worker.py` — background auto-sync every `LOCALITH_SYNC_INTERVAL_SECONDS`
+  (default 900s), wired into app lifespan; per-connection error isolation, idempotent
+- **UI:** channels page Localith card (profile + metrics + Sync now), locations DetailsTab reads snapshot,
+  Save writes back via PATCH
 
 ## Frontend (`apps/web/`)
 - **Framework:** Next.js 16.2.12, React 19.2.4, Tailwind 4.3.3, TypeScript 5
