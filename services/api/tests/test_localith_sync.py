@@ -158,6 +158,40 @@ def test_scalar_coercions():
     assert service._as_bool(None) is None
 
 
+def test_adapter_rejects_non_http_base(monkeypatch):
+    monkeypatch.setenv("LOCALITH_API_KEY", "k")
+    monkeypatch.setenv("LOCALITH_BASE_URL", "file:///etc/")
+    monkeypatch.setenv("LOCALITH_ITEMS_PATH", "rest/v1/items")
+    with pytest.raises(ValueError):
+        embedsocial.fetch_listings()
+
+
+def test_adapter_get_uses_httpx_with_auth(monkeypatch):
+    monkeypatch.setenv("LOCALITH_API_KEY", "k")
+    monkeypatch.delenv("LOCALITH_BASE_URL", raising=False)
+    monkeypatch.setenv("LOCALITH_ITEMS_PATH", "rest/v1/items")
+    seen = {}
+
+    class _FakeResp:
+        def raise_for_status(self):
+            seen["raised"] = True
+
+        def json(self):
+            return [{"id": "r1"}]
+
+    def _fake_get(url, params=None, headers=None, timeout=None):
+        seen.update(url=url, params=params, headers=headers, timeout=timeout)
+        return _FakeResp()
+
+    monkeypatch.setattr(embedsocial.httpx, "get", _fake_get)
+    out = embedsocial.fetch_items(limit=1)
+    assert out == [{"id": "r1"}]
+    assert seen["url"].startswith("https://")
+    assert seen["headers"]["Authorization"] == "Bearer k"
+    assert seen["params"]["page"] == 1
+    assert seen["raised"] is True
+
+
 def test_build_update_body_mapping():
     body = embedsocial.build_update_body(
         {

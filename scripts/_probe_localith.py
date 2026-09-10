@@ -1,10 +1,12 @@
-import json, urllib.request, re, sys
+import httpx
+import json, re, sys
 sys.stdout.reconfigure(encoding="utf-8")
 
 # Probe the n8n community node source for endpoint truth
 url = "https://raw.githubusercontent.com/localithai/n8n-nodes-localith/main/nodes/Localith/Localith.node.ts"
-with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "curl/8"}), timeout=20) as r:
-    src = r.read().decode("utf-8", errors="replace")
+r = httpx.get(url, headers={"User-Agent": "curl/8"}, timeout=20)
+r.raise_for_status()
+src = r.text
 
 print("=== baseURL-style assignments ===")
 for m in re.finditer(r"(?:baseURL|baseUrl|apiUrl|api_url|API_URL|API_BASE)\s*[:=]\s*['\"`]([^'\"`]+)['\"`]", src):

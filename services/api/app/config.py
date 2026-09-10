@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     # Background auto-sync: every connected listing is re-synced on this
     # cadence (profile + reviews + metrics). Manual "Sync now" still works.
     LOCALITH_SYNC_INTERVAL_SECONDS: int = 100  # 1 min
+    # Scheduled-post publisher: how often due posts are pushed to Google.
+    POSTS_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
 
     model_config = {"env_file": ".env"}
 
