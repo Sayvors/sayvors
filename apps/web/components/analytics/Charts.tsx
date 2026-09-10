@@ -184,6 +184,36 @@ export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
   );
 }
 
+/* ── Sparkline (dashboard cards) ──────────────────────────────────── */
+
+export function Sparkline({
+  values,
+  color = "#5b2d8e",
+  width = 96,
+  height = 28,
+}: {
+  values: number[];
+  color?: string;
+  width?: number;
+  height?: number;
+}) {
+  if (values.length < 2) return null;
+  const max = Math.max(1, ...values);
+  const pts = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * width;
+      const y = height - 2 - (Math.max(0, v) / max) * (height - 4);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="shrink-0" width={width} height={height} aria-hidden>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={width} cy={height - 2 - (Math.max(0, values[values.length - 1]) / max) * (height - 4)} r="2.5" fill={color} />
+    </svg>
+  );
+}
+
 /* ── Rating distribution ──────────────────────────────────────────── */
 
 const STAR_COLORS: Record<number, string> = {

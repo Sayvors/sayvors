@@ -28,6 +28,7 @@ const ar: Dict = {
     menu: "Menu",
     attributes: "Attributes",
     googleUpdates: "Google Updates",
+    advancedSetup: "Advanced setup",
     access: "Access",
     collapse: "طيّ الشريط الجانبي",
     expand: "توسيع الشريط الجانبي",

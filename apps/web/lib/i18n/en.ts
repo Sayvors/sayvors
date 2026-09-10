@@ -26,6 +26,7 @@ const en = {
     menu: "Menu",
     attributes: "Attributes",
     googleUpdates: "Google Updates",
+    advancedSetup: "Advanced setup",
     access: "Access",
     collapse: "Collapse sidebar",
     expand: "Expand sidebar",

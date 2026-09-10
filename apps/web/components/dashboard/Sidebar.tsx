@@ -11,11 +11,21 @@ interface NavItem {
   key: string;
   icon: React.ReactNode;
   href: string;
+  children?: NavItem[];
 }
 
 interface NavGroup {
   label?: string;
   items: NavItem[];
+}
+
+function AdvancedIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" />
+    </svg>
+  );
 }
 
 const NAV_GROUPS: NavGroup[] = [
@@ -36,15 +46,22 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Google Business",
     items: [
       { key: "locations", icon: <LocationIcon />, href: "/dashboard/locations" },
-      { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
       { key: "services", icon: <WrenchIcon />, href: "/dashboard/services" },
       { key: "media", icon: <PhotoIcon />, href: "/dashboard/media" },
       { key: "posts", icon: <MegaphoneIcon />, href: "/dashboard/posts" },
       { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
-      { key: "qa", icon: <QuestionIcon />, href: "/dashboard/qa" },
-      { key: "menu", icon: <MenuIcon />, href: "/dashboard/menu" },
-      { key: "attributes", icon: <SlidersIcon />, href: "/dashboard/attributes" },
-      { key: "googleUpdates", icon: <AlertIcon />, href: "/dashboard/google-updates" },
+      {
+        key: "advancedSetup",
+        icon: <AdvancedIcon />,
+        href: "/dashboard/verification",
+        children: [
+          { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
+          { key: "qa", icon: <QuestionIcon />, href: "/dashboard/qa" },
+          { key: "menu", icon: <MenuIcon />, href: "/dashboard/menu" },
+          { key: "attributes", icon: <SlidersIcon />, href: "/dashboard/attributes" },
+          { key: "googleUpdates", icon: <AlertIcon />, href: "/dashboard/google-updates" },
+        ],
+      },
     ],
   },
   {
@@ -71,6 +88,7 @@ function isActive(pathname: string, href: string) {
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const { t } = useI18n();
@@ -104,6 +122,22 @@ export default function Sidebar() {
     setMenuOpen(false);
   }, [pathname]);
 
+  // Auto-expand a parent group when the active route lives inside it.
+  useEffect(() => {
+    for (const group of NAV_GROUPS) {
+      for (const item of group.items) {
+        if (item.children?.some((c) => isActive(pathname, c.href))) {
+          setOpenGroups((prev) => (prev[item.key] ? prev : { ...prev, [item.key]: true }));
+        }
+      }
+    }
+  }, [pathname]);
+
+  const toggleGroup = (key: string) => {
+    if (collapsed) setCollapsed(false);
+    setOpenGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   return (
     <aside
       className={`relative flex h-screen flex-col border-r border-white/[0.08] transition-all duration-200 ${
@@ -135,6 +169,69 @@ export default function Sidebar() {
               {group.items.map((item) => {
                 const label = (t.nav as Record<string, string>)[item.key] ?? item.key;
                 const active = isActive(pathname, item.href);
+                if (item.children) {
+                  const childActive = item.children.some((c) => isActive(pathname, c.href));
+                  const open = !!openGroups[item.key];
+                  return (
+                    <div key={item.href}>
+                      <button
+                        onClick={() => toggleGroup(item.key)}
+                        aria-expanded={open}
+                        title={collapsed ? label : undefined}
+                        className={`group relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
+                          childActive
+                            ? "bg-white/[0.1] text-white"
+                            : "text-white/50 hover:bg-white/[0.08] hover:text-white"
+                        }`}
+                      >
+                        <span
+                          aria-hidden
+                          className={`absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-violet-light to-magenta transition-opacity ${
+                            childActive ? "opacity-100" : "opacity-0"
+                          }`}
+                        />
+                        <span
+                          className={`relative h-4 w-4 shrink-0 transition-colors ${
+                            childActive ? "text-white" : "text-white/30 group-hover:text-white/60"
+                          }`}
+                        >
+                          {item.icon}
+                        </span>
+                        {!collapsed && <span className="flex-1 truncate text-left">{label}</span>}
+                        {!collapsed && (
+                          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3 w-3 shrink-0 text-white/30 transition-transform ${open ? "rotate-180" : ""}`}>
+                            <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </button>
+                      {open && !collapsed && (
+                        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-white/[0.08] pl-2">
+                          {item.children.map((child) => {
+                            const childLabel = (t.nav as Record<string, string>)[child.key] ?? child.key;
+                            const childIsActive = isActive(pathname, child.href);
+                            return (
+                              <Link
+                                key={child.href}
+                                href={child.href}
+                                aria-current={childIsActive ? "page" : undefined}
+                                className={`group/child flex items-center gap-2.5 rounded-md px-2.5 py-[6px] text-[12px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
+                                  childIsActive
+                                    ? "bg-white/[0.1] text-white"
+                                    : "text-white/45 hover:bg-white/[0.08] hover:text-white"
+                                }`}
+                              >
+                                <span className={`h-4 w-4 shrink-0 transition-colors ${childIsActive ? "text-white" : "text-white/25 group-hover/child:text-white/60"}`}>
+                                  {child.icon}
+                                </span>
+                                <span className="flex-1 truncate">{childLabel}</span>
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
                 return (
                   <Link
                     key={item.href}
