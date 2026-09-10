@@ -216,6 +216,17 @@ export default function LocationsPage() {
     { key: "google-updates", label: "Google Updates" },
   ];
 
+  // Deep links: /dashboard/locations?tab=hours etc.
+  useEffect(() => {
+    try {
+      const tab = new URLSearchParams(window.location.search).get("tab");
+      if (tab && tabs.some((t) => t.key === tab)) setActiveTab(tab);
+    } catch {
+      /* non-browser or malformed query — ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="h-full overflow-y-auto p-6 space-y-5">
       {/* Header */}

@@ -146,6 +146,7 @@ function PresenceSection({ presence }: { presence: PresenceData }) {
   const cells: { label: string; value: string; sub?: string }[] = [
     { label: "Search views", value: String(p.searchViews) },
     { label: "Map views", value: String(p.mapViews) },
+    { label: "Impressions", value: String(p.searchViews + p.mapViews), sub: "search + maps" },
     { label: "Website clicks", value: String(p.websiteClicks) },
     { label: "Direction requests", value: String(p.directionRequests) },
     { label: "Phone calls", value: String(p.phoneCalls) },
@@ -153,9 +154,6 @@ function PresenceSection({ presence }: { presence: PresenceData }) {
     { label: "Avg posting time", value: String(p.avgPostingTime) },
     { label: "Avg response time", value: `${p.avgResponseTimeH}h` },
     { label: "Response percentage", value: `${p.responsePct}%` },
-    { label: "Total reviews", value: String(p.totalReviews) },
-    { label: "Average rating", value: `${p.averageRating.toFixed(1)} / 5` },
-    { label: "Impressions", value: String(p.searchViews + p.mapViews), sub: "search + maps" },
   ];
   return (
     <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">

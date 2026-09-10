@@ -84,7 +84,11 @@ async def get_executive_summary(
         "problems": problem_lines,
         "opportunity": opportunity_line,
         "recommended_action": recommended_action,
-        "benchmark_text": f"You're outperforming {min(99, 50 + (overview['reputation_score'] - 50))}% of comparable businesses on reply discipline and rating." if overview["response_rate"] >= 70 else "Replying to more reviews will lift you above comparable businesses.",
+        "benchmark_text": (
+            "Your reply discipline is strong — keep answering every review to protect it."
+            if overview["response_rate"] >= 70
+            else "Each reply lifts trust — answering every review is the fastest win available."
+        ),
     }
 
 

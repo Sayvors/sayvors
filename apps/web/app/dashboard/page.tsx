@@ -7,7 +7,7 @@ import { apiFetch } from "@/lib/api-rag";
 import { fetchOverview, fetchTimeseries, type Overview, type TimeseriesPoint } from "@/lib/api-analytics";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
-import { MetricChart, RatingDistribution } from "@/components/analytics/Charts";
+import { MetricChart, RatingDistribution, Sparkline } from "@/components/analytics/Charts";
 
 interface ExecSummary {
   headline: string;
@@ -137,6 +137,171 @@ function ExecutiveSummaryBanner() {
 type DashboardChannel = { id: string; platform: string; display_name: string | null };
 type DashboardService = { is_offered: boolean };
 
+function MoneyHero() {
+  const [data, setData] = useState<{
+    total: number; website: number; calls: number; directions: number; window: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const prof = await apiFetch("/api/v1/integrations/localith/profile");
+        const perf = prof?.metrics?.listings?.[0];
+        if (!perf) return;
+        const n = (v: unknown) => {
+          const x = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+          return Number.isFinite(x) ? x : 0;
+        };
+        const website = n(perf.websiteClicks);
+        const calls = n(perf.callClicks);
+        const directions = n(perf.directions);
+        const conn = prof?.connection ?? {};
+        if (!cancelled) {
+          setData({
+            total: website + calls + directions,
+            website, calls, directions,
+            window: conn.metrics_start && conn.metrics_end
+              ? `${conn.metrics_start} → ${conn.metrics_end}`
+              : "last 30 days",
+          });
+        }
+      } catch {
+        /* offline — hero stays hidden */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!data) return null;
+  return (
+    <Link
+      href="/dashboard/analytics"
+      aria-label="Customer actions — open analytics"
+      className="group relative block overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-emerald-600 to-teal-500 p-5 text-white shadow-md shadow-emerald-600/20 outline-none transition duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-white/60"
+    >
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-white/70">Customer actions</p>
+          <p className="mt-1 text-[34px] font-bold leading-none tabular-nums">{data.total}</p>
+          <p className="mt-1 text-[11px] text-white/70">{data.window} · via Google</p>
+        </div>
+        <div className="flex gap-2">
+          {[
+            { label: "Website", value: data.website },
+            { label: "Calls", value: data.calls },
+            { label: "Directions", value: data.directions },
+          ].map((c) => (
+            <div key={c.label} className="rounded-xl bg-white/10 px-3 py-2 text-center backdrop-blur-sm">
+              <p className="text-[16px] font-bold tabular-nums">{c.value}</p>
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-white/70">{c.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+interface AttentionItem {
+  severity: "high" | "medium";
+  title: string;
+  detail: string;
+  href: string;
+}
+
+function AttentionQueue() {
+  const [items, setItems] = useState<AttentionItem[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const found: AttentionItem[] = [];
+      try {
+        const [overview, profile] = await Promise.all([
+          fetchOverview(30, null).catch(() => null),
+          apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
+        ]);
+        if (overview && overview.unanswered > 0) {
+          found.push({
+            severity: "high",
+            title: `${overview.unanswered} review${overview.unanswered === 1 ? "" : "s"} need${overview.unanswered === 1 ? "s" : ""} a reply`,
+            detail: "Replies lift trust and local ranking",
+            href: "/dashboard/reviews",
+          });
+        }
+        const delta = overview?.period.rating_delta;
+        if (typeof delta === "number" && delta < 0) {
+          found.push({
+            severity: "high",
+            title: `Rating dipped ${Math.abs(delta)}★ this month`,
+            detail: "Check what changed and respond fast",
+            href: "/dashboard/reviews",
+          });
+        }
+        const conn = profile?.connection;
+        if (conn && !conn.phone_number) {
+          found.push({
+            severity: "medium",
+            title: "No phone number on your profile",
+            detail: "Customers can't call you from Google",
+            href: "/dashboard/locations?tab=details",
+          });
+        }
+        if (conn && !(conn.website_url || "").trim()) {
+          found.push({
+            severity: "medium",
+            title: "No website linked",
+            detail: "Add one to turn views into visits",
+            href: "/dashboard/locations?tab=details",
+          });
+        }
+      } catch {
+        /* offline — card stays hidden */
+      }
+      if (!cancelled) setItems(found.slice(0, 3));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (items === null) return null;
+  const allClear = items.length === 0;
+  return (
+    <section
+      aria-label="Needs attention"
+      className={`rounded-2xl border-2 bg-white/80 p-4 backdrop-blur-sm ${allClear ? "border-emerald-200/60" : "border-white"}`}
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <span className={`h-2 w-2 rounded-full ${allClear ? "bg-emerald-500" : "bg-coral"}`} aria-hidden />
+        <h2 className="text-[14px] font-bold text-ink">{allClear ? "All clear" : "Needs attention"}</h2>
+        {allClear && <span className="text-[12px] text-ink/45">nothing urgent right now</span>}
+      </div>
+      {!allClear && (
+        <ul className="divide-y divide-ink/[0.05]">
+          {items.map((item) => (
+            <li key={item.title}>
+              <Link href={item.href} className="group flex items-center gap-3 rounded-xl px-2 py-2.5 outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.severity === "high" ? "bg-coral" : "bg-amber-500"}`} aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-ink">{item.title}</span>
+                  <span className="block truncate text-[11px] text-ink/45">{item.detail}</span>
+                </span>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="h-3.5 w-3.5 shrink-0 text-ink/25 transition group-hover:translate-x-0.5 group-hover:text-deep-violet">
+                  <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function BusinessPulse() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
@@ -144,6 +309,9 @@ function BusinessPulse() {
   const [channelId, setChannelId] = useState("");
   const [serviceCount, setServiceCount] = useState(0);
   const [offeredCount, setOfferedCount] = useState(0);
+  const [hoursStatus, setHoursStatus] = useState<{ open: boolean | null; label: string; detail: string }>({
+    open: null, label: "--", detail: "Not configured yet",
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -184,6 +352,49 @@ function BusinessPulse() {
     };
   }, [channelId]);
 
+  // Live open/closed status from stored regular hours (independent of scope).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const prof = await apiFetch("/api/v1/integrations/localith/profile");
+        const listingId = prof?.connection?.listing_id;
+        if (!listingId) return;
+        const data = await apiFetch(`/api/v1/locations/${listingId}`);
+        const regular = data?.hours?.regular;
+        if (!regular || typeof regular !== "object") return;
+        const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const now = new Date();
+        const today = regular[days[now.getDay()]];
+        if (!today) return;
+        const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+        const fmt = (t: string) => {
+          const [h, m] = t.split(":").map(Number);
+          if (Number.isNaN(h)) return t;
+          const ap = h >= 12 ? "PM" : "AM";
+          const h12 = h % 12 === 0 ? 12 : h % 12;
+          return `${h12}:${String(m ?? 0).padStart(2, "0")} ${ap}`;
+        };
+        if (!cancelled) {
+          if (today.closed || !today.open || !today.close) {
+            setHoursStatus({ open: false, label: "Closed", detail: "Closed today" });
+          } else if (today.open <= hhmm && hhmm < today.close) {
+            setHoursStatus({ open: true, label: "Open now", detail: `Closes ${fmt(today.close)}` });
+          } else if (hhmm < today.open) {
+            setHoursStatus({ open: false, label: "Closed", detail: `Opens today ${fmt(today.open)}` });
+          } else {
+            setHoursStatus({ open: false, label: "Closed", detail: `Opens ${fmt(today.open)} tomorrow` });
+          }
+        }
+      } catch {
+        /* keep placeholder when offline or unconfigured */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const totalReviews = overview?.total_reviews ?? 0;
   const ratingDistribution = overview?.rating_distribution ?? {};
 
@@ -201,10 +412,16 @@ function BusinessPulse() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <PulseStat label="Total reviews" value={totalReviews} detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"} color="text-amber-600" href="/dashboard/reviews" />
+        <PulseStat label="Total reviews" value={totalReviews} detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"} color="text-amber-600" href="/dashboard/reviews" delta={overview?.period.reviews_delta_pct} deltaSuffix="%" spark={points.map((p) => p.reviews_count)} sparkColor="#d97706" />
         <PulseStat label="Connected businesses" value={channels.length} detail={channels.length ? "Google Business channels" : "No Google channel yet"} color="text-deep-violet" href="/dashboard/locations" />
         <PulseStat label="Services offered" value={offeredCount} detail={serviceCount ? `${serviceCount} services configured` : "No service data yet"} color="text-emerald-600" href="/dashboard/services" />
-        <PulseStat label="Working hours" value="--" detail="Not configured yet" color="text-sky-600" href="/dashboard/locations" />
+        <PulseStat
+          label="Working hours"
+          value={hoursStatus.label}
+          detail={hoursStatus.detail}
+          color={hoursStatus.open === null ? "text-sky-600" : hoursStatus.open ? "text-emerald-600" : "text-coral"}
+          href="/dashboard/locations?tab=hours"
+        />
       </div>
 
       <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr]">
@@ -224,15 +441,28 @@ function BusinessPulse() {
   );
 }
 
-function PulseStat({ label, value, detail, color, href }: { label: string; value: number | string; detail: string; color: string; href?: string }) {
+function PulseStat({ label, value, detail, color, href, delta, deltaSuffix = "", spark, sparkColor }: { label: string; value: number | string; detail: string; color: string; href?: string; delta?: number | null; deltaSuffix?: string; spark?: number[]; sparkColor?: string }) {
   const cls = "group block rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40";
+  const deltaChip = typeof delta === "number" ? (
+    <span className={`ml-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-px align-middle text-[10px] font-bold tabular-nums ${delta > 0 ? "bg-emerald/10 text-emerald" : delta < 0 ? "bg-coral/10 text-coral" : "bg-ink/[0.05] text-ink/50"}`}>
+      {delta !== 0 && (
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" className={`h-2 w-2 ${delta < 0 ? "rotate-180" : ""}`} aria-hidden>
+          <path d="M6 10V2M2.5 5.5L6 2l3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+      {delta > 0 ? "+" : ""}{delta}{deltaSuffix}
+    </span>
+  ) : null;
   const inner = (
     <>
       <p className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-ink/50">
         <span>{label}</span>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="h-3 w-3 text-ink/25 transition group-hover:translate-x-0.5 group-hover:text-deep-violet"><path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </p>
-      <p className={`mt-1 text-[22px] font-bold ${color}`}>{value}</p>
+      <p className={`mt-1 flex items-center justify-between gap-2 text-[22px] font-bold ${color}`}>
+        <span>{value}{deltaChip}</span>
+        {spark && spark.length > 1 && <Sparkline values={spark} color={sparkColor} />}
+      </p>
       <p className="truncate text-[10px] text-ink/40">{detail}</p>
     </>
   );
@@ -284,13 +514,6 @@ function writeChecklist(next: Record<string, boolean>) {
   checklistListeners.forEach((listener) => listener());
 }
 
-function fmtResponseTime(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined) return "--";
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  if (seconds < 86_400) return `${(seconds / 3600).toFixed(1)}h`;
-  return `${(seconds / 86_400).toFixed(1)}d`;
-}
-
 export default function DashboardPage() {
   const { user } = useAuth();
   const { dir, t } = useI18n();
@@ -328,43 +551,6 @@ export default function DashboardPage() {
   }, []);
   const showChecklist = !allDone || !dismissed;
 
-  const [dashStats, setDashStats] = useState<{ messages: number; channels: number; replied: number; responseTime: string } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const chData = await apiFetch("/api/v1/channels/?limit=100");
-        const google = (chData.channels ?? []).filter((c: { platform: string }) => c.platform === "google_reviews");
-        const msgTotals = await Promise.all(
-          google.map((c: { id: string }) =>
-            apiFetch(`/api/v1/channels/${c.id}/messages?limit=1`).then((d) => d.total ?? 0).catch(() => 0)
-          )
-        );
-        const o = await fetchOverview(30, null).catch(() => null);
-        if (!cancelled) {
-          setDashStats({
-            messages: msgTotals.reduce((a: number, b: number) => a + b, 0),
-            channels: google.length,
-            replied: o ? Math.max(0, o.total_reviews - o.unanswered) : 0,
-            responseTime: fmtResponseTime(o?.avg_response_seconds),
-          });
-        }
-      } catch {
-        if (!cancelled) setDashStats(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const statCards = [
-    { labelKey: "messages", subKey: "messagesSub", value: dashStats ? String(dashStats.messages) : "0", href: "/dashboard/channels" },
-    { labelKey: "channels", subKey: "channelsSub", value: dashStats ? String(dashStats.channels) : "0", href: "/dashboard/channels" },
-    { labelKey: "reviews", subKey: "reviewsSub", value: dashStats ? String(dashStats.replied) : "0", href: "/dashboard/reviews" },
-    { labelKey: "responseTime", subKey: "responseTimeSub", value: dashStats ? dashStats.responseTime : "--", href: "/dashboard/reviews" },
-  ] as const;
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-5 bg-[#f3f0ff]">
       {/* AI Executive Summary */}
@@ -377,6 +563,12 @@ export default function DashboardPage() {
           {t.dashboard.subtitle}
         </p>
       </div>
+
+      {/* North star: money actions */}
+      <MoneyHero />
+
+      {/* Needs attention — the daily driver */}
+      <AttentionQueue />
 
       {/* Getting Started checklist — first thing a new user must see */}
       {showChecklist && (
@@ -524,25 +716,6 @@ export default function DashboardPage() {
       </div>
 
       <BusinessPulse />
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {statCards.map((stat) => (
-          <Link
-            key={stat.labelKey}
-            href={stat.href}
-            aria-label={t.dashboard.stats[stat.labelKey]}
-            className="group rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
-          >
-            <p className="flex items-center justify-between text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-ink/55">
-              <span>{t.dashboard.stats[stat.labelKey]}</span>
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="h-3 w-3 text-ink/25 transition group-hover:translate-x-0.5 group-hover:text-deep-violet"><path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </p>
-            <p className="mt-1 text-[20px] sm:text-[22px] font-bold text-ink transition-colors group-hover:text-deep-violet">{stat.value}</p>
-            <p className="text-[10px] text-ink/40">{t.dashboard.stats[stat.subKey]}</p>
-          </Link>
-        ))}
-      </div>
 
     </div>
   );
