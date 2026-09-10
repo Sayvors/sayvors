@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
-type PostStatus = "LIVE" | "SCHEDULED" | "ARCHIVED";
+type PostStatus = "LIVE" | "SCHEDULED" | "ARCHIVED" | "DRAFT" | "FAILED";
 type PostTab = "all" | "scheduled" | "archived";
 type View = { kind: "list" } | { kind: "create" } | { kind: "detail"; id: string; editing: boolean };
 
@@ -21,7 +21,6 @@ interface PostItem {
   status: PostStatus;
   createdAt: string;
   scheduledAt?: string;
-  views: number;
 }
 
 interface LocationOption {
@@ -29,31 +28,13 @@ interface LocationOption {
   name: string;
 }
 
-const MOCK_LOCATIONS: LocationOption[] = [
-  { id: "loc_1", name: "Sayvors Al Malqa" },
-  { id: "loc_2", name: "Sayvors Olaya" },
-];
-
-const MOCK_POSTS: PostItem[] = [
-  {
-    id: "p1", title: "Weekend Offer — 20% Off", locationId: "loc_1", locationName: "Sayvors Al Malqa",
-    businessName: "Sayvors", description: "Weekend offer: 20% off all services. Visit us today and bring a friend!",
-    tags: ["offer", "weekend"], keywords: ["discount", "services", "riyadh"], images: ["offer-banner.jpg"],
-    status: "LIVE", createdAt: "2026-09-01", views: 1840,
-  },
-  {
-    id: "p2", title: "New Branch Opening Soon", locationId: "loc_2", locationName: "Sayvors Olaya",
-    businessName: "Sayvors", description: "New branch opening soon in Olaya. Stay tuned for launch offers!",
-    tags: ["announcement"], keywords: ["new branch", "olaya"], images: [],
-    status: "SCHEDULED", createdAt: "2026-09-05", scheduledAt: "2026-09-12T10:00", views: 0,
-  },
-  {
-    id: "p3", title: "Eid Timings Update", locationId: "loc_1", locationName: "Sayvors Al Malqa",
-    businessName: "Sayvors", description: "Eid timings updated. Check our holiday hours before visiting.",
-    tags: ["hours", "holiday"], keywords: ["eid", "timings"], images: [],
-    status: "ARCHIVED", createdAt: "2026-08-20", views: 920,
-  },
-];
+const BACKEND_STATUS: Record<string, PostStatus> = {
+  published: "LIVE",
+  scheduled: "SCHEDULED",
+  archived: "ARCHIVED",
+  draft: "DRAFT",
+  failed: "FAILED",
+};
 
 export default function PostsPage() {
   return (
@@ -89,15 +70,37 @@ function PostsInner() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch("/api/v1/locations/?limit=100");
+        // Real location: the Localith-connected listing first.
+        try {
+          const prof = await apiFetch("/api/v1/integrations/localith/profile");
+          if (!cancelled && prof?.connection) {
+            const c = prof.connection as { listing_id: string; listing_name: string };
+            const locs = [{ id: c.listing_id, name: c.listing_name }];
+            if (!cancelled) {
+              setLocations(locs);
+              setSelectedId(locs[0].id);
+              return;
+            }
+          }
+        } catch {
+          /* fall through to channels */
+        }
+        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const googleChannels = (data.channels ?? [])
+          .filter((channel: { platform: string }) => channel.platform === "google_reviews")
+          .map((channel: { id: string; display_name: string | null }) => ({
+            id: channel.id,
+            name: channel.display_name ?? "Google location",
+          }));
         if (!cancelled) {
-          const locs = data.locations ?? MOCK_LOCATIONS;
-          setLocations(locs);
-          if (locs.length) setSelectedId(locs[0].id);
+          setLocations(googleChannels);
+          if (googleChannels.length) setSelectedId(googleChannels[0].id);
         }
       } catch {
-        setLocations(MOCK_LOCATIONS);
-        setSelectedId(MOCK_LOCATIONS[0].id);
+        if (!cancelled) {
+          setLocations([]);
+          setSelectedId(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -105,18 +108,24 @@ function PostsInner() {
     return () => { cancelled = true; };
   }, []);
 
+  const loadPosts = async () => {
+    const q = selectedId ? `?listing_id=${encodeURIComponent(selectedId)}` : "";
+    const data = await apiFetch(`/api/v1/posts/${q}`);
+    return normalizePosts(data);
+  };
+
   useEffect(() => {
-    if (!selectedId) return;
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch(`/api/v1/locations/${selectedId}/posts`);
-        if (!cancelled) setPosts(normalizePosts(data.posts) ?? MOCK_POSTS);
+        const items = await loadPosts();
+        if (!cancelled) setPosts(items);
       } catch {
-        if (!cancelled) setPosts(MOCK_POSTS);
+        if (!cancelled) setPosts([]);
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
   const counts = useMemo(() => ({
@@ -128,7 +137,7 @@ function PostsInner() {
   const filtered = posts.filter((p) => {
     if (tab === "scheduled") return p.status === "SCHEDULED";
     if (tab === "archived") return p.status === "ARCHIVED";
-    return p.status === "LIVE";
+    return p.status === "LIVE" || p.status === "FAILED" || p.status === "DRAFT";
   });
 
   const activePost = view.kind === "detail" ? posts.find((p) => p.id === view.id) ?? null : null;
@@ -163,7 +172,7 @@ function PostsInner() {
     setKeywords(p.keywords);
     setImages(p.images);
     setScheduleEnabled(p.status === "SCHEDULED");
-    setScheduledAt(p.scheduledAt ?? "");
+    setScheduledAt((p.scheduledAt ?? "").slice(0, 16));
     setView({ kind: "detail", id, editing });
   };
 
@@ -182,93 +191,135 @@ function PostsInner() {
 
   const valid = title.trim() && businessName.trim() && description.trim() && postLocationId && (!scheduleEnabled || scheduledAt);
 
-  const payload = () => {
-    const loc = locations.find((l) => l.id === postLocationId);
-    return {
-      title: title.trim(),
-      locationId: postLocationId,
-      locationName: loc?.name ?? "",
-      businessName: businessName.trim(),
-      description: description.trim(),
-      tags,
-      keywords,
-      images,
-    };
+  const showBannerTimed = (kind: "ok" | "err", text: string) => {
+    setBanner({ kind, text });
+    setTimeout(() => setBanner(null), 4000);
+  };
+
+  const refreshPosts = async () => {
+    try {
+      setPosts(await loadPosts());
+    } catch {
+      /* keep current list on failure */
+    }
   };
 
   const handleCreate = async () => {
     if (!valid) return;
     setSubmitting(true);
-    const status: PostStatus = scheduleEnabled ? "SCHEDULED" : "LIVE";
-    const base = payload();
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/posts`, {
+      const res = await apiFetch("/api/v1/posts/", {
         method: "POST",
-        body: JSON.stringify({ ...base, status, scheduledAt: scheduleEnabled ? scheduledAt : undefined }),
+        body: JSON.stringify({
+          listing_id: postLocationId,
+          location_name: locations.find((l) => l.id === postLocationId)?.name ?? "",
+          business_name: businessName.trim(),
+          title: title.trim(),
+          description: description.trim(),
+          tags,
+          keywords,
+          image_urls: images,
+          action: scheduleEnabled ? "schedule" : "publish",
+          scheduled_on: scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : null,
+        }),
       });
-      setPosts((prev) => [{
-        id: `p_${Date.now()}`, ...base,
-        status, scheduledAt: scheduleEnabled ? scheduledAt : undefined,
-        createdAt: new Date().toISOString().slice(0, 10), views: 0,
-      }, ...prev]);
+      await refreshPosts();
       setView({ kind: "list" });
-      setBanner({ kind: "ok", text: scheduleEnabled ? "Post scheduled. We will publish it via Google at that time." : "Post published." });
-      setTimeout(() => setBanner(null), 2500);
-    } catch {
-      setBanner({ kind: "err", text: "Could not save post." });
+      const skipped = res?.images_skipped ?? 0;
+      showBannerTimed("ok", scheduleEnabled
+        ? "Post scheduled — our worker will publish it to Google at that time."
+        : `Published to Google.${skipped ? ` ${skipped} local image(s) not sent — attach hosted URLs to include images.` : ""}`);
+    } catch (e) {
+      showBannerTimed("err", e instanceof Error ? e.message.slice(0, 200) : "Could not save post.");
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
 
   const handleUpdate = async () => {
     if (view.kind !== "detail" || !valid) return;
     setSubmitting(true);
-    const status: PostStatus = scheduleEnabled ? "SCHEDULED" : activePost?.status === "ARCHIVED" ? "ARCHIVED" : "LIVE";
-    const base = payload();
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/posts/${view.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ ...base, status, scheduledAt: scheduleEnabled ? scheduledAt : undefined }),
+      const body: Record<string, unknown> = {
+        location_name: locations.find((l) => l.id === postLocationId)?.name ?? "",
+        business_name: businessName.trim(),
+        title: title.trim(),
+        description: description.trim(),
+        tags,
+        keywords,
+        image_urls: images,
+      };
+      if (scheduleEnabled) {
+        body.status = "scheduled";
+        body.scheduled_on = scheduledAt ? new Date(scheduledAt).toISOString() : null;
+      } else if (activePost?.status === "SCHEDULED" || activePost?.status === "DRAFT") {
+        body.status = "draft";
+        body.scheduled_on = null;
+      }
+      await apiFetch(`/api/v1/posts/${view.id}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
       });
-      setPosts((prev) => prev.map((p) => p.id === view.id
-        ? { ...p, ...base, status, scheduledAt: scheduleEnabled ? scheduledAt : undefined }
-        : p));
+      await refreshPosts();
       setView({ kind: "detail", id: view.id, editing: false });
-      setBanner({ kind: "ok", text: "Post updated." });
-      setTimeout(() => setBanner(null), 2500);
-    } catch {
-      setBanner({ kind: "err", text: "Could not update post." });
+      showBannerTimed("ok", "Post updated.");
+    } catch (e) {
+      showBannerTimed("err", e instanceof Error ? e.message.slice(0, 200) : "Could not update post.");
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
 
   const handleDelete = async (id: string) => {
+    if (!confirm("Delete this post permanently? Published copies on Google stay.")) return;
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/posts/${id}`, { method: "DELETE" });
-    } catch { /* optimistic */ }
-    setPosts((prev) => prev.map((p) => p.id === id ? { ...p, status: "ARCHIVED" as PostStatus } : p));
+      await apiFetch(`/api/v1/posts/${id}`, { method: "DELETE" });
+      setPosts((prev) => prev.filter((p) => p.id !== id));
+      showBannerTimed("ok", "Post deleted.");
+    } catch {
+      showBannerTimed("err", "Could not delete post.");
+    }
+    setView({ kind: "list" });
+  };
+
+  const handleArchive = async (id: string) => {
+    try {
+      await apiFetch(`/api/v1/posts/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ status: "archived" }),
+      });
+      await refreshPosts();
+      showBannerTimed("ok", "Post archived.");
+    } catch {
+      showBannerTimed("err", "Could not archive post.");
+    }
     setView({ kind: "list" });
   };
 
   const handleRestore = async (id: string) => {
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/posts/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "LIVE" }),
+      await apiFetch(`/api/v1/posts/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ status: "published" }),
       });
-    } catch { /* optimistic */ }
-    setPosts((prev) => prev.map((p) => p.id === id ? { ...p, status: "LIVE" as PostStatus } : p));
-    setView({ kind: "detail", id, editing: false });
+      await refreshPosts();
+      showBannerTimed("ok", "Post restored (already live on Google — not re-published).");
+      setView({ kind: "detail", id, editing: false });
+    } catch {
+      showBannerTimed("err", "Could not restore post.");
+    }
   };
 
   const handlePublishNow = async (id: string) => {
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/posts/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "LIVE" }),
-      });
-    } catch { /* optimistic */ }
-    setPosts((prev) => prev.map((p) => p.id === id ? { ...p, status: "LIVE" as PostStatus, scheduledAt: undefined } : p));
+      const res = await apiFetch(`/api/v1/posts/${id}/publish`, { method: "POST" });
+      await refreshPosts();
+      const skipped = res?.images_skipped ?? 0;
+      showBannerTimed("ok", `Published to Google.${skipped ? ` ${skipped} local image(s) not sent.` : ""}`);
+    } catch (e) {
+      showBannerTimed("err", e instanceof Error ? e.message.slice(0, 200) : "Publish failed.");
+      await refreshPosts();
+    }
   };
 
   if (loading) return <div className="flex h-full items-center justify-center"><LogoLoader size={32} /></div>;
@@ -349,9 +400,7 @@ function PostsInner() {
                           <span className="block truncate text-[14px] font-bold text-ink dark:text-fog">{p.title}</span>
                           <span className="mt-0.5 block text-[11px] text-ink/40 dark:text-fog/40">{p.businessName} · {p.locationName}</span>
                         </span>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${p.status === "LIVE" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" : p.status === "SCHEDULED" ? "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400" : "bg-ink/[0.05] text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40"}`}>
-                          {p.status}
-                        </span>
+                        <StatusBadge status={p.status} />
                       </span>
                       <span className="mt-2 line-clamp-2 block text-[13px] leading-relaxed text-ink/70 dark:text-fog/70">{p.description}</span>
                       <span className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -361,7 +410,9 @@ function PostsInner() {
                         {p.images.length > 0 && (
                           <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06]">📷 {p.images.length}</span>
                         )}
-                        <span className="ml-auto text-[11px] text-ink/35 dark:text-fog/35">{p.views.toLocaleString()} views{p.status === "SCHEDULED" && p.scheduledAt ? ` · ${new Date(p.scheduledAt).toLocaleString()}` : ""}</span>
+                        {p.status === "SCHEDULED" && p.scheduledAt && (
+                          <span className="ml-auto text-[11px] text-ink/35 dark:text-fog/35">Publishes {new Date(p.scheduledAt).toLocaleString()}</span>
+                        )}
                       </span>
                     </button>
                   ))}
@@ -428,9 +479,7 @@ function PostsInner() {
                         <h2 className="text-[17px] font-bold text-ink dark:text-fog">{activePost.title}</h2>
                         <p className="mt-0.5 text-[12px] text-ink/40 dark:text-fog/40">{activePost.businessName} · {activePost.locationName}</p>
                       </div>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${activePost.status === "LIVE" ? "bg-emerald-100 text-emerald-700" : activePost.status === "SCHEDULED" ? "bg-amber-100 text-amber-700" : "bg-ink/[0.05] text-ink/40"}`}>
-                        {activePost.status}
-                      </span>
+                      <StatusBadge status={activePost.status} />
                     </div>
                     <p className="mt-3 text-[13px] leading-relaxed text-ink/80 dark:text-fog/80">{activePost.description}</p>
                     {activePost.tags.length > 0 && (
@@ -444,18 +493,23 @@ function PostsInner() {
                       <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">Keywords: {activePost.keywords.join(", ")}</p>
                     )}
                     <p className="mt-3 text-[11px] text-ink/35 dark:text-fog/35">
-                      Created {activePost.createdAt} · {activePost.views.toLocaleString()} views
+                      Created {activePost.createdAt}
                       {activePost.status === "SCHEDULED" && activePost.scheduledAt ? ` · Publishes ${new Date(activePost.scheduledAt).toLocaleString()}` : ""}
                     </p>
                     <div className="mt-4 flex flex-wrap gap-2 border-t border-ink/[0.05] pt-4">
                       {activePost.status !== "ARCHIVED" && (
                         <button onClick={() => openDetail(activePost.id, true)} className="btn-secondary">Edit</button>
                       )}
-                      {activePost.status === "SCHEDULED" && (
-                        <button onClick={() => handlePublishNow(activePost.id)} className="rounded-xl bg-emerald-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-emerald-600">Publish now</button>
+                      {(activePost.status === "SCHEDULED" || activePost.status === "FAILED" || activePost.status === "DRAFT") && (
+                        <button onClick={() => handlePublishNow(activePost.id)} className="rounded-xl bg-emerald-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-emerald-600">
+                          {activePost.status === "FAILED" ? "Retry publish" : "Publish now"}
+                        </button>
                       )}
                       {activePost.status !== "ARCHIVED" ? (
-                        <button onClick={() => handleDelete(activePost.id)} className="rounded-xl border border-red-200 px-4 py-2 text-[12px] font-semibold text-red-600 hover:bg-red-50">Delete</button>
+                        <>
+                          <button onClick={() => handleArchive(activePost.id)} className="rounded-xl border border-ink/[0.1] px-4 py-2 text-[12px] font-semibold text-ink/50 hover:bg-ink/[0.04] dark:text-fog/50">Archive</button>
+                          <button onClick={() => handleDelete(activePost.id)} className="rounded-xl border border-red-200 px-4 py-2 text-[12px] font-semibold text-red-600 hover:bg-red-50">Delete</button>
+                        </>
                       ) : (
                         <button onClick={() => handleRestore(activePost.id)} className="btn-primary">Restore</button>
                       )}
@@ -472,22 +526,39 @@ function PostsInner() {
   );
 }
 
-function normalizePosts(raw: unknown): PostItem[] | null {
-  if (!Array.isArray(raw)) return null;
-  return raw.map((p: Record<string, unknown>, i: number) => ({
+function StatusBadge({ status }: { status: PostStatus }) {
+  const cls =
+    status === "LIVE"
+      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+      : status === "SCHEDULED"
+        ? "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+        : status === "FAILED"
+          ? "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400"
+          : status === "DRAFT"
+            ? "bg-sky-100 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400"
+            : "bg-ink/[0.05] text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40";
+  return (
+    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}`}>
+      {status}
+    </span>
+  );
+}
+
+function normalizePosts(raw: unknown): PostItem[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Record<string, unknown>[]).map((p: Record<string, unknown>, i: number) => ({
     id: String(p.id ?? `p_${i}`),
-    title: String(p.title ?? p.summary ?? "Untitled post"),
-    locationId: String(p.locationId ?? p.location_id ?? "loc_1"),
-    locationName: String(p.locationName ?? p.location_name ?? ""),
-    businessName: String(p.businessName ?? p.business_name ?? "Sayvors"),
-    description: String(p.description ?? p.summary ?? ""),
+    title: String(p.title ?? "Untitled post"),
+    locationId: String(p.listing_id ?? p.locationId ?? p.location_id ?? ""),
+    locationName: String(p.location_name ?? p.locationName ?? ""),
+    businessName: String(p.business_name ?? p.businessName ?? "Sayvors"),
+    description: String(p.description ?? ""),
     tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
     keywords: Array.isArray(p.keywords) ? p.keywords.map(String) : [],
-    images: Array.isArray(p.images) ? p.images.map(String) : [],
-    status: (p.status as PostStatus) ?? "LIVE",
-    createdAt: String(p.createdAt ?? p.created_at ?? new Date().toISOString().slice(0, 10)),
-    scheduledAt: p.scheduledAt ? String(p.scheduledAt) : p.scheduled_at ? String(p.scheduled_at) : undefined,
-    views: Number(p.views ?? 0),
+    images: Array.isArray(p.image_urls ?? p.images) ? ((p.image_urls ?? p.images) as unknown[]).map(String) : [],
+    status: BACKEND_STATUS[String(p.status)] ?? "DRAFT",
+    createdAt: String(p.created_at ?? p.createdAt ?? new Date().toISOString().slice(0, 10)).slice(0, 10),
+    scheduledAt: p.scheduled_on ? String(p.scheduled_on) : p.scheduledAt ? String(p.scheduledAt) : undefined,
   }));
 }
 

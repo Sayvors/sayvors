@@ -30,11 +30,11 @@ Env vars (never committed)::
 
 from __future__ import annotations
 
-import json
 import os
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
+
+import httpx
 
 
 @dataclass
@@ -72,21 +72,31 @@ def _config() -> tuple[str, str, str]:
     return (base or "https://embedsocial.com/app/api").rstrip("/"), key, items_path or "rest/v1/items"
 
 
+_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "sayvors-spike/1.0",
+}
+
+
+def _http_url(url: str) -> str:
+    """Fail fast on misconfigured base URLs. httpx only speaks http(s),
+    so file://-style exfiltration is impossible by construction."""
+    if not url.startswith(("http://", "https://")):
+        raise ValueError(f"Localith base URL must be http(s), got: {url[:60]!r}")
+    return url
+
+
 def _get(path: str, params: dict | None = None, timeout: int = 30) -> dict | list:
     base, key, _ = _config()
-    url = f"{base}/{path.lstrip('/')}"
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(
+    url = _http_url(f"{base}/{path.lstrip('/')}")
+    resp = httpx.get(
         url,
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {key}",
-            "User-Agent": "sayvors-spike/1.0",
-        },
+        params=params or {},
+        headers={**_HEADERS, "Authorization": f"Bearer {key}"},
+        timeout=timeout,
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-        return json.loads(resp.read().decode("utf-8"))
+    resp.raise_for_status()
+    return resp.json()
 
 
 def fetch_items(limit: int = 50, listing_id: str | None = None) -> list[dict]:
@@ -148,22 +158,73 @@ def _unwrap_list(payload: dict | list) -> list[dict]:
     return []
 
 
+def _post(path: str, body: dict, timeout: int = 60) -> dict | list:
+    base, key, _ = _config()
+    url = _http_url(f"{base}/{path.lstrip('/')}")
+    resp = httpx.post(
+        url,
+        json=body,
+        headers={**_HEADERS, "Authorization": f"Bearer {key}"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def publish_media_post(
+    listing_id: str,
+    *,
+    post_type: str = "update",
+    title: str | None = None,
+    caption: str = "",
+    image_urls: list | None = None,
+    cta_type: str | None = None,
+    cta_url: str | None = None,
+    scheduled_on: str | None = None,
+    extra: dict | None = None,
+) -> dict:
+    """Publish (or schedule) a Google post through Localith.
+
+    Body shape per the official n8n node: type (update/event/offer),
+    sourceIds, captionText, title, imageUrls, ctaType, ctaUrl,
+    scheduledOn, startDate/endDate, voucherCode. Only http(s) image URLs
+    are accepted — local filenames must be filtered by the caller.
+    """
+    if post_type not in ("update", "event", "offer"):
+        raise ValueError(f"Unsupported post type: {post_type}")
+    body: dict = {
+        "type": post_type,
+        "sourceIds": [listing_id],
+        "captionText": caption,
+    }
+    if title:
+        body["title"] = title
+    urls = [u for u in (image_urls or []) if isinstance(u, str) and u.startswith("http")]
+    if urls:
+        body["imageUrls"] = urls
+    if cta_type:
+        body["ctaType"] = cta_type
+    if cta_url:
+        body["ctaUrl"] = cta_url
+    if scheduled_on:
+        body["scheduledOn"] = scheduled_on
+    if extra:
+        body.update(extra)
+    payload = _post("rest/v1/content_publishing_media", body)
+    return payload if isinstance(payload, dict) else {"result": payload}
+
+
 def _patch(path: str, body: dict, timeout: int = 30) -> dict | list:
     base, key, _ = _config()
-    url = f"{base}/{path.lstrip('/')}"
-    req = urllib.request.Request(
+    url = _http_url(f"{base}/{path.lstrip('/')}")
+    resp = httpx.patch(
         url,
-        data=json.dumps(body).encode("utf-8"),
-        method="PATCH",
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-            "User-Agent": "sayvors-spike/1.0",
-        },
+        json=body,
+        headers={**_HEADERS, "Authorization": f"Bearer {key}"},
+        timeout=timeout,
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-        return json.loads(resp.read().decode("utf-8"))
+    resp.raise_for_status()
+    return resp.json()
 
 
 # Fields the PATCH /rest/v1/listings/{id} endpoint accepts, mapped from

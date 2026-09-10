@@ -18,6 +18,7 @@ from .modules.analytics.router import router as analytics_router
 from .modules.profile.router import router as profile_router
 from .modules.localith.router import router as localith_router
 from .modules.locations.router import router as locations_router
+from .modules.posts.router import router as posts_router
 from .modules.email.router import router as email_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
@@ -117,6 +118,10 @@ async def lifespan(app: FastAPI):
     from .modules.localith.worker import run_localith_sync_worker
     localith_sync_task = asyncio.create_task(run_localith_sync_worker())
 
+    # Start the scheduled-post publisher (due posts -> Google)
+    from .modules.posts.worker import run_post_publish_worker
+    posts_publish_task = asyncio.create_task(run_post_publish_worker())
+
     # Start the analytics pipeline: Kafka consumer (review enrichment +
     # daily rollups) and Google performance metrics sync worker
     from .modules.analytics.consumer import run_analytics_consumer
@@ -135,6 +140,7 @@ async def lifespan(app: FastAPI):
     retention_task.cancel()
     reviews_task.cancel()
     localith_sync_task.cancel()
+    posts_publish_task.cancel()
     analytics_consumer_task.cancel()
     performance_sync_task.cancel()
     await outbox_worker.stop()
@@ -175,6 +181,7 @@ app.include_router(rag_router)
 app.include_router(profile_router)
 app.include_router(localith_router)
 app.include_router(locations_router)
+app.include_router(posts_router)
 app.include_router(email_router)
 
 

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 
+from ...core.http import assert_public_http_url
 from ...database import async_session
 from .cache import set_progress
 from .chunker import chunk_text
@@ -316,10 +317,12 @@ async def _process_pending_scrape() -> None:
 
 def _crawl_sync(start_url: str, crawl_mode: str, max_pages: int) -> list[tuple[str, str]]:
     """Blocking crawl: fetch + trafilatura extract. Same-domain BFS for full mode."""
+    # Fail the job loudly on a blocked start URL instead of returning [].
+    start_url = assert_public_http_url(start_url)
+
     import trafilatura
     from html.parser import HTMLParser
     from urllib.parse import urljoin, urlparse
-    from urllib.request import Request, urlopen
 
     class _Links(HTMLParser):
         def __init__(self):
@@ -333,9 +336,12 @@ def _crawl_sync(start_url: str, crawl_mode: str, max_pages: int) -> list[tuple[s
                         self.links.append(v)
 
     def _fetch(url: str) -> str:
-        req = Request(url, headers={"User-Agent": "SayvorsBot/1.0"})
-        with urlopen(req, timeout=20) as resp:  # noqa: S310
-            return resp.read().decode("utf-8", errors="ignore")
+        # SSRF-validated + DNS-pinned fetch (see app.core.pinned_http).
+        # ValueError propagates: blocked start URL fails the job loudly,
+        # blocked discovered links are skipped by the loop below.
+        from ...core.pinned_http import fetch_pinned
+
+        return fetch_pinned(url, timeout=20)
 
     base_netloc = urlparse(start_url).netloc
     seen: set[str] = set()
