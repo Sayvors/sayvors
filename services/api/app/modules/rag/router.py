@@ -48,6 +48,7 @@ from .service import (
     list_documents,
     list_ingest_jobs,
     list_sources,
+    preview_document,
     process_document,
     process_pending,
     reindex_databank,
@@ -142,6 +143,11 @@ async def upload_new_document(
     if not bank:
         raise HTTPException(status_code=404, detail="Databank not found")
     doc = await upload_document(databank_id, file, user, db)
+    # Auto-process: parse, chunk, embed immediately
+    try:
+        await process_document(doc.id, user, db)
+    except Exception:
+        pass  # Job queued; status will update async
     return DocumentResponse(
         id=doc.id,
         filename=doc.filename,
@@ -196,6 +202,22 @@ async def delete_single_document(
     deleted = await delete_document(doc_id, user, db)
     if not deleted:
         raise HTTPException(status_code=404, detail="Document not found")
+
+
+@router.get("/databanks/{databank_id}/documents/{doc_id}/preview")
+async def preview_single_document(
+    databank_id: str,
+    doc_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Show the actual uploaded content: table for CSV, text chunks otherwise."""
+    try:
+        return await preview_document(databank_id, doc_id, user, db, page, page_size)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.post(
@@ -518,6 +540,31 @@ async def reindex_single_databank(
     """Re-embed every document (e.g. after switching embedding providers)."""
     try:
         queued = await reindex_databank(databank_id, user, db)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"queued": queued}
+
+
+@router.post(
+    "/databanks/{databank_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_stuck_documents(
+    databank_id: str,
+    body: dict | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry stuck/failed docs without deleting anything.
+
+    Body (optional): {"document_ids": ["..."]} to retry specific docs.
+    Without body, retries all docs in pending/processing/failed status.
+    """
+    from .service import retry_documents
+
+    doc_ids = (body or {}).get("document_ids")
+    try:
+        queued = await retry_documents(databank_id, user, db, doc_ids)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"queued": queued}

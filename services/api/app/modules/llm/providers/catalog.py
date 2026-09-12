@@ -27,7 +27,6 @@ MODELS: list[ModelInfo] = [
     # ── Gemini (Google) ─────────────────────────────────
     ModelInfo("gemini:gemini-3.6-flash", "Gemini 3.6 Flash", "gemini", "gemini-3.6-flash", 1_000_000, 65_536),
     ModelInfo("gemini:gemini-2.5-pro", "Gemini 2.5 Pro", "gemini", "gemini-2.5-pro", 1_000_000, 65_536),
-    ModelInfo("gemini:gemini-2.5-flash", "Gemini 2.5 Flash", "gemini", "gemini-2.5-flash", 1_000_000, 65_536),
     # ── Kimi (Moonshot) ─────────────────────────────────
     ModelInfo("kimi:kimi-k2", "Kimi K2", "kimi", "kimi-k2", 128_000, 16_384),
     ModelInfo("kimi:moonshot-v1-128k", "Moonshot v1 128k", "kimi", "moonshot-v1-128k", 128_000, 4_096),

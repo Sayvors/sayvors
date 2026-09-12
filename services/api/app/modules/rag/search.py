@@ -89,8 +89,19 @@ async def hybrid_search(
                 "score": rrf,
             }
 
-    # Keyword scores
+    # Keyword scores — include matches even if they have no embedding
+    # (e.g. stored while the embedding provider was down).
     sorted_keyword = sorted(keyword_scores.items(), key=lambda x: x[1], reverse=True)
+    missing_ids = [cid for cid, _ in sorted_keyword if cid not in chunk_map]
+    if missing_ids:
+        fetch_sql = text("""
+            SELECT id, content, document_id, metadata
+            FROM document_chunks
+            WHERE id = ANY(:ids)
+        """)
+        fetch_result = await db.execute(fetch_sql, {"ids": missing_ids})
+        for row in fetch_result.fetchall():
+            chunk_map[str(row.id)] = row
     for rank, (chunk_id, _) in enumerate(sorted_keyword):
         rrf = 1 / (k + rank + 1)
         if chunk_id in scores:

@@ -93,6 +93,19 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
   }
 }
 
+/* ── Types ──────────────────────────────────────────── */
+
+export interface DatabankDoc {
+  id: string;
+  name?: string;
+  filename?: string;
+  file_type?: string;
+  file_size?: number;
+  status?: string;
+}
+
+/* ── Databank CRUD ──────────────────────────────────── */
+
 export async function uploadFile(databankId: string, file: File): Promise<any> {
   const form = new FormData();
   form.append("file", file);
@@ -149,6 +162,37 @@ export async function processPending(databankId: string): Promise<any> {
 
 export async function processDocument(databankId: string, docId: string): Promise<any> {
   return apiFetch(`/api/v1/rag/databanks/${databankId}/documents/${docId}/process`, { method: "POST" });
+}
+
+export async function retryDocuments(databankId: string, documentIds?: string[]): Promise<{ queued: number }> {
+  return apiFetch(`/api/v1/rag/databanks/${databankId}/retry`, {
+    method: "POST",
+    body: JSON.stringify(documentIds ? { document_ids: documentIds } : {}),
+  });
+}
+
+export interface DocumentPreview {
+  kind: "table" | "text";
+  filename: string;
+  file_type?: string;
+  status?: string;
+  columns?: string[];
+  rows?: Array<Record<string, string>>;
+  chunks?: string[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export async function previewDocument(
+  databankId: string,
+  docId: string,
+  page = 1,
+  pageSize = 25
+): Promise<DocumentPreview> {
+  return apiFetch(
+    `/api/v1/rag/databanks/${databankId}/documents/${docId}/preview?page=${page}&page_size=${pageSize}`
+  );
 }
 
 export async function listJobs(): Promise<any> {
@@ -296,4 +340,66 @@ export async function ingestSourceQuery(
     method: "POST",
     body: JSON.stringify({ sql, name, limit }),
   });
+}
+
+/* ── CSV Data ─────────────────────────────────────── */
+
+export interface CSVUpload {
+  id: string;
+  filename: string;
+  column_names: string[] | null;
+  row_count: number;
+  purpose: string | null;
+  created_at?: string;
+}
+
+export interface CSVRow {
+  id: string;
+  row_index: number;
+  data: Record<string, unknown>;
+}
+
+export async function uploadCSV(file: File, purpose?: string): Promise<CSVUpload> {
+  const form = new FormData();
+  form.append("file", file);
+  if (purpose) form.append("purpose", purpose);
+  const headers: Record<string, string> = {};
+  const token = getAccessToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const csrf = getCsrfToken();
+  if (csrf) headers["X-CSRF-Token"] = csrf;
+  const res = await fetch(`${API}/api/v1/csv/upload`, {
+    method: "POST",
+    headers,
+    body: form,
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function listCSVUploads(): Promise<CSVUpload[]> {
+  return apiFetch("/api/v1/csv/uploads");
+}
+
+export async function deleteCSVUpload(id: string): Promise<void> {
+  await apiFetch(`/api/v1/csv/uploads/${id}`, { method: "DELETE" });
+}
+
+export async function searchCSVRows(
+  query: string,
+  opts?: { upload_id?: string; purpose?: string; limit?: number }
+): Promise<{ rows: CSVRow[]; total_matches: number }> {
+  return apiFetch("/api/v1/csv/search", {
+    method: "POST",
+    body: JSON.stringify({ query, ...opts }),
+  });
+}
+
+export async function getCSVRowsPaginated(
+  uploadId: string,
+  page: number,
+  pageSize: number
+): Promise<{ rows: CSVRow[]; total: number; page: number; page_size: number }> {
+  return apiFetch(`/api/v1/csv/uploads/${uploadId}/rows?page=${page}&page_size=${pageSize}`);
 }

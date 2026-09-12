@@ -1,7 +1,9 @@
+import csv
 import hashlib
 import os
 import uuid
 from datetime import datetime, timezone
+from io import StringIO
 
 from fastapi import UploadFile
 from sqlalchemy import func, select
@@ -64,6 +66,11 @@ async def delete_databank(
     if not bank:
         return False
 
+    # Order matters: children before parents (FK constraints).
+    # Ingest jobs reference documents, so jobs go first.
+    await db.execute(
+        IngestJob.__table__.delete().where(IngestJob.databank_id == databank_id)
+    )
     await db.execute(
         DocumentChunk.__table__.delete().where(
             DocumentChunk.databank_id == databank_id
@@ -73,13 +80,21 @@ async def delete_databank(
         Document.__table__.delete().where(Document.databank_id == databank_id)
     )
     await db.execute(
-        IngestJob.__table__.delete().where(IngestJob.databank_id == databank_id)
+        DataSource.__table__.delete().where(DataSource.databank_id == databank_id)
     )
     await db.execute(
         ScrapeJob.__table__.delete().where(ScrapeJob.databank_id == databank_id)
     )
     await db.delete(bank)
     await db.commit()
+
+    # Remove uploaded files from disk (best effort — DB is source of truth).
+    try:
+        import shutil
+
+        shutil.rmtree(os.path.join(settings.UPLOAD_DIR, databank_id), ignore_errors=True)
+    except Exception:
+        pass
     return True
 
 
@@ -141,6 +156,83 @@ async def list_documents(
     return list(result.scalars().all()), total
 
 
+async def preview_document(
+    databank_id: str,
+    doc_id: str,
+    user: User,
+    db: AsyncSession,
+    page: int = 1,
+    page_size: int = 25,
+) -> dict:
+    """Return the actual uploaded content for inspection.
+
+    CSV → structured table (columns + paginated rows).
+    Anything else → paginated text chunks as stored.
+    """
+    bank = await get_databank(databank_id, user, db)
+    if not bank:
+        raise ValueError("Databank not found")
+    result = await db.execute(
+        select(Document).where(
+            Document.id == doc_id,
+            Document.databank_id == databank_id,
+            Document.user_id == user.id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise ValueError("Document not found")
+
+    page = max(1, page)
+    page_size = min(max(1, page_size), 100)
+
+    if (doc.file_type or "").lower() == "csv":
+        file_path = os.path.join(settings.UPLOAD_DIR, databank_id, f"{doc.id}.{doc.file_type}")
+        if not os.path.exists(file_path):
+            raise ValueError("Source file missing from disk")
+        with open(file_path, "rb") as f:
+            content = f.read()
+        reader = csv.DictReader(StringIO(content.decode("utf-8", errors="replace")))
+        columns = list(reader.fieldnames or [])
+        all_rows = [dict(r) for r in reader]
+        total = len(all_rows)
+        start = (page - 1) * page_size
+        return {
+            "kind": "table",
+            "filename": doc.filename,
+            "file_type": doc.file_type,
+            "status": doc.status,
+            "columns": columns,
+            "rows": all_rows[start:start + page_size],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    count_result = await db.execute(
+        select(func.count()).where(DocumentChunk.document_id == doc.id)
+    )
+    total = count_result.scalar() or 0
+    chunks_result = await db.execute(
+        select(DocumentChunk.content)
+        .where(DocumentChunk.document_id == doc.id)
+        .order_by(DocumentChunk.seq)
+        .limit(page_size)
+        .offset((page - 1) * page_size)
+    )
+    chunks = [r[0] for r in chunks_result.all()]
+    return {
+        "kind": "text",
+        "filename": doc.filename,
+        "file_type": doc.file_type,
+        "status": doc.status,
+        "chunks": chunks,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 async def delete_document(doc_id: str, user: User, db: AsyncSession) -> bool:
     result = await db.execute(
         select(Document).where(Document.id == doc_id, Document.user_id == user.id)
@@ -155,8 +247,16 @@ async def delete_document(doc_id: str, user: User, db: AsyncSession) -> bool:
     await db.execute(
         IngestJob.__table__.delete().where(IngestJob.document_id == doc_id)
     )
+    databank_id = doc.databank_id
+    file_type = doc.file_type
     await db.delete(doc)
     await db.commit()
+
+    # Remove the uploaded file from disk (best effort).
+    try:
+        os.remove(os.path.join(settings.UPLOAD_DIR, databank_id, f"{doc_id}.{file_type}"))
+    except OSError:
+        pass
     return True
 
 
@@ -290,6 +390,60 @@ async def reindex_databank(databank_id: str, user: User, db: AsyncSession) -> in
     return queued
 
 
+async def retry_documents(
+    databank_id: str, user: User, db: AsyncSession, doc_ids: list[str] | None = None
+) -> int:
+    """Reset stuck/failed docs to pending and re-queue for processing.
+
+    Targets docs in pending/processing/failed status (stale jobs may have
+    died mid-flight). Completed docs are skipped unless explicitly listed.
+    Returns the number of docs re-queued.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    bank = await get_databank(databank_id, user, db)
+    if not bank:
+        raise ValueError("Databank not found")
+
+    stmt = select(Document).where(
+        Document.databank_id == databank_id,
+        Document.user_id == user.id,
+    )
+    if doc_ids:
+        stmt = stmt.where(Document.id.in_(doc_ids))
+    else:
+        stmt = stmt.where(Document.status.in_(["pending", "processing", "failed"]))
+
+    result = await db.execute(stmt)
+    docs = list(result.scalars().all())
+
+    from .jobs import enqueue_job, start_worker
+
+    queued = 0
+    for doc in docs:
+        # Skip healthy completed docs unless explicitly requested
+        if not doc_ids and doc.status == "completed":
+            continue
+        doc.status = "pending"
+        job = IngestJob(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            databank_id=databank_id,
+            document_id=doc.id,
+            job_type="reindex",
+            status="queued",
+            progress=0,
+        )
+        db.add(job)
+        await db.flush()
+        await enqueue_job(str(job.id))
+        queued += 1
+    await db.commit()
+    if queued:
+        await start_worker()
+    return queued
+
+
 async def list_ingest_jobs(
     user: User, db: AsyncSession, limit: int = 20, offset: int = 0
 ) -> tuple[list[IngestJob], int]:
@@ -371,18 +525,30 @@ async def _parse_document(doc: Document) -> str:
 async def _embed_and_store(
     doc: Document, chunks: list[dict], job: IngestJob
 ) -> None:
+    import logging
+
     from ...database import async_session
 
-    async with async_session() as db:
-        provider = await get_embedding_provider()
-        texts = [c["content"] for c in chunks]
+    logger = logging.getLogger(__name__)
 
-        batch_size = 64
-        all_vectors: list[list[float]] = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            vectors = await provider.embed(batch)
-            all_vectors.extend(vectors)
+    async with async_session() as db:
+        # Try embeddings, but fall back to NULL (keyword-only search still works).
+        all_vectors: list[list[float] | None] = [None] * len(chunks)
+        embedding_model = "none"
+        try:
+            provider = await get_embedding_provider()
+            texts = [c["content"] for c in chunks]
+            batch_size = 64
+            idx = 0
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                vectors = await provider.embed(batch)
+                for v in vectors:
+                    all_vectors[idx] = v
+                    idx += 1
+            embedding_model = provider.__class__.__name__
+        except Exception as e:
+            logger.warning("Embedding failed for doc %s, storing without vectors: %s", doc.id, e)
 
         db_chunks = []
         for idx, (chunk, vector) in enumerate(zip(chunks, all_vectors)):
@@ -392,7 +558,7 @@ async def _embed_and_store(
                 databank_id=doc.databank_id,
                 content=chunk["content"],
                 embedding=vector,
-                embedding_model=provider.__class__.__name__,
+                embedding_model=embedding_model,
                 seq=idx,
                 token_count=chunk["token_count"],
             )

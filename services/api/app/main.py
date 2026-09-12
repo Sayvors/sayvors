@@ -21,6 +21,8 @@ from .modules.locations.router import router as locations_router
 from .modules.posts.router import router as posts_router
 from .modules.admin.router import router as admin_router
 from .modules.email.router import router as email_router
+from .modules.review_engine.router import router as review_engine_router
+from .modules.review_engine.csv_router import router as csv_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
 
@@ -195,6 +197,8 @@ app.include_router(locations_router)
 app.include_router(posts_router)
 app.include_router(admin_router)
 app.include_router(email_router)
+app.include_router(review_engine_router)
+app.include_router(csv_router)
 
 
 @app.get("/health")
