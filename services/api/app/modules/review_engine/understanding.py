@@ -82,6 +82,8 @@ async def analyze_review(
     rating: int,
     reviewer_name: str | None,
     model: str,
+    tenant_id: str | None = None,
+    channel_id: str | None = None,
 ) -> tuple[ReviewAnalysis, dict]:
     """Analyze a review and return structured analysis + usage stats."""
     user_msg = (
@@ -103,6 +105,10 @@ async def analyze_review(
                 temperature=0.1,
                 max_tokens=500,
                 stream=False,
+                tenant_id=tenant_id,
+                model_id=model,
+                purpose="review_engine.analysis",
+                channel_id=channel_id,
             )
         )
     except ProviderError:

@@ -81,7 +81,8 @@ async def _handle_discovered(payload: dict) -> None:
         insight.review_updated_at = _iso_to_dt(payload.get("review_updated_at"))
 
         result = await enrich_review(
-            insight.rating, insight.review_text, insight.reviewer_name
+            insight.rating, insight.review_text, insight.reviewer_name,
+            tenant_id=insight.user_id or None,
         )
         insight.sentiment = result["sentiment"]
         insight.sentiment_score = result["sentiment_score"]

@@ -39,6 +39,22 @@ def _rating_guidance(rating: int) -> str:
     return NEGATIVE_GUIDANCE
 
 
+async def _channel_owner_id(channel_id: str | None, db: AsyncSession) -> str | None:
+    """Tenant id for metering (never raises)."""
+    if not channel_id:
+        return None
+    try:
+        from sqlalchemy import select
+
+        from .models import Channel
+
+        return (await db.execute(
+            select(Channel.user_id).where(Channel.id == channel_id)
+        )).scalar_one_or_none()
+    except Exception:
+        return None
+
+
 async def _build_context(config: AutoReplyConfig, review_text: str, db: AsyncSession) -> str:
     """Pull relevant chunks from the linked Databank (if any) for grounding."""
     if not config.databank_id or not review_text:
@@ -121,6 +137,10 @@ async def generate_review_reply(
         temperature=0.6,
         max_tokens=300,
         stream=False,
+        tenant_id=await _channel_owner_id(getattr(config, "channel_id", None), db),
+        model_id=config.model,
+        purpose="auto_reply.review",
+        channel_id=getattr(config, "channel_id", None),
     )
     try:
         resp = await provider.complete(req)
@@ -132,6 +152,7 @@ async def generate_review_reply(
         provider = get_provider_for_model("groq:oss-120b")
         api_model, _ = _resolve_model("groq:oss-120b")
         req.model = api_model
+        req.model_id = "groq:oss-120b"
         resp = await provider.complete(req)
     reply = resp.content.strip()
     if not reply:

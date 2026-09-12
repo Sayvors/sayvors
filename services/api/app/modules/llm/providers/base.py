@@ -60,6 +60,11 @@ class LLMRequest:
     max_tokens: int = 1000
     stream: bool = False
     tools: list[ToolDefinition] = field(default_factory=list)
+    # Metering context (optional — recorded per call, never affects generation).
+    tenant_id: str | None = None
+    model_id: str | None = None  # catalog id e.g. "groq:oss-120b"
+    purpose: str | None = None  # e.g. "review_engine.generate"
+    channel_id: str | None = None
 
 
 @dataclass
@@ -73,8 +78,32 @@ class LLMResponse:
 
 
 class LLMProvider(ABC):
-    @abstractmethod
     async def complete(self, req: LLMRequest) -> LLMResponse:
+        """Timed template: runs _complete, records metering, re-raises errors.
+
+        Metering never blocks or breaks generation — recording is
+        fire-and-forget with its own session.
+        """
+        import time
+
+        t0 = time.monotonic()
+        try:
+            resp = await self._complete(req)
+        except Exception as e:
+            from ..usage import record_usage_event
+
+            record_usage_event(
+                req, None, int((time.monotonic() - t0) * 1000),
+                status="error", error=str(e)[:300],
+            )
+            raise
+        from ..usage import record_usage_event
+
+        record_usage_event(req, resp, int((time.monotonic() - t0) * 1000))
+        return resp
+
+    @abstractmethod
+    async def _complete(self, req: LLMRequest) -> LLMResponse:
         """Send a completion request to the provider."""
         ...
 

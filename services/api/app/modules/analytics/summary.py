@@ -70,7 +70,7 @@ async def get_executive_summary(
     # ── narrative headline ──
     headline = _fallback_headline(overview, top_problem)
     try:
-        headline = await _llm_headline(overview, top_problem, loved, visibility)
+        headline = await _llm_headline(overview, top_problem, loved, visibility, user_id)
     except Exception as e:
         logger.debug("Executive summary LLM unavailable, using fallback: %s", e)
 
@@ -106,7 +106,7 @@ def _fallback_headline(overview: dict, top_problem: dict | None) -> str:
     return (", ".join(parts) + ".").capitalize()
 
 
-async def _llm_headline(overview: dict, top_problem: dict | None, loved: str | None, visibility: dict) -> str:
+async def _llm_headline(overview: dict, top_problem: dict | None, loved: str | None, visibility: dict, tenant_id: str | None = None) -> str:
     import json
 
     from ..llm.providers.base import LLMMessage, LLMRequest
@@ -140,6 +140,9 @@ async def _llm_headline(overview: dict, top_problem: dict | None, loved: str | N
             temperature=0.4,
             max_tokens=160,
             stream=False,
+            tenant_id=tenant_id,
+            model_id=model,
+            purpose="analytics.summary",
         )
     )
     text = resp.content.strip()

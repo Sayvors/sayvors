@@ -90,7 +90,7 @@ class GeminiProvider(LLMProvider):
                     text_parts.append(part.text)
         return "".join(text_parts), calls
 
-    async def complete(self, req: LLMRequest) -> LLMResponse:
+    async def _complete(self, req: LLMRequest) -> LLMResponse:
         try:
             response: GenerateContentResponse = await self._client.aio.models.generate_content(
                 model=req.model,

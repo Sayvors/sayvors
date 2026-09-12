@@ -66,3 +66,39 @@ class ModelResponse(BaseModel):
 
 class ModelListResponse(BaseModel):
     models: list[ModelResponse]
+
+
+class UsageModelRow(BaseModel):
+    model: str
+    api_model: str = ""
+    calls: int = 0
+    total_tokens: int = 0
+    avg_latency_ms: int = 0
+
+
+class UsagePurposeRow(BaseModel):
+    purpose: str
+    calls: int = 0
+    total_tokens: int = 0
+
+
+class UsageDayRow(BaseModel):
+    day: str
+    total_tokens: int = 0
+    calls: int = 0
+
+
+class UsageTotals(BaseModel):
+    calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    avg_latency_ms: int = 0
+
+
+class UsageSummaryResponse(BaseModel):
+    days: int = 30
+    totals: UsageTotals
+    by_model: list[UsageModelRow] = []
+    by_purpose: list[UsagePurposeRow] = []
+    daily: list[UsageDayRow] = []

@@ -19,6 +19,7 @@ from .schemas import (
     MessageResponse,
     ModelListResponse,
     ModelResponse,
+    UsageSummaryResponse,
 )
 from .service import (
     create_conversation,
@@ -257,3 +258,18 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── usage metering ───────────────────────────────────────
+
+
+@router.get("/usage/summary", response_model=UsageSummaryResponse)
+async def get_usage_summary(
+    days: int = Query(30, ge=1, le=365),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """This tenant's token usage: totals + per-model + per-purpose + daily."""
+    from .usage import get_tenant_summary
+
+    return UsageSummaryResponse(**await get_tenant_summary(db, user.id, days))
