@@ -22,6 +22,14 @@ interface GoogleChannel {
   status: string;
 }
 
+interface LlmModelOption {
+  id: string;
+  name: string;
+  provider: string;
+  available: boolean;
+  key_source: string;
+}
+
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
@@ -40,6 +48,7 @@ export default function AutomationsPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [models, setModels] = useState<LlmModelOption[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +90,12 @@ export default function AutomationsPage() {
       } catch {
         /* stats stay dash */
       }
+      try {
+        const m = await apiFetch("/api/v1/llm/models");
+        if (!cancelled) setModels(m.models ?? []);
+      } catch {
+        /* model picker falls back to the saved value only */
+      }
       if (!cancelled) setLoading(false);
     })();
     return () => {
@@ -88,8 +103,7 @@ export default function AutomationsPage() {
     };
   }, []);
 
-  const toggleAutoReply = useCallback(async (channelId: string, enable: boolean) => {
-    setBusy(channelId);
+  const toggleAutoReply = useCallback(async (channelId: string, enable: boolean) => {    setBusy(channelId);
     try {
       const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
         method: "PUT",
@@ -99,6 +113,22 @@ export default function AutomationsPage() {
       setBanner({ kind: "ok", text: enable ? "Auto-reply turned on." : "Auto-reply turned off." });
     } catch {
       setBanner({ kind: "err", text: "Could not save the auto-reply setting." });
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  const setChannelModel = useCallback(async (channelId: string, model: string) => {
+    setBusy(`${channelId}:model`);
+    try {
+      const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
+        method: "PUT",
+        body: JSON.stringify({ model }),
+      });
+      setConfigs((prev) => ({ ...prev, [channelId]: cfg }));
+      setBanner({ kind: "ok", text: "Reply model updated." });
+    } catch {
+      setBanner({ kind: "err", text: "Could not save the model choice." });
     } finally {
       setBusy(null);
     }
@@ -225,6 +255,39 @@ export default function AutomationsPage() {
                       >
                         {pendingCount} pending approval
                       </Link>
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <label className="text-[11px] font-medium text-ink/40 dark:text-fog/40">
+                      Reply model
+                    </label>
+                    {models.filter((m) => m.available).length === 0 ? (
+                      <span className="text-[11px] text-ink/40 dark:text-fog/40">
+                        No AI models enabled — contact your administrator.
+                      </span>
+                    ) : (
+                      <select
+                        value={cfg?.model ?? ""}
+                        disabled={busy !== null}
+                        onChange={(e) => {
+                          if (e.target.value) void setChannelModel(c.id, e.target.value);
+                        }}
+                        aria-label={`Reply model for ${c.display_name || "location"}`}
+                        className="max-w-[220px] truncate rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] font-medium text-ink outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog disabled:opacity-50"
+                      >
+                        {!cfg?.model && <option value="">Select model…</option>}
+                        {cfg?.model && !models.some((m) => m.id === cfg.model) && (
+                          <option value={cfg.model}>{cfg.model}</option>
+                        )}
+                        {models.filter((m) => m.available).map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {busy === `${c.id}:model` && (
+                      <span className="text-[11px] text-ink/40">Saving…</span>
                     )}
                   </div>
                 </div>

@@ -1,8 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f3f0ff;
+  --foreground: #1a1230;
+}
+
+@theme {
+  --color-deep-violet: #5b2d8e;
+  --color-violet-light: #8b5cf6;
+  --color-violet-soft: #c4b5fd;
+  --color-magenta: #d946a8;
+  --color-coral: #ff4f6e;
+  --color-amber: #f59e0b;
+  --color-emerald: #10b981;
+  --color-sky: #0ea5e9;
+  --color-ink: #1a1230;
+  --color-fog: #f8f6ff;
 }
 
 @theme inline {
@@ -12,15 +25,57 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.input-field {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(26, 18, 48, 0.08);
+  background: white;
+  padding: 0.5rem 0.75rem;
+  font-size: 13px;
+  color: #1a1230;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.input-field:focus {
+  border-color: rgba(91, 45, 142, 0.3);
+  box-shadow: 0 0 0 3px rgba(91, 45, 142, 0.08);
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 0.75rem;
+  background: #5b2d8e;
+  padding: 0.5rem 1rem;
+  font-size: 13px;
+  font-weight: 600;
+  color: white;
+  transition: opacity 0.15s;
+}
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(26, 18, 48, 0.1);
+  background: white;
+  padding: 0.5rem 1rem;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a1230;
+  transition: background 0.15s;
+}
+.btn-secondary:hover {
+  background: rgba(26, 18, 48, 0.04);
 }

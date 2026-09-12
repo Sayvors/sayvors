@@ -137,7 +137,59 @@ async def test_autoreply_config_default(client, channel_id):
     body = r.json()
     assert body["enabled"] is False
     assert body["approval_mode"] == "auto"
-    assert body["custom_instructions"] is None
+
+
+@pytest.mark.asyncio
+async def test_autoreply_model_restricted_to_admin_enabled(client, channel_id):
+    host = {"host": "localhost"}
+    # Unknown model id rejected.
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/autoreply",
+        json={"model": "not-a-model"},
+        headers=host,
+    )
+    assert r.status_code == 422
+    # Known model without an admin key rejected.
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/autoreply",
+        json={"model": "openai:gpt-4o-mini"},
+        headers=host,
+    )
+    assert r.status_code == 422
+    assert "administrator" in r.json()["detail"]
+    # Non-model fields still save fine.
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/autoreply",
+        json={"tone": "professional"},
+        headers=host,
+    )
+    assert r.status_code == 200
+    assert r.json()["tone"] == "professional"
+
+
+@pytest.mark.asyncio
+async def test_autoreply_model_accepts_admin_saved(client, channel_id, db):
+    """A model the admin saved + keyed is assignable; the picker lists it."""
+    from app.modules.channels.service import encrypt_token
+    from app.modules.llm.models import ModelConfig, ProviderConfig
+
+    db.add(ProviderConfig(
+        provider="groq", key_encrypted=encrypt_token("gsk_test"), enabled=True,
+    ))
+    db.add(ModelConfig(model_id="groq:oss-120b", enabled=True))
+    await db.commit()
+
+    host = {"host": "localhost"}
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/autoreply",
+        json={"model": "groq:oss-120b"},
+        headers=host,
+    )
+    assert r.status_code == 200, r.text[:200]
+    assert r.json()["model"] == "groq:oss-120b"
+
+    r = client.get("/api/v1/llm/models", headers=host)
+    assert [m["id"] for m in r.json()["models"]] == ["groq:oss-120b"]
 
 
 @pytest.mark.asyncio

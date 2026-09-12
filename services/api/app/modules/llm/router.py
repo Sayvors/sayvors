@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_db, get_current_user
 from ..users.models import User
 from .providers.base import ProviderError
-from .providers.catalog import MODELS, ModelInfo
 from .schemas import (
     ChatRequest,
     ChatResponse,
@@ -37,20 +36,28 @@ router = APIRouter(prefix="/api/v1/llm", tags=["llm"])
 
 
 @router.get("/models", response_model=ModelListResponse)
-async def get_models(user: User = Depends(get_current_user)):
-    return ModelListResponse(
-        models=[
-            ModelResponse(
-                id=m.id,
-                name=m.name,
-                provider=m.provider,
-                context=m.context,
-                max_output=m.max_output,
-                supports_stream=m.supports_stream,
-            )
-            for m in MODELS
-        ]
-    )
+async def get_models(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from .providers.registry import list_tenant_models
+
+    # Tenants see exactly what the admin saved in the database —
+    # never the code catalog. Every returned item is usable.
+    items = [
+        ModelResponse(
+            id=m.id,
+            name=m.name,
+            provider=m.provider,
+            context=m.context,
+            max_output=m.max_output,
+            supports_stream=m.supports_stream,
+            available=True,
+            key_source=source,
+        )
+        for m, source in await list_tenant_models(db)
+    ]
+    return ModelListResponse(models=items)
 
 
 # ── conversations ───────────────────────────────────────

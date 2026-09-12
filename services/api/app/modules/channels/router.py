@@ -668,6 +668,16 @@ async def update_autoreply_config(
     if body.min_rating_auto is not None:
         config.min_rating_auto = body.min_rating_auto
     if body.model is not None:
+        from ..llm.providers.registry import list_tenant_models
+
+        # Only models the admin saved + enabled (with a usable provider
+        # key) may be assigned — the same set tenants see in the picker.
+        visible = {m.id for m, _ in await list_tenant_models(db)}
+        if body.model not in visible:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Model {body.model} is not enabled by your administrator.",
+            )
         config.model = body.model[:100]
     if body.approval_mode is not None:
         config.approval_mode = body.approval_mode

@@ -19,6 +19,7 @@ from .modules.profile.router import router as profile_router
 from .modules.localith.router import router as localith_router
 from .modules.locations.router import router as locations_router
 from .modules.posts.router import router as posts_router
+from .modules.admin.router import router as admin_router
 from .modules.email.router import router as email_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
@@ -31,12 +32,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return await call_next(request)
 
-        # Exempt paths: auth endpoints, webhooks, health
+        # Exempt paths: auth endpoints, webhooks, health. Admin is exempt
+        # as a whole: Bearer-header auth only, no CSRF confused deputy.
         path = request.url.path
         skip_prefixes = (
             "/api/v1/auth/login", "/api/v1/auth/signup", "/api/v1/auth/refresh",
             "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password",
             "/api/v1/auth/verify-email", "/api/v1/auth/verify-otp", "/api/v1/auth/csrf-token",
+            "/api/v1/admin/",
             "/api/v1/email/otp/",
             "/api/v1/channels/webhook/",
             "/health",
@@ -70,6 +73,14 @@ async def lifespan(app: FastAPI):
         log.info("Database pool warmed up")
     except Exception as e:
         log.error("Database pool warmup failed: %s", e)
+
+    # Load DB-backed LLM provider keys (env fallback stays if this fails)
+    try:
+        from .modules.llm.providers.registry import refresh_provider_keys
+        n = await refresh_provider_keys()
+        log.info("LLM provider keys loaded from DB: %d", n)
+    except Exception as e:
+        log.warning("LLM provider key refresh failed (env fallback active): %s", e)
 
     # Try Redis — mark unavailable fast if down
     try:
@@ -182,6 +193,7 @@ app.include_router(profile_router)
 app.include_router(localith_router)
 app.include_router(locations_router)
 app.include_router(posts_router)
+app.include_router(admin_router)
 app.include_router(email_router)
 
 

@@ -60,6 +60,8 @@ class ModelResponse(BaseModel):
     context: int
     max_output: int
     supports_stream: bool
+    available: bool = False
+    key_source: str = "none"  # database | env | none | disabled
 
 
 class ModelListResponse(BaseModel):

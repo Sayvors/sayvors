@@ -92,7 +92,9 @@ async def _load_history(conv_id: str, db: AsyncSession) -> list[LLMMessage]:
 
 
 def _resolve_model(model_id: str) -> tuple[str, str]:
-    info = get_model_by_id(model_id)
+    from .providers.registry import get_effective_model
+
+    info = get_effective_model(model_id) or get_model_by_id(model_id)
     if info:
         return info.api_model, info.provider
     provider = get_provider_from_model(model_id)

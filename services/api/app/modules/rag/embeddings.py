@@ -57,7 +57,10 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     async def embed(self, texts: list[str]) -> list[list[float]]:
         import openai
 
-        client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        from ..llm.providers.registry import resolve_provider_key
+
+        api_key, _ = resolve_provider_key("openai")
+        client = openai.AsyncOpenAI(api_key=api_key or "")
         batch_size = 2048
         all_embeddings: list[list[float]] = []
 
@@ -89,7 +92,10 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
     async def embed(self, texts: list[str]) -> list[list[float]]:
         from google import genai
 
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        from ..llm.providers.registry import resolve_provider_key
+
+        api_key, _ = resolve_provider_key("gemini")
+        client = genai.Client(api_key=api_key or "")
         batch_size = 100
         all_embeddings: list[list[float]] = []
         for i in range(0, len(texts), batch_size):
@@ -117,21 +123,26 @@ async def get_embedding_provider() -> EmbeddingProvider:
     if _provider is not None:
         return _provider
 
-    if settings.GEMINI_API_KEY:
+    from ..llm.providers.registry import resolve_provider_key
+
+    gemini_key, _ = resolve_provider_key("gemini")
+    if gemini_key:
         _provider = GeminiEmbeddingProvider()
     elif await _check_ollama():
         _provider = OllamaEmbeddingProvider()
-    elif settings.OPENAI_API_KEY:
-        _provider = OpenAIEmbeddingProvider()
     else:
-        from ..llm.providers.base import ProviderError
+        openai_key, _ = resolve_provider_key("openai")
+        if openai_key:
+            _provider = OpenAIEmbeddingProvider()
+        else:
+            from ..llm.providers.base import ProviderError
 
-        raise ProviderError(
-            "embeddings",
-            "No embedding backend configured. Set GEMINI_API_KEY in .env "
-            "or start Ollama (bge-m3) locally.",
-            503,
-        )
+            raise ProviderError(
+                "embeddings",
+                "No embedding backend configured. Add a Gemini/OpenAI key in "
+                "Admin → LLMs, or start Ollama (bge-m3) locally.",
+                503,
+            )
 
     return _provider
 
