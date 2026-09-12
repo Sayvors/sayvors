@@ -132,6 +132,9 @@ async def send_message(
         temperature=0.7,
         max_tokens=1000,
         stream=False,
+        tenant_id=user.id,
+        model_id=conv.model,
+        purpose="chat.message",
     )
 
     try:

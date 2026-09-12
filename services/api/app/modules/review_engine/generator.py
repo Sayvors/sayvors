@@ -90,6 +90,8 @@ async def generate_response(
     requirements: list[str] | None = None,
     previous_issues: list[str] | None = None,
     tier: dict | None = None,
+    tenant_id: str | None = None,
+    channel_id: str | None = None,
 ) -> tuple[GeneratedResponse, dict]:
     """Generate a review response from analysis + strategies."""
     user_parts = []
@@ -147,6 +149,10 @@ async def generate_response(
                 temperature=0.6,
                 max_tokens=800,
                 stream=False,
+                tenant_id=tenant_id,
+                model_id=model,
+                purpose="review_engine.generate",
+                channel_id=channel_id,
             )
         )
     except ProviderError as e:

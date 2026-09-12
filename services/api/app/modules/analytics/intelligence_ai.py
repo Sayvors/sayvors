@@ -237,7 +237,7 @@ def _parse_ai_json(text: str) -> AIIntelligence:
     return AIIntelligence.model_validate(json.loads(_strip_fences(text)))
 
 
-async def _call_llm(facts: dict, rag_text: str, model: str) -> tuple[str, str]:
+async def _call_llm(facts: dict, rag_text: str, model: str, tenant_id: str | None = None) -> tuple[str, str]:
     from ..llm.providers.base import LLMMessage, LLMRequest
     from ..llm.providers.registry import get_provider_for_model
     from ..llm.service import _resolve_model
@@ -259,6 +259,9 @@ async def _call_llm(facts: dict, rag_text: str, model: str) -> tuple[str, str]:
             temperature=0.2,
             max_tokens=1500,
             stream=False,
+            tenant_id=tenant_id,
+            model_id=model,
+            purpose="analytics.intelligence",
         )
     )
     return resp.content, model
@@ -379,12 +382,12 @@ async def get_review_intelligence(
     last_error = "no LLM provider configured"
     for model in MODELS_CHAIN:
         try:
-            raw, used = await _call_llm(facts, rag_text, model)
+            raw, used = await _call_llm(facts, rag_text, model, user.id)
             try:
                 parsed = _parse_ai_json(raw)
             except Exception as e:
                 # Retry once, echoing the contract violation.
-                raw, used = await _call_llm_retry(facts, rag_text, model, str(e))
+                raw, used = await _call_llm_retry(facts, rag_text, model, str(e), user.id)
                 parsed = _parse_ai_json(raw)
             verified = _verify(parsed, stats)
             return {
@@ -422,7 +425,7 @@ async def get_review_intelligence(
     }
 
 
-async def _call_llm_retry(facts: dict, rag_text: str, model: str, error: str) -> tuple[str, str]:
+async def _call_llm_retry(facts: dict, rag_text: str, model: str, error: str, tenant_id: str | None = None) -> tuple[str, str]:
     from ..llm.providers.base import LLMMessage, LLMRequest
     from ..llm.providers.registry import get_provider_for_model
     from ..llm.service import _resolve_model
@@ -441,6 +444,9 @@ async def _call_llm_retry(facts: dict, rag_text: str, model: str, error: str) ->
             temperature=0.1,
             max_tokens=1500,
             stream=False,
+            tenant_id=tenant_id,
+            model_id=model,
+            purpose="analytics.intelligence",
         )
     )
     return resp.content, model

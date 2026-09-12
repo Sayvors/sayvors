@@ -36,7 +36,7 @@ class OpenAICompatibleProvider(LLMProvider):
             messages.append({"role": m.role, "content": m.content})
         return messages
 
-    async def complete(self, req: LLMRequest) -> LLMResponse:
+    async def _complete(self, req: LLMRequest) -> LLMResponse:
         try:
             response = await self._client.chat.completions.create(
                 model=req.model,

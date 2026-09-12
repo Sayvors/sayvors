@@ -92,6 +92,9 @@ async def ask_question(
             temperature=0.2,
             max_tokens=2048,
             tools=tools,
+            tenant_id=user.id,
+            model_id=f"gemini:{AGENT_MODEL}",
+            purpose="databank.ask",
         ))
         if not resp.tool_calls:
             answer = resp.content.strip()
@@ -141,6 +144,9 @@ async def ask_question(
             system_prompt=SYSTEM_PROMPT,
             temperature=0.2,
             max_tokens=2048,
+            tenant_id=user.id,
+            model_id=f"gemini:{AGENT_MODEL}",
+            purpose="databank.ask",
         ))
         answer = resp.content.strip()
 

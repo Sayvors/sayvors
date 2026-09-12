@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import uuid
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -89,4 +90,31 @@ class ModelConfig(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class LLMUsageEvent(Base):
+    """One metered LLM call — per tenant, per model, with tokens + latency.
+
+    Written fire-and-forget by LLMProvider.complete(); never blocks generation.
+    Powers tenant usage dashboards and admin metering.
+    """
+
+    __tablename__ = "llm_usage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    provider: Mapped[str] = mapped_column(String(32), index=True)
+    model_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    api_model: Mapped[str] = mapped_column(String(200))
+    purpose: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    channel_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="ok")
+    error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )

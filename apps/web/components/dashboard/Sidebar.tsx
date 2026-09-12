@@ -70,6 +70,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
       { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
       { key: "autoReply", icon: <AutoReplyIcon />, href: "/dashboard/automations" },
+      { key: "usage", icon: <ChartIcon />, href: "/dashboard/usage" },
     ],
   },
   {

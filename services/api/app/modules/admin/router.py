@@ -17,6 +17,7 @@ from .schemas import (
     AdminOverview,
     AdminTenantDetail,
     AdminTenantList,
+    AdminUsageOverview,
     LlmModelCreate,
     LlmModelStatus,
     LlmModelTestResult,
@@ -120,6 +121,18 @@ async def admin_health(
     each configured AI provider live (free list-models calls, no tokens).
     """
     return AdminHealth(**await admin_service.get_health(db, probe))
+
+
+@router.get("/usage/overview", response_model=AdminUsageOverview)
+async def admin_usage_overview(
+    days: int = Query(30, ge=1, le=365),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Global token metering: totals + per-tenant + per-model tables."""
+    from ..llm.usage import get_admin_overview
+
+    return AdminUsageOverview(**await get_admin_overview(db, days))
 
 
 @router.get("/llm", response_model=list[LlmProviderStatus])
@@ -331,6 +344,9 @@ async def admin_llm_model_test(
             temperature=0.1,
             max_tokens=20,
             stream=False,
+            tenant_id=None,
+            model_id=model_id,
+            purpose="admin.test",
         ))
         reply = (resp.content or "").strip()[:200]
         ok, detail = True, "model generated a reply"

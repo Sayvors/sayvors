@@ -125,6 +125,7 @@ async def enrich_review(
     text: str | None,
     reviewer_name: str | None,
     model: str = ENRICHMENT_MODEL,
+    tenant_id: str | None = None,
 ) -> dict:
     """Return {sentiment, sentiment_score, topics, products, problems} for a review."""
     if not text or not text.strip():
@@ -149,6 +150,9 @@ async def enrich_review(
                 temperature=0.1,
                 max_tokens=600,
                 stream=False,
+                tenant_id=tenant_id,
+                model_id=model,
+                purpose="analytics.enrichment",
             )
         )
         data = _extract_json(resp.content)

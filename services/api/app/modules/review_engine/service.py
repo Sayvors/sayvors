@@ -231,6 +231,8 @@ async def _decide_tools(
     analysis: ReviewAnalysis,
     strategies: list,
     model: str,
+    tenant_id: str | None = None,
+    channel_id: str | None = None,
 ) -> list[dict]:
     """Ask the LLM which tools to call based on review analysis. Returns list of {tool, args}."""
     provider = get_provider_for_model(model)
@@ -263,6 +265,10 @@ Rules:
                 temperature=0.1,
                 max_tokens=200,
                 stream=False,
+                tenant_id=tenant_id,
+                model_id=model,
+                purpose="review_engine.tools",
+                channel_id=channel_id,
             )
         )
     except ProviderError:
@@ -299,7 +305,8 @@ async def process_review(
     channel_bank = await _channel_databank_id(req.channel_id, tenant_id, db)
 
     # Step 1: Analyze review (errors propagate — no rule-based cover-up)
-    analysis, analysis_stats = await analyze_review(req.review_text, req.rating, req.reviewer_name, model)
+    analysis, analysis_stats = await analyze_review(req.review_text, req.rating, req.reviewer_name, model,
+                                                       tenant_id=tenant_id, channel_id=req.channel_id)
 
     # Step 2: Extract concrete complaint facts (deterministic)
     issues = extract_issues(req.review_text, analysis)
@@ -315,7 +322,8 @@ async def process_review(
     has_product_data = False
     offer_texts: list[str] = []
 
-    tool_decisions = await _decide_tools(analysis, strategies, model)
+    tool_decisions = await _decide_tools(analysis, strategies, model,
+                                         tenant_id=tenant_id, channel_id=req.channel_id)
 
     for td in tool_decisions[:MAX_TOOL_ROUNDS]:
         tool_name = td["tool"]
@@ -402,6 +410,8 @@ async def process_review(
             requirements=requirements,
             previous_issues=previous_issues,
             tier=tier,
+            tenant_id=tenant_id,
+            channel_id=req.channel_id,
         )
 
         # Validate against the REVIEW (issues, fulfillment), not just the response
@@ -495,7 +505,8 @@ async def process_review_stream(
     yield {"step": "analyzing", "message": f"Analyzing with {model}...", "progress": 10, "model": model, "model_source": model_source}
 
     # Step 1: Analyze (errors propagate — surfaced as an SSE error event)
-    analysis, analysis_stats = await analyze_review(req.review_text, req.rating, req.reviewer_name, model)
+    analysis, analysis_stats = await analyze_review(req.review_text, req.rating, req.reviewer_name, model,
+                                                       tenant_id=tenant_id, channel_id=req.channel_id)
     yield {"step": "analyzed", "message": f"Detected: {analysis.sentiment}, {analysis.emotion}, intent={analysis.intent}", "analysis": analysis.model_dump(), "progress": 25}
 
     # Step 2: Extract issues + resolve strategy conflicts
@@ -514,7 +525,8 @@ async def process_review_stream(
 
     # Step 4: Tools
     yield {"step": "tools", "message": "Deciding which business data to retrieve...", "progress": 40}
-    tool_decisions = await _decide_tools(analysis, strategies, model)
+    tool_decisions = await _decide_tools(analysis, strategies, model,
+                                         tenant_id=tenant_id, channel_id=req.channel_id)
     business_context_parts: list[str] = []
     all_tool_calls: list[ToolCall] = []
     has_offer_data = False
@@ -592,6 +604,7 @@ async def process_review_stream(
             business_context=business_context, model=model,
             issues=issues, requirements=requirements,
             previous_issues=previous_issues, tier=tier,
+            tenant_id=tenant_id, channel_id=req.channel_id,
         )
 
         validation = validate_response(

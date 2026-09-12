@@ -42,6 +42,42 @@ class AdminTenantDetail(AdminTenant):
     recent_posts: list[dict] = []
 
 
+class UsageTenantRow(BaseModel):
+    tenant_id: str | None = None
+    email: str = "—"
+    calls: int = 0
+    total_tokens: int = 0
+    avg_latency_ms: int = 0
+    last_seen: str | None = None
+
+
+class UsageModelRow(BaseModel):
+    model: str
+    api_model: str = ""
+    calls: int = 0
+    total_tokens: int = 0
+
+
+class UsageTotals(BaseModel):
+    calls: int = 0
+    total_tokens: int = 0
+    active_tenants: int = 0
+
+
+class UsageDayRow(BaseModel):
+    day: str
+    total_tokens: int = 0
+    calls: int = 0
+
+
+class AdminUsageOverview(BaseModel):
+    days: int = 30
+    totals: UsageTotals
+    per_tenant: list[UsageTenantRow] = []
+    per_model: list[UsageModelRow] = []
+    daily: list[UsageDayRow] = []
+
+
 class LlmProviderStatus(BaseModel):
     provider: str
     key_source: str  # database | none | disabled
