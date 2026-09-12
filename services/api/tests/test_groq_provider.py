@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -14,6 +16,13 @@ from app.modules.llm.providers.openai_compatible import (
     OpenAICompatibleProvider,
 )
 from app.modules.llm.service import _resolve_model
+
+
+@pytest.fixture(autouse=True)
+def _clean_registry():
+    registry.reset_provider_cache()
+    yield
+    registry.reset_provider_cache()
 
 
 def test_groq_base_url_registered():
@@ -37,7 +46,6 @@ def test_resolve_model_maps_groq_id():
 
 
 def test_groq_missing_key_fails_fast(monkeypatch):
-    monkeypatch.setattr(settings, "GROQ_API_KEY", "")
     registry._providers.pop("groq", None)
     try:
         registry.get_provider("groq")
@@ -47,9 +55,12 @@ def test_groq_missing_key_fails_fast(monkeypatch):
         raise AssertionError("expected ProviderError 503 without key")
 
 
-def test_groq_provider_builds_with_key(monkeypatch):
-    monkeypatch.setattr(settings, "GROQ_API_KEY", "gsk_test_key")
-    registry._providers.pop("groq", None)
+def test_groq_provider_builds_with_db_key(monkeypatch):
+    from app.modules.channels.service import encrypt_token
+
+    registry._db_overlay = {
+        "groq": {"key_encrypted": encrypt_token("gsk_db"), "enabled": True}
+    }
     try:
         inst = registry.get_provider("groq")
         assert isinstance(inst, OpenAICompatibleProvider)

@@ -43,3 +43,23 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
+
+
+async def require_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Platform admin gate: separate password, no user record.
+
+    Accepts only tokens minted by the admin login (type claim "admin").
+    Regular user access tokens are rejected here even when valid.
+    """
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("type") != "admin" or payload.get("sub") != "admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+    return {"admin": True}

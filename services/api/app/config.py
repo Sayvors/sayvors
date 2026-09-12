@@ -66,14 +66,9 @@ class Settings(BaseSettings):
     # How many days of daily metrics to pull per sync pass.
     ANALYTICS_PERFORMANCE_DAYS_BACK: int = 30
 
-    # ── LLM provider API keys ──────────────────────────
-    OPENAI_API_KEY: str = ""
-    XAI_API_KEY: str = ""           # Grok
-    MOONSHOT_API_KEY: str = ""      # Kimi
-    DEEPSEEK_API_KEY: str = ""
-    GEMINI_API_KEY: str = ""        # Google Gemini
-    GROQ_API_KEY: str = ""          # GroqCloud (OpenAI-compatible, free tier)
-    OLLAMA_API_KEY: str = ""        # local Ollama (optional)
+    # ── LLM ────────────────────────────────────────────
+    # Provider keys live exclusively in the database (Admin → LLMs).
+    # No LLM keys are read from the environment.
 
     # ── Localith (EmbedSocial) ──────────────────────────────
     LOCALITH_API_KEY: str = ""
@@ -85,6 +80,12 @@ class Settings(BaseSettings):
     LOCALITH_SYNC_INTERVAL_SECONDS: int = 100  # 1 min
     # Scheduled-post publisher: how often due posts are pushed to Google.
     POSTS_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
+
+    # ── Platform admin (separate password, no user record) ──────
+    # Bcrypt hash of the admin password. Empty = admin API disabled.
+    # Generate: python -c "import bcrypt; print(bcrypt.hashpw(b'PW', bcrypt.gensalt()).decode())"
+    ADMIN_PASSWORD_HASH: str = ""
+    ADMIN_SESSION_MINUTES: int = 120
 
     model_config = {"env_file": ".env"}
 

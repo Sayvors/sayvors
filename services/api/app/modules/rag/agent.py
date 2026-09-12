@@ -72,7 +72,7 @@ async def ask_question(
     if not bank:
         raise ValueError("Databank not found")
 
-    provider = get_provider("gemini")  # 503 when GEMINI_API_KEY is missing
+    provider = get_provider("gemini")  # 503 when no key is stored in admin
     ctx = ToolContext(databank_id=databank_id, user_id=user.id, db=db)
     tools = tool_definitions()
 
