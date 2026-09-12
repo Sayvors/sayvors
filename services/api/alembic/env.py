@@ -31,6 +31,7 @@ from app.modules.outbox import models as outbox_models  # noqa: F401
 from app.modules.profile import models as profile_models  # noqa: F401
 from app.modules.localith import models as localith_models  # noqa: F401
 from app.modules.posts import models as posts_models  # noqa: F401
+from app.modules.review_engine import models as review_engine_models  # noqa: F401
 
 target_metadata = Base.metadata
 
