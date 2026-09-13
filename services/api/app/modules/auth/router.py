@@ -255,9 +255,8 @@ async def forgot_password_endpoint(
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     token = await forgot_password(body, db, ip)
-    if token:
-        # TODO: send email with token
-        pass
+    # Email is sent inside forgot_password(); keep the response generic
+    # so account existence is never revealed.
     return {"message": "If email exists, a reset link has been sent"}
 
 

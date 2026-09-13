@@ -319,6 +319,21 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession, ip: str
     await db.commit()
 
     await log_password_reset_request(body.email, ip)
+
+    # Send the reset email (same branded format as OTP). A send failure
+    # must not reveal anything or break the generic endpoint response.
+    try:
+        from ...modules.email.service import send_password_reset_email
+
+        reset_url = f"{(settings.FRONTEND_URL or '').rstrip('/')}/reset-password?token={raw_token}"
+        await send_password_reset_email(
+            user.email, user.first_name or "there", reset_url
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning("Password-reset email failed for %s", body.email)
+
     return raw_token
 
 
@@ -419,10 +434,12 @@ async def verify_signup_otp(
     user = result.scalar_one_or_none()
     if not user:
         raise ValueError("No account with that email")
+    just_verified = False
     if not user.email_verified:
         if not await verify_otp(email, code):
             raise ValueError("Invalid or expired code.")
         user.email_verified = True
+        just_verified = True
         await log_email_verified(user.id, user.email)
 
     access_token = create_access_token(user.id)
@@ -447,6 +464,18 @@ async def verify_signup_otp(
         pass
 
     await log_login(user.id, user.email, ip, user_agent[:200])
+
+    if just_verified:
+        # Greeting upon account creation (same branded format as OTP).
+        # Never fail verification because the greeting failed.
+        try:
+            from ...modules.email.service import send_welcome_email
+
+            await send_welcome_email(user.email, user.first_name or "there")
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("Welcome email failed for %s", user.email)
 
     return {
         "access_token": access_token,

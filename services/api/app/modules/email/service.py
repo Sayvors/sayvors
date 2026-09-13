@@ -24,6 +24,75 @@ logger = logging.getLogger(__name__)
 
 OTP_TTL_SECONDS = 10 * 60
 
+LOGO_FILENAME = "Sayvors_Wordmark_Dark.png"
+
+
+def _logo_url() -> str:
+    """Absolute logo URL for email clients (they can't resolve relative paths)."""
+    base = (settings.FRONTEND_URL or "").rstrip("/")
+    return f"{base}/{LOGO_FILENAME}" if base else f"/{LOGO_FILENAME}"
+
+
+FOOTER_HTML = """<tr>
+    <td style="padding:28px 40px;background-color:#FAFAFA;border-top:1px solid #EEEEF0;text-align:center;">
+      <p style="margin:0 0 16px;font-size:13px;font-weight:600;color:#52525B;">Follow Sayvors</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;"><tr>
+        <td style="padding:0 8px;">
+          <a href="https://www.linkedin.com/company/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/linkedin.svg" width="40" height="40" alt="LinkedIn" style="display:block;border:0;border-radius:8px;"></a>
+        </td>
+        <td style="padding:0 8px;">
+          <a href="https://twitter.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/x.svg" width="40" height="40" alt="X" style="display:block;border:0;border-radius:8px;"></a>
+        </td>
+        <td style="padding:0 8px;">
+          <a href="https://www.facebook.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg" width="40" height="40" alt="Facebook" style="display:block;border:0;border-radius:8px;"></a>
+        </td>
+        <td style="padding:0 8px;">
+          <a href="https://www.instagram.com/Sayvors"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/instagram.svg" width="40" height="40" alt="Instagram" style="display:block;border:0;border-radius:8px;"></a>
+        </td>
+      </tr></table>
+      <p style="margin:16px 0 6px;font-size:12px;color:#A1A1AA;">
+        <a href="https://Sayvors.com" style="color:#71717A;text-decoration:none;font-weight:600;">Sayvors.com</a>
+      </p>
+      <p style="margin:0;font-size:12px;color:#A1A1AA;">EVERY LINE, ONE VOICE</p>
+      <p style="margin:6px 0 0;font-size:12px;color:#A1A1AA;">© Sayvors — Automated message, please do not reply.</p>
+    </td>
+  </tr>"""
+
+
+def _shell(title: str, body_inner: str, logo_url: str) -> str:
+    """Shared branded layout (same header/body/footer as the OTP email)."""
+    return f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F4F4F5;padding:32px 16px;">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+  <!-- Header -->
+  <tr><td style="padding:28px 40px;border-bottom:1px solid #EEEEF0;">
+    <img src="{logo_url}" alt="Sayvors" width="160" style="display:block;border:0;max-width:160px;height:auto;">
+    <div style="margin-top:8px;font-size:11px;font-weight:600;letter-spacing:3px;color:#A1A1AA;">EVERY LINE, ONE VOICE</div>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:40px;color:#1F2937;">
+    <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#1F2937;">{title}</h1>
+    {body_inner}
+  </td></tr>
+
+  <!-- Footer with social icons -->
+  {FOOTER_HTML}
+
+</table>
+</td></tr>
+</table>"""
+
+
+def _cta_button(label: str, url: str) -> str:
+    return (
+        f"<div style=\"margin:28px 0;text-align:center;\">"
+        f"<a href=\"{url}\" style=\"display:inline-block;background-color:#5B2D8E;color:#ffffff;"
+        f"font-size:15px;font-weight:700;text-decoration:none;padding:14px 32px;border-radius:10px;\">{label}</a>"
+        f"</div>"
+    )
+
 
 def _configured() -> bool:
     """Return True when the required Resend API key is configured."""
@@ -86,8 +155,8 @@ OTP_HTML = """<table role="presentation" width="100%" cellpadding="0" cellspacin
 
   <!-- Header -->
   <tr><td style="padding:28px 40px;border-bottom:1px solid #EEEEF0;">
-    <div style="font-size:20px;font-weight:700;color:#1F2937;">Sayvors</div>
-    <div style="margin-top:4px;font-size:11px;font-weight:600;letter-spacing:3px;color:#A1A1AA;">EVERY LINE, ONE VOICE</div>
+    <img src="{logo_url}" alt="Sayvors" width="160" style="display:block;border:0;max-width:160px;height:auto;">
+    <div style="margin-top:8px;font-size:11px;font-weight:600;letter-spacing:3px;color:#A1A1AA;">EVERY LINE, ONE VOICE</div>
   </td></tr>
 
   <!-- Body -->
@@ -142,7 +211,11 @@ async def send_otp_email(email: str, purpose: str = "verification") -> None:
     code = f"{secrets.randbelow(900000) + 100000}"
     redis = await get_redis()
     await redis.setex(_otp_key(email), OTP_TTL_SECONDS, code)
-    html = OTP_HTML.replace("{purpose}", purpose).replace("{code}", code)
+    html = (
+        OTP_HTML.replace("{logo_url}", _logo_url())
+        .replace("{purpose}", purpose)
+        .replace("{code}", code)
+    )
     await send_email(
         email,
         f"Your Sayvors {purpose} code: {code}",
@@ -170,43 +243,54 @@ async def verify_otp(email: str, code: str) -> bool:
 
 async def send_activation_email(email: str, name: str, activation_url: str) -> str:
     """Send a welcome/activation email with a direct account activation link."""
-
+    display = name or "there"
+    body = (
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Hi {display},</p>"
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Welcome to Sayvors! Please activate your account:</p>"
+        f"{_cta_button('Activate my account', activation_url)}"
+        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#71717A;word-break:break-all;\">If the button doesn't work, paste this link: {activation_url}</p>"
+    )
     return await send_email(
         email,
         "Activate your Sayvors account",
-        f"<p>Hi {name},</p>"
-        f"<p>Welcome to Sayvors! Please activate your account:</p>"
-        f"<p><a href='{activation_url}'>Activate my account</a></p>"
-        f"<p>If the button doesn't work, paste this link: {activation_url}</p>",
-        text=f"Hi {name}, activate your Sayvors account: {activation_url}",
+        _shell("Activate your account", body, _logo_url()),
+        text=f"Hi {display}, activate your Sayvors account: {activation_url}",
     )
 
 
 async def send_password_reset_email(email: str, name: str, reset_url: str) -> str:
     """Send a password reset email containing a secure recovery URL."""
-
+    display = name or "there"
+    body = (
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Hi {display},</p>"
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">We received a request to reset your Sayvors password. Click below to choose a new one (link expires in <strong style=\"color:#52525B;\">1 hour</strong>):</p>"
+        f"{_cta_button('Reset my password', reset_url)}"
+        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#71717A;word-break:break-all;\">If the button doesn't work, paste this link: {reset_url}</p>"
+        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#71717A;\">If you didn't request this, you can safely ignore this email.</p>"
+    )
     return await send_email(
         email,
         "Reset your Sayvors password",
-        f"<p>Hi {name},</p>"
-        f"<p>Click below to reset your password (link expires soon):</p>"
-        f"<p><a href='{reset_url}'>Reset my password</a></p>"
-        f"<p>If you didn't request this, ignore this email.</p>",
-        text=f"Hi {name}, reset your Sayvors password: {reset_url}",
+        _shell("Reset your password", body, _logo_url()),
+        text=f"Hi {display}, reset your Sayvors password (expires in 1 hour): {reset_url}",
     )
 
 
 async def send_welcome_email(email: str, name: str) -> str:
     """Send a branded onboarding email after account creation."""
-
+    display = name or "there"
+    channels_url = f"{(settings.FRONTEND_URL or '').rstrip('/')}/dashboard/channels"
+    body = (
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Hi {display},</p>"
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Congrats — your Sayvors account is ready!</p>"
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Connect your Google Business Profile and let our AI handle your reviews.</p>"
+        f"{_cta_button('Connect your first channel', channels_url)}"
+    )
     return await send_email(
         email,
-        f"Welcome to Sayvors, {name}! 🎉",
-        f"<p>Hi {name},</p>"
-        f"<p>Congrats — your Sayvors account is ready!</p>"
-        f"<p>Connect your Google Business Profile and let our AI handle your reviews.</p>"
-        f"<p><a href='{settings.FRONTEND_URL}/dashboard/channels'>Connect your first channel</a></p>",
-        text=f"Hi {name}, your Sayvors account is ready! Connect a channel: {settings.FRONTEND_URL}/dashboard/channels",
+        f"Welcome to Sayvors, {display}! 🎉",
+        _shell("Welcome to Sayvors", body, _logo_url()),
+        text=f"Hi {display}, your Sayvors account is ready! Connect a channel: {channels_url}",
     )
 
 
