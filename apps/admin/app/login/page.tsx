@@ -30,7 +30,7 @@ export default function AdminLoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-[#f3f0ff] p-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-sm space-y-4 rounded-2xl border-2 border-white bg-white/80 p-6 shadow-lg shadow-deep-violet/[0.08] backdrop-blur-sm"
+        className="w-full max-w-sm space-y-4 rounded-[6px] border-2 border-white bg-white/80 p-6 shadow-lg shadow-deep-violet/[0.08] backdrop-blur-sm"
       >
         <div>
           <h1 className="text-[18px] font-bold text-ink">Sayvors Admin</h1>

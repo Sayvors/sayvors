@@ -76,7 +76,7 @@ function ProviderLogo({ provider }: { provider: string }) {
   return (
     <span
       aria-hidden
-      className={`flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br text-[18px] font-bold text-white shadow-md ${brand.gradient}`}
+      className={`flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-gradient-to-br text-[18px] font-bold text-white shadow-md ${brand.gradient}`}
     >
       {!failed && brand.icon ? (
         <img
@@ -403,17 +403,17 @@ export default function AdminLlmsPage() {
       )}
 
       {error ? (
-        <div className="rounded-2xl border-2 border-white bg-white/80 p-10 text-center">
+        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
           <p className="text-[13px] font-semibold text-ink/60">{error}</p>
         </div>
       ) : loading && items.length === 0 ? (
         <div className="grid gap-3 sm:grid-cols-2" aria-hidden>
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-32 animate-pulse rounded-2xl border-2 border-white bg-white/60" />
+            <div key={i} className="h-32 animate-pulse rounded-[6px] border-2 border-white bg-white/60" />
           ))}
         </div>
       ) : keyedProviders.length === 0 ? (
-        <div className="rounded-2xl border-2 border-white bg-white/80 p-10 text-center">
+        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
           <p className="text-[14px] font-semibold text-ink/70">No providers with keys yet</p>
           <p className="mt-1 text-[12px] text-ink/45">
             Add a provider key above to get started — models appear once a key is stored.
@@ -428,7 +428,7 @@ export default function AdminLlmsPage() {
             return (
               <div
                 key={p.provider}
-                className={`rounded-2xl border-2 bg-white/80 p-4 backdrop-blur-sm transition ${
+                className={`rounded-[6px] border-2 bg-white/80 p-4 backdrop-blur-sm transition ${
                   p.enabled ? "border-white hover:shadow-lg hover:shadow-deep-violet/[0.08]" : "border-ink/[0.06] opacity-75"
                 }`}
               >
@@ -529,7 +529,7 @@ export default function AdminLlmsPage() {
         </div>
       )}
 
-      <section className="rounded-2xl border-2 border-white bg-white/80 p-5">
+      <section className="rounded-[6px] border-2 border-white bg-white/80 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-[16px] font-bold text-ink">Models</h2>

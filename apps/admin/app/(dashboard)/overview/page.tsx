@@ -66,21 +66,17 @@ function Progress({ value, max, color = "bg-deep-violet" }: { value: number; max
 function SkeletonOverview() {
   return (
     <div className="space-y-5" aria-hidden>
-      <div className="h-20 animate-pulse rounded-2xl bg-white/60" />
+      <div className="h-20 animate-pulse rounded-[6px] bg-white/60" />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-28 animate-pulse rounded-2xl bg-white/60" />
+          <div key={i} className="h-28 animate-pulse rounded-[6px] bg-white/60" />
         ))}
       </div>
       <div className="grid gap-3 lg:grid-cols-12">
-        <div className="h-56 animate-pulse rounded-2xl bg-white/60 lg:col-span-8" />
-        <div className="h-56 animate-pulse rounded-2xl bg-white/60 lg:col-span-4" />
+        <div className="h-56 animate-pulse rounded-[6px] bg-white/60 lg:col-span-8" />
+        <div className="h-56 animate-pulse rounded-[6px] bg-white/60 lg:col-span-4" />
       </div>
-      <div className="grid gap-3 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-40 animate-pulse rounded-2xl bg-white/60" />
-        ))}
-      </div>
+      <div className="h-32 animate-pulse rounded-[6px] bg-white/60" />
     </div>
   );
 }
@@ -152,7 +148,7 @@ export default function AdminOverviewPage() {
 
   if (error && !data) {
     return (
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-10 text-center">
+      <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
         <p className="text-[14px] font-bold text-ink">Couldn&apos;t load overview.</p>
         <p className="mt-1 text-[12px] text-ink/50">{error}</p>
         <button onClick={() => void fetchData(false)} className="btn-primary mt-4">
@@ -232,7 +228,7 @@ export default function AdminOverviewPage() {
       {hasProblems && (
         <div
           role="alert"
-          className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between"
+          className="flex flex-col gap-3 rounded-[6px] border border-red-200 bg-red-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between"
         >
           <div className="flex items-start gap-3">
             <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-600 text-white">
@@ -267,7 +263,7 @@ export default function AdminOverviewPage() {
         <h2 id="kpi-heading" className="sr-only">Key metrics</h2>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {/* Tenants — acquisition */}
-          <div className="group relative overflow-hidden rounded-2xl border-2 border-white bg-white/85 p-4 shadow-sm transition hover:shadow-md">
+          <div className="group relative overflow-hidden rounded-[6px] border-2 border-white bg-white/85 p-4 shadow-sm transition hover:shadow-md">
             <div className="absolute right-0 top-0 h-20 w-20 -translate-y-6 translate-x-6 rounded-full bg-deep-violet/[0.06] blur-[1px]" aria-hidden />
             <div className="flex items-start justify-between">
               <p className="text-[11px] font-bold uppercase tracking-widest text-ink/45">Tenants</p>
@@ -294,7 +290,7 @@ export default function AdminOverviewPage() {
           </div>
 
           {/* Connections — activation */}
-          <div className="group relative overflow-hidden rounded-2xl border-2 border-white bg-white/85 p-4 shadow-sm transition hover:shadow-md">
+          <div className="group relative overflow-hidden rounded-[6px] border-2 border-white bg-white/85 p-4 shadow-sm transition hover:shadow-md">
             <div className="absolute right-0 top-0 h-20 w-20 -translate-y-6 translate-x-6 rounded-full bg-sky-500/[0.07] blur-[1px]" aria-hidden />
             <div className="flex items-start justify-between">
               <p className="text-[11px] font-bold uppercase tracking-widest text-ink/45">Connected</p>
@@ -318,7 +314,7 @@ export default function AdminOverviewPage() {
           </div>
 
           {/* Reviews — value */}
-          <div className="group relative overflow-hidden rounded-2xl border-2 border-white bg-white/85 p-4 shadow-sm transition hover:shadow-md">
+          <div className="group relative overflow-hidden rounded-[6px] border-2 border-white bg-white/85 p-4 shadow-sm transition hover:shadow-md">
             <div className="absolute right-0 top-0 h-20 w-20 -translate-y-6 translate-x-6 rounded-full bg-amber-400/[0.10] blur-[1px]" aria-hidden />
             <div className="flex items-start justify-between">
               <p className="text-[11px] font-bold uppercase tracking-widest text-ink/45">Reviews synced</p>
@@ -339,7 +335,7 @@ export default function AdminOverviewPage() {
           </div>
 
           {/* Posts — creation */}
-          <div className="group relative overflow-hidden rounded-2xl border-2 border-white bg-white/85 p-4 shadow-sm transition hover:shadow-md">
+          <div className="group relative overflow-hidden rounded-[6px] border-2 border-white bg-white/85 p-4 shadow-sm transition hover:shadow-md">
             <div className="absolute right-0 top-0 h-20 w-20 -translate-y-6 translate-x-6 rounded-full bg-emerald-500/[0.08] blur-[1px]" aria-hidden />
             <div className="flex items-start justify-between">
               <p className="text-[11px] font-bold uppercase tracking-widest text-ink/45">Posts</p>
@@ -386,7 +382,7 @@ export default function AdminOverviewPage() {
       {/* ── 3. Funnel + Operations: the two halves of "how we run" ─────── */}
       <div className="grid gap-3 lg:grid-cols-12">
         {/* Tenant funnel — left 8 */}
-        <section className="rounded-2xl border-2 border-white bg-white/85 p-5 shadow-sm lg:col-span-8">
+        <section className="rounded-[6px] border-2 border-white bg-white/85 p-5 shadow-sm lg:col-span-8">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-[13px] font-bold uppercase tracking-widest text-ink/70">Tenant funnel</h2>
@@ -402,41 +398,19 @@ export default function AdminOverviewPage() {
             </Link>
           </div>
 
-          {/* funnel bars */}
+          {/* funnel — rates only, counts live in Key metrics above to avoid duplication */}
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             {[
-              {
-                step: "01",
-                label: "Signed up",
-                value: data.users_total,
-                note: `${fmtNum(data.signups_last_7d)} new in 7d`,
-                pct: 100,
-                color: "bg-deep-violet",
-              },
-              {
-                step: "02",
-                label: "Verified email",
-                value: data.users_verified,
-                note: `${derived.verifiedRate}% of signups`,
-                pct: derived.verifiedRate,
-                color: "bg-violet-500",
-              },
-              {
-                step: "03",
-                label: "Connected listing",
-                value: data.connections,
-                note: `${derived.connectionRate}% of signups · ${derived.connectionRateVerified}% of verified`,
-                pct: derived.connectionRate,
-                color: "bg-sky-500",
-              },
+              { step: "01", label: "Signed up", note: `${fmtNum(data.signups_last_7d)} new in 7d`, pct: 100, color: "bg-deep-violet" },
+              { step: "02", label: "Verified", note: `${derived.verifiedRate}% of signups`, pct: derived.verifiedRate, color: "bg-violet-500" },
+              { step: "03", label: "Connected", note: `${derived.connectionRate}% of signups · ${derived.connectionRateVerified}% of verified`, pct: derived.connectionRate, color: "bg-sky-500" },
             ].map((s) => (
-              <div key={s.label} className="rounded-2xl bg-ink/[0.02] p-3 ring-1 ring-ink/[0.04]">
+              <div key={s.label} className="rounded-[6px] bg-ink/[0.02] p-3 ring-1 ring-ink/[0.04]">
                 <div className="flex items-center gap-2">
                   <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-ink/40 ring-1 ring-ink/[0.06]">{s.step}</span>
                   <span className="text-[11px] font-bold uppercase tracking-wide text-ink/60">{s.label}</span>
                 </div>
-                <p className="mt-2 text-[22px] font-bold tabular-nums leading-none text-ink">{fmtNum(s.value)}</p>
-                <p className="mt-1 text-[11px] leading-snug text-ink/45">{s.note}</p>
+                <p className="mt-2 text-[11px] font-medium leading-snug text-ink/60">{s.note}</p>
                 <div className="mt-3">
                   <Progress value={s.pct} max={100} color={s.color} />
                 </div>
@@ -473,7 +447,7 @@ export default function AdminOverviewPage() {
 
         {/* Operations — right 4 */}
         <section
-          className={`rounded-2xl border-2 bg-white/85 p-5 shadow-sm lg:col-span-4 ${hasProblems ? "border-red-200 bg-red-50/40" : "border-white"}`}
+          className={`rounded-[6px] border-2 bg-white/85 p-5 shadow-sm lg:col-span-4 ${hasProblems ? "border-red-200 bg-red-50/40" : "border-white"}`}
         >
           <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-widest text-ink/70">
             Pipeline health
@@ -536,19 +510,25 @@ export default function AdminOverviewPage() {
         </section>
       </div>
 
-      {/* ── 4. Content & knowledge — Databanks ─────────────────────────── */}
-      <div className="grid gap-3 lg:grid-cols-3">
-        <section className="rounded-2xl border-2 border-white bg-white/85 p-5 shadow-sm">
-          <h3 className="text-[12px] font-bold uppercase tracking-widest text-ink/60">Knowledge base</h3>
-          <div className="mt-3 flex items-baseline gap-2">
+      {/* ── 4. Content & knowledge — single source, no duplicate Posts card ─────── */}
+      <section className="rounded-[6px] border-2 border-white bg-white/85 p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-[12px] font-bold uppercase tracking-widest text-ink/60">Knowledge base</h3>
+            <p className="mt-1 text-[11px] text-ink/45">Documents that power chat & search — the only place databank counts appear.</p>
+          </div>
+          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-ink/60 ring-1 ring-ink/[0.06]">{fmtNum(data.databanks_total)} banks · {fmtNum(data.documents_total)} docs</span>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+          <div className="flex items-baseline gap-2">
             <p className="text-[28px] font-bold tabular-nums leading-none text-ink">{fmtNum(data.databanks_total)}</p>
             <span className="text-[12px] font-medium text-ink/40">databanks</span>
           </div>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <p className="text-[15px] font-bold tabular-nums text-ink/80">{fmtNum(data.documents_total)}</p>
-            <span className="text-[11px] text-ink/40">documents indexed</span>
+          <div className="flex items-baseline gap-2">
+            <p className="text-[22px] font-bold tabular-nums leading-none text-ink">{fmtNum(data.documents_total)}</p>
+            <span className="text-[11px] text-ink/40">documents</span>
           </div>
-          <div className="mt-4 rounded-xl bg-violet-50 px-3 py-2.5 ring-1 ring-violet-100">
+          <div className="rounded-[6px] bg-violet-50 px-3 py-2.5 ring-1 ring-violet-100">
             <div className="flex items-center justify-between text-[11px]">
               <span className="font-semibold uppercase tracking-wide text-violet-700/70">Avg docs / bank</span>
               <span className="font-bold tabular-nums text-violet-700">{derived.docsPerBank}</span>
@@ -556,105 +536,33 @@ export default function AdminOverviewPage() {
             <div className="mt-2">
               <Progress value={data.documents_total} max={Math.max(data.documents_total, data.databanks_total * 10) || 1} color="bg-violet-500" />
             </div>
-            <p className="mt-2 text-[11px] leading-snug text-ink/55">
-              {data.databanks_total === 0
-                ? "No databanks yet — tenants create them to power chat & search."
-                : data.documents_total === 0
-                  ? "Banks exist but no documents ingested. Check ingest failures →"
-                  : `Healthy knowledge density. Coverage grows with every synced document.`}
-            </p>
           </div>
-        </section>
-
-        <section className="rounded-2xl border-2 border-white bg-white/85 p-5 shadow-sm lg:col-span-2">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-[12px] font-bold uppercase tracking-widest text-ink/60">Posts by status — accurate counts</h3>
-              <p className="mt-1 text-[12px] text-ink/50">Live breakdown from PostgreSQL. Bars are proportional — hover for exact numbers.</p>
-            </div>
-            <span className="shrink-0 rounded-full bg-ink/[0.06] px-2.5 py-1 text-[11px] font-bold tabular-nums text-ink/60">
-              {fmtNum(data.posts_total)} total
-            </span>
-          </div>
-
-          {derived.postsEntries.length === 0 ? (
-            <p className="mt-6 rounded-xl bg-ink/[0.03] px-4 py-8 text-center text-[12px] text-ink/40">No posts yet — tenants will see an empty library.</p>
-          ) : (
-            <>
-              <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-ink/[0.06] ring-1 ring-ink/[0.04]">
-                {derived.postsEntries.map(([k, v]) => (
-                  <div
-                    key={k}
-                    className={`${STATUS_COLOR[k] ?? "bg-ink/30"} h-full transition-all`}
-                    style={{ width: `${(v / derived.postsTotal) * 100}%` }}
-                    title={`${k}: ${v} (${pct(v, derived.postsTotal)}%)`}
-                  />
-                ))}
-              </div>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                {derived.postsEntries.map(([k, v]) => (
-                  <div key={k} className="flex items-center justify-between rounded-xl bg-ink/[0.02] px-3 py-2.5 ring-1 ring-ink/[0.04]">
-                    <span className="flex items-center gap-2 text-[12px] font-semibold capitalize text-ink/70">
-                      <span className={`h-2.5 w-2.5 rounded-full ${STATUS_COLOR[k] ?? "bg-ink/30"}`} aria-hidden />
-                      {k}
-                    </span>
-                    <span className="flex items-baseline gap-2">
-                      <b className="text-[13px] font-bold tabular-nums text-ink">{fmtNum(v)}</b>
-                      <span className="text-[11px] tabular-nums text-ink/40">{pct(v, derived.postsTotal)}%</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-3 text-[11px] text-ink/35">Statuses are exact — no sampling, no cache. Source: LocationPost.status.</p>
-            </>
-          )}
-        </section>
-      </div>
+        </div>
+        <p className="mt-3 text-[11px] leading-snug text-ink/55">
+          {data.databanks_total === 0
+            ? "No databanks yet — tenants create them to power chat & search."
+            : data.documents_total === 0
+              ? "Banks exist but no documents ingested. Check ingest failures →"
+              : `Healthy knowledge density. Coverage grows with every synced document.`}
+        </p>
+      </section>
 
       {/* ── 5. Go deeper — ordered by operator workflow ────────────────── */}
-      <section aria-labelledby="deeper-heading" className="rounded-2xl border-2 border-white bg-white/60 p-4">
+      <section aria-labelledby="deeper-heading" className="rounded-[6px] border-2 border-white bg-white/60 p-4">
         <h2 id="deeper-heading" className="text-[11px] font-bold uppercase tracking-widest text-ink/40">
           Go deeper — operator workflow
         </h2>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            {
-              href: "/tenants",
-              step: "01",
-              title: "Tenants",
-              desc: "Search by email or name, inspect a tenant's listing, reviews & posts.",
-              meta: `${fmtNum(data.users_total)} users · ${fmtNum(data.users_verified)} verified`,
-              accent: "bg-deep-violet",
-            },
-            {
-              href: "/usage",
-              step: "02",
-              title: "Token usage",
-              desc: "Global metering — calls, tokens and latency per tenant & per model.",
-              meta: "Daily trend & per-tenant rails",
-              accent: "bg-sky-500",
-            },
-            {
-              href: "/logs",
-              step: "03",
-              title: "Logs & health",
-              desc: "Service liveness + the last 20 outbox / ingest failures with live probes.",
-              meta: hasProblems ? `${derived.problems} failures need triage` : "All clear",
-              accent: hasProblems ? "bg-red-500" : "bg-emerald-500",
-            },
-            {
-              href: "/llms",
-              step: "04",
-              title: "LLM providers",
-              desc: "Keys, model toggles & live tests — the single source of truth for tenants.",
-              meta: "Encrypted keys · per-model control",
-              accent: "bg-amber-500",
-            },
+            { href: "/tenants", step: "01", title: "Tenants", desc: "Search by email or name, inspect listings, reviews & posts.", accent: "bg-deep-violet" },
+            { href: "/usage", step: "02", title: "Token usage", desc: "Global metering — calls, tokens and latency per tenant & model.", accent: "bg-sky-500" },
+            { href: "/logs", step: "03", title: "Logs & health", desc: "Service liveness + the last 20 outbox / ingest failures.", accent: hasProblems ? "bg-red-500" : "bg-emerald-500" },
+            { href: "/llms", step: "04", title: "LLM providers", desc: "Keys, model toggles & live tests — single source of truth.", accent: "bg-amber-500" },
           ].map((card) => (
             <Link
               key={card.href}
               href={card.href}
-              className="group relative flex flex-col overflow-hidden rounded-2xl bg-white p-4 shadow-sm ring-1 ring-ink/[0.06] transition hover:shadow-md hover:ring-ink/10"
+              className="group relative flex flex-col overflow-hidden rounded-[6px] bg-white p-4 shadow-sm ring-1 ring-ink/[0.06] transition hover:shadow-md hover:ring-ink/10"
             >
               <div className={`absolute left-0 top-0 h-1 w-full ${card.accent}`} aria-hidden />
               <div className="flex items-center gap-2">
@@ -662,7 +570,6 @@ export default function AdminOverviewPage() {
                 <span className="text-[13px] font-bold text-ink group-hover:text-deep-violet">{card.title} →</span>
               </div>
               <p className="mt-2 line-clamp-2 text-[12px] leading-relaxed text-ink/55">{card.desc}</p>
-              <p className="mt-auto pt-3 text-[11px] font-medium tabular-nums text-ink/35">{card.meta}</p>
             </Link>
           ))}
         </div>

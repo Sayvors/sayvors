@@ -105,9 +105,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Brand */}
         <div className="sticky top-0 z-10 bg-[#15102e] px-4 pb-3 pt-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[13px] font-black tracking-tight text-[#1e1547] shadow-sm">
-              S
-            </div>
+            <img
+              src="/Sayvors_Icon.png"
+              alt="Sayvors"
+              width={36}
+              height={36}
+              className="h-9 w-9 shrink-0 rounded-[6px] bg-white object-contain p-1 shadow-sm"
+            />
             <div className="min-w-0">
               <p className="text-[14px] font-bold leading-none tracking-tight text-white">Sayvors</p>
               <p className="mt-0.5 text-[11px] font-medium leading-none text-white/45">Admin console</p>
@@ -133,7 +137,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         <Link
                           href={item.href}
                           aria-current={active ? "page" : undefined}
-                          className={`group relative flex items-center gap-3 rounded-xl px-2.5 py-2.5 text-[13px] transition ${
+                          className={`group relative flex items-center gap-3 rounded-[6px] px-2.5 py-2.5 text-[13px] transition ${
                             active
                               ? "bg-white text-[#1e1547] shadow-sm"
                               : "text-white/55 hover:bg-white/[0.06] hover:text-white"
@@ -164,7 +168,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Footer */}
         <div className="sticky bottom-0 mt-auto bg-[#15102e] p-3">
           <div className="h-px bg-white/[0.06]" aria-hidden />
-          <div className="mt-3 flex items-center gap-2 rounded-xl bg-white/[0.04] px-3 py-2.5 ring-1 ring-white/[0.06]">
+          <div className="mt-3 flex items-center gap-2 rounded-[6px] bg-white/[0.04] px-3 py-2.5 ring-1 ring-white/[0.06]">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-[11px] font-bold text-white/80">AD</div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[12px] font-semibold leading-none text-white">Admin</p>
@@ -177,7 +181,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               setAdminToken(null);
               router.replace("/login");
             }}
-            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-[12px] font-semibold text-white/60 transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white"
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-[6px] border border-white/10 bg-transparent px-3 py-2.5 text-[12px] font-semibold text-white/60 transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white"
           >
             <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-60">
               <path d="M15.2 18.2L9 12l6.2-6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />

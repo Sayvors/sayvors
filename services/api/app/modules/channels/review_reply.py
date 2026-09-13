@@ -93,7 +93,7 @@ async def generate_review_reply(
         name = reviewer_name.split(" ")[0] if reviewer_name else "there"
         if rating >= 4:
             return (
-                f"Thank you so much, {name}! We're thrilled you had a great experience "
+                f"Thank you so much, {name}! We're happy you had a great experience "
                 f"with us — feedback like yours keeps our team motivated. We hope to see you again soon!"
             )
         if rating == 3:
