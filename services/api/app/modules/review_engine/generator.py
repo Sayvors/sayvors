@@ -116,43 +116,40 @@ async def generate_response(
     """Generate a review response from analysis + strategies."""
     user_parts = []
 
-    user_parts.append(f"## Review Analysis\n{json.dumps(analysis.model_dump(), indent=2)}")
+    # Compact analysis (only fields the model needs)
+    user_parts.append(
+        f"Review: {analysis.sentiment}/{analysis.emotion} intent={','.join(analysis.intent) or 'none'} "
+        f"issue={analysis.issue_type or 'none'} product={analysis.product_reference or 'none'}"
+    )
 
     if tier:
         user_parts.append(
-            f"## Length Target (binding)\n{tier['max_sentences']} sentences max, "
-            f"~{tier['min_words']}-{tier['max_words']} words. "
-            f"Compress all strategies into this budget — do NOT write one sentence per strategy."
+            f"Target: {tier['max_sentences']} sentences, {tier['min_words']}-{tier['max_words']} words. Compress."
         )
 
-    strategy_section = "## Selected Strategies (ordered by priority)\n"
-    for s in strategies:
-        line = f"- **{s.name}** (priority {s.priority}): {s.reason}"
-        if s.conditional and s.condition_note:
-            line += f" [CONDITIONAL: {s.condition_note}]"
-        strategy_section += line + "\n"
-    user_parts.append(strategy_section)
+    if strategies:
+        s_lines = "; ".join(
+            f"{s.name}{' (conditional)' if s.conditional else ''}: {s.reason[:80]}" for s in strategies
+        )
+        user_parts.append(f"Strategies: {s_lines}")
 
     if issues:
-        issue_lines = "\n".join(f"- {i.label}: {i.detail}" for i in issues)
-        user_parts.append(f"## Concrete Complaint Facts (MUST address each explicitly)\n{issue_lines}")
+        user_parts.append("Facts: " + "; ".join(f"{i.label}={i.detail}" for i in issues))
 
     if requirements:
-        req_lines = "\n".join(f"- {r}" for r in requirements)
-        user_parts.append(f"## Hard Requirements (validation WILL reject the reply if violated)\n{req_lines}")
+        # Trim to essentials — first 4 + last (the most binding)
+        reqs = requirements if len(requirements) <= 5 else requirements[:4] + [requirements[-1]]
+        user_parts.append("Requirements: " + " | ".join(reqs))
 
     if previous_issues:
-        prev_lines = "\n".join(f"- {p}" for p in previous_issues)
-        user_parts.append(
-            f"## Previous Attempt Failed Validation\n{prev_lines}\n"
-            f"Fix EVERY item above in this new attempt."
-        )
+        user_parts.append("Fix: " + " | ".join(previous_issues[:3]))
 
-    user_parts.append(f"## Channel Policy\n{json.dumps(channel_policy, indent=2)}")
-    user_parts.append(f"## Brand Voice\n{json.dumps(brand_voice, indent=2)}")
-
+    # Business context truncated — first 600 chars is enough to ground claims
     if business_context:
-        user_parts.append(f"## Business Context\n{business_context}")
+        user_parts.append(f"Context: {business_context[:600]}")
+
+    # Drop Channel Policy / Brand Voice dumps — already in system prompt
+    user_parts.append(f"Policy: max {channel_policy.get('max_length', 500)} chars, public={channel_policy.get('public', True)}")
 
     user_msg = "\n\n".join(user_parts)
 
@@ -167,7 +164,7 @@ async def generate_response(
                 messages=[LLMMessage(role="user", content=user_msg)],
                 system_prompt=RESPONSE_SYSTEM_PROMPT,
                 temperature=0.6,
-                max_tokens=800,
+                max_tokens=450,
                 stream=False,
                 tenant_id=tenant_id,
                 model_id=model,

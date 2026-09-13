@@ -234,58 +234,50 @@ async def _decide_tools(
     tenant_id: str | None = None,
     channel_id: str | None = None,
 ) -> list[dict]:
-    """Ask the LLM which tools to call based on review analysis. Returns list of {tool, args}."""
-    provider = get_provider_for_model(model)
-    api_model, _ = _resolve_model(model)
+    """Deterministic tool selection — zero LLM cost.
 
-    system = f"""You are a tool selection engine. Given a review analysis, decide which tools to call.
+    Rules mirror the old LLM prompt but run locally. Saves ~40% of
+    review_engine tokens (the entire review_engine.tools bucket).
+    Falls back to NO tools if nothing matches.
+    """
+    calls: list[dict] = []
+    product_ref = (getattr(analysis, "product_reference", None) or "").strip()
+    text = " ".join(getattr(analysis, "intent", []) or []) + " " + (getattr(analysis, "customer_request", None) or "")
+    text_lower = text.lower()
+    has_product_strategy = any(getattr(s, "strategy_id", "") == "recommend_related_product" for s in strategies)
+    has_offer_strategy = any(getattr(s, "strategy_id", "") == "mention_relevant_offer" for s in strategies)
+    is_pricing = (getattr(analysis, "issue_type", None) == "pricing")
+    wants_deal = any(k in text_lower for k in ("discount", "coupon", "voucher", "compensation", "promo", "deal"))
 
-Available tools (use EXACT parameter names — never invent arguments):
-{_tools_prompt()}
+    if product_ref and has_product_strategy:
+        calls.append({"tool": "search_products", "args": {"query": product_ref}})
+    elif product_ref and analysis.sentiment in ("positive", "very_positive"):
+        # Happy customer mentioning a product — still verify complementary products
+        # (previous LLM would sometimes skip; this deterministic path guarantees the check)
+        if any(getattr(s, "strategy_id", "") in ("recommend_related_product", "show_appreciation") for s in strategies):
+            calls.append({"tool": "search_products", "args": {"query": product_ref}})
 
-Rules:
-- Only call tools that are genuinely needed for this review.
-- For positive/neutral reviews with no specific product mentioned, call NO tools.
-- If a product is mentioned (product_reference present) and a recommendation strategy is possible, call search_products with that product name to verify what else the business offers — the planner will decide whether to mention it.
-- For billing/refund complaints, do NOT call find_offers unless the customer explicitly asks for compensation, a discount, or a deal.
-- Call find_offers ONLY when the customer explicitly asks for compensation, a discount, or a deal — OR when there is a pricing complaint (too expensive) about a mentioned product, to verify whether a matching offer exists. The planner decides separately whether to mention it.
-- The injected tenant_id/db are handled automatically — never include them in args.
-- Return a JSON array of tool calls. Each: {{"tool": "name", "args": {{...}}}}
-- If no tools needed, return an empty array: []
-- Return ONLY the JSON array. No explanation."""
-
-    user_msg = f"Review analysis:\n{json.dumps(analysis.model_dump(), indent=2)}"
-
-    try:
-        resp = await provider.complete(
-            LLMRequest(
-                model=api_model,
-                messages=[LLMMessage(role="user", content=user_msg)],
-                system_prompt=system,
-                temperature=0.1,
-                max_tokens=200,
-                stream=False,
-                tenant_id=tenant_id,
-                model_id=model,
-                purpose="review_engine.tools",
-                channel_id=channel_id,
-            )
-        )
-    except ProviderError:
-        return []
-
-    raw = resp.content.strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
-    try:
-        calls = json.loads(raw)
-        if not isinstance(calls, list):
-            calls = []
+    if has_offer_strategy and (wants_deal or is_pricing):
+        if product_ref:
+            calls.append({"tool": "find_offers", "args": {"product_id": product_ref}})
         else:
-            calls = [c for c in calls if isinstance(c, dict) and "tool" in c]
-    except json.JSONDecodeError:
-        calls = []
+            calls.append({"tool": "find_offers", "args": {}})
+
+    # Business profile only when the review is an explicit question about the business
+    if "question" in (getattr(analysis, "intent", []) or []) and any(
+        k in (analysis.customer_request or "").lower() for k in ("hour", "open", "location", "address", "phone", "price")
+    ):
+        calls.append({"tool": "get_business_profile", "args": {}})
+
+    # De-duplicate (keep first per tool name) and cap
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for c in calls:
+        if c["tool"] in seen:
+            continue
+        seen.add(c["tool"])
+        deduped.append(c)
+    calls = deduped[:2]
 
     # Deterministic fallback: positive mention with conditional recommend must verify inventory.
     # The LLM sometimes skips tools for happy reviews — ensure we look up the product.

@@ -10,40 +10,19 @@ from .schemas import ReviewAnalysis
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_SYSTEM_PROMPT = """You are a review analysis engine. Analyze the customer review and return a JSON object with these fields:
+ANALYSIS_SYSTEM_PROMPT = """Analyze the review → JSON {sentiment,emotion,intent,issue_type,product_reference,urgency,customer_request,language}.
+sentiment: very_negative|negative|neutral|positive|very_positive
+emotion: one word (anger,frustration,joy,disappointment,indifference)
+intent: subset of [complaint,praise,suggestion,refund_request,question,recommendation_request]
+issue_type: pricing|billing|product_quality|product_dissatisfaction|service_quality|delivery|wait_time|cleanliness|staff_behavior|technical_issue|general_complaint|null
+product_reference: product name or null
+urgency: low|medium|high|critical
+customer_request: what they ask for or null
+language: en|ar …
 
-- sentiment: one of "very_negative", "negative", "neutral", "positive", "very_positive"
-- emotion: a single word describing the customer's emotion (e.g. "anger", "frustration", "joy", "disappointment", "indifference")
-- intent: array of strings from ["complaint", "praise", "suggestion", "refund_request", "question", "recommendation_request"]
-- issue_type: string or null — see the pricing-vs-billing rules below
-- product_reference: string or null — the specific product/service mentioned
-- urgency: one of "low", "medium", "high", "critical"
-- customer_request: string or null — what the customer is explicitly asking for
-- language: ISO 639-1 code (e.g. "en", "ar")
-
-ISSUE TYPE RULES — classify by what the customer is ACTUALLY complaining about:
-
-Use "pricing" when the complaint is that the price is too high (an opinion
-about value). Signals: expensive, costly, too expensive, overpriced, pricey,
-price is high, not worth the price/money. There is NO transaction error.
-Example: "The AI tool is great but too expensive." → issue_type "pricing".
-
-Use "billing" ONLY when something went wrong with a transaction. Signals:
-charged twice, double charge, wrong amount charged, unexpected charge,
-payment failed/declined, invoice is wrong, billing error, charged for
-something not ordered. Example: "I was charged twice." → "billing".
-
-CRITICAL: the mere presence of "cost", "price", "charge", or "refund" does
-NOT make it billing. "Costly" alone is pricing. "I want a refund" with no
-charge error is a refund_request intent, not a billing issue_type.
-When in doubt between pricing opinion and billing error, prefer "pricing"
-unless a specific transaction failure is described.
-
-Other issue types: "product_quality", "product_dissatisfaction",
-"service_quality", "delivery", "wait_time", "cleanliness", "staff_behavior",
-"technical_issue", "general_complaint", or null.
-
-Return ONLY valid JSON. No explanation. No markdown."""
+PRICING vs BILLING: pricing=price too high (expensive,costly,overpriced,not worth) no transaction error; billing=transaction failed (charged twice,wrong amount,payment failed,invoice wrong,billing error). "cost/price/charge/refund" alone ≠ billing.
+"pricing" when price opinion; NOT make it billing without transaction error.
+Return ONLY JSON."""
 
 
 def _salvage_analysis_json(raw: str) -> dict:
@@ -95,6 +74,14 @@ async def analyze_review(
     provider = get_provider_for_model(model)
     api_model, _ = _resolve_model(model)
 
+    # Light in-memory cache: same review → same analysis, no extra tokens
+    cache_key = f"{model}:{rating}:{review_text.strip()[:200]}"
+    if not hasattr(analyze_review, "_cache"):
+        analyze_review._cache = {}  # type: ignore[attr-defined]
+    cached = analyze_review._cache.get(cache_key)  # type: ignore[attr-defined]
+    if cached and (time.monotonic() - cached[1] < 300):
+        return cached[0]
+
     t0 = time.monotonic()
     try:
         resp = await provider.complete(
@@ -103,7 +90,7 @@ async def analyze_review(
                 messages=[LLMMessage(role="user", content=user_msg)],
                 system_prompt=ANALYSIS_SYSTEM_PROMPT,
                 temperature=0.1,
-                max_tokens=500,
+                max_tokens=300,
                 stream=False,
                 tenant_id=tenant_id,
                 model_id=model,
@@ -151,6 +138,10 @@ async def analyze_review(
         "tokens": resp.usage.total_tokens,
         "latency_ms": latency,
     }
+    analyze_review._cache[cache_key] = ((analysis, usage), time.monotonic())  # type: ignore[attr-defined]
+    # cap cache
+    if len(analyze_review._cache) > 200:  # type: ignore[attr-defined]
+        analyze_review._cache.pop(next(iter(analyze_review._cache)))  # type: ignore[attr-defined]
     return analysis, usage
 
 
