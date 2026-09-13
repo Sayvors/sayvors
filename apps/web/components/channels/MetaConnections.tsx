@@ -43,14 +43,39 @@ const PROVIDERS: { key: MetaProvider; name: string; blurb: string; icon: string;
 
 function loadFacebookSdk(): Promise<void> {
   if (typeof document === "undefined") return Promise.resolve();
-  if (document.getElementById("facebook-jssdk")) return Promise.resolve();
+  if (document.getElementById("facebook-jssdk")) {
+    if (window.FB && typeof window.FB.init === "function") return Promise.resolve();
+    // SDK loaded but not ready yet — poll briefly (SDK init is async).
+    return new Promise((resolve) => {
+      const interval = setInterval(() => {
+        if (window.FB && typeof window.FB.init === "function") {
+          clearInterval(interval);
+          resolve();
+        }
+      }, 100);
+      setTimeout(() => { clearInterval(interval); resolve(); }, 3000);
+    });
+  }
   return new Promise((resolve) => {
+    window.fbAsyncInit = () => resolve();
     const s = document.createElement("script");
     s.id = "facebook-jssdk";
     s.src = "https://connect.facebook.net/en_US/sdk.js";
     s.async = true;
     s.defer = true;
-    s.onload = () => resolve();
+    s.onload = () => {
+      if (window.FB && typeof window.FB.init === "function") resolve();
+      else {
+        // SDK may initialize after load event — poll briefly then resolve.
+        const interval = setInterval(() => {
+          if (window.FB && typeof window.FB.init === "function") {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 100);
+        setTimeout(() => { clearInterval(interval); resolve(); }, 3000);
+      }
+    };
     s.onerror = () => resolve();
     document.head.appendChild(s);
   });
