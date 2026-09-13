@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
+import MetaConnections from "@/components/channels/MetaConnections";
 import { getAccessToken } from "@/lib/auth-context";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -77,6 +78,14 @@ const GOOGLE_ERRORS: Record<string, string> = {  no_business_account: "No Google
   access_denied: "You cancelled the Google consent screen.",
 };
 
+const META_ERRORS: Record<string, string> = {
+  unknown_provider: "Unknown provider.",
+  token_exchange_failed: "Meta rejected the connection. Please try again.",
+  invalid_state: "The connect session expired. Please click Connect again.",
+  missing_code: "Meta did not return an authorization code. Please try again.",
+  access_denied: "You cancelled the Meta consent screen.",
+};
+
 function num(v: unknown): number {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
   return Number.isFinite(n) ? n : 0;
@@ -105,9 +114,26 @@ function ConnectHub() {
 
   const connectedCount = params.get("google_connected");
   const googleError = params.get("google_error");
+  const metaConnected = params.get("meta_connected");
+  const metaError = params.get("meta_error");
 
   // URL-driven banner derived during render (no effect needed)
   const urlBanner = useMemo(() => {
+    if (metaConnected !== null) {
+      return {
+        kind: "ok" as const,
+        text:
+          metaConnected === "facebook" || metaConnected === "whatsapp"
+            ? `${metaConnected === "facebook" ? "Facebook" : "WhatsApp"} connected! Pick which assets Sayvors should use below.`
+            : `Meta connected (${metaConnected})!`,
+      };
+    }
+    if (metaError) {
+      return {
+        kind: "err" as const,
+        text: META_ERRORS[metaError] ?? `Meta connect failed (${metaError}).`,
+      };
+    }
     if (connectedCount !== null) {
       return {
         kind: "ok" as const,
@@ -121,7 +147,7 @@ function ConnectHub() {
       };
     }
     return null;
-  }, [connectedCount, googleError]);
+  }, [connectedCount, googleError, metaConnected, metaError]);
   const activeBanner = banner ?? (urlDismissed ? null : urlBanner);
 
   const dismissBanner = useCallback(() => {
@@ -560,10 +586,13 @@ function ConnectHub() {
           </div>
         )}
 
+        {/* Meta connections — tenant-owned WhatsApp / Facebook / Instagram */}
+        <MetaConnections
+          onNotice={(kind, text) => setBanner({ kind, text })}
+        />
+
         {/* Coming soon */}
         {[
-          { name: "Instagram", icon: "\u{1F4F8}", color: "from-pink-500 to-purple-500" },
-          { name: "Facebook Messenger", icon: "\u{1F464}", color: "from-blue-500 to-blue-600" },
           { name: "X / Twitter", icon: "\u{1F426}", color: "from-sky-400 to-blue-500" },
         ].map((c) => (
           <div
