@@ -423,6 +423,7 @@ async def process_review(
             tier=tier,
             tenant_id=tenant_id,
             channel_id=req.channel_id,
+            review_text=req.review_text,
         )
 
         # Validate against the REVIEW (issues, fulfillment), not just the response
@@ -616,6 +617,7 @@ async def process_review_stream(
             issues=issues, requirements=requirements,
             previous_issues=previous_issues, tier=tier,
             tenant_id=tenant_id, channel_id=req.channel_id,
+            review_text=req.review_text,
         )
 
         validation = validate_response(

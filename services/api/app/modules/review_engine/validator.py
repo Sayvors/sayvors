@@ -364,10 +364,19 @@ def validate_response(
 
     # ── Specificity ───────────────────────────────────────
     n_overlap, matched_words = _overlap_count(review_text, text_lower)
+    # Product reference (even short like "AI") counts as specificity when echoed
+    product_ref = (getattr(analysis, "product_reference", None) or "").strip()
+    product_echoed = bool(product_ref and product_ref.lower() in text_lower)
+    # Short positive praise with nothing concrete has no specificity burden
+    is_short_praise = (
+        not issues
+        and getattr(analysis, "sentiment", "") in ("positive", "very_positive")
+        and len((review_text or "").strip()) < 80
+    )
     if len(review_text or "") >= 30:
-        specific_ok = n_overlap >= 3 or (bool(issues) and coverage_ok)
+        specific_ok = n_overlap >= 3 or (bool(issues) and coverage_ok) or product_echoed or is_short_praise
     else:
-        specific_ok = n_overlap >= 1 or len(stripped) < 120
+        specific_ok = n_overlap >= 1 or len(stripped) < 120 or product_echoed or is_short_praise
     checks["specificity"] = specific_ok
     if not specific_ok:
         problems.append(f"Generic reply: only {n_overlap} concrete review word(s) echoed.")

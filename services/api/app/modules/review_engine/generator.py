@@ -112,15 +112,22 @@ async def generate_response(
     tier: dict | None = None,
     tenant_id: str | None = None,
     channel_id: str | None = None,
+    review_text: str | None = None,
 ) -> tuple[GeneratedResponse, dict]:
     """Generate a review response from analysis + strategies."""
     user_parts = []
 
     # Compact analysis (only fields the model needs)
+    # Verbatim review is critical for specificity — keep it prominent
+    if review_text:
+        user_parts.append(f'Customer review (verbatim, {analysis.sentiment}): "{review_text.strip()[:300]}"')
     user_parts.append(
-        f"Review: {analysis.sentiment}/{analysis.emotion} intent={','.join(analysis.intent) or 'none'} "
+        f"Analysis: {analysis.sentiment}/{analysis.emotion} intent={','.join(analysis.intent) or 'none'} "
         f"issue={analysis.issue_type or 'none'} product={analysis.product_reference or 'none'}"
     )
+    # Hard product mention is non-negotiable when a product is named
+    if analysis.product_reference:
+        user_parts.append(f'CRITICAL: Mention the product "{analysis.product_reference}" by exact name in your reply.')
 
     if tier:
         user_parts.append(
