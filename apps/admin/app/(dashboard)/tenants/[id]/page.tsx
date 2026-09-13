@@ -166,7 +166,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
 
   if (error) {
     return (
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-10 text-center">
+      <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
         <p className="text-[14px] font-bold text-ink">{error}</p>
         <p className="mt-1 text-[12px] text-ink/45">Tenant ID: {id}</p>
         <Link href="/tenants" className="mt-4 inline-flex rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white hover:bg-[#4a2575]">← Back to tenants</Link>
@@ -177,10 +177,10 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
     return (
       <div className="space-y-4" aria-hidden>
         <div className="h-6 w-40 animate-pulse rounded-full bg-white/60" />
-        <div className="h-44 animate-pulse rounded-2xl bg-white/60" />
+        <div className="h-44 animate-pulse rounded-[6px] bg-white/60" />
         <div className="grid gap-3 lg:grid-cols-2">
-          <div className="h-64 animate-pulse rounded-2xl bg-white/60" />
-          <div className="h-64 animate-pulse rounded-2xl bg-white/60" />
+          <div className="h-64 animate-pulse rounded-[6px] bg-white/60" />
+          <div className="h-64 animate-pulse rounded-[6px] bg-white/60" />
         </div>
       </div>
     );
@@ -209,12 +209,12 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       </div>
 
       {/* Hero */}
-      <div className="overflow-hidden rounded-2xl border-2 border-white bg-white/85 shadow-sm">
+      <div className="overflow-hidden rounded-[6px] border-2 border-white bg-white/85 shadow-sm">
         <div className="bg-gradient-to-r from-deep-violet/[0.06] via-violet-500/[0.04] to-sky-500/[0.05] px-5 py-5 sm:px-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex gap-4">
               <div className="relative shrink-0">
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-deep-violet text-[16px] font-black tracking-tight text-white shadow-sm ring-1 ring-deep-violet/20">{initialsFromTenant(tenant)}</div>
+                <div className="flex h-14 w-14 items-center justify-center rounded-[6px] bg-deep-violet text-[16px] font-black tracking-tight text-white shadow-sm ring-1 ring-deep-violet/20">{initialsFromTenant(tenant)}</div>
                 <span className={`absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold ${tenant.email_verified ? "bg-emerald-500 text-white" : "bg-amber-400 text-white"}`} aria-hidden>{tenant.email_verified ? "✓":"!"}</span>
               </div>
               <div className="min-w-0">
@@ -236,7 +236,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
               <Link href={`/usage`} className="rounded-xl bg-deep-violet px-3 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-[#4a2575]">Usage →</Link>
             </div>
           </div>
-          <div className="mt-5 rounded-2xl bg-white/80 p-3 ring-1 ring-ink/[0.06]">
+          <div className="mt-5 rounded-[6px] bg-white/80 p-3 ring-1 ring-ink/[0.06]">
             <div className="flex items-center justify-between gap-2">
               {[
                 { n:1, label:"Signed up", desc:fmtDate(tenant.created_at), done:true },
@@ -260,22 +260,22 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
           </div>
         </div>
         <div className="grid gap-2.5 p-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-2xl bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04]">
+          <div className="rounded-[6px] bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04]">
             <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40"><span className={`h-2 w-2 rounded-full ${tenant.has_connection?"bg-emerald-500":"bg-ink/20"}`} aria-hidden/> Listing</p>
             <p className="mt-2 truncate text-[13px] font-bold text-ink" title={tenant.listing_name ?? "—"}>{tenant.listing_name ?? "— No listing —"}</p>
             <p className="mt-1 text-[11px] leading-snug text-ink/45">{tenant.has_connection?"Google Business listing connected":"Tenant hasn't linked a location yet"}</p>
           </div>
-          <div className="rounded-2xl bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04]">
+          <div className="rounded-[6px] bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04]">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">Last sync</p>
             <p className="mt-2 text-[13px] font-bold text-ink">{tenant.last_synced_at?fmtRelative(tenant.last_synced_at):"never"}</p>
             <p className="mt-1 truncate text-[11px] text-ink/45" title={tenant.last_synced_at?fmtDateTime(tenant.last_synced_at):""}>{tenant.last_synced_at?fmtDateTime(tenant.last_synced_at):"No sync recorded"}</p>
           </div>
-          <div className="rounded-2xl bg-sky-50/70 p-3.5 ring-1 ring-sky-100">
+          <div className="rounded-[6px] bg-sky-50/70 p-3.5 ring-1 ring-sky-100">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700/60">Reviews</p>
             <p className="mt-2 flex items-baseline gap-1.5 text-[18px] font-bold leading-none text-ink">{tenant.reviews.toLocaleString()} <span className="text-[11px] font-medium text-ink/40">synced</span></p>
             <p className="mt-1 text-[11px] text-ink/45">{tenant.reviews===0?"No reviews indexed yet":"Insights used for AI replies"}</p>
           </div>
-          <div className="rounded-2xl bg-violet-50/70 p-3.5 ring-1 ring-violet-100">
+          <div className="rounded-[6px] bg-violet-50/70 p-3.5 ring-1 ring-violet-100">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-violet-700/60">Content</p>
             <p className="mt-2 flex items-baseline gap-2 text-[13px] font-bold text-ink">
               <span className="rounded-full bg-white px-2 py-1 text-[12px] ring-1 ring-ink/[0.06]">{tenant.posts} posts</span>
@@ -287,7 +287,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       </div>
 
       {/* AI Usage — new section */}
-      <section className="rounded-2xl border-2 border-white bg-white/85 p-4 shadow-sm sm:p-5">
+      <section className="rounded-[6px] border-2 border-white bg-white/85 p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-wide text-ink">
@@ -308,13 +308,13 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
 
         {usageLoading ? (
           <div className="mt-4 grid gap-2.5 sm:grid-cols-4">
-            {[1,2,3,4].map((i)=><div key={i} className="h-20 animate-pulse rounded-2xl bg-ink/[0.04]" />)}
+            {[1,2,3,4].map((i)=><div key={i} className="h-20 animate-pulse rounded-[6px] bg-ink/[0.04]" />)}
           </div>
         ) : usage ? (
           <>
             {usageError && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800">{usageError} <button onClick={()=>void loadUsage(usageDays)} className="ml-1 font-bold underline">Retry</button></div>}
             {usage.totals.calls === 0 ? (
-          <div className="mt-4 rounded-2xl border border-dashed border-ink/10 bg-ink/[0.02] p-8 text-center">
+          <div className="mt-4 rounded-[6px] border border-dashed border-ink/10 bg-ink/[0.02] p-8 text-center">
             <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white text-ink/30 ring-1 ring-ink/10">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M12 3l1.6 3.2 3.4.5-2.5 2.4.6 3.4L12 10.8 8.9 12.5l.6-3.4L7 6.7l3.4-.5L12 3z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/></svg>
             </div>
@@ -324,22 +324,22 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
         ) : (
           <>
             <div className="mt-4 grid gap-2.5 sm:grid-cols-4">
-              <div className="rounded-2xl bg-violet-50 px-3.5 py-3 ring-1 ring-violet-100">
+              <div className="rounded-[6px] bg-violet-50 px-3.5 py-3 ring-1 ring-violet-100">
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-violet-700/60">Total tokens</p>
                 <p className="mt-1 text-[18px] font-bold leading-none tabular-nums text-ink">{fmt(usage.totals.total_tokens)}</p>
                 <p className="mt-1 text-[11px] text-ink/45">{usage.totals.prompt_tokens.toLocaleString()} prompt · {usage.totals.completion_tokens.toLocaleString()} completion</p>
               </div>
-              <div className="rounded-2xl bg-white px-3.5 py-3 ring-1 ring-ink/[0.06]">
+              <div className="rounded-[6px] bg-white px-3.5 py-3 ring-1 ring-ink/[0.06]">
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">Calls</p>
                 <p className="mt-1 text-[18px] font-bold leading-none tabular-nums text-ink">{usage.totals.calls.toLocaleString()}</p>
                 <p className="mt-1 text-[11px] text-ink/45">{fmt(usage.totals.total_tokens / Math.max(1, usage.totals.calls))}/call avg · {usage.days}d window</p>
               </div>
-              <div className="rounded-2xl bg-white px-3.5 py-3 ring-1 ring-ink/[0.06]">
+              <div className="rounded-[6px] bg-white px-3.5 py-3 ring-1 ring-ink/[0.06]">
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">Avg latency</p>
                 <p className="mt-1 text-[18px] font-bold leading-none tabular-nums text-ink">{fmtMs(usage.totals.avg_latency_ms)}</p>
                 <p className="mt-1 text-[11px] text-ink/45">{usage.totals.avg_latency_ms > 3000 ? "Slow — check provider" : usage.totals.avg_latency_ms > 1500 ? "Moderate" : "Fast"}</p>
               </div>
-              <div className="rounded-2xl bg-ink/[0.02] px-3.5 py-3 ring-1 ring-ink/[0.04]">
+              <div className="rounded-[6px] bg-ink/[0.02] px-3.5 py-3 ring-1 ring-ink/[0.04]">
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">Progress insight</p>
                 {usage.daily.length >= 2 ? (
                   <>
@@ -363,7 +363,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-5">
-              <div className="lg:col-span-3 rounded-2xl bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04]">
+              <div className="lg:col-span-3 rounded-[6px] bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04]">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-ink/50">Daily tokens · {usage.days}d</p>
                 {usage.daily.length === 0 ? <p className="mt-2 text-[11px] text-ink/40">No daily points.</p> : <MiniArea points={usage.daily.map((d)=>({x:d.day.slice(5), y:d.total_tokens}))} />}
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -373,7 +373,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                 </div>
               </div>
               <div className="lg:col-span-2 space-y-3">
-                <div className="rounded-2xl bg-white p-3.5 ring-1 ring-ink/[0.06]">
+                <div className="rounded-[6px] bg-white p-3.5 ring-1 ring-ink/[0.06]">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-ink/50">By model</p>
                   {usage.by_model.length===0 ? <p className="mt-2 text-[11px] text-ink/40">No model breakdown.</p> : (
                     <div className="mt-2 space-y-2">
@@ -392,7 +392,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                     </div>
                   )}
                 </div>
-                <div className="rounded-2xl bg-violet-50 p-3.5 ring-1 ring-violet-100">
+                <div className="rounded-[6px] bg-violet-50 p-3.5 ring-1 ring-violet-100">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-violet-700/60">By purpose</p>
                   {usage.by_purpose.length===0 ? <p className="mt-1 text-[11px] text-ink/40">No purpose tagged.</p> : (
                     <div className="mt-2 flex flex-wrap gap-1.5">
@@ -420,7 +420,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Reviews — clickable */}
-        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 shadow-sm">
+        <section className="rounded-[6px] border-2 border-white bg-white/80 p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-wide text-ink">
               <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600">
@@ -432,7 +432,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             <span className="hidden text-[11px] text-ink/30 sm:inline">Click a card to expand</span>
           </div>
           {tenant.recent_reviews.length===0 ? (
-            <div className="mt-4 rounded-2xl border border-dashed border-ink/10 bg-ink/[0.02] p-8 text-center">
+            <div className="mt-4 rounded-[6px] border border-dashed border-ink/10 bg-ink/[0.02] p-8 text-center">
               <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white text-ink/30 ring-1 ring-ink/10">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M12 3.5l2 4 4.5.7-3.2 3.1.8 4.4L12 13.7 7.9 15.7l.8-4.4L5.5 8.2l4.5-.7 2-4z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/></svg>
               </div>
@@ -446,7 +446,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                   <button
                     type="button"
                     onClick={()=>setSelected(r)}
-                    className="group w-full rounded-2xl bg-ink/[0.02] p-3.5 text-left ring-1 ring-ink/[0.04] transition hover:bg-white hover:shadow-sm hover:ring-deep-violet/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet"
+                    className="group w-full rounded-[6px] bg-ink/[0.02] p-3.5 text-left ring-1 ring-ink/[0.04] transition hover:bg-white hover:shadow-sm hover:ring-deep-violet/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="flex items-center gap-2">
@@ -473,7 +473,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
         </section>
 
         {/* Posts */}
-        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 shadow-sm">
+        <section className="rounded-[6px] border-2 border-white bg-white/80 p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-wide text-ink">
               <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600">
@@ -485,7 +485,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             <Link href="/overview" className="hidden text-[11px] font-semibold text-deep-violet hover:underline sm:inline">View overview →</Link>
           </div>
           {tenant.recent_posts.length===0 ? (
-            <div className="mt-4 rounded-2xl border border-dashed border-ink/10 bg-ink/[0.02] p-8 text-center">
+            <div className="mt-4 rounded-[6px] border border-dashed border-ink/10 bg-ink/[0.02] p-8 text-center">
               <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white text-ink/30 ring-1 ring-ink/10">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M8 9h8M8 12h6M8 15h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               </div>
@@ -495,7 +495,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
           ) : (
             <ul className="mt-4 space-y-2.5">
               {tenant.recent_posts.map((p)=>(
-                <li key={p.id} className="group flex items-center gap-3 rounded-2xl bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04] transition hover:bg-white">
+                <li key={p.id} className="group flex items-center gap-3 rounded-[6px] bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04] transition hover:bg-white">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-semibold leading-none text-ink group-hover:text-deep-violet" title={p.title || "(untitled)"}>{p.title || <span className="italic text-ink/40">(untitled)</span>}</p>
                     <p className="mt-1.5 text-[11px] text-ink/40" title={p.created_at?fmtDateTime(p.created_at):""}>{p.created_at?`${fmtDate(p.created_at)} · ${fmtRelative(p.created_at)}`:"—"}</p>
@@ -521,7 +521,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button type="button" aria-label="Close review" onClick={()=>setSelected(null)} className="absolute inset-0 bg-ink/40 backdrop-blur-sm" />
-          <div role="dialog" aria-modal="true" aria-labelledby="review-title" className="relative max-h-[85vh] w-full max-w-[560px] overflow-auto rounded-2xl border-2 border-white bg-white p-5 shadow-xl">
+          <div role="dialog" aria-modal="true" aria-labelledby="review-title" className="relative max-h-[85vh] w-full max-w-[560px] overflow-auto rounded-[6px] border-2 border-white bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p id="review-title" className="flex items-center gap-2 text-[13px] font-bold text-ink">
@@ -537,7 +537,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                 <button onClick={()=>setSelected(null)} className="rounded-xl bg-ink px-3 py-1.5 text-[12px] font-bold text-white hover:bg-ink/90">Close</button>
               </div>
             </div>
-            <div className="mt-4 rounded-2xl bg-ink/[0.03] p-4 ring-1 ring-ink/[0.06]">
+            <div className="mt-4 rounded-[6px] bg-ink/[0.03] p-4 ring-1 ring-ink/[0.06]">
               <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink/80">{selected.text || "(No text — star rating only)"}</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">

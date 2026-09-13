@@ -181,11 +181,11 @@ export default function UsagePage() {
       {loading ? (
         <div className="grid gap-2.5 sm:grid-cols-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-[76px] animate-pulse rounded-2xl border-2 border-white bg-white/60" />
+            <div key={i} className="h-[76px] animate-pulse rounded-[6px] border-2 border-white bg-white/60" />
           ))}
         </div>
       ) : error ? (
-        <div className="rounded-2xl border-2 border-white bg-white/80 p-8 text-center">
+        <div className="rounded-[6px] border-2 border-white bg-white/80 p-8 text-center">
           <p className="text-[13px] text-ink/60">{error}</p>
           <button onClick={() => void load(days)} className="btn-primary mt-3 !py-1.5 text-[12px]">Retry</button>
         </div>
@@ -199,7 +199,7 @@ export default function UsagePage() {
               { label: "Avg / call", value: data.totals.calls ? fmt(Math.round(data.totals.total_tokens / data.totals.calls)) : "—", sub: `${fmt(data.totals.total_tokens)} in ${days}d` },
               { label: "Peak day", value: fmt(Math.max(0, ...data.daily.map((d) => d.total_tokens))), sub: data.daily.reduce((m, d) => (d.total_tokens > m.total_tokens ? d : m), data.daily[0] ?? { day: "—", total_tokens: 0 })?.day?.slice(5) ?? "—" },
             ].map((c) => (
-              <div key={c.label} className="rounded-2xl border-2 border-white bg-white/80 px-3.5 py-3">
+              <div key={c.label} className="rounded-[6px] border-2 border-white bg-white/80 px-3.5 py-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</p>
                 <p className="mt-1 text-[18px] font-bold leading-none tabular-nums text-ink">{c.value}</p>
                 <p className="mt-1 text-[11px] leading-none text-ink/45">{c.sub}</p>
@@ -211,7 +211,7 @@ export default function UsagePage() {
           {insights && (
             <div className="grid gap-2.5 lg:grid-cols-4">
               {/* Concentration */}
-              <div className="rounded-2xl border-2 border-white bg-white/85 px-3.5 py-3">
+              <div className="rounded-[6px] border-2 border-white bg-white/85 px-3.5 py-3">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   <span className="h-1.5 w-1.5 rounded-full bg-violet-500" aria-hidden /> Concentration
                 </p>
@@ -229,7 +229,7 @@ export default function UsagePage() {
               </div>
 
               {/* Engagement / dormancy */}
-              <div className="rounded-2xl border-2 border-white bg-white/85 px-3.5 py-3">
+              <div className="rounded-[6px] border-2 border-white bg-white/85 px-3.5 py-3">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   <span className={`h-1.5 w-1.5 rounded-full ${insights.dormant > 0 ? "bg-amber-500" : "bg-emerald-500"}`} aria-hidden /> Engagement
                 </p>
@@ -247,7 +247,7 @@ export default function UsagePage() {
               </div>
 
               {/* Momentum */}
-              <div className="rounded-2xl border-2 border-white bg-white/85 px-3.5 py-3">
+              <div className="rounded-[6px] border-2 border-white bg-white/85 px-3.5 py-3">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   <span className={`h-1.5 w-1.5 rounded-full ${insights.growth >= 0 ? "bg-emerald-500" : "bg-red-500"}`} aria-hidden /> Momentum
                 </p>
@@ -264,7 +264,7 @@ export default function UsagePage() {
               </div>
 
               {/* Efficiency */}
-              <div className="rounded-2xl border-2 border-white bg-white/85 px-3.5 py-3">
+              <div className="rounded-[6px] border-2 border-white bg-white/85 px-3.5 py-3">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   <span className={`h-1.5 w-1.5 rounded-full ${insights.slow ? "bg-amber-500" : "bg-sky-500"}`} aria-hidden /> Efficiency
                 </p>
@@ -281,7 +281,7 @@ export default function UsagePage() {
 
           {/* compact two-col: daily + models */}
           <div className="grid gap-3 lg:grid-cols-5">
-            <div className="rounded-2xl border-2 border-white bg-white/80 p-3.5 lg:col-span-3">
+            <div className="rounded-[6px] border-2 border-white bg-white/80 p-3.5 lg:col-span-3">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h2 className="text-[13px] font-bold leading-none text-ink">Daily tokens</h2>
@@ -297,7 +297,7 @@ export default function UsagePage() {
               <p className="mt-2 text-[11px] text-ink/30">{insights?.growth !== undefined && insights.growth >= 0 ? "Progress is tracked daily — watch for flat lines indicating stalled tenants." : ""}</p>
             </div>
 
-            <div className="rounded-2xl border-2 border-white bg-white/80 p-3.5 lg:col-span-2">
+            <div className="rounded-[6px] border-2 border-white bg-white/80 p-3.5 lg:col-span-2">
               <h2 className="text-[13px] font-bold leading-none text-ink">Top models</h2>
               <p className="mt-1 text-[11px] leading-none text-ink/45">By token share — where people get value</p>
               <div className="mt-3 space-y-2">
@@ -324,7 +324,7 @@ export default function UsagePage() {
           </div>
 
           {/* per tenant — compact table */}
-          <div className="rounded-2xl border-2 border-white bg-white/80 p-3 sm:p-3.5">
+          <div className="rounded-[6px] border-2 border-white bg-white/80 p-3 sm:p-3.5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-[13px] font-bold leading-none text-ink">Tenants by progress</h2>
               <div className="flex items-center gap-2">

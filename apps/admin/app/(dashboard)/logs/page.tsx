@@ -121,7 +121,7 @@ export default function AdminLogsPage() {
   return (
     <div className="space-y-4">
       {/* Header hero */}
-      <div className="overflow-hidden rounded-2xl border-2 border-white bg-white/85 shadow-sm">
+      <div className="overflow-hidden rounded-[6px] border-2 border-white bg-white/85 shadow-sm">
         <div className="bg-gradient-to-r from-deep-violet/[0.06] via-violet-500/[0.04] to-sky-500/[0.05] px-4 py-4 sm:px-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
@@ -173,7 +173,7 @@ export default function AdminLogsPage() {
                 { label: "Infra failing", value: String(insights?.failingInfra ?? 0), sub: insights?.failingInfra ? "needs triage" : "all clear", tone: insights?.failingInfra ? "text-red-600" : "text-emerald-600" },
                 { label: "Recent failures", value: String(health.recent_failures.length), sub: health.recent_failures.length ? "last 20" : "no recent" },
               ].map((c) => (
-                <div key={c.label} className="rounded-2xl bg-white px-3.5 py-3 ring-1 ring-ink/[0.06]">
+                <div key={c.label} className="rounded-[6px] bg-white px-3.5 py-3 ring-1 ring-ink/[0.06]">
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</p>
                   <p className={`mt-1 text-[15px] font-bold leading-none tabular-nums ${c.tone ?? "text-ink"}`}>{c.value}</p>
                   <p className="mt-1 text-[11px] leading-none text-ink/40">{c.sub}</p>
@@ -185,20 +185,20 @@ export default function AdminLogsPage() {
       </div>
 
       {error ? (
-        <div className="rounded-2xl border-2 border-white bg-white/80 p-10 text-center">
+        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
           <p className="text-[13px] font-semibold text-ink/60">{error}</p>
           <button onClick={() => void load(false)} className="mt-3 rounded-xl bg-deep-violet px-3 py-1.5 text-[12px] font-bold text-white">Retry</button>
         </div>
       ) : !health && loading ? (
         <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-[92px] animate-pulse rounded-2xl border-2 border-white bg-white/60" />
+            <div key={i} className="h-[92px] animate-pulse rounded-[6px] border-2 border-white bg-white/60" />
           ))}
         </div>
       ) : health && (
         <>
           {/* toolbar */}
-          <div className="flex flex-col gap-2.5 rounded-2xl border-2 border-white bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2.5 rounded-[6px] border-2 border-white bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-1.5">
               {filters.map((f) => (
                 <button
@@ -225,7 +225,7 @@ export default function AdminLogsPage() {
               </h2>
               <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
                 {infra.map((s) => (
-                  <div key={s.name} className={`relative overflow-hidden rounded-2xl border-2 bg-white/85 p-3.5 shadow-sm transition hover:shadow-md ${s.ok ? "border-white" : "border-red-200 bg-red-50/30"}`}>
+                  <div key={s.name} className={`relative overflow-hidden rounded-[6px] border-2 bg-white/85 p-3.5 shadow-sm transition hover:shadow-md ${s.ok ? "border-white" : "border-red-200 bg-red-50/30"}`}>
                     <div className={`absolute left-0 top-0 h-1 w-full ${s.ok ? "bg-emerald-500" : "bg-red-500"}`} aria-hidden />
                     <div className="flex items-start justify-between gap-2">
                       <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl ${s.ok ? "bg-emerald-500" : "bg-red-500"} shadow-sm`}>
@@ -253,7 +253,7 @@ export default function AdminLogsPage() {
               </h2>
               <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {ai.map((s) => (
-                  <div key={s.name} className={`relative overflow-hidden rounded-2xl p-3.5 shadow-sm ring-1 transition ${s.ok ? "bg-white ring-ink/[0.06] hover:shadow-md" : s.key_source === "disabled" ? "bg-ink/[0.02] ring-ink/10 opacity-80" : "bg-amber-50/60 ring-amber-200"}`}>
+                  <div key={s.name} className={`relative overflow-hidden rounded-[6px] p-3.5 shadow-sm ring-1 transition ${s.ok ? "bg-white ring-ink/[0.06] hover:shadow-md" : s.key_source === "disabled" ? "bg-ink/[0.02] ring-ink/10 opacity-80" : "bg-amber-50/60 ring-amber-200"}`}>
                     <div className="flex items-center gap-2">
                       <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl ${s.ok ? "bg-deep-violet text-white" : s.key_source==="disabled" ? "bg-ink/20 text-white" : "bg-amber-500 text-white"}`}>
                         <KindIcon kind={s.kind} ok={true} />
@@ -271,20 +271,20 @@ export default function AdminLogsPage() {
                     </div>
                   </div>
                 ))}
-                {ai.length === 0 && <p className="col-span-full rounded-2xl bg-white/60 p-6 text-center text-[11px] text-ink/40">No AI providers in this filter.</p>}
+                {ai.length === 0 && <p className="col-span-full rounded-[6px] bg-white/60 p-6 text-center text-[11px] text-ink/40">No AI providers in this filter.</p>}
               </div>
             </section>
           )}
 
           {services.length === 0 && (
-            <div className="rounded-2xl border-2 border-white bg-white/60 p-8 text-center text-[12px] text-ink/40">
+            <div className="rounded-[6px] border-2 border-white bg-white/60 p-8 text-center text-[12px] text-ink/40">
               No services match — clear search or switch filter.
               <button onClick={() => { setQ(""); setFilter("all"); }} className="ml-2 font-bold text-deep-violet hover:underline">Reset</button>
             </div>
           )}
 
           {/* Recent failures */}
-          <section className="rounded-2xl border-2 border-white bg-white/80 p-4 sm:p-5">
+          <section className="rounded-[6px] border-2 border-white bg-white/80 p-4 sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <h2 className="flex items-center gap-2 text-[13px] font-bold tracking-tight text-ink">
                 Recent failures
@@ -294,7 +294,7 @@ export default function AdminLogsPage() {
               <span className="hidden text-[11px] text-ink/30 sm:inline">Auto-refresh 30s · {fmtRelative(health.checked_at)}</span>
             </div>
             {health.recent_failures.length === 0 ? (
-              <div className="mt-4 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/50 p-8 text-center">
+              <div className="mt-4 rounded-[6px] border border-dashed border-emerald-200 bg-emerald-50/50 p-8 text-center">
                 <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500 text-white">✓</div>
                 <p className="mt-2 text-[13px] font-bold text-emerald-700">No failures recorded</p>
                 <p className="mx-auto mt-1 max-w-[420px] text-[11px] leading-relaxed text-emerald-700/70">Good sign — outbox and ingest are clear. Failures appear here for 20 most recent with source, type and time.</p>
@@ -302,7 +302,7 @@ export default function AdminLogsPage() {
             ) : (
               <ul className="mt-4 space-y-2">
                 {health.recent_failures.map((f, i) => (
-                  <li key={`${f.source}-${f.type}-${i}`} className="flex gap-3 rounded-2xl bg-ink/[0.02] p-3 ring-1 ring-ink/[0.04] transition hover:bg-white">
+                  <li key={`${f.source}-${f.type}-${i}`} className="flex gap-3 rounded-[6px] bg-ink/[0.02] p-3 ring-1 ring-ink/[0.04] transition hover:bg-white">
                     <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${f.source==="outbox"?"bg-amber-500":"bg-sky-500"}`} aria-hidden />
                     <div className="min-w-0 flex-1">
                       <p className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-ink">

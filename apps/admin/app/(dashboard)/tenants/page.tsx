@@ -199,7 +199,7 @@ export default function AdminTenantsPage() {
               { label: "Connected listings", value: `${pct(overview.connections, overview.users_total)}%`, sub: `${overview.connections.toLocaleString()} listings · last sync ${fmtRelative(overview.last_synced_at)}`, color: "bg-sky-500" },
               { label: "New in 7 days", value: `+${overview.signups_last_7d.toLocaleString()}`, sub: `${pct(overview.signups_last_7d, overview.users_total)}% of base`, color: "bg-violet-500" },
             ].map((c) => (
-              <div key={c.label} className="rounded-2xl border-2 border-white bg-white/80 px-4 py-3">
+              <div key={c.label} className="rounded-[6px] border-2 border-white bg-white/80 px-4 py-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</p>
                 <p className="mt-1 flex items-center gap-2 text-[14px] font-bold text-ink">
                   <span className={`h-2 w-2 rounded-full ${c.color}`} aria-hidden />
@@ -213,7 +213,7 @@ export default function AdminTenantsPage() {
       </div>
 
       {/* Toolbar: filters + sort */}
-      <div className="flex flex-col gap-3 rounded-2xl border-2 border-white bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-[6px] border-2 border-white bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-1.5">
           {(
             [
@@ -263,7 +263,7 @@ export default function AdminTenantsPage() {
 
       {/* Error */}
       {error ? (
-        <div className="rounded-2xl border-2 border-white bg-white/80 p-10 text-center">
+        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
           <p className="text-[13px] font-semibold text-ink/60">{error}</p>
           <button onClick={() => setPage((p) => p)} className="btn-primary mt-3">
             Retry
@@ -272,7 +272,7 @@ export default function AdminTenantsPage() {
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden overflow-hidden rounded-2xl border-2 border-white bg-white/80 shadow-sm md:block">
+          <div className="hidden overflow-hidden rounded-[6px] border-2 border-white bg-white/80 shadow-sm md:block">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-[12px]">
                 <thead>
@@ -438,7 +438,7 @@ export default function AdminTenantsPage() {
           <div className="grid gap-3 md:hidden">
             {loading ? (
               Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="animate-pulse rounded-2xl border-2 border-white bg-white/60 p-4">
+                <div key={i} className="animate-pulse rounded-[6px] border-2 border-white bg-white/60 p-4">
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-ink/[0.06]" />
                     <div className="flex-1 space-y-2">
@@ -449,7 +449,7 @@ export default function AdminTenantsPage() {
                 </div>
               ))
             ) : visible.length === 0 ? (
-              <div className="rounded-2xl border-2 border-white bg-white/80 p-8 text-center">
+              <div className="rounded-[6px] border-2 border-white bg-white/80 p-8 text-center">
                 <p className="text-[13px] font-semibold text-ink">No tenants match</p>
                 <p className="mt-1 text-[12px] text-ink/45">{search ? `No match for “${search}”.` : "Try clearing filters."}</p>
                 {(search || hasActiveFilter) && (
@@ -465,7 +465,7 @@ export default function AdminTenantsPage() {
                   <Link
                     key={t.id}
                     href={`/tenants/${t.id}`}
-                    className="rounded-2xl border-2 border-white bg-white/80 p-4 shadow-sm transition hover:shadow-md"
+                    className="rounded-[6px] border-2 border-white bg-white/80 p-4 shadow-sm transition hover:shadow-md"
                   >
                     <div className="flex items-start gap-3">
                       <div className="relative shrink-0">
@@ -506,7 +506,7 @@ export default function AdminTenantsPage() {
       )}
 
       {/* Pagination */}
-      <div className="flex flex-col gap-3 rounded-2xl border-2 border-white bg-white/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-[6px] border-2 border-white bg-white/60 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink/50">
           <span className="font-medium tabular-nums text-ink/60">
             {total === 0 ? "No results" : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${total.toLocaleString()}`}
