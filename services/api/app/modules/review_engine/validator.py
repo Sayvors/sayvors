@@ -444,7 +444,7 @@ def validate_response(
         sid = s.strategy_id
         name = getattr(s, "name", sid)
         status, reason, evidence = _check_strategy(
-            sid, text_lower, text, issues, review_text, n_overlap, has_offer_data)
+            sid, text_lower, text, issues, review_text, n_overlap, has_offer_data, analysis)
         fulfillment.append(StrategyFulfillment(
             strategy_id=sid, strategy=name,
             status=status, reason=reason, evidence=evidence,
@@ -513,6 +513,7 @@ def _check_strategy(
     review_text: str,
     n_overlap: int,
     has_offer_data: bool,
+    analysis=None,
 ) -> tuple[str, str, str]:
     """Return (status, reason, evidence) for one strategy."""
     if sid == "address_specific_issue":
@@ -559,12 +560,16 @@ def _check_strategy(
         return "pass", "No fulfillment rule defined.", ""
     hit = _contains_any(text_lower, lexicon)
     if hit:
-        # Anti-gaming: a stock phrase alone proves nothing. It must come with
-        # subject engagement — overlapping content, at least one genuinely
-        # covered fact (keywords OR natural equivalents), or a review too
-        # short to overlap with.
+        # Anti-gaming: a stock phrase alone proves nothing — except for
+        # short positive praise with nothing concrete to engage (star-only,
+        # "greatttt", "love it"). There, a warm thank-you *is* the engagement.
+        is_short_praise = (
+            not issues
+            and (analysis.sentiment in ("positive", "very_positive") if hasattr(analysis, "sentiment") else False)
+            and len((review_text or "").strip()) < 80
+        )
         any_covered = any(_issue_covered(i, text_lower) for i in issues)
-        engaged = n_overlap >= 1 or any_covered or len((review_text or "").strip()) < 30
+        engaged = n_overlap >= 1 or any_covered or len((review_text or "").strip()) < 30 or is_short_praise
         if not engaged:
             return ("fail",
                     f"Stock phrase ('{hit}') without engaging the review subject — "
