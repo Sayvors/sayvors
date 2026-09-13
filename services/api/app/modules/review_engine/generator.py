@@ -87,7 +87,8 @@ Rules:
 - Do NOT include phone numbers, emails, or personal information.
 - Do NOT ask the reviewer to change their rating.
 - Match the brand voice but keep it HUMAN and SIMPLE.
-- Return ONLY a JSON object: {{"response_text": "...", "reasoning": "..."}}
+- Return ONLY a JSON object: {{"response_text": "..."}}
+- No markdown. No explanation outside the JSON. No reasoning field.
 - No markdown. No explanation outside the JSON.
 - ALWAYS close the JSON object. Never stop mid-sentence.
 
@@ -171,7 +172,7 @@ async def generate_response(
                 messages=[LLMMessage(role="user", content=user_msg)],
                 system_prompt=RESPONSE_SYSTEM_PROMPT,
                 temperature=0.6,
-                max_tokens=450,
+                max_tokens=800,
                 stream=False,
                 tenant_id=tenant_id,
                 model_id=model,
@@ -185,6 +186,11 @@ async def generate_response(
 
     latency = int((time.monotonic() - t0) * 1000)
     raw = resp.content.strip()
+    if resp.finish_reason not in ("stop",):
+        logger.warning(
+            "Generate finished with reason=%s raw_len=%d usage=%s",
+            resp.finish_reason, len(raw), resp.usage,
+        )
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
@@ -204,6 +210,10 @@ async def generate_response(
             response_text = raw
 
     if not response_text:
+        logger.error(
+            "Empty response_text: finish_reason=%s raw_len=%d raw_head=%r",
+            resp.finish_reason, len(raw), raw[:200],
+        )
         raise ProviderError(model, "Model returned an empty response", 502)
 
     generated = GeneratedResponse(
