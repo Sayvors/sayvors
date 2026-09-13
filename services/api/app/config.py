@@ -84,6 +84,22 @@ class Settings(BaseSettings):
     # ── Platform admin (separate password, no user record) ──────
     # Bcrypt hash of the admin password. Empty = admin API disabled.
     # Generate: python -c "import bcrypt; print(bcrypt.hashpw(b'PW', bcrypt.gensalt()).decode())"
+    # -- Meta integrations (WhatsApp / Facebook / Instagram) --
+    # Platform-level app credentials (same precedent as Google OAuth:
+    # app-owned env, per-tenant tokens encrypted in the database).
+    # Never expose these to the frontend.
+    META_APP_ID: str = ""
+    META_APP_SECRET: str = ""
+    META_GRAPH_API_VERSION: str = "v26.0"
+    META_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/meta/facebook/callback"
+    META_WEBHOOK_VERIFY_TOKEN: str = ""
+    # Embedded Signup v4 Builder configuration id (App Dashboard ->
+    # WhatsApp -> Embedded Signup Builder). Frontend passes it to FB.login.
+    META_WHATSAPP_CONFIG_ID: str = ""
+    # Facebook Login for Business configuration id (dashboard configuration
+    # with token type + assets + permissions). Used to build the dialog URL.
+    META_FACEBOOK_CONFIG_ID: str = ""
+
     ADMIN_PASSWORD_HASH: str = ""
     ADMIN_SESSION_MINUTES: int = 120
 

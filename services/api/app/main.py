@@ -11,6 +11,8 @@ from .modules.tts.router import router as tts_router
 from .modules.stt.router import router as stt_router
 from .modules.llm.router import router as llm_router
 from .modules.channels.router import router as channels_router
+from .modules.channels.meta.router import router as meta_router
+from .modules.channels.meta.webhooks.router import router as meta_webhooks_router
 from .modules.redis.router import router as redis_router
 from .modules.kafka.router import router as kafka_router
 from .modules.rag.router import router as rag_router
@@ -44,6 +46,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             "/api/v1/admin/",
             "/api/v1/email/otp/",
             "/api/v1/channels/webhook/",
+            "/api/v1/meta/webhooks",
             "/health",
         )
         if any(path.startswith(p) for p in skip_prefixes):
@@ -187,6 +190,8 @@ app.include_router(tts_router)
 app.include_router(stt_router)
 app.include_router(llm_router)
 app.include_router(channels_router)
+app.include_router(meta_router)
+app.include_router(meta_webhooks_router)
 app.include_router(analytics_router)
 app.include_router(redis_router)
 app.include_router(kafka_router)
