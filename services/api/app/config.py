@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     # Facebook Login for Business configuration id (dashboard configuration
     # with token type + assets + permissions). Used to build the dialog URL.
     META_FACEBOOK_CONFIG_ID: str = ""
+    META_INSTAGRAM_CONFIG_ID: str = ""
 
     ADMIN_PASSWORD_HASH: str = ""
     ADMIN_SESSION_MINUTES: int = 120
