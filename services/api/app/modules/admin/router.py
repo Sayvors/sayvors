@@ -97,6 +97,23 @@ async def admin_tenants(
     return AdminTenantList(total=total, items=items)
 
 
+@router.get("/tenants/{user_id}/usage")
+async def admin_tenant_usage(
+    user_id: str,
+    days: int = Query(30, ge=1, le=365),
+    _admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tenant-scoped LLM usage: totals + by_model + daily — for the tenant detail page."""
+    from ..llm.usage import get_tenant_summary
+    from ..users.models import User
+
+    # ensure tenant exists so we return 404 not empty shape for unknown ids
+    if await db.get(User, user_id) is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    return await get_tenant_summary(db, user_id, days)
+
+
 @router.get("/tenants/{user_id}", response_model=AdminTenantDetail)
 async def admin_tenant_detail(
     user_id: str,

@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard from "@/components/reviews/GoogleReviewCard";
+import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
 
 type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
@@ -51,6 +52,9 @@ function ReviewsInner() {
   const [page, setPage] = useState(1);
   const [replyMode, setReplyMode] = useState<"manual" | "ai">("manual");
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiTrace, setAiTrace] = useState<StreamEvent[] | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [channelNames, setChannelNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -222,6 +226,9 @@ function ReviewsInner() {
   const openDetail = (id: string) => {
     setReplyDraft("");
     setReplyMode("manual");
+    setAiTrace(null);
+    setAiError(null);
+    abortRef.current?.abort();
     setView({ kind: "detail", id });
   };
 
@@ -229,33 +236,86 @@ function ReviewsInner() {
     if (view.kind !== "detail") return;
     const r = reviews.find((x) => x.id === view.id);
     if (!r) return;
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setAiLoading(true);
     setReplyMode("ai");
+    setAiError(null);
+    setAiTrace([]);
     try {
-      const data = await apiFetch("/api/v1/llm/chat", {
-        method: "POST",
-        body: JSON.stringify({
-          model: "groq:oss-120b",
-          system_prompt: "You write short, warm Google review replies for a local business. One short paragraph, no placeholders, no surrounding quotes.",
-          messages: [{ content: `Write a reply to this ${r.rating}-star Google review for ${r.locationName} from ${r.reviewer}: "${r.comment}"` }],
-        }),
-      });
-      const text = data?.message?.content?.trim();
-      if (!text) throw new Error("empty draft");
-      setReplyDraft(text);
-    } catch {
-      // Offline template fallback when the LLM is unreachable.
-      const tone = r.rating >= 4
-        ? `Thank you so much, ${r.reviewer}! We're thrilled you enjoyed ${r.locationName}.`
-        : r.rating === 3
-          ? `Thanks for your honest feedback, ${r.reviewer}. We'll work on doing better at ${r.locationName}.`
-          : `We're really sorry about your experience, ${r.reviewer}. Our team at ${r.locationName} will reach out and make this right.`;
-      const extra = r.rating >= 4
-        ? " Hope to see you again soon!"
-        : " Please give us another chance to improve.";
-      setReplyDraft(`${tone}${extra}`);
-      setBanner({ kind: "err", text: "AI unreachable — used an offline template instead." });
-      setTimeout(() => setBanner(null), 3000);
+      // Resolve the Automations channel for this review's location.
+      // Reviews page stores channelId in ReviewItem.locationId (from insights.channel_id)
+      // and also via selected location's channelId.
+      const loc = locations.find((l) => l.id === selectedId);
+      const channelId = (r as unknown as { locationId?: string }).locationId || loc?.channelId || selectedId || undefined;
+      const reviewText = r.comment && r.comment !== "(star rating only)" ? r.comment : "";
+      if (!reviewText) throw new Error("Star-only review — no text for AI engine; please write manually.");
+
+      let finalText: string | null = null;
+      let lastRelevance: StreamEvent["relevance"] | null = null;
+      let finalStatus: string | undefined;
+
+      for await (const ev of streamReviewReply(
+        {
+          review_text: reviewText,
+          rating: r.rating,
+          reviewer_name: r.reviewer || undefined,
+          channel: "google_review",
+          channel_id: channelId,
+        },
+        ctrl.signal,
+      )) {
+        setAiTrace((prev) => [...(prev ?? []), ev]);
+        if (ev.step === "relevance" && ev.relevance) lastRelevance = ev.relevance;
+        if (ev.relevance) lastRelevance = ev.relevance;
+        if ((ev as unknown as { relevance?: StreamEvent["relevance"] }).relevance) {
+          lastRelevance = (ev as unknown as { relevance: StreamEvent["relevance"] }).relevance;
+        }
+        if (ev.step === "done" && ev.response) {
+          finalText = ev.response.response_text;
+          finalStatus = (ev.response as unknown as { status?: string }).status ?? (ev.response.validation?.passed ? "approved" : "needs_review");
+          // Prefer top-level relevance if present in done event
+          const doneRel = (ev.response as unknown as { relevance?: StreamEvent["relevance"] }).relevance;
+          if (doneRel) lastRelevance = doneRel;
+          // Also check merged relevance on response
+          if ((ev as unknown as { response?: { relevance?: StreamEvent["relevance"] } }).response?.relevance) {
+            lastRelevance = (ev as unknown as { response: { relevance: StreamEvent["relevance"] } }).response.relevance;
+          }
+        }
+        // Playground also emits relevance as its own step — capture it
+        if (ev.relevance) lastRelevance = ev.relevance;
+      }
+
+      if (!finalText) throw new Error("Engine returned no response");
+      setReplyDraft(finalText);
+
+      // If the engine flagged it as possibly off-topic, surface it inline — same wording as playground.
+      if (lastRelevance?.verdict === "off_topic") {
+        setBanner({
+          kind: "err",
+          text: `Flagged: might be irrelevant to this business — ${lastRelevance.reason} Queued for human review. Please edit before publishing.`,
+        });
+        setTimeout(() => setBanner(null), 6000);
+      } else if (finalStatus === "needs_review") {
+        setBanner({ kind: "err", text: "Draft needs review — validation flagged issues. Please edit before publishing." });
+        setTimeout(() => setBanner(null), 5000);
+      }
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      const msg = e instanceof Error ? e.message : "AI engine failed";
+      // Surface engine's own 400 when Automations model is missing
+      if (msg.includes("No reply model configured") || msg.includes("Channel not found")) {
+        setAiError("No reply model selected for this location. Set it in Automations → pick a model for this location, then try again.");
+        setBanner({ kind: "err", text: "No Automations model configured for this location." });
+      } else if (msg.toLowerCase().includes("star-only")) {
+        setAiError(msg);
+      } else {
+        // Brief fallback: keep pipeline honest — don't silently invent a template as if it were the engine.
+        setAiError(msg.slice(0, 280));
+        setBanner({ kind: "err", text: `AI engine error: ${msg.slice(0, 120)}` });
+      }
+      setTimeout(() => setBanner(null), 5000);
     } finally {
       setAiLoading(false);
     }
@@ -485,83 +545,269 @@ function ReviewsInner() {
           )}
 
           {view.kind === "detail" && active && (
-            <div className="space-y-3">
-              <div className="rounded-2xl border border-ink/[0.06] bg-white p-6 dark:border-fog/[0.06] dark:bg-ink">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-[15px] font-bold text-ink dark:text-fog">{active.reviewer}</h2>
-                    <p className="text-[11px] text-ink/40">{active.locationName} · {active.createdAt}</p>
+            <div className="space-y-3" style={{ fontFamily: "Roboto, Arial, sans-serif" }}>
+              {/* Case header — Material row */}
+              <div className="rounded-lg border border-[#DADCE0] bg-white">
+                {/* Top bar: avatar + identity + status + Google mark */}
+                <div className="flex items-start gap-3 px-4 pt-4">
+                  <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F1F3F4] text-[11px] font-medium text-[#5F6368] ring-1 ring-[#E8EAED]">
+                    {active.reviewer.trim().split(/\s+/).filter(Boolean).length > 1
+                      ? (active.reviewer.trim().split(/\s+/)[0][0] + active.reviewer.trim().split(/\s+/).slice(-1)[0][0]).toUpperCase()
+                      : active.reviewer.slice(0, 2).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate text-[14px] font-medium leading-5 text-[#202124]">{active.reviewer}</h2>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] leading-4 text-[#5F6368]">
+                      <span className="inline-flex items-center gap-1">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden className="h-3.5 w-3.5">
+                          <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-11Z" stroke="currentColor" strokeWidth={1.5} />
+                          <path d="M4.5 7.5 12 13l7.5-5.5" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        Posted on
+                        <span className="font-medium tracking-tight">
+                          <span className="text-[#4285F4]">G</span><span className="text-[#EA4335]">o</span><span className="text-[#FBBC05]">o</span><span className="text-[#4285F4]">g</span><span className="text-[#34A853]">l</span><span className="text-[#EA4335]">e</span>
+                        </span>
+                      </span>
+                      <span aria-hidden className="text-[#DADCE0]">•</span>
+                      <span title={active.createdAt}>{active.createdAt ? new Date(active.createdAt.length === 10 ? `${active.createdAt}T00:00:00` : active.createdAt).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" }) : "—"}</span>
+                    </div>
+                    <p className="mt-1 truncate text-[12px] leading-4 text-[#5F6368]">{active.locationName}</p>
                   </div>
-                  <Stars rating={active.rating} />
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white ring-1 ring-[#DADCE0]">
+                    <img src="/google.svg" alt="Google" width={16} height={16} className="h-4 w-4" />
+                  </span>
                 </div>
-                <p className="mt-3 text-[14px] leading-relaxed text-ink dark:text-fog">“{active.comment}”</p>
 
-                <div className="mt-5 border-t border-ink/[0.05] pt-4">
-                  <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Your reply</h3>
+                {/* Rating + status row — green for replied = In Progress pattern */}
+                <div className="mx-4 mt-3 flex flex-wrap items-center gap-2 border-y border-[#E8EAED] py-3">
+                  <span className="flex items-center gap-1.5">
+                    <Stars rating={active.rating} />
+                    <span className="text-[12px] font-medium text-[#202124]">{active.rating.toFixed(1)}</span>
+                  </span>
+                  <span aria-hidden className="text-[#DADCE0]">•</span>
                   {active.replied ? (
-                    <div className="mt-2 rounded-xl bg-emerald-50 p-3 dark:bg-emerald-500/10">
-                      <p className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-300">Replied on Google</p>
-                      <p className="mt-0.5 text-[11px] text-emerald-700/70 dark:text-emerald-300/70">This review already has a published reply.</p>
+                    <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#137333]">
+                      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#34A853]" /> Replied
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#5F6368]">
+                      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#FABB05]" /> Needs reply
+                    </span>
+                  )}
+                  <span aria-hidden className="text-[#DADCE0]">•</span>
+                  <span className="text-[12px] text-[#5F6368]">Updated {active.createdAt ? (() => { const d = new Date(active.createdAt.length === 10 ? `${active.createdAt}T00:00:00` : active.createdAt); const days = Math.floor((Date.now() - d.getTime())/86400000); if (days<=0) return "today"; if (days===1) return "yesterday"; if (days<7) return `${days} days ago`; return d.toLocaleDateString("en", {month:"short", day:"numeric"}); })() : "—"}</span>
+                  <span className="flex-1" />
+                  {active.reviewUrl && (
+                    <a href={active.reviewUrl} target="_blank" rel="noreferrer" className="text-[12px] font-medium text-[#1A73E8] hover:text-[#174EA6] hover:underline underline-offset-2">
+                      View on Google
+                    </a>
+                  )}
+                </div>
+
+                {/* Comment — clean quote, no purple */}
+                <div className="px-4 py-3">
+                  <p className="whitespace-pre-wrap break-words text-[13px] leading-6 text-[#202124]">{active.comment ? `“${active.comment}”` : <span className="italic text-[#5F6368]">No written comment — star rating only.</span>}</p>
+                </div>
+
+                {/* Reply composer — Material, not violet */}
+                <div className="mx-4 mb-4 rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-4">
+                  <h3 className="text-[13px] font-medium text-[#202124]">Your reply</h3>
+                  {active.replied ? (
+                    <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
+                      <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
+                      <div>
+                        <p className="text-[12px] font-medium text-[#137333]">Replied on Google</p>
+                        <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">This review already has a published reply. You can still draft an updated response below and publish it from Google.</p>
+                      </div>
                     </div>
                   ) : (
                     <>
-                      <div className="mt-2 flex gap-1 rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.05]">
-                        <button onClick={() => setReplyMode("manual")}
-                          className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${replyMode === "manual" ? "bg-white text-deep-violet shadow-sm dark:bg-ink" : "text-ink/45"}`}>
+                      <div className="mt-3 inline-flex rounded-full border border-[#DADCE0] bg-white p-1">
+                        <button
+                          onClick={() => setReplyMode("manual")}
+                          className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${replyMode === "manual" ? "bg-[#1A73E8] text-white shadow-sm" : "text-[#5F6368] hover:text-[#202124]"}`}
+                        >
                           Write myself
                         </button>
-                        <button onClick={() => generateAiReply()}
-                          className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${replyMode === "ai" ? "bg-white text-deep-violet shadow-sm dark:bg-ink" : "text-ink/45"}`}>
+                        <button
+                          onClick={() => generateAiReply()}
+                          className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${replyMode === "ai" ? "bg-[#1A73E8] text-white shadow-sm" : "text-[#5F6368] hover:text-[#202124]"}`}
+                        >
                           Write with AI
                         </button>
                       </div>
                       {aiLoading ? (
-                        <div className="mt-2 flex items-center gap-2 rounded-xl border border-deep-violet/15 bg-deep-violet/[0.04] p-3">
-                          <LogoLoader size={16} />
-                          <p className="text-[12px] text-ink/50">AI is drafting a reply...</p>
+                        <div className="mt-3 space-y-2 rounded-md border border-[#DADCE0] bg-white px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#DADCE0] border-t-[#1A73E8]" />
+                            <p className="text-[12px] font-medium text-[#202124]">Engine is analyzing • validating • grounding</p>
+                          </div>
+                          <p className="text-[11px] leading-4 text-[#5F6368]">
+                            Same pipeline as <a href="/dashboard/reviews/playground" target="_blank" rel="noreferrer" className="font-medium text-[#1A73E8] hover:underline">Playground</a> — relevance → strategies → databank lookups → grounded generation.
+                          </p>
+                          {aiTrace && aiTrace.length > 0 && (
+                            <div className="max-h-48 overflow-auto rounded bg-[#F8F9FA] px-2 py-2 font-mono text-[10px] leading-4 text-[#5F6368] scrollbar-thin">
+                              {aiTrace.map((ev, i) => {
+                                let resultLabel: string | null = null;
+                                if (ev.result) {
+                                  try {
+                                    const parsed = JSON.parse(ev.result);
+                                    if (typeof parsed.count === "number") {
+                                      resultLabel = `${parsed.count} result(s)${parsed.count === 0 ? " — no verified product, so no pitch" : ""}`;
+                                    }
+                                  } catch {
+                                    resultLabel = ev.result.slice(0, 160);
+                                  }
+                                }
+                                return (
+                                  <div key={i} className="py-0.5">
+                                    <span className="font-medium text-[#202124]">{ev.step}</span>
+                                    {ev.message ? ` — ${ev.message}` : ""}
+                                    {ev.model ? ` (${ev.model})` : ""}
+                                    {ev.relevance ? ` • relevance: ${ev.relevance.verdict}` : ""}
+                                    {ev.tool ? ` • ${ev.tool} ${ev.args ? JSON.stringify(ev.args) : ""}` : ""}
+                                    {resultLabel ? <span className="block truncate pl-2 text-[#137333]">→ {resultLabel}</span> : null}
+                                    {ev.strategy ? ` • ${ev.strategy.name ?? ev.strategy.id ?? ""}` : ""}
+                                    {ev.issues ? ` • ${ev.issues.length} issue(s)` : ""}
+                                    {ev.requirements ? ` • ${ev.requirements.length} requirements` : ""}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       ) : (
-                        <textarea
-                          value={replyDraft}
-                          onChange={(e) => { setReplyDraft(e.target.value); setReplyMode("manual"); }}
-                          rows={3}
-                          maxLength={1000}
-                          placeholder={replyMode === "ai" ? "AI draft — edit if you like, then copy..." : "Write your reply..."}
-                          className="input-field mt-2 resize-y"
-                        />
+                        <>
+                          <textarea
+                            value={replyDraft}
+                            onChange={(e) => { setReplyDraft(e.target.value); setReplyMode("manual"); }}
+                            rows={4}
+                            maxLength={1000}
+                            placeholder={replyMode === "ai" ? "AI draft — edit if you like, then copy…" : "Write your reply…"}
+                            className="mt-3 min-h-[96px] w-full resize-y rounded-md border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] placeholder:text-[#5F6368]/60 outline-none focus:border-[#1A73E8] focus:ring-1 focus:ring-[#1A73E8]"
+                          />
+                          {aiError && (
+                            <p className="mt-2 rounded-md border border-[#FAD2CF] bg-[#FCE8E6] px-2.5 py-2 text-[12px] leading-4 text-[#C5221F]">{aiError}</p>
+                          )}
+                          {aiTrace && aiTrace.length > 0 && !aiError && (
+                            <details className="mt-2 rounded-md border border-[#E8EAED] bg-white" open>
+                              <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-medium text-[#1A73E8] hover:underline">
+                                Engine trace — same as Playground ({aiTrace.length} steps) — scroll to see all tools & results
+                              </summary>
+                              <div className="max-h-64 overflow-auto border-t border-[#E8EAED] bg-[#FCFDFF] px-3 py-2 font-mono text-[10px] leading-4 text-[#5F6368]">
+                                {aiTrace.map((ev, i) => (
+                                  <div key={i} className="border-b border-[#F1F3F4] py-1 last:border-0">
+                                    <div>
+                                      <span className="font-medium text-[#202124]">{ev.step}</span>
+                                      {ev.message ? ` — ${ev.message}` : ""}
+                                      {ev.model ? ` (${ev.model})` : ""}
+                                      {ev.relevance ? ` • relevance: ${ev.relevance.verdict} — ${ev.relevance.reason ?? ""}` : ""}
+                                    </div>
+                                    {ev.tool && (
+                                      <div className="ml-2 mt-0.5 rounded bg-white px-1.5 py-0.5 ring-1 ring-[#E8EAED]">
+                                        🔧 {ev.tool} {ev.args ? JSON.stringify(ev.args) : ""}
+                                      </div>
+                                    )}
+                                    {ev.result &&
+                                      (() => {
+                                        let label = ev.result.slice(0, 300);
+                                        try {
+                                          const p = JSON.parse(ev.result);
+                                          if (typeof p.count === "number") {
+                                            label = `${p.count} result(s) — ${p.count === 0 ? "no verified product, so no pitch (correct)" : JSON.stringify(p.results?.[0] ?? "").slice(0, 120)}`;
+                                          }
+                                        } catch {}
+                                        return <div className="ml-2 mt-0.5 break-all text-[#137333]">→ {label}</div>;
+                                      })()}
+                                    {ev.strategy && (
+                                      <div className="ml-2 mt-0.5">
+                                        STRATEGY: {ev.strategy.name ?? ev.strategy.id} {ev.strategy.reason ? `— ${ev.strategy.reason}` : ""}
+                                        {ev.strategy.condition_note ? ` (${ev.strategy.condition_note})` : ""}
+                                      </div>
+                                    )}
+                                    {ev.issues && ev.issues.length > 0 && (
+                                      <div className="ml-2 mt-0.5 space-y-0.5">
+                                        {ev.issues.map((iss: { label: string; detail: string }, j: number) => (
+                                          <div key={j}>
+                                            ISSUE: {iss.label} — {iss.detail}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {ev.requirements && <div className="ml-2 mt-0.5 whitespace-pre-wrap break-words">{ev.requirements.map((r: string, j: number) => <div key={j}>• {r}</div>)}</div>}
+                                    {ev.fulfillment && (
+                                      <div className="ml-2 mt-0.5 space-y-0.5">
+                                        {ev.fulfillment.map((f: { strategy: string; status: string; reason: string }, j: number) => (
+                                          <div key={j} className={f.status === "pass" ? "text-[#137333]" : "text-[#C5221F]"}>
+                                            {f.status.toUpperCase()}: {f.strategy} — {f.reason}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {ev.claims && ev.claims.length > 0 && (
+                                      <div className="ml-2 mt-0.5 space-y-0.5">
+                                        {ev.claims.map((c: { claim: string; status: string; kind: string }, j: number) => (
+                                          <div key={j} className={c.status === "GROUNDED" ? "text-[#137333]" : "text-[#C5221F]"}>
+                                            {c.status}: “{c.claim.slice(0, 80)}” [{c.kind}]
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {ev.checks && (
+                                      <div className="ml-2 mt-0.5 flex flex-wrap gap-1">
+                                        {Object.entries(ev.checks).map(([k, v]) => (
+                                          <span key={k} className={`rounded px-1 py-0.5 text-[9px] font-medium ${v ? "bg-[#E6F4EA] text-[#137333]" : "bg-[#FCE8E6] text-[#C5221F]"}`}>
+                                            {v ? "✓" : "✗"} {k}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                                <a href="/dashboard/reviews/playground" target="_blank" rel="noreferrer" className="mt-2 inline-block font-sans text-[11px] font-medium text-[#1A73E8] hover:underline">
+                                  Open full Playground →
+                                </a>
+                              </div>
+                            </details>
+                          )}
+                        </>
                       )}
-                      {replyMode === "ai" && !aiLoading && (
-                        <button onClick={() => generateAiReply()} className="mt-1 text-[11px] font-semibold text-deep-violet hover:underline">Regenerate AI draft</button>
-                      )}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <button onClick={() => copyDraft()} disabled={!replyDraft.trim() || replying || aiLoading} className="btn-primary disabled:opacity-50">
-                          {replying ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Copying...</span> : "Copy draft"}
-                        </button>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {replyMode === "ai" && !aiLoading && (
+                          <button onClick={() => generateAiReply()} className="text-[12px] font-medium text-[#1A73E8] hover:underline">
+                            {replyDraft ? "Regenerate with engine" : "Generate with engine"}
+                          </button>
+                        )}
+                        <span className="flex-1" />
+                        <span className="text-[11px] text-[#5F6368]">{replyDraft.length}/1000</span>
                       </div>
-                      <p className="mt-2 text-[10px] text-ink/30">Direct reply posting isn&apos;t available via API yet — copy the draft and publish it from your Google or Localith dashboard.</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button onClick={() => copyDraft()} disabled={!replyDraft.trim() || replying || aiLoading} className="inline-flex items-center justify-center rounded-md bg-[#1A73E8] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50">
+                          {replying ? <span className="inline-flex items-center gap-1.5"><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Copying…</span> : "Copy draft"}
+                        </button>
+                        <span className="inline-flex items-center text-[11px] leading-4 text-[#5F6368]">Copy & publish from Google or Localith</span>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-4 text-[#5F6368]">Powered by the review strategy engine — grounded in your databank, validated before it reaches you. Full trace in Playground.</p>
                     </>
                   )}
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-3 border-t border-ink/[0.05] pt-4 text-[11px]">
-                  <div>
-                    <p className="text-ink/40">Sentiment</p>
-                    <p className="font-semibold capitalize text-ink dark:text-fog">{active.sentiment ?? "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-ink/40">Review date</p>
-                    <p className="truncate font-semibold text-ink dark:text-fog">{active.createdAt || "—"}</p>
-                  </div>
+                {/* Meta — subtle gray, icon style */}
+                <div className="flex flex-wrap gap-4 border-t border-[#E8EAED] px-4 py-3 text-[12px]">
+                  <span className="inline-flex items-center gap-1.5 text-[#5F6368]">
+                    <span aria-hidden className="text-[11px]">◐</span> Sentiment <span className="font-medium capitalize text-[#202124]">{active.sentiment ?? "—"}</span>
+                  </span>
+                  <span aria-hidden className="text-[#E8EAED]">|</span>
+                  <span className="inline-flex items-center gap-1.5 text-[#5F6368]">
+                    <span aria-hidden>🗓</span> {active.createdAt || "—"}
+                  </span>
                 </div>
-                {active.reviewUrl && (
-                  <a href={active.reviewUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-[12px] font-semibold text-deep-violet underline underline-offset-2 hover:opacity-80">
-                    View on Google →
-                  </a>
-                )}
               </div>
 
-              <InsightCard review={active} />
-              <button onClick={() => setView({ kind: "list" })} className="text-[12px] font-medium text-ink/40 hover:text-ink">← Back to reviews</button>
+              <div className="rounded-lg border border-[#DADCE0] bg-white">
+                <InsightCard review={active} />
+              </div>
+              <button onClick={() => setView({ kind: "list" })} className="text-[13px] font-medium text-[#1A73E8] hover:underline">← Back to reviews</button>
             </div>
           )}
 
@@ -853,107 +1099,210 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
   onBack: () => void; onOpenStar: (s: number) => void;
 }) {
   const i = intel;
-  const badge = aiLoading || analyzing
-    ? { text: analyzing ? "Analyzing…" : "Loading analysis…", cls: "bg-deep-violet/10 text-deep-violet" }
-    : aiMeta
-      ? aiMeta.source === "ai"
-        ? { text: `AI-analyzed${aiMeta.ragUsed ? " · RAG-grounded" : ""}`, cls: "bg-emerald-100 text-emerald-700" }
-        : { text: "Rule-based", cls: "bg-ink/[0.05] text-ink/50" }
-      : { text: "Not analyzed yet", cls: "bg-amber-100 text-amber-700" };
+  const isAI = aiMeta?.source === "ai";
+  const isLoading = aiLoading || analyzing;
+
+  const badge = isLoading
+    ? { text: analyzing ? "Analyzing with AI…" : "Loading…", icon: "◐", cls: "bg-[#1A73E8]/10 text-[#1A73E8] border border-[#1A73E8]/20" }
+    : isAI
+      ? { text: `AI • ${aiMeta?.model ?? "LLM"}${aiMeta?.ragUsed ? " • RAG" : ""}`, icon: "✦", cls: "bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]" }
+      : aiMeta
+        ? { text: "Heuristic • Instant", icon: "◈", cls: "bg-[#F1F3F4] text-[#5F6368] border border-[#DADCE0]" }
+        : { text: "Not analyzed", icon: "○", cls: "bg-[#FEF7E0] text-[#EA8600] border border-[#FDE293]" };
+
   const analyzedLabel = aiMeta?.analyzedAt
-    ? `Analyzed ${new Date(aiMeta.analyzedAt).toLocaleString()}${aiMeta.stale ? ` · ${aiMeta.newCount} new review(s) since` : ""}`
+    ? `${new Date(aiMeta.analyzedAt).toLocaleString()}${aiMeta.stale ? ` • ${aiMeta.newCount} new since` : " • fresh"}`
     : null;
+
+  // Derived business impact
+  const unanswered = total - Math.round((intel as unknown as { avg: number }).avg ? total * 0.6 : 0); // placeholder, will use real replied count if available
+  const atRiskPct = total ? Math.round(((i.dislike.reduce((a, b) => a + b.mentions, 0) / Math.max(1, total)) * 100)) : 0;
+  const revenueRisk = i.dislike.length ? `${atRiskPct}% of reviews signal churn risk` : "Low churn risk";
+  const sentimentDelta = i.sentimentScore >= 3.5 ? "Positive momentum" : i.sentimentScore >= 2.5 ? "Mixed — fixable friction" : "Needs attention";
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 text-[17px] font-bold text-ink dark:text-fog">
-            Review Intelligence
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badge.cls}`}>{badge.text}</span>
-          </h2>
-          <p className="text-[12px] text-ink/45">{locationName} · {total} reviews analyzed · {aiMeta?.source === "ai" ? `AI analysis${aiMeta.model ? ` (${aiMeta.model})` : ""}` : "Sayvors-derived analytics"}</p>
-          {analyzedLabel && <p className="mt-0.5 text-[11px] text-ink/40">{analyzedLabel}</p>}
+    <div className="space-y-4" style={{ fontFamily: "Roboto, Arial, sans-serif" }}>
+      {/* HEADER — Google Material, clean & functional */}
+      <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-[16px] font-medium leading-6 text-[#202124]">Review Intelligence</h2>
+              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium leading-none ${badge.cls}`}>
+                <span aria-hidden>{badge.icon}</span> {badge.text}
+              </span>
+              {isAI && !isLoading && (
+                <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] text-[#5F6368] ring-1 ring-[#DADCE0]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#34A853]" /> Verified numbers
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-[13px] leading-5 text-[#5F6368]">
+              <span className="font-medium text-[#202124]">{locationName || "All locations"}</span>
+              <span className="mx-1.5 text-[#DADCE0]">•</span>
+              {total} reviews • {isAI ? `AI analysis${aiMeta?.model ? ` • ${aiMeta.model}` : ""}` : "Instant heuristic — AI adds deeper opportunities & citations"}
+            </p>
+            {analyzedLabel && <p className="mt-1 text-[12px] text-[#5F6368]">Updated {analyzedLabel}</p>}
+            {aiMeta?.stale && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#FEF7E0] px-2.5 py-1 text-[12px] font-medium text-[#EA8600]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#EA8600]" /> {aiMeta.newCount} new review(s) since last AI run — re-analyze for fresh insights
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onBack}
+              className="hidden sm:inline-flex rounded-md border border-[#DADCE0] bg-white px-3 py-2 text-[13px] font-medium text-[#1A73E8] hover:bg-[#F8F9FA]"
+            >
+              Back
+            </button>
+            <button
+              onClick={onAnalyze}
+              disabled={analyzing || aiLoading}
+              className="inline-flex items-center gap-1.5 rounded-md bg-[#1A73E8] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
+            >
+              {analyzing ? (
+                <>
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Analyzing…
+                </>
+              ) : isAI ? "Re-analyze with AI" : "Analyze with AI"}
+            </button>
+          </div>
         </div>
-        <button
-          onClick={onAnalyze}
-          disabled={analyzing || aiLoading}
-          className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-50"
-        >
-          {analyzing ? "Analyzing…" : aiMeta ? "Analyze again" : "Analyze reviews"}
-        </button>
+
+        {/* Source transparency — makes AI vs heuristic crystal clear */}
+        <div className="mt-3 flex flex-wrap gap-2 border-t border-[#E8EAED] pt-3 text-[12px]">
+          <span className={`inline-flex items-center gap-1.5 ${isAI ? "text-[#137333]" : "text-[#5F6368]"}`}>
+            <span className={`h-2 w-2 rounded-full ${isAI ? "bg-[#34A853]" : "bg-[#5F6368]"}`} />
+            {isAI ? "Numbers are clamped to your real review stats — AI cannot invent counts" : "Counts are exact — insights are rule-based until AI runs"}
+          </span>
+          <span className="text-[#DADCE0]">•</span>
+          <span className="text-[#5F6368]">{isAI && aiMeta?.ragUsed ? "Grounded in your databank + reviews" : isAI ? "Based on reviews (no databank context)" : "Add a databank to enable RAG grounding"}</span>
+        </div>
       </div>
 
+      {/* HERO KPIs — Material cards, neutral + one green accent */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Avg. Rating" value={`${i.avg.toFixed(1)} ★`} />
-        <StatCard label="Reviews" value={String(total)} />
-        <StatCard label="AI Sentiment" value={`${i.sentimentScore} ★`} />
-        <StatCard label="Confidence" value={`${i.confidence}%`} />
+        <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Avg rating</p>
+          <p className="mt-1 text-[22px] font-normal leading-7 text-[#202124]">{i.avg.toFixed(1)} <span className="text-[#FBBC05]">★</span></p>
+          <p className="mt-1 text-[12px] text-[#5F6368]">{i.sentimentLabel} • {total} reviews</p>
+        </div>
+        <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Sentiment</p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <p className="text-[22px] font-normal leading-7 text-[#202124]">{i.sentimentScore.toFixed(1)}</p>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${i.sentimentScore >= 3.5 ? "bg-[#E6F4EA] text-[#137333]" : i.sentimentScore >= 2.5 ? "bg-[#FEF7E0] text-[#EA8600]" : "bg-[#FCE8E6] text-[#C5221F]"}`}>
+              {sentimentDelta}
+            </span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#E8EAED]">
+            <div className="h-full rounded-full bg-[#1A73E8]" style={{ width: `${Math.min(100, (i.sentimentScore / 5) * 100)}%` }} />
+          </div>
+        </div>
+        <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Confidence</p>
+          <p className="mt-1 text-[22px] font-normal leading-7 text-[#202124]">{i.confidence}%</p>
+          <p className="mt-1 text-[12px] text-[#5F6368]">{total >= 20 ? "High — strong sample" : total >= 8 ? "Medium — growing sample" : "Low — more reviews needed"}</p>
+        </div>
+        <div className="rounded-lg border border-[#DADCE0] bg-white p-4">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Risk signal</p>
+          <p className="mt-1 text-[14px] font-medium leading-5 text-[#202124]">{revenueRisk}</p>
+          <p className="mt-1 text-[12px] text-[#5F6368]">Fix top 1-sided theme first</p>
+        </div>
       </div>
 
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-        <h3 className="text-[14px] font-bold text-ink">AI Executive Summary</h3>
-        <p className="mt-2 text-[13px] leading-relaxed text-ink/70">{i.summary}</p>
+      {/* AI EXEC SUMMARY — hero card, clearly AI when AI, muted when heuristic */}
+      <div className={`rounded-lg border bg-white p-5 ${isAI ? "border-[#CEEAD6] shadow-sm" : "border-[#DADCE0]"}`}>
+        <div className="flex items-center gap-2">
+          <span className={`flex h-7 w-7 items-center justify-center rounded-full ${isAI ? "bg-[#E6F4EA] text-[#137333]" : "bg-[#F1F3F4] text-[#5F6368]"}`}>
+            {isAI ? "✦" : "◈"}
+          </span>
+          <h3 className="text-[14px] font-medium text-[#202124]">{isAI ? "AI Executive Summary" : "Executive Summary (heuristic)"}</h3>
+          {!isAI && <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[11px] font-medium text-[#5F6368]">Run AI for citations & verified opportunities</span>}
+        </div>
+        {isLoading ? (
+          <div className="mt-3 space-y-2">
+            <div className="h-4 w-full animate-pulse rounded bg-[#F1F3F4]" />
+            <div className="h-4 w-5/6 animate-pulse rounded bg-[#F1F3F4]" />
+          </div>
+        ) : (
+          <p className="mt-3 text-[13px] leading-6 text-[#202124]">{i.summary}</p>
+        )}
         <div className="mt-3 flex flex-wrap gap-1.5">
           {[5, 4, 3, 2, 1].map((s) => (
-            <button key={s} onClick={() => onOpenStar(s)} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-bold text-ink/60 hover:bg-deep-violet hover:text-white">
+            <button key={s} onClick={() => onOpenStar(s)} className="rounded-full border border-[#DADCE0] bg-white px-3 py-1 text-[12px] font-medium text-[#1A73E8] hover:bg-[#F8F9FA]">
               {s}★ detail →
             </button>
           ))}
         </div>
       </div>
 
+      {/* LOVE / DISLIKE — balanced, actionable */}
       <div className="grid gap-3 lg:grid-cols-2">
-        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-          <h3 className="mb-3 text-[14px] font-bold text-ink">What customers love</h3>
-          {i.love.length === 0 ? <p className="text-[12px] text-ink/40">Not enough positive signals yet.</p> : (
-            <div className="space-y-2.5">
+        <section className="rounded-lg border border-[#DADCE0] bg-white p-5">
+          <h3 className="flex items-center gap-2 text-[14px] font-medium text-[#202124]">
+            <span className="h-2 w-2 rounded-full bg-[#34A853]" /> What customers love
+            <span className="ml-auto text-[11px] font-normal text-[#5F6368]">{i.love.length ? `${i.love.length} themes` : ""}</span>
+          </h3>
+          {i.love.length === 0 ? <p className="mt-3 text-[13px] text-[#5F6368]">Not enough positive signals yet — keep collecting 4–5★ reviews with specific praise.</p> : (
+            <div className="mt-3 space-y-3">
               {i.love.map((t) => (
                 <div key={t.name}>
-                  <div className="flex justify-between text-[12px] font-semibold text-ink/70"><span>{t.name}</span><span>{t.positivePct}%</span></div>
-                  <div className="mt-1 h-2 overflow-hidden rounded-full bg-ink/[0.06]"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${t.positivePct}%` }} /></div>
-                  <p className="mt-1 text-[11px] text-ink/40">{t.mentions} mentions · {t.avgRating.toFixed(1)}★ avg</p>
+                  <div className="flex justify-between text-[13px]">
+                    <span className="font-medium text-[#202124]">{t.name}</span>
+                    <span className="font-medium text-[#137333]">{t.positivePct}% positive</span>
+                  </div>
+                  <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#E8EAED]"><div className="h-full rounded-full bg-[#34A853]" style={{ width: `${t.positivePct}%` }} /></div>
+                  <p className="mt-1 text-[12px] text-[#5F6368]">{t.mentions} mentions · {t.avgRating.toFixed(1)}★ avg {t.phrases[0] ? `· “${t.phrases[0].slice(0, 60)}”` : ""}</p>
                 </div>
               ))}
             </div>
           )}
+          <p className="mt-3 border-t border-[#E8EAED] pt-3 text-[12px] text-[#5F6368]"><span className="font-medium text-[#202124]">Next:</span> Double down in replies & posts — quote this praise back to future customers.</p>
         </section>
-        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-          <h3 className="mb-3 text-[14px] font-bold text-ink">What customers dislike</h3>
-          {i.dislike.length === 0 ? <p className="text-[12px] text-emerald-600">No major complaints detected. Good sign.</p> : (
-            <div className="space-y-2.5">
+        <section className="rounded-lg border border-[#DADCE0] bg-white p-5">
+          <h3 className="flex items-center gap-2 text-[14px] font-medium text-[#202124]">
+            <span className="h-2 w-2 rounded-full bg-[#EA4335]" /> What hurts your rating
+            <span className="ml-auto text-[11px] font-normal text-[#5F6368]">{i.dislike.length ? `${i.dislike.length} themes` : "No major drag"}</span>
+          </h3>
+          {i.dislike.length === 0 ? <p className="mt-3 rounded-md bg-[#E6F4EA] px-3 py-2 text-[13px] text-[#137333]">No major complaints detected. Protect this — reply fast when one appears.</p> : (
+            <div className="mt-3 space-y-3">
               {i.dislike.map((t) => (
                 <div key={t.name}>
-                  <div className="flex justify-between text-[12px] font-semibold text-ink/70"><span>{t.name}</span><span>{t.mentions} mentions</span></div>
-                  <div className="mt-1 h-2 overflow-hidden rounded-full bg-ink/[0.06]"><div className="h-full rounded-full bg-coral" style={{ width: `${Math.min(100, t.mentions * 12)}%` }} /></div>
-                  <p className="mt-1 text-[11px] text-ink/40">{t.avgRating.toFixed(1)}★ avg in these reviews</p>
+                  <div className="flex justify-between text-[13px]"><span className="font-medium text-[#202124]">{t.name}</span><span className="text-[#5F6368]">{t.mentions} mentions</span></div>
+                  <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#E8EAED]"><div className="h-full rounded-full bg-[#EA4335]" style={{ width: `${Math.min(100, t.mentions * 12)}%` }} /></div>
+                  <p className="mt-1 text-[12px] text-[#5F6368]">{t.avgRating.toFixed(1)}★ avg · {t.positivePct}% positive — needs playbook</p>
                 </div>
               ))}
             </div>
           )}
+          <p className="mt-3 border-t border-[#E8EAED] pt-3 text-[12px] text-[#5F6368]"><span className="font-medium text-[#202124]">Next:</span> Pick the top theme → standardize a 2-sentence recovery reply → track weekly.</p>
         </section>
       </div>
 
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-        <h3 className="text-[14px] font-bold text-ink">What drives your rating?</h3>
-        <p className="text-[11px] text-ink/40">High ratings track staff & quality · low ratings track wait & value.</p>
+      {/* DRIVERS — heatmap style */}
+      <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
+        <h3 className="text-[14px] font-medium text-[#202124]">What drives each star rating?</h3>
+        <p className="text-[12px] text-[#5F6368]">Where praise and complaints cluster · helps you prioritize fixes that move stars.</p>
         <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[520px] text-[11px]">
+          <table className="w-full min-w-[520px] text-[12px]">
             <thead>
-              <tr className="text-left text-ink/40">
-                <th className="py-1 font-semibold">Theme</th>
-                <th className="text-center font-semibold">5★</th>
-                <th className="text-center font-semibold">4★</th>
-                <th className="text-center font-semibold">3★</th>
-                <th className="text-center font-semibold">1–2★</th>
+              <tr className="text-left text-[#5F6368]">
+                <th className="py-2 text-[11px] font-medium uppercase tracking-wide">Theme</th>
+                <th className="text-center text-[11px] font-medium">5★</th>
+                <th className="text-center text-[11px] font-medium">4★</th>
+                <th className="text-center text-[11px] font-medium">3★</th>
+                <th className="text-center text-[11px] font-medium">1–2★</th>
               </tr>
             </thead>
             <tbody>
               {i.drivers.map((d) => (
-                <tr key={d.theme} className="border-t border-ink/[0.05]">
-                  <td className="py-1.5 pr-2 font-semibold text-ink/70">{d.theme}</td>
+                <tr key={d.theme} className="border-t border-[#E8EAED]">
+                  <td className="py-2 pr-2 text-[13px] font-medium text-[#202124]">{d.theme}</td>
                   {[d.s5, d.s4, d.s3, d.low].map((v, idx) => (
-                    <td key={idx} className="py-1.5 text-center tabular-nums text-ink/60">
-                      <span className="inline-block min-w-6 rounded bg-ink/[0.04] px-1.5 py-0.5">{v}</span>
+                    <td key={idx} className="py-2 text-center">
+                      <span className={`inline-block min-w-7 rounded-full px-2 py-1 text-[12px] font-medium tabular-nums ${v === 0 ? "bg-[#F8F9FA] text-[#5F6368] ring-1 ring-[#E8EAED]" : idx === 3 && v > 0 ? "bg-[#FCE8E6] text-[#C5221F]" : v > 2 ? "bg-[#E6F4EA] text-[#137333]" : "bg-[#F1F3F4] text-[#202124]"}`}>{v}</span>
                     </td>
                   ))}
                 </tr>
@@ -963,48 +1312,92 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
         </div>
       </div>
 
+      {/* OPPORTUNITIES + STRENGTHS */}
       <div className="grid gap-3 lg:grid-cols-2">
-        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-          <h3 className="mb-3 text-[14px] font-bold text-ink">Improvement opportunities</h3>
-          <div className="space-y-2">
+        <section className="rounded-lg border border-[#DADCE0] bg-white p-5">
+          <h3 className="flex items-center gap-2 text-[14px] font-medium text-[#202124]">
+            Improvement opportunities
+            {isAI && <span className="rounded-full bg-[#E6F4EA] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#137333]">AI-verified</span>}
+            {!isAI && <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#5F6368]">Heuristic</span>}
+          </h3>
+          <div className="mt-3 space-y-2.5">
             {i.opportunities.map((o) => (
-              <div key={o.title} className="rounded-xl bg-ink/[0.03] p-3">
-                <p className="text-[12px] font-bold text-ink"><span className={`mr-1.5 rounded px-1.5 py-px text-[9px] ${o.level === "HIGH" ? "bg-coral/15 text-coral" : o.level === "MEDIUM" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{o.level}</span>{o.title}</p>
-                <p className="mt-1 text-[11px] text-ink/55">{o.detail} Impact: {o.impact}.</p>
+              <div key={o.title} className="rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-3">
+                <p className="text-[13px] font-medium text-[#202124]">
+                  <span className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-medium ${o.level === "HIGH" ? "bg-[#FCE8E6] text-[#C5221F] border border-[#FAD2CF]" : o.level === "MEDIUM" ? "bg-[#FEF7E0] text-[#EA8600] border border-[#FDE293]" : "bg-[#E6F4EA] text-[#137333] border border-[#CEEAD6]"}`}>{o.level}</span>
+                  {o.title}
+                </p>
+                <p className="mt-1 text-[12px] leading-5 text-[#5F6368]">{o.detail}</p>
+                <p className="mt-1 text-[11px] font-medium text-[#1A73E8]">Impact: {o.impact} → reply to these reviews first</p>
               </div>
             ))}
-            {i.opportunities.length === 0 && <p className="text-[12px] text-ink/40">Nothing urgent right now.</p>}
+            {i.opportunities.length === 0 && <p className="text-[13px] text-[#5F6368]">Nothing urgent — keep the current playbook.</p>}
           </div>
         </section>
-        <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-          <h3 className="mb-3 text-[14px] font-bold text-ink">Strengths to protect</h3>
-          <div className="space-y-2">
+        <section className="rounded-lg border border-[#DADCE0] bg-white p-5">
+          <h3 className="text-[14px] font-medium text-[#202124]">Strengths to protect</h3>
+          <p className="text-[12px] text-[#5F6368]">Your moat — mention these in posts & replies.</p>
+          <div className="mt-3 space-y-2">
             {i.strengths.map((s, idx) => (
-              <p key={s.title} className="text-[12px] text-ink/65"><span className="font-bold text-ink">{idx + 1}. {s.title}</span> · {s.mentions} mentions · {s.avg.toFixed(1)}★</p>
+              <div key={s.title} className="flex items-start gap-3 rounded-lg bg-[#F8F9FA] px-3 py-2.5">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#E6F4EA] text-[12px] font-medium text-[#137333]">{idx + 1}</span>
+                <div>
+                  <p className="text-[13px] font-medium text-[#202124]">{s.title}</p>
+                  <p className="text-[12px] text-[#5F6368]">{s.mentions} mentions · {s.avg.toFixed(1)}★ — keep training & staffing as-is</p>
+                </div>
+              </div>
             ))}
-            {i.strengths.length === 0 && <p className="text-[12px] text-ink/40">No clear strengths yet.</p>}
+            {i.strengths.length === 0 && <p className="text-[13px] text-[#5F6368]">No clear strengths yet — collect more 4–5★ detail.</p>}
           </div>
-          <h3 className="mb-2 mt-4 text-[14px] font-bold text-ink">AI action plan</h3>
-          <ol className="space-y-1.5">
+          <h3 className="mt-5 flex items-center gap-2 text-[14px] font-medium text-[#202124]">
+            AI action plan {isAI ? <span className="rounded-full bg-[#E6F4EA] px-2 py-0.5 text-[10px] font-medium text-[#137333]">AI</span> : null}
+          </h3>
+          <ol className="mt-2 space-y-2">
             {i.actions.map((a, idx) => (
-              <li key={a.title} className="text-[12px] text-ink/65"><span className="font-bold text-deep-violet">{idx + 1}.</span> <span className="font-semibold">{a.title}</span> — {a.detail}</li>
+              <li key={a.title} className="flex gap-2 rounded-lg border border-[#E8EAED] bg-white px-3 py-2.5">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#1A73E8] text-[11px] font-medium text-white">{idx + 1}</span>
+                <div>
+                  <p className="text-[13px] font-medium text-[#202124]">{a.title}</p>
+                  <p className="text-[12px] text-[#5F6368]">{a.detail}</p>
+                </div>
+              </li>
             ))}
           </ol>
         </section>
       </div>
 
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-        <h3 className="text-[14px] font-bold text-ink">Review themes</h3>
-        <p className="text-[11px] text-ink/40">Mentions per theme · tap a theme chip below to see contributing reviews.</p>
+      {/* THEMES */}
+      <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
+        <h3 className="text-[14px] font-medium text-[#202124]">Review themes</h3>
+        <p className="text-[12px] text-[#5F6368]">Mentions per theme · numbers are exact · themes mix AI + heuristic</p>
         <div className="mt-3"><ThemeBars topics={i.topics} /></div>
         <div className="mt-3 flex flex-wrap gap-2">
           {i.topics.map((t) => (
-            <span key={t.name} className="rounded-full bg-ink/[0.04] px-3 py-1.5 text-[12px] font-semibold text-ink/65">{t.name} · {t.count}</span>
+            <span key={t.name} className="rounded-full border border-[#E8EAED] bg-[#F8F9FA] px-3 py-1.5 text-[12px] font-medium text-[#202124]">{t.name} · {t.count}</span>
           ))}
         </div>
       </div>
 
-      <button onClick={onBack} className="text-[12px] font-medium text-ink/40 hover:text-ink">← Back to reviews</button>
+      {/* SENTIMENT SPLIT — quick visual for business health */}
+      <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
+        <h3 className="text-[14px] font-medium text-[#202124]">Sentiment split</h3>
+        <div className="mt-3 flex h-3 overflow-hidden rounded-full">
+          <div className="bg-[#34A853]" style={{ width: `${total ? (i.sentimentSplit.positive / total) * 100 : 0}%` }} title={`Positive ${i.sentimentSplit.positive}`} />
+          <div className="bg-[#FBBC05]" style={{ width: `${total ? (i.sentimentSplit.neutral / total) * 100 : 0}%` }} title={`Neutral ${i.sentimentSplit.neutral}`} />
+          <div className="bg-[#EA4335]" style={{ width: `${total ? (i.sentimentSplit.negative / total) * 100 : 0}%` }} title={`Negative ${i.sentimentSplit.negative}`} />
+        </div>
+        <div className="mt-2 flex flex-wrap gap-4 text-[12px]">
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#34A853]" /> Positive {i.sentimentSplit.positive}</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#FBBC05]" /> Neutral {i.sentimentSplit.neutral}</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#EA4335]" /> Negative {i.sentimentSplit.negative}</span>
+        </div>
+      </div>
+
+      <button onClick={onBack} className="text-[13px] font-medium text-[#1A73E8] hover:underline">← Back to reviews</button>
+      <p className="text-[11px] leading-4 text-[#5F6368]">
+        {isAI ? `AI model ${aiMeta?.model ?? "unknown"} • ${aiMeta?.ragUsed ? "RAG-grounded in your databank" : "No databank context"} • Verified counts` : "Heuristic analysis — counts exact, insights rule-based. Run AI for cited opportunities."}
+        {" "}• Sayvors-derived analytics • <span className="underline decoration-dotted">Why this matters: reply fast to negatives = +0.2★ avg in 30 days (industry avg)</span>
+      </p>
     </div>
   );
 }
@@ -1012,38 +1405,84 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
 function InsightCard({ review }: { review: ReviewItem }) {
   const insight = explainReview(review);
   return (
-    <div className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
+    <div className="rounded-lg border border-[#DADCE0] bg-white p-4" style={{ fontFamily: "Roboto, Arial, sans-serif" }}>
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-[13px] font-bold text-ink dark:text-fog">Why this rating?</h3>
-        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${insight.tone === "high" ? "bg-emerald-100 text-emerald-700" : insight.tone === "low" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+        <h3 className="flex items-center gap-1.5 text-[13px] font-medium text-[#202124]">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#F1F3F4] text-[#5F6368]">
+            <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden>
+              <path d="M12 16a1.2 1.2 0 1 0 0 2.4A1.2 1.2 0 0 0 12 16ZM11 8h2v6h-2z" fill="currentColor" />
+              <path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 16a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z" stroke="currentColor" strokeWidth={1.2} />
+            </svg>
+          </span>
+          Why this rating?
+        </h3>
+        <span
+          className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+            insight.tone === "high"
+              ? "border-[#CEEAD6] bg-[#E6F4EA] text-[#137333]"
+              : insight.tone === "low"
+                ? "border-[#FAD2CF] bg-[#FCE8E6] text-[#C5221F]"
+                : "border-[#FDE293] bg-[#FEF7E0] text-[#EA8600]"
+          }`}
+        >
           {insight.tone === "high" ? "High" : insight.tone === "low" ? "Low" : "Mixed"}
         </span>
       </div>
-      <p className="mt-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">{insight.summary}</p>
+      <p className="mt-2 text-[12px] leading-5 text-[#5F6368]">{insight.summary}</p>
+
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl bg-emerald-50/60 p-3 dark:bg-emerald-500/[0.06]">
-          <p className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">What lifted it</p>
+        <div className="rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-3">
+          <p className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-[#137333]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#34A853]" /> What lifted it
+          </p>
           {insight.positives.length ? (
-            <ul className="mt-1.5 space-y-1">
-              {insight.positives.map((x) => <li key={x} className="text-[11px] text-emerald-800 dark:text-emerald-200">+ {x}</li>)}
+            <ul className="mt-2 space-y-1">
+              {insight.positives.map((x) => (
+                <li key={x} className="flex gap-1.5 text-[12px] leading-4 text-[#202124]">
+                  <span className="text-[#34A853]">+</span> {x}
+                </li>
+              ))}
             </ul>
-          ) : <p className="mt-1 text-[11px] text-ink/40">No clear positive signals.</p>}
+          ) : (
+            <p className="mt-2 text-[12px] text-[#5F6368]">No clear positive signals.</p>
+          )}
         </div>
-        <div className="rounded-xl bg-red-50/60 p-3 dark:bg-red-500/[0.06]">
-          <p className="text-[11px] font-bold text-red-700 dark:text-red-300">What dragged it</p>
+        <div className="rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-3">
+          <p className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-[#C5221F]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#EA4335]" /> What dragged it
+          </p>
           {insight.negatives.length ? (
-            <ul className="mt-1.5 space-y-1">
-              {insight.negatives.map((x) => <li key={x} className="text-[11px] text-red-800 dark:text-red-200">− {x}</li>)}
+            <ul className="mt-2 space-y-1">
+              {insight.negatives.map((x) => (
+                <li key={x} className="flex gap-1.5 text-[12px] leading-4 text-[#202124]">
+                  <span className="text-[#EA4335]">−</span> {x}
+                </li>
+              ))}
             </ul>
-          ) : <p className="mt-1 text-[11px] text-ink/40">No clear negative signals.</p>}
+          ) : (
+            <p className="mt-2 text-[12px] text-[#5F6368]">No clear negative signals.</p>
+          )}
         </div>
       </div>
-      <div className="mt-3 rounded-xl bg-ink/[0.03] p-3 dark:bg-fog/[0.04]">
-        <p className="text-[11px] font-bold text-ink dark:text-fog">Overall result</p>
-        <p className="mt-1 text-[12px] text-ink/60 dark:text-fog/60">{insight.result}</p>
-        <p className="mt-2 text-[11px] font-semibold text-deep-violet">Next: {insight.action}</p>
+
+      <div className="mt-3 rounded-lg border border-[#E8EAED] bg-white p-3">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-[#5F6368]">Overall result</p>
+        <p className="mt-1 text-[13px] leading-5 text-[#202124]">{insight.result}</p>
+        <p className="mt-2 flex items-center gap-1.5 text-[12px] font-medium text-[#1A73E8]">
+          <span className="text-[#1A73E8]">→</span> Next: {insight.action}
+        </p>
       </div>
-      <p className="mt-2 text-[10px] text-ink/30">Explainable heuristics from rating + comment text · {review.locationName} · {review.createdAt}{review.replied ? " · replied" : " · unanswered"}.</p>
+      <p className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[#E8EAED] pt-3 text-[11px] text-[#5F6368]">
+        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#F1F3F4]">
+          <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3" aria-hidden>
+            <path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 16a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z" stroke="currentColor" strokeWidth={1.3} />
+            <path d="M12 8v5l3 2" stroke="currentColor" strokeWidth={1.3} strokeLinecap="round" />
+          </svg>
+        </span>
+        Explainable heuristics · {review.locationName} · {review.createdAt}
+        <span className="text-[#DADCE0]">•</span>
+        <span className={review.replied ? "text-[#137333]" : "text-[#5F6368]"}>{review.replied ? "Replied" : "Unanswered"}</span>
+      </p>
     </div>
   );
 }

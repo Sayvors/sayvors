@@ -158,14 +158,29 @@ def resolve_strategy_conflicts(
 
     for m in matches:
         sid = m.strategy_id
-        # Hard eligibility: product recommendations need an explicit request.
-        # Mentioning a product is NOT asking for another one.
+        # Product recommendations: explicit request always ok. For happy customers
+        # who mention a product and are still engaged, allow a gentle
+        # best-effort suggestion — but only if a verified product is found later.
         if sid == "recommend_related_product" and not wants_alternative:
+            product_ref = (analysis.product_reference or "").strip()
+            is_positive = analysis.sentiment in ("positive", "very_positive")
             if churn:
                 reason = "Customer signaled churn — no product pitch."
-            else:
-                reason = (f"{_money_prefix()}no explicit request for alternatives, "
-                          f"recommendations, or a replacement — complaint context only.")
+                suppressed.append(SuppressedStrategy(strategy_id=sid, name=m.name, reason=reason))
+                continue
+            if is_positive and product_ref and not billing_ctx:
+                m = m.model_copy(update={
+                    "conditional": True,
+                    "condition_note": (
+                        f"Happy customer mentioning '{product_ref}' — a VERIFIED complementary product "
+                        f"from the databank MAY be suggested briefly in one clause, with exact name and link if present. "
+                        f"No verified product means no suggestion."
+                    ),
+                })
+                active.append(m)
+                continue
+            reason = (f"{_money_prefix()}no explicit request for alternatives, "
+                      f"recommendations, or a replacement — complaint context only.")
             suppressed.append(SuppressedStrategy(strategy_id=sid, name=m.name, reason=reason))
             continue
         # Hard eligibility for offers:
@@ -393,7 +408,14 @@ def _matches_conditions(strategy: ResponseStrategy, analysis: ReviewAnalysis) ->
 
     allowed_sentiments = conds.get("sentiments")
     if allowed_sentiments and analysis.sentiment not in allowed_sentiments:
-        return False
+        # Back-compat: happy-customer complement (positive + product) should
+        # be allowed even if the DB row hasn't been migrated yet.
+        if not (
+            strategy.id == "recommend_related_product"
+            and analysis.sentiment in ("positive", "very_positive")
+            and bool(analysis.product_reference)
+        ):
+            return False
 
     allowed_issue_types = conds.get("issue_types")
     if allowed_issue_types and analysis.issue_type:
@@ -509,9 +531,9 @@ CORE_STRATEGIES = [
     {
         "id": "recommend_related_product",
         "name": "Recommend Related Product",
-        "description": "Recommend another product or service when genuinely relevant to the customer's complaint.",
+        "description": "Recommend another product or service when genuinely relevant — complaint alternative or happy-customer complement.",
         "category": "growth",
-        "conditions": {"sentiments": ["negative", "very_negative", "neutral"], "has_product_reference": True},
+        "conditions": {"sentiments": ["negative", "very_negative", "neutral", "positive", "very_positive"], "has_product_reference": True},
         "instructions": ["Only recommend products that actually exist in the business catalog.", "Frame the recommendation as a genuine alternative, not a sales pitch.", "Connect the recommendation to what the customer didn't like."],
         "compatible_strategies": ["acknowledge_feedback", "mention_relevant_offer", "encourage_another_visit"],
         "priority": 40,
@@ -597,8 +619,9 @@ CHANNEL_POLICIES = {
 }
 
 DEFAULT_BRAND_VOICE = {
-    "tone": ["friendly", "human", "confident"],
-    "avoid": ["corporate language", "excessive apologies", "fake enthusiasm"],
+    "tone": ["friendly", "human", "simple", "warm"],
+    "avoid": ["corporate language", "AI buzzwords", "excessive apologies", "fake enthusiasm", "big fancy words"],
     "response_length": "short",
     "emoji_usage": "minimal",
+    "language": "simple everyday English, like texting a neighbor — short sentences, contractions, no heavy adjectives",
 }

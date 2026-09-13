@@ -64,9 +64,27 @@ async def resolve_business_domain(
         from ..locations.models import LocationProfile
         from ..rag.models import Databank, Document
 
-        profiles = (
-            await db.execute(select(LocationProfile).where(LocationProfile.user_id == tenant_id))
-        ).scalars().all()
+        # Each source is queried independently — a missing table or
+        # aborted transaction in one must NOT poison the session for the
+        # rest of the pipeline (the later INSERT of review_response_logs).
+        async def _safe_execute(stmt, label: str):
+            try:
+                return await db.execute(stmt)
+            except Exception as e:
+                # Missing table on dev DBs (e.g. location_profiles) is expected until migrated —
+                # debug level so it doesn't spam every review request.
+                if "UndefinedTableError" in type(e).__name__ or "does not exist" in str(e):
+                    logger.debug("Business domain %s skipped (table missing): %s", label, e)
+                else:
+                    logger.warning("Business domain %s failed: %s", label, e)
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                return None
+
+        res = await _safe_execute(select(LocationProfile).where(LocationProfile.user_id == tenant_id), "location_profiles")
+        profiles = res.scalars().all() if res is not None else []
         for p in profiles:
             cats = p.categories or {}
             if isinstance(cats, dict):
@@ -79,9 +97,8 @@ async def resolve_business_domain(
             sources["location_profiles"] = len(profiles)
 
         if channel_id:
-            services = (
-                await db.execute(select(BusinessService).where(BusinessService.channel_id == channel_id))
-            ).scalars().all()
+            res = await _safe_execute(select(BusinessService).where(BusinessService.channel_id == channel_id), "channel_services")
+            services = res.scalars().all() if res is not None else []
             for s in services:
                 terms.update(_words(s.name or ""))
                 terms.update(_words(s.category or ""))
@@ -89,37 +106,39 @@ async def resolve_business_domain(
             if services:
                 sources["channel_services"] = len(services)
 
-            ch = (
-                await db.execute(
-                    select(Channel.display_name).where(
-                        Channel.id == channel_id, Channel.user_id == tenant_id)
-                )
-            ).scalar_one_or_none()
+            res = await _safe_execute(
+                select(Channel.display_name).where(Channel.id == channel_id, Channel.user_id == tenant_id),
+                "channel",
+            )
+            ch = res.scalar_one_or_none() if res is not None else None
             if ch:
                 terms.update(_words(ch))
                 sources["channel_name"] = 1
 
-        banks = (
-            await db.execute(select(Databank).where(Databank.user_id == tenant_id).limit(10))
-        ).scalars().all()
+        res = await _safe_execute(select(Databank).where(Databank.user_id == tenant_id).limit(10), "databanks")
+        banks = res.scalars().all() if res is not None else []
         for b in banks:
             terms.update(_words(b.name or ""))
         if banks:
             sources["databanks"] = len(banks)
-            docs = (
-                await db.execute(
-                    select(Document.filename).where(
-                        Document.databank_id.in_([b.id for b in banks]))
-                    .limit(50)
-                )
-            ).all()
-            for (filename,) in docs:
-                # Filenames like sayvors_business_databank.csv carry domain words.
+            res = await _safe_execute(
+                select(Document.filename).where(Document.databank_id.in_([b.id for b in banks])).limit(50),
+                "documents",
+            )
+            rows = res.all() if res is not None else []
+            for (filename,) in rows:
                 cleaned = re.sub(r"\.[a-z0-9]+$", "", filename or "")
                 terms.update(w for w in _words(cleaned) if w not in {"databank", "data", "csv", "final", "new"})
-            sources["documents"] = len(docs)
+            sources["documents"] = len(rows)
     except Exception as e:
-        logger.warning("Business domain resolution failed: %s", e)
+        if "UndefinedTableError" in type(e).__name__ or "does not exist" in str(e):
+            logger.debug("Business domain resolution failed (table missing): %s", e)
+        else:
+            logger.warning("Business domain resolution failed: %s", e)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
     return {"terms": sorted(terms), "sources": sources}
 
 
