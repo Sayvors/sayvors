@@ -4,11 +4,17 @@ Single source of truth: TOOL_DEFINITIONS is GENERATED from the function
 signatures below (via @tool + Annotated descriptions). The schema the model
 sees can never drift from the Python signature it calls.
 """
+import csv
 import inspect
 import logging
+import os
+from io import StringIO
 from typing import Annotated, get_args, get_origin, get_type_hints
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +71,82 @@ def _build_definitions() -> list[dict]:
     return [_schema_for(name, meta["fn"]) for name, meta in _TOOL_REGISTRY.items()]
 
 
+async def _csv_direct_search(
+    tenant_id: str,
+    db: AsyncSession,
+    record_types: list[str],
+    query: str,
+    databank_id: str | None = None,
+    limit: int = 5,
+) -> list[dict]:
+    """Precise CSV row search — bypasses chunk embeddings.
+
+    Reads the actual uploaded CSV file(s) for the tenant's databank(s) and
+    filters rows where any of (name, description, category) contains the
+    query terms. Returns raw row dicts so source_url and other fields are
+    preserved for link grounding. Falls back to empty when no CSV exists.
+    """
+    try:
+        from ..rag.models import Databank, Document
+
+        # Determine which databanks to search
+        if databank_id:
+            bank_ids = [databank_id]
+        else:
+            res = await db.execute(select(Databank.id).where(Databank.user_id == tenant_id))
+            bank_ids = [r[0] for r in res.all()]
+        if not bank_ids:
+            return []
+
+        docs = (
+            await db.execute(
+                select(Document).where(
+                    Document.databank_id.in_(bank_ids),
+                    Document.user_id == tenant_id,
+                    Document.file_type == "csv",
+                )
+            )
+        ).scalars().all()
+
+        q_terms = [t.lower() for t in query.split() if len(t) >= 2]
+        if not q_terms:
+            q_terms = [query.lower()]
+
+        hits: list[dict] = []
+        for doc in docs:
+            path = os.path.join(settings.UPLOAD_DIR, doc.databank_id, f"{doc.id}.{doc.file_type}")
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, "rb") as f:
+                    text = f.read().decode("utf-8", errors="replace").replace("\ufeff", "")
+                reader = csv.DictReader(StringIO(text))
+                for row in reader:
+                    rt = (row.get("record_type") or "").strip().lower()
+                    if record_types and rt not in [r.lower() for r in record_types]:
+                        continue
+                    # For product search, exclude the exact mentioned product when recommending?
+                    # Keep all — prune logic decides. Just match query terms.
+                    searchable = " ".join([
+                        row.get("name") or "",
+                        row.get("category") or "",
+                        row.get("description") or "",
+                        row.get("entity_id") or "",
+                    ]).lower()
+                    if any(term in searchable for term in q_terms):
+                        # Preserve useful fields for the prompt, including link
+                        hits.append({k: v for k, v in row.items() if v})
+                        if len(hits) >= limit:
+                            return hits
+            except Exception as e:
+                logger.debug("CSV direct search failed for doc %s: %s", doc.id, e)
+                continue
+        return hits
+    except Exception as e:
+        logger.debug("CSV direct search outer failed: %s", e)
+        return []
+
+
 async def _rag_search(
     tenant_id: str,
     query: str,
@@ -81,10 +163,6 @@ async def _rag_search(
         from ..rag.schemas import SearchRequest
 
         if not databank_id:
-            # Fall back to the tenant's primary databank
-            from sqlalchemy import select
-            from ..rag.models import Databank
-
             result = await db.execute(
                 select(Databank.id).where(Databank.user_id == tenant_id).limit(1)
             )
@@ -118,11 +196,22 @@ async def search_products(
     if not db:
         return {"results": [], "count": 0, "tool_name": "search_products"}
 
+    # Try precise CSV rows first — works even when embeddings are down.
+    csv_hits = await _csv_direct_search(tenant_id, db, ["product"], query, databank_id=databank_id, limit=limit)
+    if csv_hits:
+        # Return structured rows so source_url (links) survive for grounding.
+        formatted = []
+        for r in csv_hits:
+            parts = [f"{k}={v}" for k, v in r.items() if k in ("name", "category", "description", "source_url", "entity_id", "status") and v]
+            formatted.append(", ".join(parts) if parts else str(r))
+        return {"results": formatted, "count": len(formatted), "tool_name": "search_products", "mode": "csv"}
+
     results = await _rag_search(tenant_id, query, db, top_k=limit, databank_id=databank_id)
     return {
         "results": [r.get("content", "") for r in results],
         "count": len(results),
         "tool_name": "search_products",
+        "mode": "rag",
     }
 
 
@@ -160,6 +249,19 @@ async def find_offers(
     if not db:
         return {"results": [], "count": 0, "tool_name": "find_offers"}
 
+    # CSV offers first — precise, works without embeddings.
+    q = product_id or category or ""
+    csv_hits = await _csv_direct_search(tenant_id, db, ["offer", "pricing_rule"], q, databank_id=databank_id, limit=limit)
+    # If no product filter, also try broad offer search
+    if not csv_hits and not q:
+        csv_hits = await _csv_direct_search(tenant_id, db, ["offer"], "offer", databank_id=databank_id, limit=limit)
+    if csv_hits:
+        formatted = []
+        for r in csv_hits:
+            parts = [f"{k}={v}" for k, v in r.items() if v]
+            formatted.append(", ".join(parts))
+        return {"results": formatted, "count": len(formatted), "tool_name": "find_offers", "mode": "csv"}
+
     query = "offers promotions discounts deals"
     if category:
         query += f" {category}"
@@ -171,6 +273,7 @@ async def find_offers(
         "results": [r.get("content", "") for r in results],
         "count": len(results),
         "tool_name": "find_offers",
+        "mode": "rag",
     }
 
 

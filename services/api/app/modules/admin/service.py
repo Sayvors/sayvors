@@ -357,6 +357,9 @@ async def get_health(db: AsyncSession, probe: bool = False) -> dict:
 
     db_rows = await _provider_rows(db)
     for provider in _ai_providers_configured(db_rows):
+        # Only show providers with a key stored in DB — hide "missing key" / "disabled" (not ready for tenants)
+        if provider["source"] != "database":
+            continue
         if not provider["configured"]:
             reason = "disabled by admin" if provider["source"] == "disabled" else "no API key configured"
             services.append({

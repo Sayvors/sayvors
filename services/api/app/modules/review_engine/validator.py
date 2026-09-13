@@ -125,6 +125,14 @@ CORPORATE_OPENERS = [
     "remain committed", "utmost", "please be advised",
     "it has come to our attention", "do not hesitate",
     "as a valued customer", "your business means",
+    "wonderful feedback", "thrilled you enjoyed", "delighted to hear",
+    "we're thrilled", "we're delighted", "heartfelt", "cherish",
+]
+
+AI_HEAVY_WORDS = [
+    "wonderful", "thrilled", "delighted", "elated", "heartfelt",
+    "cherish", "cherished", "exquisite", "phenomenal", "outstanding",
+    "blessed", "overjoyed", "utmost gratitude", "truly blessed",
 ]
 
 STRATEGY_IDS = [
@@ -377,6 +385,16 @@ def validate_response(
                 f"Unsupported business claim ('{m.group(0).strip()}', type: {name}) — "
                 f"remove it or ground it in databank data."
             )
+    # Link grounding: every URL must appear verbatim in Business Context.
+    link_ok = True
+    for url in re.findall(r"https?://\S+", text):
+        cleaned = url.rstrip(".,)]}>\"'")
+        if cleaned.lower() not in context_lower:
+            link_ok = False
+            grounding_ok = False
+            problems.append(f"Invented link ('{cleaned[:80]}') — no matching URL in databank context.")
+    checks["link_grounding"] = link_ok
+
     # Engine-level: every factual claim must trace to retrieved context.
     claim_verdicts: list[ClaimVerdict] = []
     for v in ground_claims(extract_claims(text), business_context):
@@ -475,7 +493,7 @@ def validate_response(
 
     # ── "Does this actually help?" summary badge ──────────
     # (Specific failures are already reported above; this is the roll-up.)
-    helpful_keys = ["issue_coverage", "claim_grounding", "hallucination",
+    helpful_keys = ["issue_coverage", "claim_grounding", "link_grounding", "hallucination",
                     "offer_appropriateness", "naturalness", "conciseness",
                     "taxonomy_leak", "pricing_purity"]
     checks["helpfulness"] = all(checks.get(k, True) for k in helpful_keys)
@@ -578,6 +596,9 @@ def _check_naturalness(text: str, text_lower: str) -> tuple[bool, str]:
     for opener in CORPORATE_OPENERS:
         if opener in text_lower:
             return False, f"Corporate phrasing detected ('{opener}') — rewrite like a real person."
+    for w in AI_HEAVY_WORDS:
+        if w in text_lower:
+            return False, f"AI-heavy word detected ('{w}') — use simple human words like thanks/glad/sorry instead."
     for sid in STRATEGY_IDS:
         if sid in text_lower:
             return False, f"Strategy name leaked into reply ('{sid}')."

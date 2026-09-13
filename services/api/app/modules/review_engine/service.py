@@ -246,7 +246,7 @@ Available tools (use EXACT parameter names — never invent arguments):
 Rules:
 - Only call tools that are genuinely needed for this review.
 - For positive/neutral reviews with no specific product mentioned, call NO tools.
-- For reviews mentioning specific products or asking for alternatives, call search_products.
+- If a product is mentioned (product_reference present) and a recommendation strategy is possible, call search_products with that product name to verify what else the business offers — the planner will decide whether to mention it.
 - For billing/refund complaints, do NOT call find_offers unless the customer explicitly asks for compensation, a discount, or a deal.
 - Call find_offers ONLY when the customer explicitly asks for compensation, a discount, or a deal — OR when there is a pricing complaint (too expensive) about a mentioned product, to verify whether a matching offer exists. The planner decides separately whether to mention it.
 - The injected tenant_id/db are handled automatically — never include them in args.
@@ -281,10 +281,29 @@ Rules:
     try:
         calls = json.loads(raw)
         if not isinstance(calls, list):
-            return []
-        return [c for c in calls if isinstance(c, dict) and "tool" in c]
+            calls = []
+        else:
+            calls = [c for c in calls if isinstance(c, dict) and "tool" in c]
     except json.JSONDecodeError:
-        return []
+        calls = []
+
+    # Deterministic fallback: positive mention with conditional recommend must verify inventory.
+    # The LLM sometimes skips tools for happy reviews — ensure we look up the product.
+    product_ref = (analysis.product_reference or "").strip() if hasattr(analysis, "product_reference") else ""
+    is_positive = getattr(analysis, "sentiment", "") in ("positive", "very_positive")
+    needs_product_check = is_positive and product_ref and any(
+        getattr(s, "strategy_id", "") == "recommend_related_product" for s in strategies
+    )
+    if needs_product_check and not any(c.get("tool") == "search_products" for c in calls):
+        # Also handle stale arg name "keyword" → correct to "query"
+        calls.append({"tool": "search_products", "args": {"query": product_ref}})
+    # Normalize any stale "keyword" arg the model might still emit
+    for c in calls:
+        if c.get("tool") == "search_products" and "keyword" in (c.get("args") or {}):
+            args = dict(c["args"])
+            args["query"] = args.pop("keyword")
+            c["args"] = args
+    return calls
 
 
 async def process_review(

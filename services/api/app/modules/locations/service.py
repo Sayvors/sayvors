@@ -28,18 +28,29 @@ async def _connection(db: AsyncSession, user_id: str) -> LocalithConnection | No
 
 
 async def _profile(db: AsyncSession, user_id: str, listing_id: str) -> LocationProfile:
-    result = await db.execute(
-        select(LocationProfile).where(
-            LocationProfile.user_id == user_id,
-            LocationProfile.listing_id == listing_id,
+    try:
+        result = await db.execute(
+            select(LocationProfile).where(
+                LocationProfile.user_id == user_id,
+                LocationProfile.listing_id == listing_id,
+            )
         )
-    )
-    profile = result.scalar_one_or_none()
-    if profile is None:
-        profile = LocationProfile(user_id=user_id, listing_id=listing_id)
-        db.add(profile)
-        await db.flush()
-    return profile
+        profile = result.scalar_one_or_none()
+        if profile is None:
+            profile = LocationProfile(user_id=user_id, listing_id=listing_id)
+            db.add(profile)
+            await db.flush()
+        return profile
+    except Exception as e:
+        # Table missing on dev DBs that haven't run migrations — don't 500 the page.
+        if "UndefinedTableError" in type(e).__name__ or "does not exist" in str(e):
+            logger.debug("location_profiles missing, returning ephemeral profile: %s", e)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            return LocationProfile(user_id=user_id, listing_id=listing_id)
+        raise
 
 
 def _status_of(connection: LocalithConnection | None) -> str:
@@ -57,8 +68,20 @@ async def get_profile(
 ) -> dict:
     """Merged profile for one listing (auto-creates the local row)."""
     connection = await _connection(db, user_id)
-    profile = await _profile(db, user_id, listing_id)
-    await db.commit()
+    try:
+        profile = await _profile(db, user_id, listing_id)
+        await db.commit()
+    except Exception as e:
+        if "UndefinedTableError" in type(e).__name__ or "does not exist" in str(e):
+            logger.debug("get_profile fallback for missing table: %s", e)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            # Return ephemeral in-memory profile so the page still loads
+            profile = LocationProfile(user_id=user_id, listing_id=listing_id)
+        else:
+            raise
 
     merged = {
         "listing_id": listing_id,
