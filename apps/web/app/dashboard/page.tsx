@@ -4,61 +4,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { fetchOverview, fetchTimeseries, type Overview, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, fetchOverview, fetchTimeseries, generateReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
 import { MetricChart, RatingDistribution, Sparkline } from "@/components/analytics/Charts";
-
-interface ExecSummary {
-  headline: string;
-  reputation_score: number;
-  health_score: number;
-  wins: string[];
-  problems: string[];
-  opportunity: string;
-  recommended_action: string;
-  benchmark_text: string;
-}
-
-const quickActions = [
-  {
-    titleKey: "connectTitle",
-    descKey: "connectDesc",
-    href: "/dashboard/channels",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-        <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
-        <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
-      </svg>
-    ),
-    color: "from-deep-violet to-magenta",
-  },
-  {
-    titleKey: "databankTitle",
-    descKey: "databankDesc",
-    href: "/dashboard/databank",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-        <ellipse cx="12" cy="5" rx="9" ry="3" />
-        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
-      </svg>
-    ),
-    color: "from-magenta to-coral",
-  },
-  {
-    titleKey: "autoReplyTitle",
-    descKey: "autoReplyDesc",
-    href: "/dashboard/automations",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-        <path d="M8 10h8M8 14h4" />
-      </svg>
-    ),
-    color: "from-sky-400 to-blue-500",
-  },
-] as const;
 
 const checklistDefs = [
   { id: "channel", labelKey: "stepConnect", href: "/dashboard/channels" },
@@ -68,142 +17,8 @@ const checklistDefs = [
 
 const CHECKLIST_KEY = "sayvors.onboarding.checklist";
 
-function ExecutiveSummaryBanner() {
-  const { t } = useI18n();
-  const [summary, setSummary] = useState<ExecSummary | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    apiFetch("/api/v1/analytics/executive-summary?days=30")
-      .then((s) => {
-        if (!cancelled) setSummary(s);
-      })
-      .catch(() => {
-        /* banner stays hidden when no data / backend down */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!summary) return null;
-  return (
-    <Link
-      href="/dashboard/analytics"
-      aria-label={t.dashboard.briefing.title}
-      className="group relative block overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet to-magenta p-5 text-white shadow-md shadow-deep-violet/20 outline-none transition duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-white/60"
-    >
-      <div className="mb-2 flex items-center gap-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/15">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden>
-            <path d="M12 2a7 7 0 014 12.7V17a1 1 0 01-1 1H9a1 1 0 01-1-1v-2.3A7 7 0 0112 2z" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M9 21h6" strokeLinecap="round" />
-          </svg>
-        </span>
-        <h2 className="text-[13px] font-bold tracking-wide">{t.dashboard.briefing.title}</h2>
-        <span className="ml-auto flex items-center gap-3 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold">
-          <span title={t.dashboard.briefing.reputation}>{t.dashboard.briefing.reputation} {summary.reputation_score}</span>
-          <span className="h-3 w-px bg-white/25" aria-hidden />
-          <span title={t.dashboard.briefing.health}>{t.dashboard.briefing.health} {summary.health_score}</span>
-        </span>
-      </div>
-      <p className="text-[13px] font-semibold leading-snug">{summary.headline}</p>
-      <ul className="mt-2 grid gap-1 sm:grid-cols-2">
-        {summary.wins.slice(0, 2).map((w) => (
-          <li key={w} className="flex items-center gap-2 text-[12px] text-white/90">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald" aria-hidden />
-            {w}
-          </li>
-        ))}
-        {summary.problems.slice(0, 1).map((p) => (
-          <li key={p} className="flex items-center gap-2 text-[12px] text-white/90 sm:col-start-1">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
-            {p}
-          </li>
-        ))}
-        {summary.opportunity && (
-          <li className="flex items-center gap-2 text-[12px] text-white/90">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky" aria-hidden />
-            {summary.opportunity}
-          </li>
-        )}
-      </ul>
-      <p className="mt-2.5 border-t border-white/15 pt-2 text-[11px] text-white/75">
-        <span className="font-semibold">{t.dashboard.briefing.recommendedAction}</span> {summary.recommended_action} · {summary.benchmark_text}
-      </p>
-    </Link>
-  );
-}
-
 type DashboardChannel = { id: string; platform: string; display_name: string | null };
 type DashboardService = { is_offered: boolean };
-
-function MoneyHero() {
-  const [data, setData] = useState<{
-    total: number; website: number; calls: number; directions: number; window: string;
-  } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const prof = await apiFetch("/api/v1/integrations/localith/profile");
-        const perf = prof?.metrics?.listings?.[0];
-        if (!perf) return;
-        const n = (v: unknown) => {
-          const x = typeof v === "number" ? v : parseFloat(String(v ?? ""));
-          return Number.isFinite(x) ? x : 0;
-        };
-        const website = n(perf.websiteClicks);
-        const calls = n(perf.callClicks);
-        const directions = n(perf.directions);
-        const conn = prof?.connection ?? {};
-        if (!cancelled) {
-          setData({
-            total: website + calls + directions,
-            website, calls, directions,
-            window: conn.metrics_start && conn.metrics_end
-              ? `${conn.metrics_start} → ${conn.metrics_end}`
-              : "last 30 days",
-          });
-        }
-      } catch {
-        /* offline — hero stays hidden */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!data) return null;
-  return (
-    <Link
-      href="/dashboard/analytics"
-      aria-label="Customer actions — open analytics"
-      className="group relative block overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-emerald-600 to-teal-500 p-5 text-white shadow-md shadow-emerald-600/20 outline-none transition duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-white/60"
-    >
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-widest text-white/70">Customer actions</p>
-          <p className="mt-1 text-[34px] font-bold leading-none tabular-nums">{data.total}</p>
-          <p className="mt-1 text-[11px] text-white/70">{data.window} · via Google</p>
-        </div>
-        <div className="flex gap-2">
-          {[
-            { label: "Website", value: data.website },
-            { label: "Calls", value: data.calls },
-            { label: "Directions", value: data.directions },
-          ].map((c) => (
-            <div key={c.label} className="rounded-xl bg-white/10 px-3 py-2 text-center backdrop-blur-sm">
-              <p className="text-[16px] font-bold tabular-nums">{c.value}</p>
-              <p className="text-[9px] font-semibold uppercase tracking-wide text-white/70">{c.label}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </Link>
-  );
-}
 
 interface AttentionItem {
   severity: "high" | "medium";
@@ -212,26 +27,81 @@ interface AttentionItem {
   href: string;
 }
 
+/** One row per review — newest draft wins (the backend may hold older duplicates). */
+function dedupeDraftsByReview(list: ReviewReplyDTO[]): ReviewReplyDTO[] {
+  const seen = new Map<string, ReviewReplyDTO>();
+  for (const d of list) {
+    const prev = seen.get(d.review_id);
+    if (!prev || d.created_at > prev.created_at) seen.set(d.review_id, d);
+  }
+  return [...seen.values()];
+}
+
 function AttentionQueue() {
   const [items, setItems] = useState<AttentionItem[] | null>(null);
+  const [drafts, setDrafts] = useState<ReviewReplyDTO[]>([]);
+  const [draftTotal, setDraftTotal] = useState(0);
+  const [channelIds, setChannelIds] = useState<string[]>([]);
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approvingAll, setApprovingAll] = useState(false);
+  const [approveProgress, setApproveProgress] = useState({ done: 0, total: 0 });
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [failed, setFailed] = useState<ReviewReplyDTO[]>([]);
+  const [failedTotal, setFailedTotal] = useState(0);
+  const [failedOpen, setFailedOpen] = useState(false);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [remakingAll, setRemakingAll] = useState(false);
+  const [remakeProgress, setRemakeProgress] = useState({ done: 0, total: 0 });
+  const [failedError, setFailedError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const found: AttentionItem[] = [];
       try {
-        const [overview, profile] = await Promise.all([
+        const [overview, profile, channelData] = await Promise.all([
           fetchOverview(30, null).catch(() => null),
           apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
+          apiFetch("/api/v1/channels/?limit=100").catch(() => null),
         ]);
-        if (overview && overview.unanswered > 0) {
-          found.push({
-            severity: "high",
-            title: `${overview.unanswered} review${overview.unanswered === 1 ? "" : "s"} need${overview.unanswered === 1 ? "s" : ""} a reply`,
-            detail: "Replies lift trust and local ranking",
-            href: "/dashboard/reviews",
-          });
+        const googleChannels = (channelData?.channels ?? []).filter(
+          (c: { platform: string }) => c.platform === "google_reviews"
+        );
+        if (!cancelled) setChannelIds(googleChannels.map((c: { id: string }) => c.id));
+        let pendingTotal = 0;
+        const pendingLists: ReviewReplyDTO[][] = await Promise.all(
+          googleChannels.map(async (c: { id: string }) => {
+            try {
+              const r = await apiFetch(`/api/v1/channels/${c.id}/reviews?status=pending_approval&limit=5`);
+              pendingTotal += r.pending ?? 0;
+              return (r.replies ?? []) as ReviewReplyDTO[];
+            } catch {
+              /* channel counted as zero when its queue can't load */
+              return [];
+            }
+          })
+        );
+        if (!cancelled && pendingTotal > 0) {
+          setDraftTotal(pendingTotal);
+          setDrafts(dedupeDraftsByReview(pendingLists.flat()).slice(0, 5));
         }
+        await Promise.all(
+          googleChannels.map(async (c: { id: string }) => {
+            try {
+              const r = await apiFetch(`/api/v1/channels/${c.id}/reviews?status=failed&limit=100`);
+              return (r.replies ?? []) as ReviewReplyDTO[];
+            } catch {
+              /* channel counted as zero when its queue can't load */
+              return [];
+            }
+          })
+        ).then((failedLists) => {
+          if (cancelled) return;
+          const uniqueFailed = dedupeDraftsByReview(failedLists.flat());
+          setFailedTotal(uniqueFailed.length);
+          setFailed(uniqueFailed.slice(0, 5));
+        });
         const delta = overview?.period.rating_delta;
         if (typeof delta === "number" && delta < 0) {
           found.push({
@@ -268,8 +138,152 @@ function AttentionQueue() {
     };
   }, []);
 
+  async function approveDraft(channelId: string, replyId: string) {
+    setApprovingId(replyId);
+    setDraftError(null);
+    try {
+      await approveReply(channelId, replyId);
+      setDrafts((prev) => prev.filter((d) => d.id !== replyId));
+      setDraftTotal((t) => Math.max(0, t - 1));
+    } catch {
+      setDraftError("Could not publish that reply. Try again.");
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
+  async function approveAll() {
+    if (approvingAll || approvingId !== null) return;
+    setApprovingAll(true);
+    setDraftError(null);
+    try {
+      const lists = await Promise.all(
+        channelIds.map(async (id) => {
+          try {
+            const r = await apiFetch(`/api/v1/channels/${id}/reviews?status=pending_approval&limit=100`);
+            return (r.replies ?? []) as ReviewReplyDTO[];
+          } catch {
+            return [];
+          }
+        })
+      );
+      const all = dedupeDraftsByReview(lists.flat());
+      setApproveProgress({ done: 0, total: all.length });
+      let ok = 0;
+      const failed: string[] = [];
+      for (const d of all) {
+        try {
+          await approveReply(d.channel_id, d.id);
+          ok += 1;
+        } catch {
+          failed.push(d.id);
+        }
+        setApproveProgress({ done: ok + failed.length, total: all.length });
+      }
+      setDrafts((prev) => prev.filter((d) => failed.includes(d.id)));
+      setDraftTotal((t) => Math.max(0, t - ok));
+      if (failed.length > 0) {
+        setDraftError(`Published ${ok} of ${all.length}. ${failed.length} failed — try again.`);
+      }
+    } catch {
+      setDraftError("Could not publish. Try again.");
+    } finally {
+      setApprovingAll(false);
+      setApproveProgress({ done: 0, total: 0 });
+    }
+  }
+
+  async function remakeDraft(d: ReviewReplyDTO) {
+    if (generatingId !== null || remakingAll) return;
+    // A live draft already covers this review — drop the stale failed row.
+    if (drafts.some((x) => x.review_id === d.review_id)) {
+      setFailed((prev) => prev.filter((x) => x.id !== d.id));
+      setFailedTotal((t) => Math.max(0, t - 1));
+      return;
+    }
+    setGeneratingId(d.id);
+    setFailedError(null);
+    try {
+      const fresh = await generateReply(d.channel_id, {
+        review_id: d.review_id,
+        rating: d.rating,
+        review_text: d.review_text,
+        reviewer_name: d.reviewer_name,
+      });
+      setFailed((prev) => prev.filter((x) => x.id !== d.id));
+      setFailedTotal((t) => Math.max(0, t - 1));
+      setDrafts((prev) => dedupeDraftsByReview([...prev, fresh]).slice(0, 5));
+      setDraftTotal((t) => t + 1);
+    } catch {
+      setFailedError("Could not make a new draft. Try again.");
+    } finally {
+      setGeneratingId(null);
+    }
+  }
+
+  async function remakeAll() {
+    if (remakingAll || generatingId !== null) return;
+    setRemakingAll(true);
+    setFailedError(null);
+    try {
+      const lists = await Promise.all(
+        channelIds.map(async (id) => {
+          try {
+            const r = await apiFetch(`/api/v1/channels/${id}/reviews?status=failed&limit=100`);
+            return (r.replies ?? []) as ReviewReplyDTO[];
+          } catch {
+            return [];
+          }
+        })
+      );
+      const targets = dedupeDraftsByReview(lists.flat()).filter(
+        (d) => !drafts.some((x) => x.review_id === d.review_id)
+      );
+      setRemakeProgress({ done: 0, total: targets.length });
+      const freshOnes: ReviewReplyDTO[] = [];
+      const stillFailed: ReviewReplyDTO[] = [];
+      for (const d of targets) {
+        try {
+          const f = await generateReply(d.channel_id, {
+            review_id: d.review_id,
+            rating: d.rating,
+            review_text: d.review_text,
+            reviewer_name: d.reviewer_name,
+          });
+          freshOnes.push(f);
+        } catch {
+          stillFailed.push(d);
+        }
+        setRemakeProgress({ done: freshOnes.length + stillFailed.length, total: targets.length });
+      }
+      if (freshOnes.length > 0) {
+        setDrafts((prev) => dedupeDraftsByReview([...prev, ...freshOnes]).slice(0, 5));
+        setDraftTotal((t) => t + freshOnes.length);
+      }
+      // Refresh the failed list fresh — rows covered by live drafts stay hidden.
+      const covered = new Set(freshOnes.map((f) => f.review_id));
+      const remaining = dedupeDraftsByReview(stillFailed).filter((d) => !covered.has(d.review_id));
+      setFailed(remaining.slice(0, 5));
+      setFailedTotal(remaining.length);
+      if (stillFailed.length > 0) {
+        setFailedError(`${stillFailed.length} could not be remade. Try again.`);
+      }
+    } catch {
+      setFailedError("Could not make new drafts. Try again.");
+    } finally {
+      setRemakingAll(false);
+      setRemakeProgress({ done: 0, total: 0 });
+    }
+  }
+
   if (items === null) return null;
-  const allClear = items.length === 0;
+  const showDrafts = draftTotal > 0;
+  const showFailed = failedTotal > 0;
+  const allClear = !showDrafts && !showFailed && items.length === 0;
+  const draftTitle =
+    draftTotal === 1 ? "1 drafted reply needs your approval" : `${draftTotal} drafted replies need your approval`;
+  const failedTitle =
+    failedTotal === 1 ? "1 reply failed to publish" : `${failedTotal} replies failed to publish`;
   return (
     <section
       aria-label="Needs attention"
@@ -282,6 +296,146 @@ function AttentionQueue() {
       </div>
       {!allClear && (
         <ul className="divide-y divide-ink/[0.05]">
+          {showDrafts && (
+            <li>
+              <button
+                onClick={() => setDraftsOpen((o) => !o)}
+                aria-expanded={draftsOpen}
+                aria-controls="attention-drafts-body"
+                className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-ink">{draftTitle}</span>
+                  <span className="block truncate text-[11px] text-ink/45">Check them and publish to Google</span>
+                </span>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 transition group-hover:text-deep-violet ${draftsOpen ? "rotate-180" : ""}`}>
+                  <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {draftsOpen && (
+                <div id="attention-drafts-body" className="space-y-2 px-2 pb-3 pt-1">
+                  {draftError && (
+                    <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{draftError}</p>
+                  )}
+                  {drafts.map((d) => {
+                    const busy = approvingId === d.id;
+                    return (
+                      <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                        <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
+                          <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                          <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
+                        </div>
+                        {d.review_text && (
+                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
+                        )}
+                        <div className="mt-2 rounded-lg bg-deep-violet/[0.05] p-2.5">
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60">AI draft</p>
+                          <p className="mt-0.5 line-clamp-3 text-[12px] leading-relaxed text-ink/80">{d.reply_text}</p>
+                        </div>
+                        <div className="mt-2 flex items-center justify-end">
+                          <button
+                            onClick={() => void approveDraft(d.channel_id, d.id)}
+                            disabled={approvingId !== null || approvingAll}
+                            className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
+                          >
+                            {busy ? "Publishing…" : "Approve & publish"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {draftTotal > drafts.length && (
+                    <Link
+                      href="/dashboard/analytics"
+                      className="flex items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                    >
+                      See all {draftTotal} and approve
+                      <span aria-hidden> →</span>
+                    </Link>
+                  )}
+                  <button
+                    onClick={() => void approveAll()}
+                    disabled={approvingAll || approvingId !== null || draftTotal === 0}
+                    className="w-full rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
+                  >
+                    {approvingAll
+                      ? `Publishing ${approveProgress.done} of ${approveProgress.total}…`
+                      : `Approve all & publish (${draftTotal})`}
+                  </button>
+                </div>
+              )}
+            </li>
+          )}
+          {showFailed && (
+            <li>
+              <button
+                onClick={() => setFailedOpen((o) => !o)}
+                aria-expanded={failedOpen}
+                aria-controls="attention-failed-body"
+                className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-ink">{failedTitle}</span>
+                  <span className="block truncate text-[11px] text-ink/45">Reconnect Google, then make new drafts</span>
+                </span>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 transition group-hover:text-deep-violet ${failedOpen ? "rotate-180" : ""}`}>
+                  <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {failedOpen && (
+                <div id="attention-failed-body" className="space-y-2 px-2 pb-3 pt-1">
+                  {failedError && (
+                    <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{failedError}</p>
+                  )}
+                  {failed.map((d) => {
+                    const busy = generatingId === d.id;
+                    return (
+                      <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                        <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
+                          <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                          <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
+                        </div>
+                        {d.review_text && (
+                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
+                        )}
+                        <div className="mt-2 rounded-lg bg-ink/[0.03] p-2.5">
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-ink/40">Failed draft</p>
+                          <p className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-ink/60">{d.reply_text || "—"}</p>
+                        </div>
+                        <div className="mt-2 flex items-center justify-end">
+                          <button
+                            onClick={() => void remakeDraft(d)}
+                            disabled={generatingId !== null || remakingAll}
+                            className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
+                          >
+                            {busy ? "Making…" : "Make new draft"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <Link
+                    href="/dashboard/channels"
+                    className="flex items-center justify-center gap-1 rounded-xl bg-ink/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                  >
+                    Reconnect Google first
+                    <span aria-hidden> →</span>
+                  </Link>
+                  <button
+                    onClick={() => void remakeAll()}
+                    disabled={remakingAll || generatingId !== null || failedTotal === 0}
+                    className="w-full rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
+                  >
+                    {remakingAll
+                      ? `Making drafts ${remakeProgress.done} of ${remakeProgress.total}…`
+                      : `Remake all drafts (${failedTotal})`}
+                  </button>
+                </div>
+              )}
+            </li>
+          )}
           {items.map((item) => (
             <li key={item.title}>
               <Link href={item.href} className="group flex items-center gap-3 rounded-xl px-2 py-2.5 outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
@@ -550,26 +704,25 @@ export default function DashboardPage() {
     setDismissed(true);
   }, []);
   const showChecklist = !allDone || !dismissed;
+  const [checklistOpen, setChecklistOpen] = useState(() => {
+    try {
+      return typeof window === "undefined" || window.localStorage.getItem("sayvors.onboarding.checklist.open") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleChecklist = useCallback(() => {
+    const next = !checklistOpen;
+    try {
+      window.localStorage.setItem("sayvors.onboarding.checklist.open", next ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+    setChecklistOpen(next);
+  }, [checklistOpen]);
 
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-5 bg-[#f3f0ff]">
-      {/* AI Executive Summary */}
-      <ExecutiveSummaryBanner />
-
-      {/* Header */}
-      <div>
-        <Greeting name={user?.first_name ?? t.dashboard.greetingFallback} />
-        <p className="mt-0.5 text-[12px] sm:text-[13px] text-ink/65">
-          {t.dashboard.subtitle}
-        </p>
-      </div>
-
-      {/* North star: money actions */}
-      <MoneyHero />
-
-      {/* Needs attention — the daily driver */}
-      <AttentionQueue />
-
       {/* Getting Started checklist — first thing a new user must see */}
       {showChecklist && (
         <section
@@ -577,8 +730,8 @@ export default function DashboardPage() {
           className="relative overflow-hidden rounded-2xl bg-white p-5 shadow-md shadow-deep-violet/[0.08] ring-2 ring-deep-violet/30"
         >
           <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-deep-violet via-magenta to-coral" />
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
                 <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z" />
                 <path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z" />
@@ -586,29 +739,41 @@ export default function DashboardPage() {
                 <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
               </svg>
             </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[15px] font-bold text-ink">{t.dashboard.start.title}</h2>
-                <span className="rounded-full bg-deep-violet/[0.08] px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-deep-violet">
-                  {allDone ? t.dashboard.start.allSet : t.dashboard.start.doneOf.replace("{done}", String(completed)).replace("{total}", String(total))}
+            <button
+              onClick={toggleChecklist}
+              aria-expanded={checklistOpen}
+              aria-controls="onboarding-checklist-body"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-lg text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-[15px] font-bold text-ink">{t.dashboard.start.title}</span>
+                  <span className="rounded-full bg-deep-violet/[0.08] px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-deep-violet">
+                    {allDone ? t.dashboard.start.allSet : t.dashboard.start.doneOf.replace("{done}", String(completed)).replace("{total}", String(total))}
+                  </span>
                 </span>
-              </div>
-              <p className="mt-0.5 text-[12px] text-ink/55">
-                {allDone
-                  ? t.dashboard.start.subtitleDone
-                  : t.dashboard.start.subtitleTodo}
-              </p>
-            </div>
+                <span className="mt-0.5 block text-[12px] text-ink/55">
+                  {allDone
+                    ? t.dashboard.start.subtitleDone
+                    : t.dashboard.start.subtitleTodo}
+                </span>
+              </span>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-4 w-4 shrink-0 text-ink/30 transition-transform ${checklistOpen ? "rotate-180" : ""}`}>
+                <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
             {allDone && (
               <button
                 onClick={dismissChecklist}
-                className="rounded-lg px-2 py-1 text-[12px] font-semibold text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink"
+                className="shrink-0 rounded-lg px-2 py-1 text-[12px] font-semibold text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink"
               >
                 {t.dashboard.start.dismiss}
               </button>
             )}
           </div>
 
+          {checklistOpen && (
+          <div id="onboarding-checklist-body" className="mt-3">
           {/* Progress bar */}
           <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-deep-violet/[0.08]" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label={t.dashboard.start.title}>
             <div
@@ -695,25 +860,21 @@ export default function DashboardPage() {
               );
             })}
           </ol>
+          </div>
+          )}
         </section>
       )}
 
-      {/* Quick Actions */}
-      <div className="grid gap-3 sm:grid-cols-3">
-        {quickActions.map((action) => (
-          <Link
-            key={action.href}
-            href={action.href}
-            className="group rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:translate-y-0"
-          >
-            <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${action.color} text-white shadow-sm transition-transform duration-200 group-hover:scale-105`}>
-              {action.icon}
-            </div>
-            <p className="text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">{t.dashboard.actions[action.titleKey]}</p>
-            <p className="mt-1 text-[12px] text-ink/50 leading-relaxed">{t.dashboard.actions[action.descKey]}</p>
-          </Link>
-        ))}
+      {/* Header */}
+      <div>
+        <Greeting name={user?.first_name ?? t.dashboard.greetingFallback} />
+        <p className="mt-0.5 text-[12px] sm:text-[13px] text-ink/65">
+          {t.dashboard.subtitle}
+        </p>
       </div>
+
+      {/* Needs attention — the daily driver */}
+      <AttentionQueue />
 
       <BusinessPulse />
 
