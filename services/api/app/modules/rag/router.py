@@ -77,26 +77,32 @@ async def create_new_databank(
 
 @router.get("/databanks", response_model=DatabankListResponse)
 async def list_all_databanks(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    banks = await list_databanks(user, db)
-    responses = []
+    banks = await list_databanks(user, db, limit, offset)
+    doc_counts = {}
     for b in banks:
         doc_count = await db.execute(
             select(func.count()).where(DocumentModel.databank_id == b.id)
         )
-        responses.append(
+        doc_counts[b.id] = doc_count.scalar() or 0
+    return DatabankListResponse(
+        databanks=[
             DatabankResponse(
                 id=b.id,
                 name=b.name,
                 description=b.description,
                 accent_color=b.accent_color,
-                doc_count=doc_count.scalar() or 0,
+                doc_count=doc_counts.get(b.id, 0),
                 created_at=b.created_at,
             )
-        )
-    return DatabankListResponse(databanks=responses, total=len(responses))
+            for b in banks
+        ],
+        total=len(banks),
+    )
 
 
 @router.get("/databanks/{databank_id}", response_model=DatabankResponse)

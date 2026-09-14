@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
+from ...database import async_session as _async_session
 from ..users.models import User
 from .cache import content_hash, set_progress
 from .chunker import chunk_text
@@ -39,11 +40,15 @@ async def create_databank(
     return bank
 
 
-async def list_databanks(user: User, db: AsyncSession) -> list[Databank]:
+async def list_databanks(
+    user: User, db: AsyncSession, limit: int = 20, offset: int = 0
+) -> list[Databank]:
     result = await db.execute(
         select(Databank)
         .where(Databank.user_id == user.id)
         .order_by(Databank.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     return list(result.scalars().all())
 
@@ -481,13 +486,14 @@ async def search(
     except Exception:
         degraded = True
 
-    results = await hybrid_search(
-        databank_id=databank_id,
-        query_vector=query_vector,
-        query_text=body.query,
-        top_k=body.top_k,
-        db=db,
-    )
+    async with _async_session() as search_db:
+        results = await hybrid_search(
+            databank_id=databank_id,
+            query_vector=query_vector,
+            query_text=body.query,
+            top_k=body.top_k,
+            db=search_db,
+        )
     return results, degraded
 
 

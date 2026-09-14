@@ -5,8 +5,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors"
     # AsyncPG pool: workers hold sessions across network calls (Localith,
     # Groq), so size generously and fail fast instead of hanging forever.
-    DB_POOL_SIZE: int = 10
-    DB_POOL_MAX_OVERFLOW: int = 10
+    DB_POOL_SIZE: int = 50
+    DB_POOL_MAX_OVERFLOW: int = 50
     DB_POOL_TIMEOUT_SECONDS: int = 30
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
