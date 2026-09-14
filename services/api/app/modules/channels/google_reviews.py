@@ -8,6 +8,7 @@ replies are posted via `reviews/{id}:replyUpdate`.
 
 Required OAuth scope: https://www.googleapis.com/auth/business.manage
 """
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -316,6 +317,39 @@ class GoogleReviewsClient:
             raise GoogleReviewsError(
                 f"deleteReply failed: {resp.status_code}", resp.status_code
             )
+
+    async def get_review(self, review_resource: str) -> dict:
+        """Fetch one review by full resource name
+        (``accounts/{a}/locations/{l}/reviews/{r}``).
+
+        Returns the raw payload — it carries ``reviewReply`` when a merchant
+        reply is live. Returns {} when the review no longer exists (404).
+        """
+        resp = await self._authed_request("GET", f"{GBP_REVIEWS_API}/{review_resource}")
+        if resp.status_code == 404:
+            return {}
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"get_review failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    async def confirm_reply_live(self, review_resource: str, attempts: int = 3) -> bool:
+        """True only if Google actually shows a reply on the review.
+
+        Never trust the write call alone: a 200 from ``:replyUpdate`` is
+        followed by a read, retried a few times to ride out replication
+        lag. ``posted`` must mean live — anything else is a lie in the UI.
+        """
+        for attempt in range(max(1, attempts)):
+            payload = await self.get_review(review_resource)
+            if payload and payload.get("reviewReply"):
+                return True
+            if attempt < attempts - 1:
+                await asyncio.sleep(2)
+        return False
 
     # ── Performance (Business Profile Performance API v1) ──────────────────
 

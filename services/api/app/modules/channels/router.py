@@ -755,6 +755,74 @@ async def list_review_replies(
     )
 
 
+@router.post("/{channel_id}/reviews/verify-posted", response_model=dict)
+async def verify_posted_replies(
+    channel_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-check every `posted` reply against live Google data.
+
+    Rows with no reply actually showing are flipped to `failed` with a
+    clear reason. "Posted" must mean live — this is the enforcement.
+    Read failures (auth/network) abort without touching anything: we
+    only correct on definitive absence, never on our own errors.
+    """
+    from .google_reviews import GoogleReviewsClient, GoogleReviewsError
+    from .service import decrypt_token
+
+    channel = await _get_owned_channel(channel_id, user, db)
+    rows = (
+        await db.execute(
+            select(ReviewReply)
+            .where(
+                ReviewReply.channel_id == channel.id,
+                ReviewReply.status == "posted",
+            )
+            .order_by(ReviewReply.created_at.desc())
+            .limit(500)
+        )
+    ).scalars().all()
+
+    access_token = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access_token and not refresh_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Google account not connected. Reconnect Google on the Connect page, then verify again.",
+        )
+    client = GoogleReviewsClient(access_token or "", refresh_token)
+    confirmed = 0
+    corrected = 0
+    try:
+        for reply in rows:
+            try:
+                live = await client.confirm_reply_live(reply.review_id, attempts=1)
+            except GoogleReviewsError as e:
+                raise HTTPException(
+                    status_code=e.status_code,
+                    detail=f"Could not read Google to verify: {e}",
+                )
+            if live:
+                confirmed += 1
+            else:
+                reply.status = "failed"
+                reply.error = (
+                    "Not found on Google when verified. "
+                    "Reconnect Google if needed, remake the draft, approve again."
+                )
+                corrected += 1
+    finally:
+        await client.close()
+    await db.commit()
+    return {
+        "channel_id": channel.id,
+        "checked": len(rows),
+        "confirmed": confirmed,
+        "corrected": corrected,
+    }
+
+
 @router.post("/{channel_id}/reviews/{reply_id}/approve", response_model=ReviewReplyResponse)
 async def approve_review_reply(
     channel_id: str,
@@ -779,41 +847,50 @@ async def approve_review_reply(
     from .service import decrypt_token
 
     if settings.GOOGLE_REVIEWS_MOCK:
-        # Dev mode: no real GBP location behind the demo channel
+        # Dev mode has no real GBP location: publishing is impossible, so
+        # refuse instead of fabricating a "posted" row nobody can verify.
+        raise HTTPException(
+            status_code=503,
+            detail="Mock mode: connect a real Google Business Profile to publish replies.",
+        )
+    access_token = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access_token and not refresh_token:
+        # No Google tokens: nothing can reach Google. Leave the draft
+        # pending and tell the merchant the only fix is re-consent.
+        raise HTTPException(
+            status_code=401,
+            detail="Google account not connected. Reconnect Google on the Connect page, then approve again.",
+        )
+    client = GoogleReviewsClient(access_token or "", refresh_token)
+    try:
+        if not access_token:
+            await client.refresh_access_token()
+        await client.reply_to_review(reply.review_id, reply.reply_text)
+        # "posted" must mean live on Google: confirm by reading the
+        # review back before stamping the status.
+        if not await client.confirm_reply_live(reply.review_id):
+            reply.status = "failed"
+            reply.error = (
+                "Google accepted the reply but it is not showing on the "
+                "listing. Approve again to retry."
+            )
+            await db.commit()
+            raise HTTPException(status_code=502, detail=reply.error)
         reply.status = "posted"
         reply.error = None
         await db.commit()
-    else:
-        access_token = decrypt_token(channel.access_token) if channel.access_token else None
-        refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
-        if not access_token and not refresh_token:
-            # Localith middleware channel: reviews sync through Localith and
-            # there is no Google token to post with. The merchant publishes
-            # the reply from their Localith/GBP dashboard — approval marks
-            # it "approved" (NOT "posted": nothing reached Google).
-            reply.status = "approved"
-            reply.error = None
-            await db.commit()
-        else:
-            client = GoogleReviewsClient(access_token or "", refresh_token)
-            try:
-                if not access_token:
-                    await client.refresh_access_token()
-                await client.reply_to_review(reply.review_id, reply.reply_text)
-                reply.status = "posted"
-                reply.error = None
-                await db.commit()
-            except GoogleReviewsError as e:
-                reply.status = "failed"
-                reply.error = str(e)[:2000]
-                await db.commit()
-                # Surface the real reason (e.g. "No refresh token available") —
-                # a generic message hides that re-consent is the only fix.
-                raise HTTPException(
-                    status_code=e.status_code, detail=f"Failed to post reply to Google: {e}"
-                )
-            finally:
-                await client.close()
+    except GoogleReviewsError as e:
+        reply.status = "failed"
+        reply.error = str(e)[:2000]
+        await db.commit()
+        # Surface the real reason (e.g. "No refresh token available") —
+        # a generic message hides that re-consent is the only fix.
+        raise HTTPException(
+            status_code=e.status_code, detail=f"Failed to post reply to Google: {e}"
+        )
+    finally:
+        await client.close()
 
     # Collapse duplicate drafts for the same review: approving one
     # withdraws its siblings (pending or failed) so the same review can

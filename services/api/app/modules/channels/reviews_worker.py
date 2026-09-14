@@ -262,6 +262,10 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             if not needs_approval:
                 try:
                     await client.reply_to_review(review.review_id, reply_text)
+                    if not await client.confirm_reply_live(review.review_id):
+                        raise GoogleReviewsError(
+                            "Google accepted the reply but it is not showing on the listing"
+                        )
                     stats["replied"] += 1
                 except GoogleReviewsError as e:
                     stats["errors"] += 1
