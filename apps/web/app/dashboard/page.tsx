@@ -145,8 +145,19 @@ function AttentionQueue() {
       await approveReply(channelId, replyId);
       setDrafts((prev) => prev.filter((d) => d.id !== replyId));
       setDraftTotal((t) => Math.max(0, t - 1));
-    } catch {
-      setDraftError("Could not publish that reply. Try again.");
+    } catch (e) {
+      // apiFetch throws the raw response body — extract the server's detail
+      // (e.g. "Failed to post reply to Google: No refresh token available").
+      let msg = "Could not publish that reply. Try again.";
+      if (e instanceof Error) {
+        try {
+          const parsed = JSON.parse(e.message) as { detail?: unknown };
+          if (typeof parsed.detail === "string") msg = parsed.detail;
+        } catch {
+          /* not JSON — keep the generic message */
+        }
+      }
+      setDraftError(msg);
     } finally {
       setApprovingId(null);
     }
