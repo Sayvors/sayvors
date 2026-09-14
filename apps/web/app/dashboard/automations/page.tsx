@@ -254,26 +254,6 @@ export default function AutomationsPage() {
                         <span className="rounded bg-deep-violet/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-deep-violet">
                           {approvalMode}
                         </span>
-                        <select
-                          value={cfg?.tone ?? "friendly"}
-                          disabled={busy !== null}
-                          onChange={(e) => {
-                            if (e.target.value) void setChannelTone(c.id, e.target.value);
-                          }}
-                          aria-label={`Response tone for ${c.display_name || "location"}`}
-                          className="max-w-[150px] truncate rounded-lg border border-ink/[0.08] bg-white px-1.5 py-0.5 text-[10px] font-medium text-ink/70 outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog/70 disabled:opacity-50"
-                        >
-                          <option value="friendly">Friendly</option>
-                          <option value="professional">Professional</option>
-                          <option value="apologetic">Apologetic</option>
-                          <option value="playful">Playful</option>
-                          {cfg?.tone && !["friendly", "professional", "apologetic", "playful"].includes(cfg.tone) && (
-                            <option value={cfg.tone}>{cfg.tone}</option>
-                          )}
-                        </select>
-                        {busy === `${c.id}:tone` && (
-                          <span className="text-[10px] text-ink/40">Saving…</span>
-                        )}
                         {cfg?.approval_mode !== "approval" && (
                           <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-ink/45 dark:bg-fog/[0.04] dark:text-fog/45">
                             auto-post ★{cfg?.min_rating_auto ?? 4}+
@@ -320,6 +300,31 @@ export default function AutomationsPage() {
                       </select>
                     )}
                     {busy === `${c.id}:model` && (
+                      <span className="text-[11px] text-ink/40">Saving…</span>
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <label className="text-[11px] font-medium text-ink/40 dark:text-fog/40">
+                      Response tone
+                    </label>
+                    <select
+                      value={cfg?.tone ?? "friendly"}
+                      disabled={busy !== null}
+                      onChange={(e) => {
+                        if (e.target.value) void setChannelTone(c.id, e.target.value);
+                      }}
+                      aria-label={`Response tone for ${c.display_name || "location"}`}
+                      className="max-w-[220px] truncate rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] font-medium text-ink outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog disabled:opacity-50"
+                    >
+                      <option value="friendly">Friendly — warm and casual</option>
+                      <option value="professional">Professional — formal and polished</option>
+                      <option value="apologetic">Apologetic — extra empathetic</option>
+                      <option value="playful">Playful — light and fun</option>
+                      {cfg?.tone && !["friendly", "professional", "apologetic", "playful"].includes(cfg.tone) && (
+                        <option value={cfg.tone}>{cfg.tone}</option>
+                      )}
+                    </select>
+                    {busy === `${c.id}:tone` && (
                       <span className="text-[11px] text-ink/40">Saving…</span>
                     )}
                   </div>
