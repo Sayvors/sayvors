@@ -27,6 +27,10 @@ class WhatsAppAdapter(MetaProviderAdapter):
             "fb_app_id": settings.META_APP_ID,
             "fb_config_id": settings.META_WHATSAPP_CONFIG_ID,
             "graph_api_version": settings.META_GRAPH_API_VERSION or "v26.0",
+            # v4 Tech Provider flow extras (app_only_install). Empty when the
+            # tenant isn't a Tech Provider — the frontend falls back to the
+            # plain Embedded Signup extras then.
+            "solution_id": settings.META_SOLUTION_ID or None,
             "state": state,
         }
 
