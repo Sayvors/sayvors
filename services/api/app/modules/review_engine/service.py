@@ -7,6 +7,7 @@ from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...database import async_session as _async_session
 from ..llm.providers.base import LLMMessage, LLMRequest, ProviderError
 from ..llm.providers.registry import get_provider_for_model
 from ..llm.service import _resolve_model
@@ -400,6 +401,9 @@ async def process_review(
     channel_policy = CHANNEL_POLICIES.get(req.channel, CHANNEL_POLICIES["google_review"])
     brand_voice = DEFAULT_BRAND_VOICE
 
+    # Close DB before LLM generation to free connection for other requests
+    await db.close()
+
     # Step 6: Generate + validate loop (same model, up to MAX_TOOL_ROUNDS tries).
     # Generation errors propagate — no fallback models, no template replies.
     # Each retry receives the previous validation failures so it can fix them.
@@ -443,49 +447,51 @@ async def process_review(
         if iteration == MAX_TOOL_ROUNDS - 1:
             validation.regenerated = True
 
-    # Step 7: Log (full pipeline artifacts for debugging)
-    total_latency = int((time.monotonic() - t0) * 1000)
-    token_in = analysis_stats.get("tokens", 0) + gen_stats.get("tokens", 0)
+    # Reopen DB session for logging
+    async with _async_session() as write_db:
+        # Step 7: Log (full pipeline artifacts for debugging)
+        total_latency = int((time.monotonic() - t0) * 1000)
+        token_in = analysis_stats.get("tokens", 0) + gen_stats.get("tokens", 0)
 
-    # Off-topic reviews are always flagged for human review — even when
-    # the reply itself is valid. No extra regen attempts are burned.
-    final_status = "approved" if validation.passed else "needs_review"
-    if relevance.verdict == "off_topic":
-        final_status = "needs_review"
-        validation.issues.append(
-            f"Flagged: review might be irrelevant to this business ({relevance.reason}). "
-            f"Queued for human review."
+        # Off-topic reviews are always flagged for human review — even when
+        # the reply itself is valid. No extra regen attempts are burned.
+        final_status = "approved" if validation.passed else "needs_review"
+        if relevance.verdict == "off_topic":
+            final_status = "needs_review"
+            validation.issues.append(
+                f"Flagged: review might be irrelevant to this business ({relevance.reason}). "
+                f"Queued for human review."
+            )
+
+        log_entry = ReviewResponseLog(
+            id=log_id,
+            tenant_id=tenant_id,
+            channel_id=req.channel_id,
+            review_id=req.review_id,
+            review_text=req.review_text[:2000] if req.review_text else None,
+            rating=req.rating,
+            reviewer_name=req.reviewer_name,
+            channel=req.channel,
+            analysis=analysis.model_dump(),
+            selected_strategies=[s.model_dump() for s in strategies],
+            tool_calls=[tc.model_dump() for tc in all_tool_calls] or None,
+            retrieved_offers={
+                "issues": [i.model_dump() for i in issues],
+                "suppressed": [s.model_dump() for s in suppressed],
+                "requirements": requirements,
+                "tier": tier,
+                "relevance": relevance.model_dump(),
+            },
+            generated_response=generated.response_text,
+            validation_result=validation.model_dump(),
+            status=final_status,
+            model=model,
+            token_input=token_in,
+            token_output=gen_stats.get("tokens", 0),
+            latency_ms=total_latency,
         )
-
-    log_entry = ReviewResponseLog(
-        id=log_id,
-        tenant_id=tenant_id,
-        channel_id=req.channel_id,
-        review_id=req.review_id,
-        review_text=req.review_text[:2000] if req.review_text else None,
-        rating=req.rating,
-        reviewer_name=req.reviewer_name,
-        channel=req.channel,
-        analysis=analysis.model_dump(),
-        selected_strategies=[s.model_dump() for s in strategies],
-        tool_calls=[tc.model_dump() for tc in all_tool_calls] or None,
-        retrieved_offers={
-            "issues": [i.model_dump() for i in issues],
-            "suppressed": [s.model_dump() for s in suppressed],
-            "requirements": requirements,
-            "tier": tier,
-            "relevance": relevance.model_dump(),
-        },
-        generated_response=generated.response_text,
-        validation_result=validation.model_dump(),
-        status=final_status,
-        model=model,
-        token_input=token_in,
-        token_output=gen_stats.get("tokens", 0),
-        latency_ms=total_latency,
-    )
-    db.add(log_entry)
-    await db.commit()
+        write_db.add(log_entry)
+        await write_db.commit()
 
     return ReviewEngineResponse(
         response_text=generated.response_text,
@@ -596,11 +602,15 @@ async def process_review_stream(
             "the specific mentioned item — keep the reply general and brief."
         )
     yield {"step": "requirements", "message": f"{len(requirements)} binding generation requirement(s).",
-           "requirements": requirements, "tier": tier, "progress": 65}
+            "requirements": requirements, "tier": tier, "progress": 65}
 
     # Step 4: Generate
     channel_policy = CHANNEL_POLICIES.get(req.channel, CHANNEL_POLICIES["google_review"])
     brand_voice = DEFAULT_BRAND_VOICE
+
+    # Close DB before LLM generation to free connection for other requests
+    await db.close()
+
     yield {"step": "generating", "message": "Generating response...", "progress": 70}
 
     generated: GeneratedResponse | None = None
@@ -628,9 +638,9 @@ async def process_review_stream(
             has_offer_data=has_offer_data, rating=req.rating,
         )
         yield {"step": "fulfillment", "message": f"Validation attempt {iteration + 1}: {'passed' if validation.passed else 'failed'}.",
-               "fulfillment": [f.model_dump() for f in validation.strategy_fulfillment],
-               "claims": [c.model_dump() for c in validation.claim_verdicts],
-               "checks": validation.checks, "validation_issues": validation.issues, "progress": 80}
+                "fulfillment": [f.model_dump() for f in validation.strategy_fulfillment],
+                "claims": [c.model_dump() for c in validation.claim_verdicts],
+                "checks": validation.checks, "validation_issues": validation.issues, "progress": 80}
         if validation.passed:
             break
         previous_issues = list(validation.issues)
@@ -639,35 +649,36 @@ async def process_review_stream(
 
     yield {"step": "validating", "message": "Validating response against policies...", "progress": 85}
 
-    # Step 7: Log (full pipeline artifacts for debugging)
-    total_latency = int((time.monotonic() - t0) * 1000)
-    final_status = "approved" if validation.passed else "needs_review"
-    if relevance.verdict == "off_topic":
-        final_status = "needs_review"
-        validation.issues.append(
-            f"Flagged: review might be irrelevant to this business ({relevance.reason}). "
-            f"Queued for human review."
+    # Reopen DB session for logging
+    async with _async_session() as write_db:
+        total_latency = int((time.monotonic() - t0) * 1000)
+        final_status = "approved" if validation.passed else "needs_review"
+        if relevance.verdict == "off_topic":
+            final_status = "needs_review"
+            validation.issues.append(
+                f"Flagged: review might be irrelevant to this business ({relevance.reason}). "
+                f"Queued for human review."
+            )
+        log_entry = ReviewResponseLog(
+            id=log_id, tenant_id=tenant_id, channel_id=req.channel_id,
+            review_id=req.review_id, review_text=req.review_text[:2000] if req.review_text else None,
+            rating=req.rating, reviewer_name=req.reviewer_name, channel=req.channel,
+            analysis=analysis.model_dump(), selected_strategies=[s.model_dump() for s in strategies],
+            tool_calls=[tc.model_dump() for tc in all_tool_calls] or None,
+            retrieved_offers={
+                "issues": [i.model_dump() for i in issues],
+                "suppressed": [s.model_dump() for s in suppressed],
+                "requirements": requirements,
+                "tier": tier,
+                "relevance": relevance.model_dump(),
+            },
+            generated_response=generated.response_text, validation_result=validation.model_dump(),
+            status=final_status, model=model,
+            token_input=analysis_stats.get("tokens", 0) + gen_stats.get("tokens", 0),
+            token_output=gen_stats.get("tokens", 0), latency_ms=total_latency,
         )
-    log_entry = ReviewResponseLog(
-        id=log_id, tenant_id=tenant_id, channel_id=req.channel_id,
-        review_id=req.review_id, review_text=req.review_text[:2000] if req.review_text else None,
-        rating=req.rating, reviewer_name=req.reviewer_name, channel=req.channel,
-        analysis=analysis.model_dump(), selected_strategies=[s.model_dump() for s in strategies],
-        tool_calls=[tc.model_dump() for tc in all_tool_calls] or None,
-        retrieved_offers={
-            "issues": [i.model_dump() for i in issues],
-            "suppressed": [s.model_dump() for s in suppressed],
-            "requirements": requirements,
-            "tier": tier,
-            "relevance": relevance.model_dump(),
-        },
-        generated_response=generated.response_text, validation_result=validation.model_dump(),
-        status=final_status, model=model,
-        token_input=analysis_stats.get("tokens", 0) + gen_stats.get("tokens", 0),
-        token_output=gen_stats.get("tokens", 0), latency_ms=total_latency,
-    )
-    db.add(log_entry)
-    await db.commit()
+        write_db.add(log_entry)
+        await write_db.commit()
 
     # Final event
     yield {
