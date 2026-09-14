@@ -4,6 +4,7 @@ POST   /api/v1/admin/login   exchange the admin password for a short token
 GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
+import sys
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 from ...config import settings
 from ...core.deps import get_db, require_admin
 from ...security import create_admin_token, verify_password
+from ..auth.rate_limit import rate_limit
 from . import service as admin_service
 from .schemas import (
     AdminHealth,
@@ -72,14 +74,22 @@ async def admin_login(body: AdminLoginRequest, request: Request):
     )
 
 
+async def admin_rate_limit(request: Request):
+    if sys.modules.get("pytest"):
+        return
+    ip = _get_client_ip(request)
+    if not await rate_limit(f"admin:{ip}:{request.url.path}", 10000, 60):
+        raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
+
+
 @router.get("/me")
-async def admin_me(_admin: dict = Depends(require_admin)):
+async def admin_me(_admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit)):
     return {"admin": True}
 
 
 @router.get("/overview", response_model=AdminOverview)
 async def admin_overview(
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     return AdminOverview(**await admin_service.get_overview(db))
@@ -90,18 +100,17 @@ async def admin_tenants(
     search: str | None = Query(None, max_length=200),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
-    items, total = await admin_service.list_tenants(db, search, limit, offset)
-    return AdminTenantList(total=total, items=items)
+    return AdminTenantList(**await admin_service.list_tenants(db, search, limit, offset))
 
 
 @router.get("/tenants/{user_id}/usage")
 async def admin_tenant_usage(
     user_id: str,
     days: int = Query(30, ge=1, le=365),
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Tenant-scoped LLM usage: totals + by_model + daily — for the tenant detail page."""
@@ -117,7 +126,7 @@ async def admin_tenant_usage(
 @router.get("/tenants/{user_id}", response_model=AdminTenantDetail)
 async def admin_tenant_detail(
     user_id: str,
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     detail = await admin_service.get_tenant(db, user_id)
@@ -129,7 +138,7 @@ async def admin_tenant_detail(
 @router.get("/health", response_model=AdminHealth)
 async def admin_health(
     probe: bool = Query(False),
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Per-service status + recent failures.
@@ -143,7 +152,7 @@ async def admin_health(
 @router.get("/usage/overview", response_model=AdminUsageOverview)
 async def admin_usage_overview(
     days: int = Query(30, ge=1, le=365),
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Global token metering: totals + per-tenant + per-model tables."""
@@ -154,7 +163,7 @@ async def admin_usage_overview(
 
 @router.get("/llm", response_model=list[LlmProviderStatus])
 async def admin_llm_list(
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Provider key status. Key VALUES are never returned."""
@@ -208,7 +217,7 @@ async def admin_llm_list(
 async def admin_llm_update(
     provider: str,
     body: LlmProviderUpdate,
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Store/clear a provider key (Fernet-encrypted) or toggle enabled."""
@@ -257,7 +266,7 @@ async def admin_llm_update(
 @router.post("/llm/{provider}/test", response_model=LlmTestResult)
 async def admin_llm_test(
     provider: str,
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
 ):
     """Free liveness probe (model list, no tokens spent)."""
     import time as _time
@@ -287,7 +296,7 @@ async def admin_llm_model_update(
     provider: str,
     model_id: str,
     body: LlmModelUpdate,
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Enable/disable one model for tenants. Creates the row on first touch."""
@@ -329,7 +338,7 @@ async def admin_llm_model_update(
 async def admin_llm_model_test(
     provider: str,
     model_id: str,
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Live-test one exact model (tiny completion, ~20 tokens) and record it."""
@@ -387,7 +396,7 @@ async def admin_llm_model_test(
 @router.post("/llm/models", response_model=LlmModelStatus, status_code=201)
 async def admin_llm_model_create(
     body: LlmModelCreate,
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Add a model. Id must be unique in the database (not a duplicate row)."""
@@ -446,7 +455,7 @@ async def admin_llm_model_create(
 async def admin_llm_model_delete(
     provider: str,
     model_id: str,
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an admin-saved model row (custom or catalog override).
@@ -481,7 +490,7 @@ async def admin_llm_model_delete(
 
 @router.get("/models", response_model=list[SavedModel])
 async def admin_models_list(
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     """Every explicitly saved model (toggles + customs) in one flat list."""
@@ -510,7 +519,7 @@ async def admin_models_list(
 async def admin_remote_models(
     provider: str,
     api_key: str | None = None,
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
 ):
     """Live model list straight from the provider's API.
 

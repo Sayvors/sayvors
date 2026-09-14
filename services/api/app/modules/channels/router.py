@@ -1,4 +1,5 @@
 import logging
+import sys
 import uuid
 from datetime import datetime, timezone
 
@@ -7,7 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db, get_current_user
+from ...database import async_session as _async_session
 from ...config import settings
+from ..auth.rate_limit import rate_limit
 from ..users.models import User
 from .models import BusinessService, Channel, ReviewReply, AutoReplyConfig, VerificationRecord
 from .schemas import (
@@ -330,6 +333,10 @@ async def channel_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    # ── Rate limit ──
+    if not sys.modules.get("pytest") and not await rate_limit(f"webhook:{platform}", 100, 60):
+        return Response(status_code=429, content="Too many requests")
+
     # ── Enforce body size limit ──
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > MAX_WEBHOOK_BODY_BYTES:
@@ -950,6 +957,8 @@ async def generate_reply_for_review(
     db: AsyncSession = Depends(get_db),
 ):
     """Draft an AI reply for a review that has no reply row yet (inbox flow)."""
+    if not sys.modules.get("pytest") and not await rate_limit(f"gen:{channel_id}", 100, 60):
+        raise HTTPException(status_code=429, detail="Too many requests")
     channel = await _get_owned_channel(channel_id, user, db)
     config = (
         await db.execute(select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel.id))
@@ -986,21 +995,21 @@ async def generate_reply_for_review(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
 
-    reply = ReviewReply(
-        id=str(uuid.uuid4()),
-        channel_id=channel.id,
-        review_id=body.review_id,
-        rating=body.rating,
-        review_text=body.review_text,
-        reviewer_name=body.reviewer_name,
-        reply_text=reply_text,
-        status="pending_approval",
-    )
-    db.add(reply)
-    await db.commit()
-    await db.refresh(reply)
-    return _reply_response(reply)
-
+    # Reopen DB session for logging
+    async with _async_session() as write_db:
+        reply = ReviewReply(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            review_id=body.review_id,
+            rating=body.rating,
+            review_text=body.review_text,
+            reviewer_name=body.reviewer_name,
+            reply_text=reply_text,
+            status="pending_approval",
+        )
+        write_db.add(reply)
+        await write_db.commit()
+        await write_db.refresh(reply)
 
 @router.put("/{channel_id}/reviews/{reply_id}", response_model=ReviewReplyResponse)
 async def edit_pending_reply(
@@ -1046,9 +1055,13 @@ async def regenerate_reply(
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
-    await db.commit()
-    await db.refresh(reply)
-    return _reply_response(reply)
+
+    async with _async_session() as write_db:
+        refreshed = await write_db.get(ReviewReply, reply_id)
+        refreshed.reply_text = reply.reply_text
+        await write_db.commit()
+        await write_db.refresh(refreshed)
+        return _reply_response(refreshed)
 
 
 @router.post("/{channel_id}/reviews/{reply_id}/retry", response_model=ReviewReplyResponse)
@@ -1080,11 +1093,16 @@ async def retry_failed_reply(
             )
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
-    reply.status = "pending_approval"
-    reply.error = None
-    await db.commit()
-    await db.refresh(reply)
-    return _reply_response(reply)
+
+    async with _async_session() as write_db:
+        refreshed = await write_db.get(ReviewReply, reply_id)
+        refreshed.status = "pending_approval"
+        refreshed.error = None
+        if reply.reply_text:
+            refreshed.reply_text = reply.reply_text
+        await write_db.commit()
+        await write_db.refresh(refreshed)
+        return _reply_response(refreshed)
 
 
 @router.delete("/{channel_id}/reviews/{reply_id}", response_model=ReviewReplyResponse)

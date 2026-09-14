@@ -4,6 +4,7 @@ import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...database import async_session as _async_session
 from ..llm.providers.base import LLMMessage, LLMRequest, ProviderError
 from ..llm.providers.registry import get_provider_for_model
 from .models import AutoReplyConfig
@@ -172,6 +173,11 @@ async def generate_review_reply(
     from ..llm.service import _resolve_model
     api_model, _ = _resolve_model(config.model)
 
+    tenant_id = await _channel_owner_id(getattr(config, "channel_id", None), db)
+
+    # Close DB before LLM call to free connection
+    await db.close()
+
     req = LLMRequest(
         model=api_model,
         messages=[LLMMessage(role="user", content=user_msg)],
@@ -179,7 +185,7 @@ async def generate_review_reply(
         temperature=0.6,
         max_tokens=300,
         stream=False,
-        tenant_id=await _channel_owner_id(getattr(config, "channel_id", None), db),
+        tenant_id=tenant_id,
         model_id=config.model,
         purpose="auto_reply.review",
         channel_id=getattr(config, "channel_id", None),
