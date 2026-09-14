@@ -311,3 +311,14 @@ export function rejectReply(channelId: string, replyId: string): Promise<ReviewR
 export function retryReply(channelId: string, replyId: string): Promise<ReviewReplyDTO> {
   return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}/retry`, { method: "POST" });
 }
+
+export interface VerifyPostedResult {
+  channel_id: string;
+  checked: number;
+  confirmed: number;
+  corrected: number;
+}
+
+export function verifyPostedReplies(channelId: string): Promise<VerifyPostedResult> {
+  return apiFetch(`/api/v1/channels/${channelId}/reviews/verify-posted`, { method: "POST" });
+}
