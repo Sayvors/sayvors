@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useAuth } from "@/lib/auth-context";
+import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import {
   fetchOverview,
@@ -14,6 +14,9 @@ import {
 import { StatCard } from "@/components/analytics/StatCard";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
 import { ReviewInbox } from "@/components/analytics/ReviewInbox";
+import InsightsPage from "../insights/page";
+import GrowthPage from "../growth/page";
+import BenchmarkPage from "../benchmark/page";
 
 const RANGES = [7, 30, 90] as const;
 
@@ -174,10 +177,9 @@ function PresenceSection({ presence }: { presence: PresenceData }) {
   );
 }
 
-/* ── Page ─────────────────────────────────────────────────────────── */
+/* ── Overview tab ─────────────────────────────────────────────────── */
 
-export default function AnalyticsPage() {
-  const { user } = useAuth();
+function OverviewPanel() {
   const [days, setDays] = useState<number>(30);
   const [channels, setChannels] = useState<ChannelOption[]>([]);
   const [channelId, setChannelId] = useState<string | null>(null);
@@ -237,19 +239,10 @@ export default function AnalyticsPage() {
     }`;
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f3f0ff] p-4 sm:p-6">
-      {/* Header */}
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">
-            Analytics{user?.first_name ? `, ${user.first_name}` : ""}
-          </h1>
-          <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">
-            Reputation, sentiment and Google performance — all in one place.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {channels.length > 1 && (
+    <div className="h-full overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6">
+      {/* Controls */}
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+        {channels.length > 1 && (
             <select
               value={channelId ?? ""}
               onChange={(e) => {
@@ -280,7 +273,6 @@ export default function AnalyticsPage() {
               </button>
             ))}
           </div>
-        </div>
       </div>
 
       {error && !loading ? (
@@ -443,5 +435,73 @@ export default function AnalyticsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/* ── Tab shell (Overview / Insights / Growth / Benchmark) ───────────── */
+
+const TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "insights", label: "Insights" },
+  { id: "growth", label: "Growth" },
+  { id: "benchmark", label: "Benchmark" },
+] as const;
+
+type AnalyticsTab = (typeof TABS)[number]["id"];
+
+function AnalyticsShell() {
+  const params = useSearchParams();
+  const raw = params.get("tab");
+  const tab: AnalyticsTab =
+    raw === "insights" || raw === "growth" || raw === "benchmark" ? raw : "overview";
+
+  return (
+    <div className="flex h-full flex-col bg-[#f3f0ff]">
+      <div className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6">
+        <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">Analytics</h1>
+        <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">
+          Reputation, sentiment and Google performance — all in one place.
+        </p>
+        <div
+          role="tablist"
+          aria-label="Analytics sections"
+          className="mt-3 flex gap-1 overflow-x-auto rounded-xl bg-deep-violet/[0.06] p-1"
+        >
+          {TABS.map((t) => {
+            const active = tab === t.id;
+            return (
+              <Link
+                key={t.id}
+                role="tab"
+                aria-selected={active}
+                href={t.id === "overview" ? "/dashboard/analytics" : `/dashboard/analytics?tab=${t.id}`}
+                scroll={false}
+                className={`whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                  active
+                    ? "bg-white text-deep-violet shadow-sm"
+                    : "text-ink/45 hover:text-ink/70"
+                }`}
+              >
+                {t.label}
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+      <div className="mt-3 min-h-0 flex-1">
+        {tab === "overview" && <OverviewPanel />}
+        {tab === "insights" && <InsightsPage />}
+        {tab === "growth" && <GrowthPage />}
+        {tab === "benchmark" && <BenchmarkPage />}
+      </div>
+    </div>
+  );
+}
+
+export default function AnalyticsPage() {
+  return (
+    <Suspense>
+      <AnalyticsShell />
+    </Suspense>
   );
 }

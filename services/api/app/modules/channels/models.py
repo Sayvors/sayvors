@@ -168,7 +168,10 @@ class ReviewReply(Base):
     reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reply_text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
-        Enum("posted", "pending_approval", "failed", "rejected", name="review_reply_status"),
+        # "approved" = merchant approved a Localith draft; it is NOT on
+        # Google yet — they post it from their Localith/GBP dashboard.
+        Enum("posted", "pending_approval", "failed", "rejected", "approved",
+             name="review_reply_status"),
         default="pending_approval",
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

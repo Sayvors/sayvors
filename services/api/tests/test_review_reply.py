@@ -145,3 +145,69 @@ async def test_mock_mode_arabic_review_returns_arabic_reply(monkeypatch):
     # Arabic script present, no English canned text
     assert any("؀" <= ch <= "ۿ" for ch in text)
     assert "Thank you" not in text
+
+
+# ── outbox retry endpoint ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_retry_failed_reply_returns_to_queue(db, user_id, channel_id, client):
+    """Retry: a failed publish row goes back to pending_approval, error cleared."""
+    from app.modules.channels.models import ReviewReply
+
+    db.add(ReviewReply(
+        id="rr-retry-1", channel_id=channel_id, review_id="localith:xyz",
+        rating=5, review_text="Great", reviewer_name="Ali",
+        reply_text="Thanks, Ali!", status="failed", error="No refresh token available",
+    ))
+    await db.commit()
+
+    r = client.post(
+        f"/api/v1/channels/{channel_id}/reviews/rr-retry-1/retry",
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "pending_approval"
+    assert body["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_reply_regenerates_empty_text(db, user_id, channel_id, client):
+    """Retry with empty text (generation failure) regenerates the draft."""
+    from app.modules.channels.models import ReviewReply
+
+    db.add(ReviewReply(
+        id="rr-retry-2", channel_id=channel_id, review_id="localith:xyz2",
+        rating=4, review_text="Nice place", reviewer_name="Omar",
+        reply_text="", status="failed", error="LLM down",
+    ))
+    await db.commit()
+
+    r = client.post(
+        f"/api/v1/channels/{channel_id}/reviews/rr-retry-2/retry",
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "pending_approval"
+    assert len(body["reply_text"]) > 5
+    assert body["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_retry_rejects_non_failed(db, user_id, channel_id, client):
+    """Retry only applies to failed rows."""
+    from app.modules.channels.models import ReviewReply
+
+    db.add(ReviewReply(
+        id="rr-retry-3", channel_id=channel_id, review_id="localith:xyz3",
+        rating=5, review_text="Great", reviewer_name="Ali",
+        reply_text="Thanks!", status="posted",
+    ))
+    await db.commit()
+
+    r = client.post(
+        f"/api/v1/channels/{channel_id}/reviews/rr-retry-3/retry",
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 400

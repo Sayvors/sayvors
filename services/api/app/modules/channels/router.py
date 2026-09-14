@@ -714,7 +714,7 @@ async def update_autoreply_config(
 @router.get("/{channel_id}/reviews", response_model=ReviewReplyListResponse)
 async def list_review_replies(
     channel_id: str,
-    status_filter: str | None = Query(None, alias="status", pattern="^(posted|pending_approval|failed)$"),
+    status_filter: str | None = Query(None, alias="status", pattern="^(posted|pending_approval|failed|approved)$"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user: User = Depends(get_current_user),
@@ -790,8 +790,8 @@ async def approve_review_reply(
             # Localith middleware channel: reviews sync through Localith and
             # there is no Google token to post with. The merchant publishes
             # the reply from their Localith/GBP dashboard — approval marks
-            # it posted locally so the queue and analytics stay honest.
-            reply.status = "posted"
+            # it "approved" (NOT "posted": nothing reached Google).
+            reply.status = "approved"
             reply.error = None
             await db.commit()
         else:
@@ -969,6 +969,42 @@ async def regenerate_reply(
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+    await db.commit()
+    await db.refresh(reply)
+    return _reply_response(reply)
+
+
+@router.post("/{channel_id}/reviews/{reply_id}/retry", response_model=ReviewReplyResponse)
+async def retry_failed_reply(
+    channel_id: str,
+    reply_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry a failed reply: regenerate the text if generation failed, then
+    return it to the approval queue with the error cleared."""
+    reply = await _get_owned_reply(channel_id, reply_id, user, db)
+    if reply.status != "failed":
+        raise HTTPException(status_code=400, detail="Only failed replies can be retried")
+    if not (reply.reply_text or "").strip():
+        config = (
+            await db.execute(
+                select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel_id)
+            )
+        ).scalar_one_or_none()
+        if not config:
+            config = AutoReplyConfig(channel_id=channel_id)
+            db.add(config)
+        from .review_reply import generate_review_reply
+
+        try:
+            reply.reply_text = await generate_review_reply(
+                config, reply.rating, reply.review_text, reply.reviewer_name, db
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+    reply.status = "pending_approval"
+    reply.error = None
     await db.commit()
     await db.refresh(reply)
     return _reply_response(reply)

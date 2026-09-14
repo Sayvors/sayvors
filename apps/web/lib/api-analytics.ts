@@ -307,3 +307,7 @@ export function approveReply(channelId: string, replyId: string): Promise<Review
 export function rejectReply(channelId: string, replyId: string): Promise<ReviewReplyDTO> {
   return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}`, { method: "DELETE" });
 }
+
+export function retryReply(channelId: string, replyId: string): Promise<ReviewReplyDTO> {
+  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}/retry`, { method: "POST" });
+}

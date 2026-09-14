@@ -16,6 +16,7 @@ const en = {
     databank: "Databank",
     connect: "Connect",
     autoReply: "Auto-Reply",
+    outbox: "Outbox",
     usage: "Usage",
     locations: "Locations",
     verification: "Verification",

@@ -103,21 +103,6 @@ export default function AutomationsPage() {
     };
   }, []);
 
-  const toggleAutoReply = useCallback(async (channelId: string, enable: boolean) => {    setBusy(channelId);
-    try {
-      const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
-        method: "PUT",
-        body: JSON.stringify({ enabled: enable }),
-      });
-      setConfigs((prev) => ({ ...prev, [channelId]: cfg }));
-      setBanner({ kind: "ok", text: enable ? "Auto-reply turned on." : "Auto-reply turned off." });
-    } catch {
-      setBanner({ kind: "err", text: "Could not save the auto-reply setting." });
-    } finally {
-      setBusy(null);
-    }
-  }, []);
-
   const setChannelModel = useCallback(async (channelId: string, model: string) => {
     setBusy(`${channelId}:model`);
     try {
@@ -150,9 +135,9 @@ export default function AutomationsPage() {
     }
   }, []);
 
-  const activeCount = useMemo(
-    () => channels.filter((c) => configs[c.id]?.enabled).length,
-    [channels, configs]
+  const pendingTotal = useMemo(
+    () => channels.reduce((sum, c) => sum + (pending[c.id] ?? 0), 0),
+    [channels, pending]
   );
 
   return (
@@ -192,7 +177,7 @@ export default function AutomationsPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Locations connected" value={String(channels.length)} sub="Google Business" />
-        <StatCard label="Auto-reply active" value={String(activeCount)} sub={`of ${channels.length}`} />
+        <StatCard label="Pending approval" value={String(pendingTotal)} sub="awaiting you" />
         <StatCard
           label="Response rate"
           value={overview ? `${overview.response_rate}%` : "—"}
@@ -229,7 +214,6 @@ export default function AutomationsPage() {
         <div className="space-y-2.5">
           {channels.map((c) => {
             const cfg = configs[c.id];
-            const enabled = cfg?.enabled ?? false;
             const approvalMode = cfg?.approval_mode === "approval" ? "You approve all" : "Automatic above threshold";
             const pendingCount = pending[c.id] ?? 0;
             return (
@@ -242,24 +226,16 @@ export default function AutomationsPage() {
                     {c.display_name || "Business location"}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                        enabled ? "bg-emerald-50 text-emerald-600" : "bg-ink/[0.04] text-ink/40 dark:bg-fog/[0.04] dark:text-fog/40"
-                      }`}
-                    >
-                      {enabled ? "Active" : "Off"}
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">
+                      Engine on
                     </span>
-                    {enabled && (
-                      <>
-                        <span className="rounded bg-deep-violet/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-deep-violet">
-                          {approvalMode}
-                        </span>
-                        {cfg?.approval_mode !== "approval" && (
-                          <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-ink/45 dark:bg-fog/[0.04] dark:text-fog/45">
-                            auto-post ★{cfg?.min_rating_auto ?? 4}+
-                          </span>
-                        )}
-                      </>
+                    <span className="rounded bg-deep-violet/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-deep-violet">
+                      {approvalMode}
+                    </span>
+                    {cfg?.approval_mode !== "approval" && (
+                      <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-ink/45 dark:bg-fog/[0.04] dark:text-fog/45">
+                        auto-post ★{cfg?.min_rating_auto ?? 4}+
+                      </span>
                     )}
                     {pendingCount > 0 && (
                       <Link
@@ -335,20 +311,6 @@ export default function AutomationsPage() {
                 >
                   AI settings
                 </Link>
-                <button
-                  onClick={() => toggleAutoReply(c.id, !enabled)}
-                  disabled={busy === c.id}
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${
-                    enabled ? "bg-emerald-500" : "bg-ink/15 dark:bg-fog/15"
-                  } ${busy === c.id ? "opacity-50" : ""}`}
-                  aria-label={enabled ? `Turn off auto-reply for ${c.display_name || "location"}` : `Turn on auto-reply for ${c.display_name || "location"}`}
-                >
-                  <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                      enabled ? "left-[22px]" : "left-0.5"
-                    }`}
-                  />
-                </button>
               </div>
             );
           })}

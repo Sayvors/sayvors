@@ -82,7 +82,7 @@ async def _already_replied(db: AsyncSession, review_id: str) -> bool:
         select(ReviewReply.id)
         .where(
             ReviewReply.review_id == review_id,
-            ReviewReply.status.in_(["pending_approval", "posted"]),
+            ReviewReply.status.in_(["pending_approval", "posted", "approved"]),
         )
         .limit(1)
     )
@@ -168,12 +168,6 @@ async def _enqueue_review_replied(channel: Channel, review, status: str) -> None
 async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyConfig) -> dict:
     """Poll one Google Reviews channel and auto-reply to new reviews."""
     stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
-
-    # The merchant's ON/OFF switch is the master gate: disabled channels are
-    # not processed at all (no generation, no drafts, no posting).
-    if not getattr(config, "enabled", True):
-        stats["skipped"] += 1
-        return stats
 
     mock_mode = settings.GOOGLE_REVIEWS_MOCK
     if mock_mode:
@@ -343,9 +337,8 @@ async def poll_once() -> dict:
                 .where(
                     Channel.platform == "google_reviews",
                     Channel.status == "active",
-                    # Master switch: OFF means no generation at all. When ON,
-                    # approval_mode + min_rating_auto decide auto-post vs draft.
-                    AutoReplyConfig.enabled.is_(True),
+                    # No `enabled` filter: the engine always generates and
+                    # queues. Auto Pilot alone decides auto-post vs approval.
                     (AutoReplyConfig.last_polled_at.is_(None))
                     | (AutoReplyConfig.last_polled_at < due_before),
                 )
