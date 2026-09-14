@@ -33,6 +33,18 @@ def _salvage_response_text(raw: str) -> str:
     partial = partial.rstrip("\\").replace('\\"', '"').replace("\\n", " ").replace("\\\\", "\\")
     return partial.strip()
 
+# Analysis language code → human name for the writer instruction.
+_LANGUAGE_NAMES = {
+    "ar": "Arabic",
+    "ur": "Urdu",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "en": "English",
+}
+
 RESPONSE_SYSTEM_PROMPT = """You are a real person replying to a customer review — not an AI, not a corporation.
 
 Given:
@@ -42,7 +54,9 @@ Given:
 4. Channel policy
 5. Brand voice guidelines
 
-Write like a friendly human texting a neighbor. Simple, warm, everyday English.
+Write like a friendly human texting a neighbor. Simple and warm — in the SAME language
+as the review (an Arabic review gets an Arabic reply, an English review gets an
+English reply).
 
 LANGUAGE — SIMPLE & HUMAN (non-negotiable):
 - Use short, simple words anyone would use. Grade 5 reading level.
@@ -129,6 +143,16 @@ async def generate_response(
     # Hard product mention is non-negotiable when a product is named
     if analysis.product_reference:
         user_parts.append(f'CRITICAL: Mention the product "{analysis.product_reference}" by exact name in your reply.')
+
+    # Reply language must match the review language (analysis detects it).
+    lang = (analysis.language or "en").strip().lower()
+    if lang and lang != "en":
+        lang_name = _LANGUAGE_NAMES.get(lang, lang)
+        user_parts.append(
+            f"LANGUAGE (binding): the review is written in {lang_name}. "
+            f"Write your ENTIRE reply in {lang_name} — never switch to English. "
+            f"Keep the same warm, simple tone."
+        )
 
     if tier:
         user_parts.append(

@@ -92,3 +92,56 @@ async def test_rejected_status_round_trips(db, user_id, channel_id):
     row = await db.get(ReviewReply, "rr-rej-1")
     assert row is not None
     assert row.status == "rejected"
+
+
+# ── reply language: Arabic review → Arabic reply ──────────
+
+@pytest.mark.asyncio
+async def test_arabic_review_gets_arabic_language_instruction(monkeypatch):
+    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
+    captured = {}
+
+    class _Capture:
+        async def complete(self, req):
+            captured["system"] = req.system_prompt
+            return _resp("شكراً جزيلاً على تقييمك!")
+
+    monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
+    config = SimpleNamespace(model="groq:oss-120b", tone="friendly",
+                             databank_id=None, custom_instructions=None)
+    text = await review_reply.generate_review_reply(
+        config, 5, "الطعام رائع والخدمة ممتازة", "أحمد", object()
+    )
+    assert text == "شكراً جزيلاً على تقييمك!"
+    assert "in Arabic" in captured["system"]
+    assert "العربية" in captured["system"]
+
+
+@pytest.mark.asyncio
+async def test_english_review_gets_language_match_rule(monkeypatch):
+    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
+    captured = {}
+
+    class _Capture:
+        async def complete(self, req):
+            captured["system"] = req.system_prompt
+            return _resp("Thanks for the kind words!")
+
+    monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
+    config = SimpleNamespace(model="groq:oss-120b", tone="friendly",
+                             databank_id=None, custom_instructions=None)
+    await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", object())
+    assert "SAME language as the review" in captured["system"]
+
+
+@pytest.mark.asyncio
+async def test_mock_mode_arabic_review_returns_arabic_reply(monkeypatch):
+    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", True)
+    config = SimpleNamespace(model="groq:oss-120b", tone="friendly",
+                             databank_id=None, custom_instructions=None)
+    text = await review_reply.generate_review_reply(
+        config, 5, "مطعم رائع جداً", "أحمد", object()
+    )
+    # Arabic script present, no English canned text
+    assert any("؀" <= ch <= "ۿ" for ch in text)
+    assert "Thank you" not in text

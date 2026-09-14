@@ -1,5 +1,6 @@
 """Generate merchant replies to Google reviews via LLM (+ optional RAG grounding)."""
 import logging
+import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +9,18 @@ from ..llm.providers.registry import get_provider_for_model
 from .models import AutoReplyConfig
 
 logger = logging.getLogger(__name__)
+
+# Arabic-script characters (also covers Urdu, Persian) — the reply language
+# must match the review language (Arabic review → Arabic reply).
+_ARABIC_SCRIPT = re.compile(r"[؀-ۿ]")
+
+
+def _review_language(review_text: str | None) -> str | None:
+    """'ar' when the review uses Arabic script; None otherwise (English default)."""
+    if review_text and _ARABIC_SCRIPT.search(review_text):
+        return "ar"
+    return None
+
 
 # Google review-reply policy constraints baked into every prompt:
 # no advertising, no links, no asking to change the review, no personal data.
@@ -24,6 +37,7 @@ Tone: {tone}.
 {rating_guidance}
 {custom_block}
 {context_block}
+{language_block}
 Write only the reply text — nothing else."""
 
 POSITIVE_GUIDANCE = "This is a positive review: thank the reviewer warmly and mention something specific they praised if possible."
@@ -87,10 +101,37 @@ async def generate_review_reply(
     db: AsyncSession,
 ) -> str:
     """Generate a public reply to a review using the channel's configured model/tone."""
+    lang = _review_language(review_text)
+    if lang == "ar":
+        language_block = (
+            "Language: the review is written in Arabic — write your ENTIRE reply "
+            "in Arabic (العربية). Never switch to English."
+        )
+    else:
+        language_block = (
+            "Language: reply in the SAME language as the review — an Arabic review "
+            "gets an Arabic reply, an English review gets an English reply."
+        )
+
     # Dev mock mode: canned, policy-safe replies — no LLM call.
     from ...config import settings as _settings
     if _settings.GOOGLE_REVIEWS_MOCK:
         name = reviewer_name.split(" ")[0] if reviewer_name else "there"
+        if lang == "ar":
+            if rating >= 4:
+                return (
+                    f"شكراً جزيلاً يا {name}! سعدنا بتجربتك الرائعة معنا — آراء مثل رأيك "
+                    f"تحفز فريقنا على الاستمرار. نتطلع لرؤيتك مرة أخرى قريباً!"
+                )
+            if rating == 3:
+                return (
+                    f"شكراً لملاحظاتك الصادقة يا {name}. يسعدنا أن جزءاً من تجربتك كان جيداً، "
+                    f"ونحب أن نسمع رأيك فيما يمكننا تحسينه في المرة القادمة."
+                )
+            return (
+                f"نعتذر بشدة عن تجربتك يا {name}. هذا ليس المستوى الذي نسعى إليه. "
+                f"يرجى التواصل معنا مباشرة حتى نصلح الأمر."
+            )
         if rating >= 4:
             return (
                 f"Thank you so much, {name}! We're happy you had a great experience "
@@ -121,6 +162,7 @@ async def generate_review_reply(
         rating_guidance=_rating_guidance(rating),
         custom_block=custom_block,
         context_block=context_block,
+        language_block=language_block,
     )
 
     review_desc = review_text.strip() if review_text and review_text.strip() else "(no written comment, star rating only)"

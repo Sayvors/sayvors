@@ -1653,3 +1653,91 @@ def test_pricing_rationale_fails_grounding():
     )
     assert result.checks["claim_grounding"] is False
     assert result.passed is False
+
+
+# ── reply-language tests (Arabic review → Arabic reply) ──
+
+def _ar_analysis():
+    return ReviewAnalysis(
+        sentiment="positive", emotion="joy", intent=["praise"],
+        issue_type=None, product_reference=None, urgency="low",
+        customer_request="الطعام رائع والمكان جميل", language="ar",
+    )
+
+
+def test_validate_arabic_praise_reply_passes_without_english_lexicons():
+    """Arabic replies skip English lexicons — subject engagement governs."""
+    result = validate_response(
+        _resp("شكراً لك على كلماتك الرائعة! سعدنا بزيارتك ونتطلع لرؤيتك مرة أخرى."),
+        _ar_analysis(), {"max_length": 500, "public": True},
+        review_text="الطعام رائع والمكان جميل",
+        active_strategies=[_match("show_appreciation", "Show appreciation", 80)],
+    )
+    assert result.checks["specificity"] is True
+    assert result.checks["strategy_fulfillment"] is True
+    assert result.passed is True
+
+
+def test_validate_arabic_complaint_reply_with_covered_facts_passes():
+    from app.modules.review_engine.schemas import ExtractedIssue
+
+    analysis = ReviewAnalysis(
+        sentiment="negative", emotion="frustration", intent=["complaint"],
+        issue_type="service_quality", product_reference=None, urgency="medium",
+        customer_request="الانتظار كان طويلاً", language="ar",
+    )
+    issues = [ExtractedIssue(
+        key="wait_time", label="Wait time", detail="الانتظار",
+        keywords=["الانتظار"], semantic=["تأخر"],
+    )]
+    result = validate_response(
+        _resp("نعتذر عن الانتظار الطويل — هذا ليس المستوى الذي نسعى إليه، وسنعمل على تحسينه."),
+        analysis, {"max_length": 500, "public": True},
+        review_text="الانتظار كان طويلاً جداً",
+        issues=issues,
+        active_strategies=[_match("apologize_for_issue", "Apologize", 90)],
+    )
+    assert result.checks["issue_coverage"] is True
+    assert result.checks["specificity"] is True
+    assert result.checks["strategy_fulfillment"] is True
+    assert result.passed is True
+
+
+def test_generator_adds_binding_language_instruction():
+    import asyncio
+    from app.modules.review_engine import generator as gen
+
+    captured = {}
+
+    class _FakeProvider:
+        async def complete(self, req):
+            captured["user_msg"] = req.messages[0].content
+            from app.modules.llm.providers.base import LLMResponse, LLMUsage
+            return LLMResponse(
+                content='{"response_text": "شكراً لك!"}',
+                provider="test", model="test/m",
+                usage=LLMUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                finish_reason="stop",
+            )
+
+    orig_get = gen.get_provider_for_model
+    orig_resolve = gen._resolve_model
+    gen.get_provider_for_model = lambda model: _FakeProvider()
+    gen._resolve_model = lambda model: ("test/m", {})
+    try:
+        out, _usage = asyncio.run(gen.generate_response(
+            analysis=_ar_analysis(),
+            strategies=[_match("show_appreciation", "Show appreciation", 80)],
+            channel_policy={"max_length": 500, "public": True},
+            brand_voice={},
+            business_context=None,
+            model="test:m",
+            review_text="الطعام رائع والمكان جميل",
+        ))
+    finally:
+        gen.get_provider_for_model = orig_get
+        gen._resolve_model = orig_resolve
+
+    assert out.response_text == "شكراً لك!"
+    assert "LANGUAGE (binding)" in captured["user_msg"]
+    assert "Arabic" in captured["user_msg"]
