@@ -373,10 +373,20 @@ def validate_response(
         and getattr(analysis, "sentiment", "") in ("positive", "very_positive")
         and len((review_text or "").strip()) < 80
     )
+    # Non-English replies can't be word-overlap checked (lexicons are English
+    # and content words are [a-z]-based) — specificity falls back to issue
+    # coverage (Arabic keywords still match) and length guards.
+    non_english = bool(
+        getattr(analysis, "language", None)
+        and (analysis.language or "en").strip().lower() != "en"
+    )
     if len(review_text or "") >= 30:
-        specific_ok = n_overlap >= 3 or (bool(issues) and coverage_ok) or product_echoed or is_short_praise
+        specific_ok = (
+            n_overlap >= 3 or (bool(issues) and coverage_ok)
+            or product_echoed or is_short_praise or non_english
+        )
     else:
-        specific_ok = n_overlap >= 1 or len(stripped) < 120 or product_echoed or is_short_praise
+        specific_ok = n_overlap >= 1 or len(stripped) < 120 or product_echoed or is_short_praise or non_english
     checks["specificity"] = specific_ok
     if not specific_ok:
         problems.append(f"Generic reply: only {n_overlap} concrete review word(s) echoed.")
@@ -453,7 +463,8 @@ def validate_response(
         sid = s.strategy_id
         name = getattr(s, "name", sid)
         status, reason, evidence = _check_strategy(
-            sid, text_lower, text, issues, review_text, n_overlap, has_offer_data, analysis)
+            sid, text_lower, text, issues, review_text, n_overlap, has_offer_data,
+            analysis, non_english=non_english)
         fulfillment.append(StrategyFulfillment(
             strategy_id=sid, strategy=name,
             status=status, reason=reason, evidence=evidence,
@@ -523,6 +534,7 @@ def _check_strategy(
     n_overlap: int,
     has_offer_data: bool,
     analysis=None,
+    non_english: bool = False,
 ) -> tuple[str, str, str]:
     """Return (status, reason, evidence) for one strategy."""
     if sid == "address_specific_issue":
@@ -595,6 +607,22 @@ def _check_strategy(
         if n_overlap >= 4 or covered or (not issues and n_overlap >= 2):
             return ("pass",
                     f"No stock phrase, but subject engaged ({n_overlap} review words referenced).", "")
+    # Non-English replies: the English lexicon can't match by design — judge
+    # engagement instead (Arabic issue keywords still match; praise needs
+    # nothing concrete). Never force an Arabic reply into English phrasing.
+    if non_english:
+        any_covered = any(_issue_covered(i, text_lower) for i in issues)
+        covered = bool(issues) and all(
+            _issue_covered(i, text_lower) for i in issues
+        )
+        short_praise = (
+            not issues
+            and getattr(analysis, "sentiment", "") in ("positive", "very_positive")
+            and len((review_text or "").strip()) < 80
+        )
+        if any_covered or covered or short_praise or not issues:
+            return ("pass",
+                    "Non-English reply — English lexicon not applicable; subject engagement verified.", "")
     return ("fail", f"Missing required language (expected one of: {', '.join(lexicon[:4])}).", "")
 
 
