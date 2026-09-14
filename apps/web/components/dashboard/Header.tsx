@@ -8,6 +8,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { LOCALES } from "@/lib/i18n/locales";
 import { useAuth } from "@/lib/auth-context";
 import AutoPilotDialog from "@/components/dashboard/AutoPilotDialog";
+import SearchPalette from "@/components/dashboard/SearchPalette";
 import {
   derivePilotState,
   fetchPilotChannels,
@@ -20,6 +21,7 @@ export default function Header() {
   const { theme, toggle } = useTheme();
   const { locale, setLocale, t } = useI18n();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuth();
 
@@ -75,6 +77,10 @@ export default function Header() {
     }
     function handleKeydown(e: KeyboardEvent) {
       if (e.key === "Escape") setProfileOpen(false);
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
     }
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("keydown", handleKeydown);
@@ -90,7 +96,25 @@ export default function Header() {
     pilot === "on" ? t.pilot.on : pilot === "off" ? t.pilot.off : pilot === "mixed" ? t.pilot.mixed : t.pilot.none;
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-end gap-2 border-b border-deep-violet/[0.06] bg-white px-4 dark:bg-ink dark:border-deep-violet/[0.06]">
+    <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-deep-violet/[0.06] bg-white px-4 dark:bg-ink dark:border-deep-violet/[0.06]">
+      {/* Search */}
+      <button
+        onClick={() => setSearchOpen(true)}
+        aria-label={t.header.searchLabel}
+        title={`${t.header.searchLabel} (⌘K)`}
+        className="flex h-8 items-center gap-2 rounded-lg border border-deep-violet/[0.08] bg-deep-violet/[0.03] px-2.5 text-[12px] text-ink/40 outline-none transition hover:border-deep-violet/25 hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 sm:w-56 dark:text-fog/40 dark:hover:text-fog/60"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0" aria-hidden>
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <span className="hidden flex-1 truncate text-left sm:block">{t.header.search}</span>
+        <kbd className="hidden shrink-0 rounded border border-deep-violet/[0.1] bg-white px-1 py-0.5 text-[9px] font-medium text-deep-violet/40 sm:block dark:bg-ink dark:text-deep-violet/50">
+          ⌘K
+        </kbd>
+      </button>
+
+      <div className="flex items-center gap-2">
       {/* Connect channel */}
       <Link
         href="/dashboard/channels"
@@ -245,6 +269,9 @@ export default function Header() {
           }}
         />
       )}
+      </div>
+
+      {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} />}
     </header>
   );
 }
