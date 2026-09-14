@@ -134,6 +134,22 @@ export default function AutomationsPage() {
     }
   }, []);
 
+  const setChannelTone = useCallback(async (channelId: string, tone: string) => {
+    setBusy(`${channelId}:tone`);
+    try {
+      const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
+        method: "PUT",
+        body: JSON.stringify({ tone }),
+      });
+      setConfigs((prev) => ({ ...prev, [channelId]: cfg }));
+      setBanner({ kind: "ok", text: "Response tone updated." });
+    } catch {
+      setBanner({ kind: "err", text: "Could not save the tone choice." });
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
   const activeCount = useMemo(
     () => channels.filter((c) => configs[c.id]?.enabled).length,
     [channels, configs]
@@ -238,9 +254,26 @@ export default function AutomationsPage() {
                         <span className="rounded bg-deep-violet/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-deep-violet">
                           {approvalMode}
                         </span>
-                        <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[10px] font-medium capitalize text-ink/45 dark:bg-fog/[0.04] dark:text-fog/45">
-                          {cfg?.tone ?? "friendly"}
-                        </span>
+                        <select
+                          value={cfg?.tone ?? "friendly"}
+                          disabled={busy !== null}
+                          onChange={(e) => {
+                            if (e.target.value) void setChannelTone(c.id, e.target.value);
+                          }}
+                          aria-label={`Response tone for ${c.display_name || "location"}`}
+                          className="max-w-[150px] truncate rounded-lg border border-ink/[0.08] bg-white px-1.5 py-0.5 text-[10px] font-medium text-ink/70 outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog/70 disabled:opacity-50"
+                        >
+                          <option value="friendly">Friendly</option>
+                          <option value="professional">Professional</option>
+                          <option value="apologetic">Apologetic</option>
+                          <option value="playful">Playful</option>
+                          {cfg?.tone && !["friendly", "professional", "apologetic", "playful"].includes(cfg.tone) && (
+                            <option value={cfg.tone}>{cfg.tone}</option>
+                          )}
+                        </select>
+                        {busy === `${c.id}:tone` && (
+                          <span className="text-[10px] text-ink/40">Saving…</span>
+                        )}
                         {cfg?.approval_mode !== "approval" && (
                           <span className="rounded bg-ink/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-ink/45 dark:bg-fog/[0.04] dark:text-fog/45">
                             auto-post ★{cfg?.min_rating_auto ?? 4}+
