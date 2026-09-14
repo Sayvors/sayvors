@@ -18,6 +18,7 @@ const ar: Dict = {
     databank: "بنك المعرفة",
     connect: "القنوات",
     autoReply: "الرد التلقائي",
+    outbox: "صندوق الصادر",
     usage: "الاستخدام",
     locations: "Locations",
     verification: "Verification",

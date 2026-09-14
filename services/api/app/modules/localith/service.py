@@ -288,7 +288,7 @@ async def sync_connection(
                 select(ReviewReply.id).where(
                     ReviewReply.channel_id == channel.id,
                     ReviewReply.review_id == full_review_id,
-                    ReviewReply.status.in_(["pending_approval", "posted"]),
+                    ReviewReply.status.in_(["pending_approval", "posted", "approved"]),
                 )
             )
         ).scalar_one_or_none()

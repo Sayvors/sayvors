@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, fetchOverview, fetchTimeseries, generateReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, fetchOverview, fetchTimeseries, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
 import { MetricChart, RatingDistribution, Sparkline } from "@/components/analytics/Charts";
@@ -215,18 +215,15 @@ function AttentionQueue() {
     setGeneratingId(d.id);
     setFailedError(null);
     try {
-      const fresh = await generateReply(d.channel_id, {
-        review_id: d.review_id,
-        rating: d.rating,
-        review_text: d.review_text,
-        reviewer_name: d.reviewer_name,
-      });
+      // Backend retry regenerates the text when generation failed, or
+      // simply returns the row to the approval queue when publishing failed.
+      const fresh = await retryReply(d.channel_id, d.id);
       setFailed((prev) => prev.filter((x) => x.id !== d.id));
       setFailedTotal((t) => Math.max(0, t - 1));
       setDrafts((prev) => dedupeDraftsByReview([...prev, fresh]).slice(0, 5));
       setDraftTotal((t) => t + 1);
     } catch {
-      setFailedError("Could not make a new draft. Try again.");
+      setFailedError("Retry failed. Check the error and try again.");
     } finally {
       setGeneratingId(null);
     }
@@ -255,12 +252,7 @@ function AttentionQueue() {
       const stillFailed: ReviewReplyDTO[] = [];
       for (const d of targets) {
         try {
-          const f = await generateReply(d.channel_id, {
-            review_id: d.review_id,
-            rating: d.rating,
-            review_text: d.review_text,
-            reviewer_name: d.reviewer_name,
-          });
+          const f = await retryReply(d.channel_id, d.id);
           freshOnes.push(f);
         } catch {
           stillFailed.push(d);
@@ -277,10 +269,10 @@ function AttentionQueue() {
       setFailed(remaining.slice(0, 5));
       setFailedTotal(remaining.length);
       if (stillFailed.length > 0) {
-        setFailedError(`${stillFailed.length} could not be remade. Try again.`);
+        setFailedError(`${stillFailed.length} could not be retried. Try again.`);
       }
     } catch {
-      setFailedError("Could not make new drafts. Try again.");
+      setFailedError("Could not retry the drafts. Try again.");
     } finally {
       setRemakingAll(false);
       setRemakeProgress({ done: 0, total: 0 });
@@ -435,27 +427,36 @@ function AttentionQueue() {
                             disabled={generatingId !== null || remakingAll}
                             className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
                           >
-                            {busy ? "Making…" : "Make new draft"}
+                            {busy ? "Retrying…" : d.reply_text ? "Retry publishing" : "Retry AI drafting"}
                           </button>
                         </div>
                       </div>
                     );
                   })}
-                  <Link
-                    href="/dashboard/channels"
-                    className="flex items-center justify-center gap-1 rounded-xl bg-ink/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
-                  >
-                    {needsReconnect ? "Reconnect Google first" : "Manage Google connection"}
-                    <span aria-hidden> →</span>
-                  </Link>
+                  <div className="flex gap-2">
+                    <Link
+                      href="/dashboard/outbox"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                    >
+                      Open outbox
+                      <span aria-hidden> →</span>
+                    </Link>
+                    <Link
+                      href="/dashboard/channels"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-ink/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                    >
+                      {needsReconnect ? "Reconnect Google" : "Manage connection"}
+                      <span aria-hidden> →</span>
+                    </Link>
+                  </div>
                   <button
                     onClick={() => void remakeAll()}
                     disabled={remakingAll || generatingId !== null || failedTotal === 0}
                     className="w-full rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
                   >
                     {remakingAll
-                      ? `Making drafts ${remakeProgress.done} of ${remakeProgress.total}…`
-                      : `Remake all drafts (${failedTotal})`}
+                      ? `Retrying ${remakeProgress.done} of ${remakeProgress.total}…`
+                      : `Retry all (${failedTotal})`}
                   </button>
                 </div>
               )}

@@ -27,18 +27,6 @@ interface LocationOption {
   name: string;
 }
 
-const MOCK_LOCATIONS: LocationOption[] = [
-  { id: "loc_1", name: "Sayvors Al Malqa" },
-];
-
-const MOCK_MEDIA: MediaItem[] = [
-  { id: "m1", type: "PHOTO", source: "OWN", category: "EXTERIOR", views: 1240, createdAt: "2026-08-20", isCover: true },
-  { id: "m2", type: "PHOTO", source: "OWN", category: "INTERIOR", views: 860, createdAt: "2026-08-22" },
-  { id: "m3", type: "VIDEO", source: "OWN", category: "AT_WORK", views: 2130, createdAt: "2026-08-25", isProfile: true },
-  { id: "m4", type: "PHOTO", source: "CUSTOMER", category: "FOOD_AND_DRINK", views: 540, attribution: "Ahmed K.", createdAt: "2026-08-28" },
-  { id: "m5", type: "PHOTO", source: "CUSTOMER", category: "INTERIOR", views: 310, attribution: "Sara M.", createdAt: "2026-09-01" },
-];
-
 const CATEGORIES = ["PROFILE", "COVER", "EXTERIOR", "INTERIOR", "PRODUCT", "AT_WORK", "FOOD_AND_DRINK", "TEAM"];
 
 export default function MediaPage() {
@@ -78,8 +66,7 @@ function MediaInner() {
           if (data.locations?.length) setSelectedId(data.locations[0].id);
         }
       } catch {
-        setLocations(MOCK_LOCATIONS);
-        setSelectedId(MOCK_LOCATIONS[0].id);
+        if (!cancelled) setLocations([]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -93,9 +80,9 @@ function MediaInner() {
     (async () => {
       try {
         const data = await apiFetch(`/api/v1/locations/${selectedId}/media`);
-        if (!cancelled) setItems(data.media ?? MOCK_MEDIA);
+        if (!cancelled) setItems(data.media ?? []);
       } catch {
-        if (!cancelled) setItems(MOCK_MEDIA);
+        if (!cancelled) setItems([]);
       }
     })();
     return () => { cancelled = true; };
@@ -116,6 +103,10 @@ function MediaInner() {
   });
 
   const handleUpload = async () => {
+    if (!selectedId) {
+      setBanner({ kind: "err", text: "Connect a location first." });
+      return;
+    }
     if (uploadMode === "url" && !uploadUrl.trim()) return;
     setUploading(true);
     try {
