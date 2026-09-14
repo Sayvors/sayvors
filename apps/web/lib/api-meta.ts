@@ -36,6 +36,7 @@ export interface MetaConnectEntry {
   fb_app_id?: string | null;
   fb_config_id?: string | null;
   graph_api_version?: string | null;
+  solution_id?: string | null;
   state: string;
   note?: string | null;
 }

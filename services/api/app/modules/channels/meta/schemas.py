@@ -28,6 +28,7 @@ class MetaConnectResponse(BaseModel):
     fb_app_id: str | None = None
     fb_config_id: str | None = None
     graph_api_version: str | None = None
+    solution_id: str | None = None
     state: str
 
 

@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     # Embedded Signup v4 Builder configuration id (App Dashboard ->
     # WhatsApp -> Embedded Signup Builder). Frontend passes it to FB.login.
     META_WHATSAPP_CONFIG_ID: str = ""
+    # Tech Provider solution id (Tech Provider Portal -> Solutions). When
+    # set, the frontend uses the v4 app_only_install FB.login extras.
+    META_SOLUTION_ID: str = ""
     # Facebook Login for Business configuration id (dashboard configuration
     # with token type + assets + permissions). Used to build the dialog URL.
     META_FACEBOOK_CONFIG_ID: str = ""

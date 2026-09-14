@@ -1,9 +1,11 @@
 """Meta connections API: connect, callback, assets, validate, disconnect."""
 import logging
 import re
+import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....config import settings
@@ -94,6 +96,83 @@ def _frontend_base(next_path: str | None) -> str:
     return base
 
 
+_FB_SDK_URL = "https://connect.facebook.net/en_US/sdk.js"
+# sdk.js is a 12KB bootstrap: it defines a stub window.FB and then loads
+# this real 272KB bundle from connect.facebook.net. We proxy the bundle
+# too (and rewrite the bootstrap's hardcoded URL to this proxy) so the
+# whole SDK loads same-origin — no facebook.net fetch for the core SDK.
+_FB_BUNDLE_URL = "https://connect.facebook.net/en_US/bundle/sdk.js/"
+_FB_BUNDLE_URL_ESCAPED = _FB_BUNDLE_URL.replace("/", "\\/")
+_FB_SDK_TTL_SECONDS = 3600
+_sdk_cache: dict = {"body": None, "at": 0.0}
+_bundle_cache: dict = {"body": None, "at": 0.0}
+
+
+async def _fetch_cached_js(url: str, cache: dict) -> str | None:
+    """Fetch public Meta JS into the in-memory cache; None on failure."""
+    now = time.monotonic()
+    if cache["body"] and now - cache["at"] < _FB_SDK_TTL_SECONDS:
+        return cache["body"]
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as http:
+            resp = await http.get(url, headers={"User-Agent": "SayvorsMetaSDKProxy/1.0"})
+        if resp.status_code != 200:
+            raise ValueError(f"upstream status {resp.status_code}")
+        cache.update(body=resp.text, at=now)
+        return cache["body"]
+    except Exception as e:
+        logger.warning("Meta SDK proxy fetch failed: %s", type(e).__name__)
+        return None
+
+
+def _js_response(body: str | None) -> Response:
+    if body is None:
+        return Response(
+            "/* Meta SDK temporarily unavailable */",
+            media_type="application/javascript",
+            status_code=200,
+        )
+    return Response(
+        body,
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.get("/connect-sdk")
+async def meta_sdk(request: Request):
+    """Same-origin proxy for the Meta JS SDK (ad-blocker mitigation).
+
+    Blockers match the facebook.net domain AND common SDK filenames, so
+    this route carries neither. The SDK is public static JS — no auth,
+    no tenant data. Cached in memory for an hour; upstream failures
+    return an inert stub (never secrets, never the error body) so the
+    frontend falls into its retry messaging.
+
+    The bundle URL is rewritten to /connect-sdk-bundle below so the
+    browser never has to fetch facebook.net for the core SDK either.
+    """
+    body = await _fetch_cached_js(_FB_SDK_URL, _sdk_cache)
+    if body is not None:
+        # No trailing slash — the route is registered without one, and the
+        # rewrite replaces the full escaped URL (including its trailing \/).
+        proxy_base = (
+            f"{request.url.scheme}://{request.url.netloc}"
+            "/api/v1/meta/connect-sdk-bundle"
+        )
+        body = body.replace(
+            _FB_BUNDLE_URL_ESCAPED, proxy_base.replace("/", "\\/")
+        )
+    return _js_response(body)
+
+
+@router.get("/connect-sdk-bundle")
+async def meta_sdk_bundle():
+    """Same-origin proxy for the real Meta SDK bundle (see /connect-sdk)."""
+    body = await _fetch_cached_js(_FB_BUNDLE_URL, _bundle_cache)
+    return _js_response(body)
+
+
 @router.get("/{provider}/callback")
 async def oauth_callback(
     provider: str,
@@ -110,6 +189,18 @@ async def oauth_callback(
         return RedirectResponse(f"{base}?meta_error={error}")
 
     txn = await _oauth.consume_transaction(db, state, provider)
+    if txn is None and provider in ("facebook", "instagram"):
+        # Both Login dialogs share one registered redirect URI (the facebook
+        # callback), so an Instagram transaction arrives here with
+        # provider="facebook". The transaction row — not the URL — owns the
+        # provider; resolve it from the state instead of rejecting it.
+        sibling = "instagram" if provider == "facebook" else "facebook"
+        txn = await _oauth.consume_transaction(db, state, sibling)
+        if txn is not None:
+            provider = sibling
+            logger.info(
+                "Meta OAuth callback provider resolved from state: %s", provider
+            )
     if txn is None:
         return RedirectResponse(f"{base}?meta_error=invalid_state")
     tenant_id = txn.tenant_id
@@ -143,6 +234,11 @@ async def oauth_callback(
         await _service.save_discovered_assets(db, tenant_id, provider, conn, discovered)
     except MetaAPIError as e:
         logger.warning("Meta asset discovery failed provider=%s: %s", provider, e.status_code)
+        # Surface the Graph status to the tenant (no secrets) instead of a
+        # silent success with zero assets.
+        return RedirectResponse(
+            f"{base}?meta_connected={provider}&discovery_error={e.status_code}"
+        )
     return RedirectResponse(f"{base}?meta_connected={provider}")
 
 
