@@ -284,6 +284,11 @@ function AttentionQueue() {
     draftTotal === 1 ? "1 drafted reply needs your approval" : `${draftTotal} drafted replies need your approval`;
   const failedTitle =
     failedTotal === 1 ? "1 reply failed to publish" : `${failedTotal} replies failed to publish`;
+  // Token-flavored failures genuinely need a Google re-consent; anything
+  // else (API hiccups, transient errors) just needs a retry.
+  const needsReconnect = failed.some((d) =>
+    /refresh token|access token|invalid_grant|expired|auth|401|permission/i.test(d.error ?? "")
+  );
   return (
     <section
       aria-label="Needs attention"
@@ -378,7 +383,11 @@ function AttentionQueue() {
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold text-ink">{failedTitle}</span>
-                  <span className="block truncate text-[11px] text-ink/45">Reconnect Google, then make new drafts</span>
+                  <span className="block truncate text-[11px] text-ink/45">
+                    {needsReconnect
+                      ? "Google access expired — reconnect, then make new drafts"
+                      : "Publishing failed — make new drafts and try again"}
+                  </span>
                 </span>
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 transition group-hover:text-deep-violet ${failedOpen ? "rotate-180" : ""}`}>
                   <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -404,6 +413,11 @@ function AttentionQueue() {
                           <p className="text-[9px] font-bold uppercase tracking-wide text-ink/40">Failed draft</p>
                           <p className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-ink/60">{d.reply_text || "—"}</p>
                         </div>
+                        {d.error && (
+                          <p className="mt-1.5 rounded-lg bg-coral/10 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-coral">
+                            {d.error}
+                          </p>
+                        )}
                         <div className="mt-2 flex items-center justify-end">
                           <button
                             onClick={() => void remakeDraft(d)}
@@ -420,7 +434,7 @@ function AttentionQueue() {
                     href="/dashboard/channels"
                     className="flex items-center justify-center gap-1 rounded-xl bg-ink/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                   >
-                    Reconnect Google first
+                    {needsReconnect ? "Reconnect Google first" : "Manage Google connection"}
                     <span aria-hidden> →</span>
                   </Link>
                   <button
