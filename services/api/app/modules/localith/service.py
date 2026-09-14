@@ -25,7 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from ..analytics.models import ReviewInsight
-from ..channels.models import Channel
+from ..channels.models import AutoReplyConfig, Channel, ReviewReply
+from ..channels.review_reply import generate_review_reply
 from ..outbox.service import enqueue_event
 from ..users.models import User
 
@@ -254,6 +255,67 @@ async def sync_connection(
 
     connection.last_synced_at = datetime.now(timezone.utc)
     await db.commit()
+
+    # Reply drafts: Localith reviews flow through the same reply engine as
+    # OAuth channels, except posting to Google isn't possible through the
+    # middleware API — every draft queues as pending_approval for the
+    # merchant to publish from their Localith/GBP dashboard. Cap per sync
+    # so a first-time backfill doesn't flood the queue with LLM calls.
+    DRAFT_CAP_PER_SYNC = 20
+    config = (
+        await db.execute(
+            select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel.id)
+        )
+    ).scalar_one_or_none()
+    if config is None:
+        config = AutoReplyConfig(channel_id=channel.id)
+        db.add(config)
+        await db.flush()
+
+    drafted = 0
+    for item in items:
+        if drafted >= DRAFT_CAP_PER_SYNC:
+            break
+        review_id = str(item.get("id") or item.get("review_id") or item.get("uid") or "")
+        if not review_id:
+            continue
+        review = embedsocial.to_internal_review(item)
+        if review.has_replies:
+            continue
+        full_review_id = f"localith:{review_id}"
+        existing_reply = (
+            await db.execute(
+                select(ReviewReply.id).where(
+                    ReviewReply.channel_id == channel.id,
+                    ReviewReply.review_id == full_review_id,
+                    ReviewReply.status.in_(["pending_approval", "posted"]),
+                )
+            )
+        ).scalar_one_or_none()
+        if existing_reply:
+            continue
+        try:
+            reply_text = await generate_review_reply(
+                config, review.rating, review.text, review.reviewer, db
+            )
+        except Exception as e:
+            logger.warning("Localith draft generation failed review=%s: %s", review_id, e)
+            continue
+        db.add(
+            ReviewReply(
+                channel_id=channel.id,
+                review_id=full_review_id,
+                rating=review.rating,
+                review_text=review.text,
+                reviewer_name=review.reviewer,
+                reply_text=reply_text,
+                status="pending_approval",
+            )
+        )
+        drafted += 1
+    if drafted:
+        await db.commit()
+        logger.info("Localith sync drafted %d replies for %s", drafted, connection.listing_id)
 
     for item in items:
         review_id = str(item.get("id") or item.get("review_id") or item.get("uid") or "")

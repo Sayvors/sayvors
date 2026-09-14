@@ -41,7 +41,7 @@ async def test_falls_back_to_groq_when_configured_model_dead(monkeypatch):
     groq = _GroqProvider()
 
     def _fake_get(model_id):
-        if model_id == "groq:oss-120b":
+        if model_id == "groq:openai/gpt-oss-120b":
             return groq
         return _DeadProvider()
 
@@ -70,11 +70,11 @@ async def test_no_retry_when_groq_itself_fails(monkeypatch):
         return _Fail()
 
     monkeypatch.setattr(review_reply, "get_provider_for_model", _fake_get)
-    config = SimpleNamespace(model="groq:oss-120b", tone="friendly",
+    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
                              databank_id=None, custom_instructions=None)
     with pytest.raises(ProviderError):
         await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", object())
-    assert calls == ["groq:oss-120b"]
+    assert calls == ["groq:openai/gpt-oss-120b"]
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_arabic_review_gets_arabic_language_instruction(monkeypatch):
             return _resp("شكراً جزيلاً على تقييمك!")
 
     monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
-    config = SimpleNamespace(model="groq:oss-120b", tone="friendly",
+    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
                              databank_id=None, custom_instructions=None)
     text = await review_reply.generate_review_reply(
         config, 5, "الطعام رائع والخدمة ممتازة", "أحمد", object()
@@ -128,7 +128,7 @@ async def test_english_review_gets_language_match_rule(monkeypatch):
             return _resp("Thanks for the kind words!")
 
     monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
-    config = SimpleNamespace(model="groq:oss-120b", tone="friendly",
+    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
                              databank_id=None, custom_instructions=None)
     await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", object())
     assert "SAME language as the review" in captured["system"]
@@ -137,7 +137,7 @@ async def test_english_review_gets_language_match_rule(monkeypatch):
 @pytest.mark.asyncio
 async def test_mock_mode_arabic_review_returns_arabic_reply(monkeypatch):
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", True)
-    config = SimpleNamespace(model="groq:oss-120b", tone="friendly",
+    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
                              databank_id=None, custom_instructions=None)
     text = await review_reply.generate_review_reply(
         config, 5, "مطعم رائع جداً", "أحمد", object()

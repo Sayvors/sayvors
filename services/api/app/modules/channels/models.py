@@ -92,8 +92,8 @@ class AutoReplyConfig(Base):
     )
     # Free-text brand voice / house rules injected into every reply prompt
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # LLM model id (provider catalog id, e.g. "groq:oss-120b")
-    model: Mapped[str] = mapped_column(String(100), default="groq:oss-120b")
+    # LLM model id (provider catalog id, e.g. "groq:openai/gpt-oss-120b")
+    model: Mapped[str] = mapped_column(String(100), default="groq:openai/gpt-oss-120b")
     # Polling lease (atomic claim across worker instances)
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     polling_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
