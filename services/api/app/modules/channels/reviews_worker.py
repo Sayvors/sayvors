@@ -73,9 +73,18 @@ async def _release_channel(db: AsyncSession, config_id: str) -> None:
 
 
 async def _already_replied(db: AsyncSession, review_id: str) -> bool:
-    """True if we already generated a reply row for this review."""
+    """True if this review already has a queued or posted reply.
+
+    Only `pending_approval`/`posted` rows count: `failed` rows are
+    retried on later polls, `rejected` rows were withdrawn on purpose.
+    """
     result = await db.execute(
-        select(ReviewReply.id).where(ReviewReply.review_id == review_id).limit(1)
+        select(ReviewReply.id)
+        .where(
+            ReviewReply.review_id == review_id,
+            ReviewReply.status.in_(["pending_approval", "posted"]),
+        )
+        .limit(1)
     )
     return result.scalar_one_or_none() is not None
 
@@ -160,6 +169,12 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
     """Poll one Google Reviews channel and auto-reply to new reviews."""
     stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
 
+    # The merchant's ON/OFF switch is the master gate: disabled channels are
+    # not processed at all (no generation, no drafts, no posting).
+    if not getattr(config, "enabled", True):
+        stats["skipped"] += 1
+        return stats
+
     mock_mode = settings.GOOGLE_REVIEWS_MOCK
     if mock_mode:
         logger.info(
@@ -213,6 +228,11 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
         for review in reviews:
             stats["reviews"] += 1
             await _store_inbound_review(db, channel.id, review)
+            if await _already_replied(db, review.review_id):
+                # Idempotency: a draft is already queued (or posted) for
+                # this review — polling it again must not create a duplicate.
+                stats["skipped"] += 1
+                continue
             try:
                 await _enqueue_review_discovered(db, channel, review)
             except Exception as e:
@@ -323,7 +343,9 @@ async def poll_once() -> dict:
                 .where(
                     Channel.platform == "google_reviews",
                     Channel.status == "active",
-                    AutoReplyConfig.enabled == True,  # noqa: E712
+                    # Master switch: OFF means no generation at all. When ON,
+                    # approval_mode + min_rating_auto decide auto-post vs draft.
+                    AutoReplyConfig.enabled.is_(True),
                     (AutoReplyConfig.last_polled_at.is_(None))
                     | (AutoReplyConfig.last_polled_at < due_before),
                 )
