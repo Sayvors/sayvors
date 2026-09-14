@@ -170,7 +170,7 @@ async def lifespan(app: FastAPI):
     await close_kafka()
 
 
-app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limit=1_000_000)
 
 app.add_middleware(
     CORSMiddleware,

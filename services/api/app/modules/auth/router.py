@@ -81,7 +81,7 @@ async def signup_endpoint(
     ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
 
-    if not await rate_limit(f"signup:{ip}", 5, 60):
+    if not await rate_limit(f"signup:{ip}", 60, 60):
         raise HTTPException(status_code=429, detail="Too many signup attempts. Try again later.")
 
     try:
@@ -129,10 +129,9 @@ async def login_endpoint(
     ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
 
-    if not await rate_limit(f"login:ip:{ip}", 10, 60):
+    if not await rate_limit(f"login:ip:{ip}", 100, 60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
-    # Per-identity limit stops one account being hammered from many IPs.
-    if not await rate_limit(f"login:user:{body.email.lower()}", 10, 60):
+    if not await rate_limit(f"login:user:{body.email.lower()}", 100, 60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
 
     try:
@@ -183,7 +182,7 @@ async def refresh_endpoint(
 
     ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
-    if not await rate_limit(f"refresh:{ip}", 30, 60):
+    if not await rate_limit(f"refresh:{ip}", 100, 60):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     try:
@@ -251,7 +250,7 @@ async def forgot_password_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     ip = get_client_ip(request)
-    if not await rate_limit(f"forgot:{ip}", 3, 60):
+    if not await rate_limit(f"forgot:{ip}", 10, 60):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     token = await forgot_password(body, db, ip)
@@ -267,7 +266,7 @@ async def reset_password_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     ip = get_client_ip(request)
-    if not await rate_limit(f"reset:{ip}", 3, 60):
+    if not await rate_limit(f"reset:{ip}", 10, 60):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
     try:
@@ -298,7 +297,7 @@ async def verify_otp_endpoint(
 ):
     ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
-    if not await rate_limit(f"verify-otp:{ip}", 10, 60):
+    if not await rate_limit(f"verify-otp:{ip}", 60, 60):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     try:
         result = await verify_signup_otp(str(body.email), body.code, db, user_agent, ip)

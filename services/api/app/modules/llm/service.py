@@ -10,6 +10,7 @@ from .providers.base import LLMMessage, LLMRequest, ProviderError
 from .providers.catalog import get_model_by_id, get_provider_from_model
 from .providers.registry import get_provider_for_model
 from .schemas import ChatRequest, ConversationCreate, MessageCreate
+from ...database import async_session as _async_session
 
 # Max messages to include in LLM context (token-aware windowing)
 MAX_HISTORY_MESSAGES = 40
@@ -118,8 +119,12 @@ async def send_message(
     )
     db.add(user_msg)
     await db.flush()
+    await db.commit()
+    await db.close()
 
-    history = await _load_history(conv_id, db)
+    async with _async_session() as read_db:
+        history = await _load_history(conv_id, read_db)
+
     history.append(LLMMessage(role="user", content=body.content))
 
     api_model, provider_key = _resolve_model(conv.model)
@@ -147,25 +152,26 @@ async def send_message(
     except Exception as e:
         raise ProviderError(provider_key, str(e), 502)
 
-    assistant_msg = Message(
-        id=str(uuid.uuid4()),
-        conversation_id=conv_id,
-        role="assistant",
-        content=content,
-        tokens=tokens,
-        provider_model=actual_model,
-    )
-    db.add(assistant_msg)
+    async with _async_session() as write_db:
+        assistant_msg = Message(
+            id=str(uuid.uuid4()),
+            conversation_id=conv_id,
+            role="assistant",
+            content=content,
+            tokens=tokens,
+            provider_model=actual_model,
+        )
+        write_db.add(assistant_msg)
+        conv_db = await get_conversation(conv_id, user, write_db)
+        if conv_db:
+            conv_db.updated_at = datetime.now(timezone.utc)
+        await write_db.commit()
 
-    conv.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(user_msg)
-    await db.refresh(assistant_msg)
     return user_msg, assistant_msg
 
 
 async def stream_message(
-    conv_id: str, body: MessageCreate, user: User, db: AsyncSession
+    conv_id: str, body: MessageCreate, user: User, db: AsyncSession,
 ):
     conv = await get_conversation(conv_id, user, db)
     if not conv:
@@ -179,8 +185,12 @@ async def stream_message(
     )
     db.add(user_msg)
     await db.flush()
+    await db.commit()
+    await db.close()
 
-    history = await _load_history(conv_id, db)
+    async with _async_session() as read_db:
+        history = await _load_history(conv_id, read_db)
+
     history.append(LLMMessage(role="user", content=body.content))
 
     api_model, provider_key = _resolve_model(conv.model)
@@ -206,16 +216,20 @@ async def stream_message(
         raise ProviderError(provider_key, str(e), 502)
 
     final_text = "".join(full_content)
-    assistant_msg = Message(
-        id=str(uuid.uuid4()),
-        conversation_id=conv_id,
-        role="assistant",
-        content=final_text,
-        provider_model=api_model,
-    )
-    db.add(assistant_msg)
-    conv.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+
+    async with _async_session() as write_db:
+        assistant_msg = Message(
+            id=str(uuid.uuid4()),
+            conversation_id=conv_id,
+            role="assistant",
+            content=final_text,
+            provider_model=api_model,
+        )
+        write_db.add(assistant_msg)
+        conv_db = await get_conversation(conv_id, user, write_db)
+        if conv_db:
+            conv_db.updated_at = datetime.now(timezone.utc)
+        await write_db.commit()
 
     yield {
         "type": "done",

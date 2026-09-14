@@ -21,15 +21,16 @@ async def hybrid_search(
     top_k: int,
     db: AsyncSession,
 ) -> list[dict]:
-    # 1. Load all chunks for this databank (with embeddings)
-    load_sql = text("""
+    limit = top_k * 3
+    load_sql = text(f"""
         SELECT id, content, document_id, metadata, embedding, embedding_model
         FROM document_chunks
         WHERE databank_id = :databank_id
           AND embedding IS NOT NULL
         ORDER BY seq
+        LIMIT :limit
     """)
-    result = await db.execute(load_sql, {"databank_id": databank_id})
+    result = await db.execute(load_sql, {"databank_id": databank_id, "limit": limit})
     all_chunks = result.fetchall()
 
     # 2. Vector search — in-memory cosine similarity.
