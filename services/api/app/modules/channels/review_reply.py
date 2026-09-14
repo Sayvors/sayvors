@@ -188,13 +188,13 @@ async def generate_review_reply(
         resp = await provider.complete(req)
     except ProviderError:
         # Configured model unreachable (no key, 403, …) — one retry on Groq.
-        if config.model == "groq:oss-120b":
+        if config.model == "groq:openai/gpt-oss-120b":
             raise
-        logger.warning("Reply model %s failed; retrying on groq:oss-120b", config.model)
-        provider = get_provider_for_model("groq:oss-120b")
-        api_model, _ = _resolve_model("groq:oss-120b")
+        logger.warning("Reply model %s failed; retrying on groq:openai/gpt-oss-120b", config.model)
+        provider = get_provider_for_model("groq:openai/gpt-oss-120b")
+        api_model, _ = _resolve_model("groq:openai/gpt-oss-120b")
         req.model = api_model
-        req.model_id = "groq:oss-120b"
+        req.model_id = "groq:openai/gpt-oss-120b"
         resp = await provider.complete(req)
     reply = resp.content.strip()
     if not reply:

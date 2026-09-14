@@ -8,10 +8,13 @@ key column.
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
+from ..analytics.models import ReviewInsight
+from ..channels.models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
+from ..locations.models import LocationProfile
 from ..users.models import User
 from . import service
 from .models import LocalithConnection
@@ -247,6 +250,33 @@ async def delete_my_connection(
         select(LocalithConnection).where(LocalithConnection.user_id == user.id)
     )
     c = result.scalar_one_or_none()
-    if c is not None:
-        await db.delete(c)
-        await db.commit()
+    if c is None:
+        return
+    listing_id = c.listing_id
+    await db.delete(c)
+    await db.flush()
+
+    # Localith-synced artifacts must go with the connection — otherwise the
+    # dashboard keeps showing ghost locations, reviews, drafts and stats.
+    channels = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == user.id,
+                Channel.platform == "google_reviews",
+                Channel.metadata_json.contains(listing_id),
+            )
+        )
+    ).scalars().all()
+    for ch in channels:
+        await db.execute(delete(ReviewReply).where(ReviewReply.channel_id == ch.id))
+        await db.execute(delete(ChannelMessage).where(ChannelMessage.channel_id == ch.id))
+        await db.execute(delete(AutoReplyConfig).where(AutoReplyConfig.channel_id == ch.id))
+        await db.execute(delete(ReviewInsight).where(ReviewInsight.channel_id == ch.id))
+        await db.delete(ch)
+    await db.execute(
+        delete(LocationProfile).where(
+            LocationProfile.user_id == user.id,
+            LocationProfile.listing_id == listing_id,
+        )
+    )
+    await db.commit()

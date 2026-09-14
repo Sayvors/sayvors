@@ -786,25 +786,34 @@ async def approve_review_reply(
     else:
         access_token = decrypt_token(channel.access_token) if channel.access_token else None
         refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
-        client = GoogleReviewsClient(access_token or "", refresh_token)
-        try:
-            if not access_token:
-                await client.refresh_access_token()
-            await client.reply_to_review(reply.review_id, reply.reply_text)
+        if not access_token and not refresh_token:
+            # Localith middleware channel: reviews sync through Localith and
+            # there is no Google token to post with. The merchant publishes
+            # the reply from their Localith/GBP dashboard — approval marks
+            # it posted locally so the queue and analytics stay honest.
             reply.status = "posted"
             reply.error = None
             await db.commit()
-        except GoogleReviewsError as e:
-            reply.status = "failed"
-            reply.error = str(e)[:2000]
-            await db.commit()
-            # Surface the real reason (e.g. "No refresh token available") —
-            # a generic message hides that re-consent is the only fix.
-            raise HTTPException(
-                status_code=e.status_code, detail=f"Failed to post reply to Google: {e}"
-            )
-        finally:
-            await client.close()
+        else:
+            client = GoogleReviewsClient(access_token or "", refresh_token)
+            try:
+                if not access_token:
+                    await client.refresh_access_token()
+                await client.reply_to_review(reply.review_id, reply.reply_text)
+                reply.status = "posted"
+                reply.error = None
+                await db.commit()
+            except GoogleReviewsError as e:
+                reply.status = "failed"
+                reply.error = str(e)[:2000]
+                await db.commit()
+                # Surface the real reason (e.g. "No refresh token available") —
+                # a generic message hides that re-consent is the only fix.
+                raise HTTPException(
+                    status_code=e.status_code, detail=f"Failed to post reply to Google: {e}"
+                )
+            finally:
+                await client.close()
 
     # Collapse duplicate drafts for the same review: approving one
     # withdraws its siblings (pending or failed) so the same review can

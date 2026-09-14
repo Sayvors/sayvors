@@ -231,15 +231,6 @@ function ConnectHub() {
     };
   }, []);
 
-  const connectGoogle = () => {
-    const token = getAccessToken();
-    if (!token) {
-      setBanner({ kind: "err", text: "Please log in first." });
-      return;
-    }
-    window.location.href = `${API}/api/v1/channels/google/connect?token=${encodeURIComponent(token)}`;
-  };
-
   const toggleAutoReply = async (channelId: string, enable: boolean) => {
     setBusy(channelId);
     try {
@@ -356,14 +347,17 @@ function ConnectHub() {
     }
   };
 
-  // ── Localith: disconnect ──
+  // ── Localith: disconnect (with destructive-data confirmation) ──
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+
   const disconnectLocalith = async () => {
+    setConfirmDisconnect(false);
     setLocalithBusy(true);
     try {
       await apiFetch("/api/v1/integrations/localith/connection", { method: "DELETE" });
       setLocalithListing(null);
       setLocalithProfile(null);
-      setBanner({ kind: "ok", text: "Localith disconnected." });
+      setBanner({ kind: "ok", text: "Localith disconnected — all related data was deleted." });
     } catch {
       setBanner({ kind: "err", text: "Could not disconnect Localith." });
     } finally {
@@ -404,50 +398,7 @@ function ConnectHub() {
 
       {/* ── Available channels ── */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {/* Google Reviews — REAL connect */}
-        <div className="animate-google-glow rounded-xl p-[2px] shadow-[0_0_28px_-8px_rgba(66,133,244,0.55)]">
-        <div className="relative flex items-center gap-4 rounded-[10px] bg-white p-4 dark:bg-ink">
-          <span className="absolute -top-2.5 left-4 rounded-full bg-gradient-to-r from-[#4285F4] to-[#34A853] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow-sm">
-            Recommended
-          </span>
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-ink/[0.08] dark:ring-fog/10">
-            <Image src="/google.svg" alt="Google" width={28} height={28} className="h-7 w-7" />
-          </div>
-          <div className="flex-1">
-            <p className="text-[14px] font-semibold">
-              <span aria-hidden>
-                <span className="text-[#4285F4]">G</span>
-                <span className="text-[#EA4335]">o</span>
-                <span className="text-[#FBBC05]">o</span>
-                <span className="text-[#4285F4]">g</span>
-                <span className="text-[#34A853]">l</span>
-                <span className="text-[#EA4335]">e</span>
-              </span>
-              <span className="sr-only">Google</span>
-              <span className="text-ink dark:text-fog"> Reviews</span>
-            </p>
-            <p className="flex items-center gap-1.5 text-[12px] text-ink/40 dark:text-fog/40">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0" aria-hidden>
-                <path d="M3 9l1.5-5h15L21 9" />
-                <path d="M3 9h18v2a2.5 2.5 0 01-5 0 2.5 2.5 0 01-5 0 2.5 2.5 0 01-5 0V9z" />
-                <path d="M5 12.5V20h14v-7.5" />
-                <path d="M9 20v-5h6v5" />
-              </svg>
-              {googleChannels.length > 0
-                ? `${googleChannels.length} location${googleChannels.length > 1 ? "s" : ""} connected`
-                : "AI replies to your reviews"}
-            </p>
-          </div>
-          <button
-            onClick={connectGoogle}
-            className="rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90"
-          >
-            {googleChannels.length > 0 ? "Add another" : "Connect"}
-          </button>
-        </div>
-        </div>
-
-        {/* Localith — review middleware (no Google approval needed) */}
+        {/* Localith — the Google connection path (no Google OAuth) */}
         {localithListing ? (
           <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-500/20 dark:bg-emerald-500/[0.06]">
             <div className="flex items-center gap-4">
@@ -483,7 +434,7 @@ function ConnectHub() {
                 {localithBusy ? <LogoLoader size={14} /> : "Sync now"}
               </button>
               <button
-                onClick={disconnectLocalith}
+                onClick={() => setConfirmDisconnect(true)}
                 disabled={localithBusy}
                 className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-500/10 disabled:opacity-50"
               >
@@ -759,6 +710,42 @@ function ConnectHub() {
 
       {loading && (
         <p className="text-[12px] text-ink/40 dark:text-fog/40">Loading your channels…</p>
+      )}
+
+      {/* Disconnect confirmation — destructive, must be explicit */}
+      {confirmDisconnect && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-label="Confirm Localith disconnect"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink">
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">
+              Disconnect Localith?
+            </h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-ink/60 dark:text-fog/60">
+              All data related to this account will be <strong className="text-red-600">deleted from the database</strong> — locations,
+              reviews, stats, drafts and settings. This cannot be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDisconnect(false)}
+                disabled={localithBusy}
+                className="rounded-lg px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:text-fog/60 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={disconnectLocalith}
+                disabled={localithBusy}
+                className="rounded-lg bg-red-600 px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-50"
+              >
+                {localithBusy ? "Deleting…" : "Yes, disconnect & delete data"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
