@@ -4,6 +4,43 @@ Planned work that is designed but NOT yet implemented. When starting an entry, m
 
 ---
 
+## 2. Response Tone selector in auto-reply settings (added 2026-09-14)
+
+**Status:** ✅ done (2026-09-14)
+- Tone select (Friendly / Professional / Apologetic / Playful + unknown-value guard) added to the channels hub AI-settings card (`app/dashboard/channels/page.tsx`) and the automations page card (`app/dashboard/automations/page.tsx`), wired to `PUT /api/v1/channels/{id}/autoreply` `{tone}`.
+
+**Goal:** Let the user pick the auto-reply tone — professional, friendly, apologetic, playful — instead of the current fixed "friendly" default.
+
+**Current state:** backend already supports it — `AutoReplyConfig.tone` (`services/api/app/modules/channels/models.py:83`, default "friendly") and `PUT /api/v1/channels/{id}/autoreply` accepts `{tone}` (schema documents "friendly, professional, apologetic, playful, ..." in `schemas.py:94`). The frontend never exposes it: the automations page renders tone only as a static chip (`apps/web/app/dashboard/automations/page.tsx:242` `{cfg?.tone ?? "friendly"}`), and the channels hub autoreply card has no tone control at all.
+
+**Plan:**
+- Add a tone `<select>` (options: Friendly / Professional / Apologetic / Playful) to:
+  1. the channels hub autoreply card (`apps/web/app/dashboard/channels/page.tsx` — where approval mode + custom instructions live, ~line 261-269 pattern), and
+  2. the automations page card (replace the static chip with the select).
+- Wire changes through `PUT /api/v1/channels/{id}/autoreply` with `{ tone }`; optimistic UI + banner on error, same as the approval-mode toggle.
+- Unknown saved tone values: include as an extra `<option>` guard (same idiom as the model select).
+- i18n: add keys in `lib/i18n/en.ts` + `ar.ts` (lockstep).
+
+**Verification:** `npx tsc --noEmit` + `npm run lint`; manual: set Professional on one channel → new review reply prompt uses `Tone: professional` (check API or reply output).
+
+---
+
+## 3. Multi-location expansion (added 2026-09-14)
+
+**Status:** partially done (2026-09-14)
+- ✅ "Add location" button + multi-location hint on `/dashboard/locations` (deep-links to channels hub; every connected Google channel becomes a location).
+- ✅ Verified per-location analytics already works: `/api/v1/analytics/*` accept `channel_id` and the analytics page has a location dropdown wired to it.
+- ✅ Per-location reviews already work via the `/dashboard/reviews` location dropdown.
+
+**Remaining gaps:**
+1. **Single Localith listing cap** — `localith_connections` unique on `user_id` (single-shared-key mode v1). Multi-location chains need multiple Localith listings or per-tenant keys (the model docstring already anticipates the per-tenant key upgrade).
+2. **"Add new location" wizard** — the button deep-links to the channels hub; a dedicated guided flow (choose listing → sync → set up autoreply) is not built.
+3. **Reviews UX** — reviews live in `/dashboard/reviews` with a location filter, not a per-location workspace; consider per-location review inboxes (channels `[slug]` workspace pattern exists).
+
+**Reference:** design sketch discussed 2026-09-14; full design TBD when picked up.
+
+---
+
 ## 1. Facebook Section — Dashboard & Pages (designed 2026-09-14)
 
 **Status:** pending (plan approved in design; implementation deferred by user request)

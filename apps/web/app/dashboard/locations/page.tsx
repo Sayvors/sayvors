@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
@@ -259,8 +260,26 @@ export default function LocationsPage() {
           <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
             {locations.length ? "Google connected" : "Google not connected"}
           </span>
+          <Link
+            href="/dashboard/channels"
+            title="Connect another Google location — every connected Google channel becomes a location here."
+            className="rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:opacity-90"
+          >
+            + Add location
+          </Link>
         </div>
       </div>
+
+      {/* Multi-location hint */}
+      {locations.length > 0 && (
+        <p className="rounded-xl border border-ink/[0.06] bg-white/60 p-3 text-[12px] text-ink/50 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/50">
+          Every connected Google location appears in this list — switch locations above, or{" "}
+          <Link href="/dashboard/channels" className="font-semibold text-deep-violet hover:underline">
+            connect another location
+          </Link>{" "}
+          to manage its reviews and auto-replies separately.
+        </p>
+      )}
 
       {/* Banner */}
       {banner && (

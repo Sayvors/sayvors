@@ -98,6 +98,7 @@ function ConnectHub() {
   const [expandedConfig, setExpandedConfig] = useState<string | null>(null);
   const [voiceDraft, setVoiceDraft] = useState("");
   const [approvalDraft, setApprovalDraft] = useState<"auto" | "approval">("auto");
+  const [toneDraft, setToneDraft] = useState("friendly");
   const [savingConfig, setSavingConfig] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -259,6 +260,7 @@ function ConnectHub() {
     setExpandedConfig(expandedConfig === channelId ? null : channelId);
     setVoiceDraft(cfg?.custom_instructions ?? "");
     setApprovalDraft(cfg?.approval_mode === "approval" ? "approval" : "auto");
+    setToneDraft(cfg?.tone ?? "friendly");
   };
 
   const saveConfig = async (channelId: string) => {
@@ -266,7 +268,7 @@ function ConnectHub() {
     try {
       const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
         method: "PUT",
-        body: JSON.stringify({ approval_mode: approvalDraft, custom_instructions: voiceDraft }),
+        body: JSON.stringify({ approval_mode: approvalDraft, custom_instructions: voiceDraft, tone: toneDraft }),
       });
       setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
       setBanner({ kind: "ok", text: "Response engine settings saved." });
@@ -702,6 +704,26 @@ function ConnectHub() {
                       <p className="mt-1 text-[10px] text-ink/35 dark:text-fog/35">
                         Automatic: replies post instantly above your rating threshold. Approval: every draft waits for you.
                       </p>
+                    </div>
+
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">
+                        Response tone
+                      </p>
+                      <select
+                        value={toneDraft}
+                        onChange={(e) => setToneDraft(e.target.value)}
+                        aria-label="Response tone"
+                        className="w-full rounded-lg border border-ink/[0.08] bg-white px-2.5 py-2 text-[12px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                      >
+                        <option value="friendly">Friendly — warm and casual</option>
+                        <option value="professional">Professional — formal and polished</option>
+                        <option value="apologetic">Apologetic — extra empathetic</option>
+                        <option value="playful">Playful — light and fun</option>
+                        {!["friendly", "professional", "apologetic", "playful"].includes(toneDraft) && (
+                          <option value={toneDraft}>{toneDraft}</option>
+                        )}
+                      </select>
                     </div>
 
                     <div>
