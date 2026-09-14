@@ -67,7 +67,6 @@ async def get_profile(
     db: AsyncSession, user_id: str, listing_id: str
 ) -> dict:
     """Merged profile for one listing (auto-creates the local row)."""
-    connection = await _connection(db, user_id)
     try:
         profile = await _profile(db, user_id, listing_id)
         await db.commit()
@@ -82,6 +81,12 @@ async def get_profile(
             profile = LocationProfile(user_id=user_id, listing_id=listing_id)
         else:
             raise
+
+    # Fetch after the try/except: the missing-table fallback in _profile
+    # rolls the session back, and rollback expires every loaded object.
+    # Touching an expired attribute below would trigger a sync lazy-load
+    # (MissingGreenlet); a fresh select repopulates it inside the await.
+    connection = await _connection(db, user_id)
 
     merged = {
         "listing_id": listing_id,
