@@ -542,6 +542,12 @@ async def google_callback(
             location_id = loc.get("name", "locations/").split("/")[-1]
             title = loc.get("title") or location_id
 
+            # Google access tokens typically expire in 3600s. Default if missing
+            # so we still know to refresh proactively.
+            from datetime import datetime, timedelta, timezone
+            expires_in = int(tokens.get("expires_in") or 3600)
+            token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
             # Skip if this location is already connected for this user
             import json as _json
             existing = await db.execute(
@@ -551,18 +557,22 @@ async def google_callback(
                     Channel.status == "active",
                 )
             )
-            already = any(
-                _channel_meta_meta(c).get("location_id") == location_id
+            matching = [
+                c
                 for c in existing.scalars().all()
-            )
-            if already:
+                if _channel_meta_meta(c).get("location_id") == location_id
+            ]
+            if matching:
+                # Re-consent heals tokens: a fresh refresh_token repairs
+                # channels that can't publish ("No refresh token available").
+                # Never overwrite a stored refresh token with nothing —
+                # Google only sends one on fresh consent.
+                if refresh_token:
+                    for c in matching:
+                        c.access_token = encrypt_token(access_token)
+                        c.refresh_token = encrypt_token(refresh_token)
+                        c.token_expires_at = token_expires_at
                 continue
-
-            # Google access tokens typically expire in 3600s. Default if missing
-            # so we still know to refresh proactively.
-            from datetime import datetime, timedelta, timezone
-            expires_in = int(tokens.get("expires_in") or 3600)
-            token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
             channel = Channel(
                 id=str(_uuid.uuid4()),
@@ -788,9 +798,30 @@ async def approve_review_reply(
             reply.status = "failed"
             reply.error = str(e)[:2000]
             await db.commit()
-            raise HTTPException(status_code=e.status_code, detail="Failed to post reply to Google")
+            # Surface the real reason (e.g. "No refresh token available") —
+            # a generic message hides that re-consent is the only fix.
+            raise HTTPException(
+                status_code=e.status_code, detail=f"Failed to post reply to Google: {e}"
+            )
         finally:
             await client.close()
+
+    # Collapse duplicate drafts for the same review: approving one
+    # withdraws its siblings (pending or failed) so the same review can
+    # never be posted twice (the poll worker used to queue one draft
+    # per pass).
+    sibling_result = await db.execute(
+        select(ReviewReply).where(
+            ReviewReply.channel_id == channel.id,
+            ReviewReply.review_id == reply.review_id,
+            ReviewReply.status.in_(["pending_approval", "failed"]),
+            ReviewReply.id != reply.id,
+        )
+    )
+    for sibling in sibling_result.scalars().all():
+        sibling.status = "rejected"
+        sibling.error = None
+    await db.commit()
 
     # Keep analytics response-rate/response-time accurate
     try:
