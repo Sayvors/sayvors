@@ -9,6 +9,7 @@ import {
   approveReply,
   rejectReply,
   retryReply,
+  verifyPostedReplies,
   type ReviewReplyDTO,
 } from "@/lib/api-analytics";
 
@@ -17,7 +18,7 @@ interface ChannelOption {
   display_name: string | null;
 }
 
-type StatusFilter = "pending_approval" | "posted" | "failed" | "approved";
+type StatusFilter = "pending_approval" | "posted" | "failed";
 
 const STATUS_META: Record<StatusFilter, { label: string; pill: string }> = {
   pending_approval: {
@@ -27,10 +28,6 @@ const STATUS_META: Record<StatusFilter, { label: string; pill: string }> = {
   posted: {
     label: "Posted",
     pill: "bg-emerald-600/15 text-emerald-700 dark:text-emerald-300",
-  },
-  approved: {
-    label: "Approved",
-    pill: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
   },
   failed: {
     label: "Failed",
@@ -117,17 +114,34 @@ export default function OutboxPage() {
     setBusy(r.id);
     setBanner(null);
     try {
-      const updated = await approveReply(r.channel_id, r.id);
-      setBanner({
-        kind: "ok",
-        text:
-          updated.status === "approved"
-            ? "Approved — post it from your Localith dashboard to make it live on Google."
-            : "Published to Google.",
-      });
+      await approveReply(r.channel_id, r.id);
+      setBanner({ kind: "ok", text: "Published to Google — verified live." });
       if (selected) void load(selected);
     } catch (e) {
       setBanner({ kind: "err", text: apiDetail(e) || "Could not publish. Try again." });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onVerifyPosted = async () => {
+    if (!selected || busy !== null) return;
+    setBusy("verify");
+    setBanner(null);
+    try {
+      const res = await verifyPostedReplies(selected);
+      setBanner({
+        kind: res.corrected > 0 ? "err" : "ok",
+        text:
+          res.checked === 0
+            ? "Nothing marked posted to check."
+            : res.corrected > 0
+              ? `${res.corrected} of ${res.checked} were not actually on Google — moved back to Failed.`
+              : `All ${res.confirmed} confirmed live on Google.`,
+      });
+      void load(selected);
+    } catch (e) {
+      setBanner({ kind: "err", text: apiDetail(e) || "Could not verify. Try again." });
     } finally {
       setBusy(null);
     }
@@ -217,6 +231,21 @@ export default function OutboxPage() {
           </button>
         ))}
       </div>
+
+      {filter === "posted" && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.06] dark:bg-ink">
+          <p className="text-[12px] text-ink/55 dark:text-fog/55">
+            Posted means confirmed live on Google. Re-check any time.
+          </p>
+          <button
+            onClick={() => void onVerifyPosted()}
+            disabled={busy !== null || !selected}
+            className="shrink-0 rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+          >
+            {busy === "verify" ? "Verifying…" : "Verify against Google"}
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
