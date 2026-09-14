@@ -46,14 +46,17 @@ export function middleware(request: NextRequest) {
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
 
-  const scriptSrc = isProd ? "'self'" : "'self' 'unsafe-eval' 'unsafe-inline'";
+  const scriptExtras = isProd ? "" : " 'unsafe-eval' 'unsafe-inline'";
   const csp = [
     "default-src 'self'",
-    `script-src 'self' ${scriptSrc}`,
+    // API host: serves the proxied Meta SDK script (cross-origin script tag).
+    `script-src 'self' ${apiUrl}${scriptExtras}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    `connect-src 'self' ${apiUrl}`,
+    // Meta SDK subresources (graph calls, dialog/popup channel frames).
+    `connect-src 'self' ${apiUrl} https://graph.facebook.com https://connect.facebook.net`,
+    "frame-src 'self' https://www.facebook.com https://web.facebook.com",
     "frame-ancestors 'none'",
   ].join("; ");
   response.headers.set("Content-Security-Policy", csp);
