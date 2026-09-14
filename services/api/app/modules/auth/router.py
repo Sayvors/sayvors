@@ -97,7 +97,7 @@ async def signup_endpoint(
         value=refresh_token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.REFRESH_COOKIE_MAX_AGE,
         path="/",
     )
@@ -108,7 +108,7 @@ async def signup_endpoint(
         value=csrf_token,
         httponly=False,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.REFRESH_COOKIE_MAX_AGE,
         path="/",
     )
@@ -152,7 +152,7 @@ async def login_endpoint(
         value=refresh_token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.REFRESH_COOKIE_MAX_AGE,
         path="/",
     )
@@ -163,7 +163,7 @@ async def login_endpoint(
         value=csrf_token,
         httponly=False,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.REFRESH_COOKIE_MAX_AGE,
         path="/",
     )
@@ -197,7 +197,7 @@ async def refresh_endpoint(
         value=new_refresh,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.REFRESH_COOKIE_MAX_AGE,
         path="/",
     )
@@ -208,7 +208,7 @@ async def refresh_endpoint(
         value=csrf_token,
         httponly=False,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.REFRESH_COOKIE_MAX_AGE,
         path="/",
     )
@@ -237,7 +237,7 @@ async def csrf_token_endpoint(response: Response):
         value=csrf_token,
         httponly=False,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.REFRESH_COOKIE_MAX_AGE,
         path="/",
     )
@@ -311,7 +311,7 @@ async def verify_otp_endpoint(
         value=refresh_token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.REFRESH_COOKIE_MAX_AGE,
         path="/",
     )
@@ -321,7 +321,7 @@ async def verify_otp_endpoint(
         value=csrf_token,
         httponly=False,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.REFRESH_COOKIE_MAX_AGE,
         path="/",
     )

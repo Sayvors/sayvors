@@ -1,11 +1,14 @@
-"""Instagram adapter (FB-Login stack: IG Professional via its Facebook Page).
+"""Instagram adapter (Login for Business with its own configuration).
 
-Auth reuses the Facebook Login for Business connection; this adapter
-discovers the linked IG business account per Page and validates API
-eligibility at connect time.
+The connect dialog uses META_INSTAGRAM_CONFIG_ID — independent from the
+Facebook configuration. Token exchange reuses the Facebook Login stack;
+IG business accounts are discovered per Facebook Page and API eligibility
+(professional + public) is validated at connect time.
 """
 import logging
+from urllib.parse import urlencode
 
+from .....config import settings
 from .base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter
 
 logger = logging.getLogger(__name__)
@@ -15,13 +18,30 @@ class InstagramAdapter(MetaProviderAdapter):
     provider = "instagram"
 
     def build_auth_entry(self, state: str) -> dict:
-        # Instagram uses the Facebook Login for Business flow; the tenant
-        # connects Facebook first, then links the IG account to a Page.
-        from .facebook import FacebookAdapter
+        # Instagram connects through its own Login for Business
+        # configuration — never the Facebook one. Dialog shape is
+        # identical; only config_id differs.
+        if not settings.META_APP_ID or not settings.META_INSTAGRAM_CONFIG_ID:
+            raise MetaAPIError(
+                "Instagram Login not configured. Set META_APP_ID / "
+                "META_INSTAGRAM_CONFIG_ID in .env",
+                503,
+            )
+        from .facebook import FB_DIALOG_URL
 
-        entry = FacebookAdapter().build_auth_entry(state)
-        entry["note"] = "Connect Facebook first, then select the linked Instagram account."
-        return entry
+        params = {
+            "client_id": settings.META_APP_ID,
+            "redirect_uri": settings.META_OAUTH_REDIRECT_URI,
+            "config_id": settings.META_INSTAGRAM_CONFIG_ID,
+            "response_type": "code",
+            "override_default_response_type": "true",
+            "state": state,
+        }
+        return {
+            "auth_url": f"{FB_DIALOG_URL}?{urlencode(params)}",
+            "state": state,
+            "note": "Connect Instagram, then use 'Discover from my Pages'.",
+        }
 
     async def exchange_code(self, code: str, redirect_uri: str | None = None) -> dict:
         from .facebook import FacebookAdapter

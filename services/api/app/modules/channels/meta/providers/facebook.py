@@ -57,8 +57,19 @@ class FacebookAdapter(MetaProviderAdapter):
 
     async def discover_assets(self, credentials: dict) -> list[DiscoveredAsset]:
         token = credentials.get("access_token", "")
+        # access_token + tasks are required: the page token powers all
+        # page-level API calls, tasks tells what it may do. Never log it.
         resp = await self._graph(
-            "GET", "/me/accounts", token, params={"fields": "id,name,link"}
+            "GET", "/me/accounts", token,
+            params={"fields": "id,name,link,access_token,tasks"},
+        )
+        try:
+            data = resp.json().get("data", [])
+        except Exception:
+            data = []
+        logger.info(
+            "Facebook /me/accounts: status=%s pages=%d token_present=%s",
+            resp.status_code, len(data), bool(token),
         )
         out = [
             DiscoveredAsset(
@@ -71,7 +82,7 @@ class FacebookAdapter(MetaProviderAdapter):
                     "page_access_token": p.get("access_token", ""),
                 },
             )
-            for p in resp.json().get("data", [])
+            for p in data
             if p.get("id")
         ]
         logger.info("Facebook asset discovery: %d pages", len(out))

@@ -116,10 +116,24 @@ function ConnectHub() {
   const googleError = params.get("google_error");
   const metaConnected = params.get("meta_connected");
   const metaError = params.get("meta_error");
+  const metaNext = params.get("next");
+  const discoveryError = params.get("discovery_error");
 
   // URL-driven banner derived during render (no effect needed)
   const urlBanner = useMemo(() => {
+    if (discoveryError) {
+      return {
+        kind: "err" as const,
+        text: `Connected, but Page/asset discovery failed (Graph ${discoveryError}). Grant the Page in the Meta dialog (pages_show_list) and reconnect.`,
+      };
+    }
     if (metaConnected !== null) {
+      if (metaConnected === "facebook" && metaNext === "instagram_select") {
+        return {
+          kind: "ok" as const,
+          text: "Instagram connected! Open the Instagram card below and click Discover from my Pages.",
+        };
+      }
       return {
         kind: "ok" as const,
         text:
@@ -147,7 +161,7 @@ function ConnectHub() {
       };
     }
     return null;
-  }, [connectedCount, googleError, metaConnected, metaError]);
+  }, [connectedCount, googleError, metaConnected, metaError, metaNext, discoveryError]);
   const activeBanner = banner ?? (urlDismissed ? null : urlBanner);
 
   const dismissBanner = useCallback(() => {
