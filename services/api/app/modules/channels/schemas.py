@@ -119,8 +119,10 @@ class ReviewReplyResponse(BaseModel):
     reviewer_name: str | None
     reply_text: str
     status: str
+    generation_attempt: int = 1
     error: str | None
     created_at: str
+    review_url: str | None = None
 
 
 class ReviewReplyListResponse(BaseModel):

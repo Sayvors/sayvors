@@ -65,7 +65,7 @@ async def sync_all_once(session_factory=None) -> dict:
 
 async def run_localith_sync_worker() -> None:
     """Background loop started from app lifespan."""
-    interval = max(300, settings.LOCALITH_SYNC_INTERVAL_SECONDS)
+    interval = max(60, settings.LOCALITH_SYNC_INTERVAL_SECONDS)
     while True:
         try:
             totals = await sync_all_once()

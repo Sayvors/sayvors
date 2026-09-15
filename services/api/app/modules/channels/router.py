@@ -729,7 +729,21 @@ async def list_review_replies(
 ):
     await _get_owned_channel(channel_id, user, db)
 
+    from ..analytics.models import ReviewInsight
+
+    # Reviews the merchant flagged as deleted/removed on Google —
+    # never surface them in the approval queue or anywhere else.
+    skipped_result = await db.execute(
+        select(ReviewInsight.review_id).where(
+            ReviewInsight.channel_id == channel_id,
+            ReviewInsight.skipped == True,  # noqa: E712
+        )
+    )
+    skipped_ids = {r[0] for r in skipped_result.scalars().all()}
+
     query = select(ReviewReply).where(ReviewReply.channel_id == channel_id)
+    if skipped_ids:
+        query = query.where(~ReviewReply.review_id.in_(skipped_ids))
     if status_filter:
         query = query.where(ReviewReply.status == status_filter)
     result = await db.execute(query.order_by(ReviewReply.created_at.desc()).limit(limit).offset(offset))
@@ -738,9 +752,26 @@ async def list_review_replies(
     pending_result = await db.execute(
         select(ReviewReply.id)
         .where(ReviewReply.channel_id == channel_id, ReviewReply.status == "pending_approval")
+        .where(~ReviewReply.review_id.in_(skipped_ids))
         .limit(1000)
     )
     pending = len(pending_result.scalars().all())
+
+    # Live Google review links (synced into analytics insights) so the
+    # merchant can eyeball each review — and its reply — on Google.
+    review_urls: dict[str, str] = {}
+    review_ids = [r.review_id for r in rows]
+    if review_ids:
+        from ..analytics.models import ReviewInsight
+
+        url_rows = await db.execute(
+            select(ReviewInsight.review_id, ReviewInsight.review_url).where(
+                ReviewInsight.channel_id == channel_id,
+                ReviewInsight.review_id.in_(review_ids),
+                ReviewInsight.review_url.is_not(None),
+            )
+        )
+        review_urls = {rid: url for rid, url in url_rows.all()}
 
     return ReviewReplyListResponse(
         replies=[
@@ -753,8 +784,10 @@ async def list_review_replies(
                 reviewer_name=r.reviewer_name,
                 reply_text=r.reply_text,
                 status=r.status,
+                generation_attempt=r.generation_attempt,
                 error=r.error,
                 created_at=r.created_at.isoformat(),
+                review_url=review_urls.get(r.review_id),
             )
             for r in rows
         ],
@@ -779,7 +812,7 @@ async def verify_posted_replies(
     from .service import decrypt_token
 
     channel = await _get_owned_channel(channel_id, user, db)
-    rows = (
+    all_posted = (
         await db.execute(
             select(ReviewReply)
             .where(
@@ -790,6 +823,19 @@ async def verify_posted_replies(
             .limit(500)
         )
     ).scalars().all()
+
+    # Localith rows were confirmed at approve time by the Localith API —
+    # they can't (and must not) be re-verified against Google directly.
+    rows = [r for r in all_posted if not r.review_id.startswith("localith:")]
+    skipped_localith = len(all_posted) - len(rows)
+    if not rows:
+        return {
+            "channel_id": channel.id,
+            "checked": 0,
+            "confirmed": 0,
+            "corrected": 0,
+            "skipped_localith": skipped_localith,
+        }
 
     access_token = decrypt_token(channel.access_token) if channel.access_token else None
     refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
@@ -827,6 +873,7 @@ async def verify_posted_replies(
         "checked": len(rows),
         "confirmed": confirmed,
         "corrected": corrected,
+        "skipped_localith": skipped_localith,
     }
 
 
@@ -860,44 +907,67 @@ async def approve_review_reply(
             status_code=503,
             detail="Mock mode: connect a real Google Business Profile to publish replies.",
         )
-    access_token = decrypt_token(channel.access_token) if channel.access_token else None
-    refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
-    if not access_token and not refresh_token:
-        # No Google tokens: nothing can reach Google. Leave the draft
-        # pending and tell the merchant the only fix is re-consent.
-        raise HTTPException(
-            status_code=401,
-            detail="Google account not connected. Reconnect Google on the Connect page, then approve again.",
-        )
-    client = GoogleReviewsClient(access_token or "", refresh_token)
-    try:
-        if not access_token:
-            await client.refresh_access_token()
-        await client.reply_to_review(reply.review_id, reply.reply_text)
-        # "posted" must mean live on Google: confirm by reading the
-        # review back before stamping the status.
-        if not await client.confirm_reply_live(reply.review_id):
+
+    if reply.review_id.startswith("localith:"):
+        # Localith-sourced review: publish through Localith's
+        # POST /items/{id}/replies — as a GBP partner they post it live
+        # on the connected listing, no per-tenant Google OAuth needed.
+        from ..localith.service import post_reply as localith_post_reply
+
+        item_id = reply.review_id.split(":", 1)[1]
+        try:
+            await localith_post_reply(item_id, reply.reply_text)
+        except Exception as e:
+            logger.warning("Localith reply publish failed review=%s item=%s: %s", reply.review_id, item_id, e)
             reply.status = "failed"
-            reply.error = (
-                "Google accepted the reply but it is not showing on the "
-                "listing. Approve again to retry."
-            )
+            reply.error = str(e)[:2000]
             await db.commit()
-            raise HTTPException(status_code=502, detail=reply.error)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to post reply via Localith: {e}",
+            )
         reply.status = "posted"
         reply.error = None
         await db.commit()
-    except GoogleReviewsError as e:
-        reply.status = "failed"
-        reply.error = str(e)[:2000]
-        await db.commit()
-        # Surface the real reason (e.g. "No refresh token available") —
-        # a generic message hides that re-consent is the only fix.
-        raise HTTPException(
-            status_code=e.status_code, detail=f"Failed to post reply to Google: {e}"
-        )
-    finally:
-        await client.close()
+    else:
+        access_token = decrypt_token(channel.access_token) if channel.access_token else None
+        refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+        if not access_token and not refresh_token:
+            # No Google tokens: nothing can reach Google. Leave the draft
+            # pending and tell the merchant the only fix is re-consent.
+            raise HTTPException(
+                status_code=401,
+                detail="Google account not connected. Reconnect Google on the Connect page, then approve again.",
+            )
+        client = GoogleReviewsClient(access_token or "", refresh_token)
+        try:
+            if not access_token:
+                await client.refresh_access_token()
+            await client.reply_to_review(reply.review_id, reply.reply_text)
+            # "posted" must mean live on Google: confirm by reading the
+            # review back before stamping the status.
+            if not await client.confirm_reply_live(reply.review_id):
+                reply.status = "failed"
+                reply.error = (
+                    "Google accepted the reply but it is not showing on the "
+                    "listing. Approve again to retry."
+                )
+                await db.commit()
+                raise HTTPException(status_code=502, detail=reply.error)
+            reply.status = "posted"
+            reply.error = None
+            await db.commit()
+        except GoogleReviewsError as e:
+            reply.status = "failed"
+            reply.error = str(e)[:2000]
+            await db.commit()
+            # Surface the real reason (e.g. "No refresh token available") —
+            # a generic message hides that re-consent is the only fix.
+            raise HTTPException(
+                status_code=e.status_code, detail=f"Failed to post reply to Google: {e}"
+            )
+        finally:
+            await client.close()
 
     # Collapse duplicate drafts for the same review: approving one
     # withdraws its siblings (pending or failed) so the same review can
@@ -944,6 +1014,7 @@ async def approve_review_reply(
         reviewer_name=reply.reviewer_name,
         reply_text=reply.reply_text,
         status=reply.status,
+        generation_attempt=reply.generation_attempt,
         error=reply.error,
         created_at=reply.created_at.isoformat(),
     )
@@ -1006,10 +1077,12 @@ async def generate_reply_for_review(
             reviewer_name=body.reviewer_name,
             reply_text=reply_text,
             status="pending_approval",
+            generation_attempt=1,
         )
         write_db.add(reply)
         await write_db.commit()
         await write_db.refresh(reply)
+        return _reply_response(reply)
 
 @router.put("/{channel_id}/reviews/{reply_id}", response_model=ReviewReplyResponse)
 async def edit_pending_reply(
@@ -1049,9 +1122,12 @@ async def regenerate_reply(
 
     from .review_reply import generate_review_reply
 
+    # The model knows this is a rejected draft so it writes a fresh variation.
+    attempt = (reply.generation_attempt or 1) + 1
     try:
         reply.reply_text = await generate_review_reply(
-            config, reply.rating, reply.review_text, reply.reviewer_name, db
+            config, reply.rating, reply.review_text, reply.reviewer_name, db,
+            attempt=attempt, previous_draft=reply.reply_text,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
@@ -1059,6 +1135,7 @@ async def regenerate_reply(
     async with _async_session() as write_db:
         refreshed = await write_db.get(ReviewReply, reply_id)
         refreshed.reply_text = reply.reply_text
+        refreshed.generation_attempt = attempt
         await write_db.commit()
         await write_db.refresh(refreshed)
         return _reply_response(refreshed)
@@ -1076,6 +1153,9 @@ async def retry_failed_reply(
     reply = await _get_owned_reply(channel_id, reply_id, user, db)
     if reply.status != "failed":
         raise HTTPException(status_code=400, detail="Only failed replies can be retried")
+    # Generation attempt: only counts real generations. A retry with text
+    # already in hand just re-queues; an empty failed row regenerates (+1).
+    attempt = reply.generation_attempt or 1
     if not (reply.reply_text or "").strip():
         config = (
             await db.execute(
@@ -1087,9 +1167,11 @@ async def retry_failed_reply(
             db.add(config)
         from .review_reply import generate_review_reply
 
+        attempt += 1
         try:
             reply.reply_text = await generate_review_reply(
-                config, reply.rating, reply.review_text, reply.reviewer_name, db
+                config, reply.rating, reply.review_text, reply.reviewer_name, db,
+                attempt=attempt,
             )
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
@@ -1098,6 +1180,7 @@ async def retry_failed_reply(
         refreshed = await write_db.get(ReviewReply, reply_id)
         refreshed.status = "pending_approval"
         refreshed.error = None
+        refreshed.generation_attempt = attempt
         if reply.reply_text:
             refreshed.reply_text = reply.reply_text
         await write_db.commit()
@@ -1112,11 +1195,16 @@ async def reject_reply(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Discard a pending reply draft without posting anything to Google."""
+    """Discard a reply draft without posting anything to Google.
+
+    Failed drafts can be discarded too — e.g. when the review was
+    deleted on Google and no retry can ever succeed.
+    """
     reply = await _get_owned_reply(channel_id, reply_id, user, db)
-    if reply.status != "pending_approval":
-        raise HTTPException(status_code=400, detail="Only pending replies can be rejected")
+    if reply.status not in ("pending_approval", "failed"):
+        raise HTTPException(status_code=400, detail="Only pending or failed replies can be rejected")
     reply.status = "rejected"
+    reply.error = None
     await db.commit()
     await db.refresh(reply)
     return _reply_response(reply)
@@ -1132,6 +1220,7 @@ def _reply_response(reply: ReviewReply) -> ReviewReplyResponse:
         reviewer_name=reply.reviewer_name,
         reply_text=reply.reply_text,
         status=reply.status,
+        generation_attempt=getattr(reply, "generation_attempt", 1) or 1,
         error=reply.error,
         created_at=reply.created_at.isoformat(),
     )

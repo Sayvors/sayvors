@@ -11,6 +11,7 @@ export interface GoogleReview {
   createdAt: string;
   locationName: string;
   replied: boolean;
+  skipped?: boolean;
   sentiment?: string;
   reviewUrl?: string;
 }
@@ -96,11 +97,14 @@ function GoogleGIcon() {
 export default function GoogleReviewCard({
   review,
   onOpen,
+  onFlag,
 }: {
   review: GoogleReview;
   onOpen: (id: string) => void;
+  onFlag?: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const open = () => onOpen(review.id);
   const isLong = review.comment.length > 180;
   const displayText = expanded || !isLong ? review.comment : `${review.comment.slice(0, 180).trimEnd()}…`;
@@ -145,6 +149,33 @@ export default function GoogleReviewCard({
         </div>
 
         <GoogleGIcon />
+        {onFlag && !review.replied && !review.skipped && (
+          <div className="relative ml-1">
+            <button
+              onClick={(e) => { e.stopPropagation(); e.preventDefault(); setMenuOpen((v) => !v); }}
+              className="rounded-full p-1 text-[#5F6368] hover:bg-[#F1F3F4] focus-visible:ring-2 focus-visible:ring-[#1A73E8]/30"
+              aria-label="Review actions"
+              tabIndex={0}
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+                <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+              </svg>
+            </button>
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+                <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-lg border border-[#DADCE0] bg-white py-1 shadow-lg">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); onFlag?.(review.id); setMenuOpen(false); }}
+                    className="block w-full px-4 py-2 text-left text-[12px] font-medium text-[#5F6368] hover:bg-[#F1F3F4]"
+                  >
+                    Mark as unavailable on Google
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Location — secondary row */}
@@ -184,6 +215,11 @@ export default function GoogleReviewCard({
           <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[#137333]">
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#34A853]" />
             Replied
+          </span>
+        ) : review.skipped ? (
+          <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[#5F6368]">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#AAAAAA]" />
+            Unavailable on Google
           </span>
         ) : (
           <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[#5F6368]">

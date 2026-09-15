@@ -78,6 +78,7 @@ class ReviewInsightItem(BaseModel):
     problems: list[Any]
     replied: bool
     replied_at: datetime | None = None
+    skipped: bool = False
     review_url: str | None = None
     review_updated_at: datetime | None = None
     created_at: datetime

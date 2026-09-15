@@ -6,11 +6,13 @@ as a middleware today so we can read GBP data without a per-tenant
 Google approval; once native Google API access lands, the same shape
 goes to the Google adapter.
 
-Endpoint map (from the public Localith n8n community node source):
+Endpoint map (from the public Localith n8n community node source
+    and https://app.localith.ai/app/api/documentation):
     https://github.com/localithai/n8n-nodes-localith (nodes/Localith/Localith.node.ts)
     baseURL: https://embedsocial.com/app/api
     items:            GET   /rest/v1/items           (individual reviews)
                       query: page, pageSize (max 100), sourceId, sort (+field/-field)
+    reply:            POST  /rest/v1/items/{id}/replies  (write — publishes to Google)
     listings:         GET   /rest/v1/listings        (connected locations)
                       query: address, name, page, pageSize, sort
     listing detail:   GET   /rest/v1/listings/{listingId}
@@ -30,6 +32,7 @@ Env vars (never committed)::
 
 from __future__ import annotations
 
+import json
 import os
 import urllib.parse
 from dataclasses import dataclass, field
@@ -97,6 +100,42 @@ def _get(path: str, params: dict | None = None, timeout: int = 30) -> dict | lis
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def post_item_reply(item_id: str, text: str, timeout: int = 30) -> dict:
+    """Create a reply for a review item: POST /rest/v1/items/{id}/replies.
+
+    Localith is a Google Business Profile partner, so this reply goes
+    live on the connected listing. Body contract (confirmed live against
+    the API and per the official docs): {"comment": "<reply text>"}.
+    Returns the created reply: {id, comment, updateTime}.
+    """
+    base, key, _ = _config()
+    url = _http_url(f"{base}/rest/v1/items/{urllib.parse.quote(str(item_id), safe='')}/replies")
+    headers = {**_HEADERS, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    resp = httpx.post(url, content=json.dumps({"comment": text}).encode("utf-8"), headers=headers, timeout=timeout)
+    if resp.status_code < 300:
+        try:
+            return resp.json()
+        except ValueError:
+            return {}
+    if resp.status_code in (400, 422):
+        # Their validation detail (e.g. {"errors": {"comment": ...}}) is
+        # the most useful thing we can surface to the merchant. A 400 on
+        # approve almost always means the review is unreachable on
+        # Google: it either already has a reply (one per review) or it
+        # was deleted/removed since the sync — both are unfixable here.
+        hint = (
+            " (the review either already has a reply on Google, or it"
+            " was deleted/removed since the sync — in both cases it"
+            " cannot be replied to)"
+            if resp.status_code == 400
+            else ""
+        )
+        detail = resp.text[:300].replace("\n", " ")
+        raise RuntimeError(f"Localith reply rejected (HTTP {resp.status_code}){hint}: {detail}")
+    resp.raise_for_status()
+    return {}
 
 
 def fetch_items(limit: int = 50, listing_id: str | None = None) -> list[dict]:

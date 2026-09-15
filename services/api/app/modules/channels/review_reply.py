@@ -38,6 +38,7 @@ Tone: {tone}.
 {rating_guidance}
 {custom_block}
 {context_block}
+{retry_block}
 {language_block}
 Write only the reply text — nothing else."""
 
@@ -100,8 +101,27 @@ async def generate_review_reply(
     review_text: str | None,
     reviewer_name: str | None,
     db: AsyncSession,
+    attempt: int = 1,
+    previous_draft: str | None = None,
 ) -> str:
-    """Generate a public reply to a review using the channel's configured model/tone."""
+    """Generate a public reply to a review using the channel's configured model/tone.
+
+    `attempt` > 1 marks a regenerate/retry: `previous_draft` (the wording the
+    merchant rejected) is shown to the model so the new draft differs.
+    """
+    retry_block = ""
+    if attempt > 1 and (previous_draft or "").strip():
+        retry_block = (
+            f"This is attempt #{attempt} of drafting a reply for this review.\n"
+            f"Previous draft the merchant rejected:\n\"{previous_draft.strip()[:800]}\"\n"
+            "Write a DIFFERENT reply — keep the same policy and tone, but do not "
+            "reuse the previous draft's wording, opening line or structure."
+        )
+    elif attempt > 1:
+        retry_block = (
+            f"This is attempt #{attempt} of drafting a reply for this review "
+            "(earlier attempts failed to generate)."
+        )
     lang = _review_language(review_text)
     if lang == "ar":
         language_block = (
@@ -163,6 +183,7 @@ async def generate_review_reply(
         rating_guidance=_rating_guidance(rating),
         custom_block=custom_block,
         context_block=context_block,
+        retry_block=retry_block,
         language_block=language_block,
     )
 

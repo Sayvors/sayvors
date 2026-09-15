@@ -8,7 +8,7 @@ import GoogleReviewCard, { GoogleStars } from "@/components/reviews/GoogleReview
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
 import { approveReply, editReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
 
-type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval";
+type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
 
 interface ReviewItem {
@@ -21,6 +21,7 @@ interface ReviewItem {
   comment: string;
   createdAt: string;
   replied: boolean;
+  skipped: boolean;
   sentiment?: string;
   reviewUrl?: string;
   reply_text?: string;
@@ -70,8 +71,9 @@ function ReviewsInner() {
   const [page, setPage] = useState(1);
   const [needApprovalPage, setNeedApprovalPage] = useState(1);
   const [approvingAllPending, setApprovingAllPending] = useState(false);
-  const [approvingId, setApprovingId] = useState<string | null>(null);
-  const [pendingReplies, setPendingReplies] = useState<ReviewReplyDTO[]>([]);
+   const [approvingId, setApprovingId] = useState<string | null>(null);
+   const [pendingReplies, setPendingReplies] = useState<ReviewReplyDTO[]>([]);
+   const [skippingId, setSkippingId] = useState<string | null>(null);
   const [draftTexts, setDraftTexts] = useState<Record<string, string>>({});
   const [regenId, setRegenId] = useState<string | null>(null);
   const [replyMode, setReplyMode] = useState<"manual" | "ai">("manual");
@@ -220,20 +222,22 @@ function ReviewsInner() {
 
   const counts = useMemo(() => ({
     all: reviews.length,
-    unanswered: reviews.filter((r) => !r.replied).length,
+    unanswered: reviews.filter((r) => !r.replied && !r.skipped).length,
     replied: reviews.filter((r) => r.replied).length,
     positive: reviews.filter((r) => r.rating >= 4).length,
     negative: reviews.filter((r) => r.rating <= 2).length,
     // The approval queue is the source of truth for this count.
     need_approval: pendingReplies.length,
+    flagged: reviews.filter((r) => r.skipped).length,
   }), [reviews, pendingReplies]);
 
   const filtered = reviews.filter((r) => {
-    if (tab === "unanswered") return !r.replied;
+    if (tab === "unanswered") return !r.replied && !r.skipped;
     if (tab === "replied") return r.replied;
-    if (tab === "need_approval") return !r.replied;
+    if (tab === "need_approval") return !r.replied && !r.skipped;
     if (tab === "positive") return r.rating >= 4;
     if (tab === "negative") return r.rating <= 2;
+    if (tab === "flagged") return r.skipped;
     return true;
   });
 
@@ -322,7 +326,7 @@ function ReviewsInner() {
     setRegenId(d.id);
     try {
       const fresh = await regenerateReply(d.channel_id, d.id);
-      setPendingReplies((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: fresh.reply_text } : x)));
+      setPendingReplies((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: fresh.reply_text, generation_attempt: fresh.generation_attempt ?? (x.generation_attempt ?? 1) + 1 } : x)));
       setDraftTexts((prev) => ({ ...prev, [d.id]: fresh.reply_text }));
       setBanner({ kind: "ok", text: "Draft rewritten by the AI engine." });
       setTimeout(() => setBanner(null), 3000);
@@ -386,6 +390,34 @@ function ReviewsInner() {
     void fetchReviews(false);
     setApprovingAllPending(false);
   }
+
+  const handleSkip = async () => {
+    if (view.kind !== "detail") return;
+    setSkippingId(active!.id);
+    try {
+      await apiFetch(`/api/v1/analytics/reviews/insights/${active!.id}/skip`, { method: "POST" });
+      setBanner({ kind: "ok", text: "Marked as unavailable on Google — removed from unanswered." });
+      setTimeout(() => setBanner(null), 3000);
+      void fetchReviews(false);
+    } catch {
+      setBanner({ kind: "err", text: "Could not mark as skipped — try again." });
+      setTimeout(() => setBanner(null), 3000);
+    } finally {
+      setSkippingId(null);
+    }
+  };
+
+  const handleFlag = async (reviewId: string) => {
+    try {
+      await apiFetch(`/api/v1/analytics/reviews/insights/${reviewId}/skip`, { method: "POST" });
+      setBanner({ kind: "ok", text: "Review flagged as unavailable — it no longer appears in queues." });
+      setTimeout(() => setBanner(null), 3000);
+      void fetchReviews(false);
+    } catch {
+      setBanner({ kind: "err", text: "Could not flag — try again." });
+      setTimeout(() => setBanner(null), 3000);
+    }
+  };
 
   const generateAiReply = async () => {
     if (view.kind !== "detail") return;
@@ -591,16 +623,17 @@ function ReviewsInner() {
                               ? "border-coral/40 text-coral focus:ring-2 focus:ring-coral/20"
                               : "border-ink/[0.08] text-ink dark:border-fog/[0.1] dark:text-fog"
                           }`}>
-                          {([
-                            { key: "all", label: `All (${counts.all})` },
-                            { key: "unanswered", label: `Unanswered (${counts.unanswered})` },
-                            { key: "need_approval", label: `Need Approval (${counts.need_approval})` },
-                            { key: "replied", label: `Replied (${counts.replied})` },
-                            { key: "positive", label: `Positive (${counts.positive})` },
-                            { key: "negative", label: `Negative (${counts.negative})` },
-                          ] as const).map((t) => (
-                            <option key={t.key} value={t.key}>{t.label}</option>
-                          ))}
+                           {([
+                             { key: "all", label: `All (${counts.all})` },
+                             { key: "unanswered", label: `Unanswered (${counts.unanswered})` },
+                             { key: "need_approval", label: `Need Approval (${counts.need_approval})` },
+                             { key: "flagged", label: `Flagged (${counts.flagged})` },
+                             { key: "replied", label: `Replied (${counts.replied})` },
+                             { key: "positive", label: `Positive (${counts.positive})` },
+                             { key: "negative", label: `Negative (${counts.negative})` },
+                           ] as const).map((t) => (
+                             <option key={t.key} value={t.key}>{t.label}</option>
+                           ))}
                         </select>
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40 pointer-events-none">
                           <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -690,7 +723,22 @@ function ReviewsInner() {
                                         <p className="truncate text-[13px] font-bold text-ink dark:text-fog">{d.reviewer_name ?? "Anonymous"}</p>
                                         <GoogleStars rating={d.rating} />
                                       </div>
-                                      <p className="mt-0.5 text-[11px] text-ink/40">left a {d.rating}★ review · {when}</p>
+                                                                            <p className="mt-0.5 text-[11px] text-ink/40">
+                                        left a {d.rating}★ review · {when}
+                                        {(d as ReviewReplyDTO & { review_url?: string }).review_url && (
+                                          <>
+                                            {" · "}
+                                            <a
+                                              href={(d as ReviewReplyDTO & { review_url?: string }).review_url}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="font-semibold text-deep-violet underline-offset-2 hover:underline"
+                                            >
+                                              View on Google
+                                            </a>
+                                          </>
+                                        )}
+                                      </p>
                                     </div>
                                     <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-600">
                                       <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
@@ -708,11 +756,18 @@ function ReviewsInner() {
                                   {/* AI draft */}
                                   <div className="mt-3 rounded-xl border border-deep-violet/[0.14] bg-deep-violet/[0.03] p-3">
                                     <div className="mb-2 flex items-center justify-between gap-2">
-                                      <span className="inline-flex items-center gap-1 rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-2.5 w-2.5" aria-hidden>
-                                          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" strokeLinecap="round" strokeLinejoin="round" />
-                                        </svg>
-                                        AI draft
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-2.5 w-2.5" aria-hidden>
+                                            <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" strokeLinecap="round" strokeLinejoin="round" />
+                                          </svg>
+                                          AI draft
+                                        </span>
+                                        {(d.generation_attempt ?? 1) > 1 && (
+                                          <span className="text-[10px] font-semibold text-ink/40 dark:text-fog/40">
+                                            try #{d.generation_attempt}
+                                          </span>
+                                        )}
                                       </span>
                                       <button
                                         onClick={() => void regenDraft(d)}
@@ -793,11 +848,13 @@ function ReviewsInner() {
                       )
                     ) : filtered.length === 0 ? (
                       <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
-                        <p className="text-[14px] font-medium text-ink/40">
-                          {reviews.length === 0 && tab === "all"
-                            ? "No reviews yet — press Reconcile after syncing your listing."
-                            : "No reviews in this view"}
-                        </p>
+                         <p className="text-[14px] font-medium text-ink/40">
+                           {reviews.length === 0 && tab === "all"
+                             ? "No reviews yet — press Reconcile after syncing your listing."
+                             : tab === "flagged"
+                               ? "No reviews flagged yet — use the flag button on any review."
+                               : "No reviews in this view"}
+                         </p>
                       </div>
                     ) : (
                       <>
@@ -813,11 +870,13 @@ function ReviewsInner() {
                                 createdAt: r.createdAt,
                                 locationName: r.locationName,
                                 replied: r.replied,
-                                sentiment: r.sentiment,
-                                reviewUrl: r.reviewUrl,
-                              }}
-                              onOpen={openDetail}
-                            />
+                                 skipped: r.skipped,
+                                 sentiment: r.sentiment,
+                                 reviewUrl: r.reviewUrl,
+                               }}
+                               onOpen={openDetail}
+                               onFlag={handleFlag}
+                             />
                           ))}
                         </div>
                         <div className="flex items-center justify-between pt-1">
@@ -844,6 +903,7 @@ function ReviewsInner() {
                       <StatCard label="Total Reviews" value={String(analytics.total)} />
                       <StatCard label="Response Rate" value={`${analytics.responseRate}%`} />
                       <StatCard label="Unanswered" value={String(counts.unanswered)} />
+                      <StatCard label="Flagged" value={String(counts.flagged)} />
                     </div>
                     <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                       <button onClick={() => setView({ kind: "intelligence" })} className="block w-full text-left">
@@ -942,6 +1002,10 @@ function ReviewsInner() {
                     <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#137333]">
                       <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#34A853]" /> Replied
                     </span>
+                  ) : active.skipped ? (
+                    <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#5F6368]">
+                      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#AAAAAA]" /> Unavailable on Google
+                    </span>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#5F6368]">
                       <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#FABB05]" /> Needs reply
@@ -966,29 +1030,44 @@ function ReviewsInner() {
                 <div className="mx-4 mb-4 rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-4">
                   <h3 className="text-[13px] font-medium text-[#202124]">Your reply</h3>
                   {active.replied ? (
-                    <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
-                      <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
-                      <div>
-                        <p className="text-[12px] font-medium text-[#137333]">Replied on Google</p>
-                        <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">This review already has a published reply. You can still draft an updated response below and publish it from Google.</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="mt-3 inline-flex rounded-full border border-[#DADCE0] bg-white p-1">
-                        <button
-                          onClick={() => setReplyMode("manual")}
-                          className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${replyMode === "manual" ? "bg-[#1A73E8] text-white shadow-sm" : "text-[#5F6368] hover:text-[#202124]"}`}
-                        >
-                          Write myself
-                        </button>
-                        <button
-                          onClick={() => generateAiReply()}
-                          className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${replyMode === "ai" ? "bg-[#1A73E8] text-white shadow-sm" : "text-[#5F6368] hover:text-[#202124]"}`}
-                        >
-                          Write with AI
-                        </button>
-                      </div>
+                     <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
+                       <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
+                       <div>
+                         <p className="text-[12px] font-medium text-[#137333]">Replied on Google</p>
+                         <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">This review already has a published reply. You can still draft an updated response below and publish it from Google.</p>
+                       </div>
+                     </div>
+                   ) : active.skipped ? (
+                     <div className="mt-2 flex items-start gap-2 rounded-md border border-[#E8EAED] bg-[#F8F9FA] px-3 py-2.5">
+                       <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#AAAAAA]" />
+                       <div>
+                         <p className="text-[12px] font-medium text-[#5F6368]">Unavailable on Google</p>
+                         <p className="mt-0.5 text-[12px] leading-4 text-[#5F6368]/80">The reviewer deleted this review or Google removed it. No reply is possible. You can still view it via the link below.</p>
+                       </div>
+                     </div>
+                   ) : (
+                     <>
+                       <div className="mt-3 inline-flex rounded-full border border-[#DADCE0] bg-white p-1">
+                         <button
+                           onClick={() => setReplyMode("manual")}
+                           className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${replyMode === "manual" ? "bg-[#1A73E8] text-white shadow-sm" : "text-[#5F6368] hover:text-[#202124]"}`}
+                         >
+                           Write myself
+                         </button>
+                         <button
+                           onClick={() => generateAiReply()}
+                           className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${replyMode === "ai" ? "bg-[#1A73E8] text-white shadow-sm" : "text-[#5F6368] hover:text-[#202124]"}`}
+                         >
+                           Write with AI
+                         </button>
+                       </div>
+                       <button
+                         onClick={() => void handleSkip()}
+                         disabled={skippingId === active?.id}
+                         className="mt-2 inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-medium text-[#5F6368] transition hover:bg-ink/[0.04] disabled:opacity-40"
+                       >
+                         {skippingId === active?.id ? "Marking…" : "Mark as unavailable on Google"}
+                       </button>
                       {aiLoading ? (
                         <div className="mt-3 space-y-2 rounded-md border border-[#DADCE0] bg-white px-3 py-3">
                           <div className="flex items-center gap-2">
@@ -1198,6 +1277,7 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       comment: String(r.review_text ?? "(star rating only)"),
       createdAt: String(r.review_updated_at ?? r.created_at ?? "").slice(0, 10),
       replied: r.replied === true,
+      skipped: r.skipped === true,
       sentiment: typeof r.sentiment === "string" ? r.sentiment : undefined,
       reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,

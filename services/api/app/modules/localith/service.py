@@ -69,6 +69,18 @@ async def get_listing_detail(listing_id: str) -> dict:
     return await asyncio.to_thread(embedsocial.fetch_listing_detail, listing_id)
 
 
+async def post_reply(item_id: str, text: str) -> dict:
+    """Publish a reply to a review item through Localith.
+
+    Their `POST /rest/v1/items/{id}/replies` posts the reply live on the
+    connected Google Business Profile — this is how Localith-sourced
+    drafts reach Google without native OAuth.
+    """
+    if not _key_present():
+        raise RuntimeError("Server is missing LOCALITH_API_KEY in .env.")
+    return await asyncio.to_thread(embedsocial.post_item_reply, item_id, text)
+
+
 def _parse_dt(value: object) -> datetime | None:
     if not value or not isinstance(value, str):
         return None
@@ -257,10 +269,11 @@ async def sync_connection(
     await db.commit()
 
     # Reply drafts: Localith reviews flow through the same reply engine as
-    # OAuth channels, except posting to Google isn't possible through the
-    # middleware API — every draft queues as pending_approval for the
-    # merchant to publish from their Localith/GBP dashboard. Cap per sync
-    # so a first-time backfill doesn't flood the queue with LLM calls.
+    # OAuth channels. Approving a draft posts it live via Localith's
+    # POST /items/{id}/replies (see channels.router.approve_review_reply);
+    # drafts queue as pending_approval until the merchant approves.
+    # Cap per sync so a first-time backfill doesn't flood the queue with
+    # LLM calls.
     DRAFT_CAP_PER_SYNC = 20
     config = (
         await db.execute(
@@ -294,6 +307,16 @@ async def sync_connection(
         ).scalar_one_or_none()
         if existing_reply:
             continue
+        # Don't generate drafts for reviews the merchant marked
+        # as deleted/removed on Google.
+        insight = (await db.execute(
+            select(ReviewInsight).where(
+                ReviewInsight.channel_id == channel.id,
+                ReviewInsight.review_id == full_review_id,
+            )
+        )).scalar_one_or_none()
+        if insight and insight.skipped:
+            continue
         try:
             reply_text = await generate_review_reply(
                 config, review.rating, review.text, review.reviewer, db
@@ -322,6 +345,17 @@ async def sync_connection(
         if not review_id:
             continue
         review = embedsocial.to_internal_review(item)
+        full_review_id = f"localith:{review_id}"
+        # Don't re-enqueue events for reviews the merchant
+        # marked as unavailable on Google.
+        _ins = (await db.execute(
+            select(ReviewInsight).where(
+                ReviewInsight.channel_id == channel.id,
+                ReviewInsight.review_id == full_review_id,
+            )
+        )).scalar_one_or_none()
+        if _ins and _ins.skipped:
+            continue
         await enqueue_event(
             "review.discovered",
             {
