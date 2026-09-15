@@ -11,6 +11,7 @@ import {
   retryReply,
   verifyPostedReplies,
   type ReviewReplyDTO,
+  type ReviewInsight,
 } from "@/lib/api-analytics";
 
 interface ChannelOption {
@@ -50,8 +51,10 @@ function apiDetail(e: unknown): string {
 export default function OutboxPage() {
   const [channels, setChannels] = useState<ChannelOption[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [outboxTab, setOutboxTab] = useState<"replies" | "flagged">("replies");
   const [filter, setFilter] = useState<StatusFilter>("pending_approval");
   const [replies, setReplies] = useState<ReviewReplyDTO[]>([]);
+  const [flagged, setFlagged] = useState<ReviewInsight[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -94,7 +97,29 @@ export default function OutboxPage() {
     };
   }, [load]);
 
+  const loadFlagged = useCallback(async (channelId: string) => {
+    try {
+      const data = await apiFetch(
+        `/api/v1/analytics/reviews/insights?channel_id=${encodeURIComponent(channelId)}&status=skipped&limit=100`
+      );
+      setReplies([]);
+      setFlagged((data.items ?? []) as ReviewInsight[]);
+    } catch {
+      setFlagged([]);
+    }
+  }, []);
+
   const visible = replies.filter((r) => r.status === filter);
+
+  const handleTabChange = async (tab: "replies" | "flagged") => {
+    setOutboxTab(tab);
+    if (!selected) return;
+    if (tab === "flagged") {
+      await loadFlagged(selected);
+    } else {
+      await load(selected);
+    }
+  };
 
   const onRetry = async (r: ReviewReplyDTO) => {
     setBusy(r.id);
@@ -129,17 +154,28 @@ export default function OutboxPage() {
     setBusy("verify");
     setBanner(null);
     try {
-      const res = await verifyPostedReplies(selected);
+      const res = await verifyPostedReplies(selected) as {
+        checked: number;
+        confirmed: number;
+        corrected: number;
+        skipped_localith?: number;
+      };
+      const skipped = res.skipped_localith ?? 0;
+      let text: string;
+      if (res.checked === 0 && skipped > 0) {
+        text = `${skipped} Localith-published ${skipped === 1 ? "reply" : "replies"} skipped — ${skipped === 1 ? "it is" : "they are"} confirmed at publish time. Only Google-connected replies can be re-checked.`;
+      } else if (res.checked === 0) {
+        text = "Nothing marked posted to check.";
+      } else if (res.corrected > 0) {
+        text = `${res.corrected} of ${res.checked} were not actually on Google — moved back to Failed.`;
+      } else {
+        text = `All ${res.confirmed} confirmed live on Google.`;
+      }
       setBanner({
         kind: res.corrected > 0 ? "err" : "ok",
-        text:
-          res.checked === 0
-            ? "Nothing marked posted to check."
-            : res.corrected > 0
-              ? `${res.corrected} of ${res.checked} were not actually on Google — moved back to Failed.`
-              : `All ${res.confirmed} confirmed live on Google.`,
+        text,
       });
-      void load(selected);
+       void (outboxTab === "flagged" ? (selected ? loadFlagged(selected) : Promise.resolve()) : load(selected));
     } catch (e) {
       setBanner({ kind: "err", text: apiDetail(e) || "Could not verify. Try again." });
     } finally {
@@ -232,6 +268,30 @@ export default function OutboxPage() {
         ))}
       </div>
 
+      {/* View toggle: Outbox / Flagged */}
+      <div className="flex rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.06]">
+        <button
+          onClick={() => handleTabChange("replies")}
+          className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+            outboxTab === "replies"
+              ? "bg-white text-deep-violet shadow-sm dark:bg-ink"
+              : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
+          }`}
+        >
+          Outbox
+        </button>
+        <button
+          onClick={() => handleTabChange("flagged")}
+          className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+            outboxTab === "flagged"
+              ? "bg-white text-deep-violet shadow-sm dark:bg-ink"
+              : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
+          }`}
+        >
+          Flagged
+        </button>
+      </div>
+
       {filter === "posted" && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.06] dark:bg-ink">
           <p className="text-[12px] text-ink/55 dark:text-fog/55">
@@ -264,13 +324,50 @@ export default function OutboxPage() {
             Connect
           </Link>
         </div>
+      ) : outboxTab === "flagged" ? (
+        flagged.length === 0 ? (
+          <div className="rounded-xl border border-ink/[0.06] bg-white py-12 text-center text-[13px] text-ink/40 dark:border-fog/[0.06] dark:bg-ink dark:text-fog/40">
+            No reviews flagged as unavailable yet.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {flagged.map((r) => (
+              <div
+                key={r.id}
+                className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
+              >
+                <div className="flex items-center gap-1.5 text-[11px] text-ink/50 dark:text-fog/50">
+                  <span aria-label={`${r.rating} out of 5 stars`} className="font-bold text-amber-600">
+                    {"★".repeat(Math.max(0, Math.min(5, r.rating)))}
+                  </span>
+                  <span className="truncate font-semibold text-ink dark:text-fog">
+                    {r.reviewer_name ?? "Anonymous"}
+                  </span>
+                  <span className="ml-auto rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600 dark:bg-fog/[0.06] dark:text-fog/50">
+                    Unavailable
+                  </span>
+                </div>
+                {r.review_text && (
+                  <p className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">
+                    “{r.review_text}”
+                  </p>
+                )}
+                <p className="mt-1.5 text-[11px] text-ink/45">
+                  Reviewer deleted this review or Google removed it — no reply is possible.
+                </p>
+              </div>
+            ))}
+          </div>
+        )
       ) : visible.length === 0 ? (
         <div className="rounded-xl border border-ink/[0.06] bg-white py-12 text-center text-[13px] text-ink/40 dark:border-fog/[0.06] dark:bg-ink dark:text-fog/40">
           No {STATUS_META[filter].label.toLowerCase()} replies for this location.
         </div>
       ) : (
         <div className="space-y-3">
-          {visible.map((r) => (
+          {visible.map((r) => {
+            const reviewUrl = (r as ReviewReplyDTO & { review_url?: string }).review_url;
+            return (
             <div
               key={r.id}
               className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
@@ -282,6 +379,19 @@ export default function OutboxPage() {
                 <span className="truncate font-semibold text-ink dark:text-fog">
                   {r.reviewer_name ?? "Anonymous"}
                 </span>
+                {reviewUrl && (
+                  <a
+                    href={reviewUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-deep-violet underline-offset-2 transition hover:underline"
+                  >
+                    View on Google
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-2.5 w-2.5" aria-hidden>
+                      <path d="M7 17L17 7M9 7h8v8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </a>
+                )}
                 <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${STATUS_META[r.status as StatusFilter]?.pill ?? ""}`}>
                   {STATUS_META[r.status as StatusFilter]?.label ?? r.status}
                 </span>
@@ -304,13 +414,22 @@ export default function OutboxPage() {
               )}
               <div className="mt-2 flex items-center justify-end gap-2">
                 {r.status === "failed" && (
-                  <button
-                    onClick={() => void onRetry(r)}
-                    disabled={busy !== null}
-                    className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
-                  >
-                    {busy === r.id ? "Retrying…" : "Retry"}
-                  </button>
+                  <>
+                    <button
+                      onClick={() => void onDiscard(r)}
+                      disabled={busy !== null}
+                      className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] dark:text-fog/50 disabled:opacity-50"
+                    >
+                      Discard
+                    </button>
+                    <button
+                      onClick={() => void onRetry(r)}
+                      disabled={busy !== null}
+                      className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
+                    >
+                      {busy === r.id ? "Retrying…" : "Retry"}
+                    </button>
+                  </>
                 )}
                 {r.status === "pending_approval" && (
                   <>
@@ -332,7 +451,8 @@ export default function OutboxPage() {
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -243,8 +243,13 @@ async def list_insights(
         filters.append(ReviewInsight.rating == rating)
     if status == "replied":
         filters.append(ReviewInsight.replied == True)  # noqa: E712
+        filters.append(ReviewInsight.skipped == False)  # noqa: E722
     elif status == "unanswered":
         filters.append(ReviewInsight.replied == False)  # noqa: E722
+        filters.append(ReviewInsight.skipped == False)  # noqa: E722
+    elif status == "skipped":
+        filters.append(ReviewInsight.skipped == True)  # noqa: E722
+        filters.append(ReviewInsight.skipped == False)  # noqa: E722
     if search:
         like = f"%{search.lower()}%"
         filters.append(

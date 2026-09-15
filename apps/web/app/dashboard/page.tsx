@@ -338,7 +338,9 @@ function AttentionQueue() {
                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
                         )}
                         <div className="mt-2 rounded-lg bg-deep-violet/[0.05] p-2.5">
-                          <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60">AI draft</p>
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60">
+                            AI draft{(d.generation_attempt ?? 1) > 1 ? ` · try #${d.generation_attempt}` : ""}
+                          </p>
                           <p className="mt-0.5 line-clamp-3 text-[12px] leading-relaxed text-ink/80">{d.reply_text}</p>
                         </div>
                         <div className="mt-2 flex items-center justify-end">
@@ -428,7 +430,9 @@ function AttentionQueue() {
                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
                         )}
                         <div className="mt-2 rounded-lg bg-ink/[0.03] p-2.5">
-                          <p className="text-[9px] font-bold uppercase tracking-wide text-ink/40">Failed draft</p>
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-ink/40">
+                            Failed draft{(d.generation_attempt ?? 1) > 1 ? ` · try #${d.generation_attempt}` : ""}
+                          </p>
                           <p className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-ink/60">{d.reply_text || "—"}</p>
                         </div>
                         {d.error && (

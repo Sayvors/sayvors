@@ -174,6 +174,11 @@ class ReviewReply(Base):
              name="review_reply_status"),
         default="pending_approval",
     )
+    # How many times a draft has been generated for this review
+    # (1 = first draft; regenerate/retry/resume increments it).
+    generation_attempt: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

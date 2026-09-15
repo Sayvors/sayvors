@@ -275,6 +275,7 @@ export interface ReviewReplyDTO {
   reviewer_name: string | null;
   reply_text: string;
   status: string;
+  generation_attempt?: number;
   error: string | null;
   created_at: string;
 }

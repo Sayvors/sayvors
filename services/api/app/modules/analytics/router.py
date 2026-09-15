@@ -1,8 +1,9 @@
 """Analytics API: business overview, timeseries, enriched-review list."""
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
@@ -141,6 +142,30 @@ async def list_review_insights(
         total=total,
         items=[ReviewInsightItem.model_validate(r) for r in items],
     )
+
+
+@router.post("/reviews/insights/{insight_id}/skip", response_model=ReviewInsightItem)
+async def skip_review(
+    insight_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a review as skipped — reviewer deleted it or Google removed it.
+
+    The cached insight stays visible but is treated as unavailable:
+    it no longer counts toward "unanswered" and cannot be replied to.
+    """
+    row = await db.execute(select(ReviewInsight).where(ReviewInsight.id == insight_id))
+    insight = row.scalar_one_or_none()
+    if insight is None:
+        raise HTTPException(status_code=404, detail="Review insight not found")
+    if insight.user_id != (DEMO_USER_ID if settings.DEMO_MODE else user.id):
+        raise HTTPException(status_code=403, detail="Not your review")
+    insight.skipped = True
+    db.add(insight)
+    await db.commit()
+    await db.refresh(insight)
+    return insight
 
 
 @router.get("/review-intelligence", response_model=ReviewIntelligenceResponse | None)

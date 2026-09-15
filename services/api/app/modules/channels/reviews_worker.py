@@ -89,6 +89,77 @@ async def _already_replied(db: AsyncSession, review_id: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+async def _resume_failed_row(
+    db: AsyncSession, channel_id: str, review_id: str
+) -> ReviewReply | None:
+    """Newest `failed` row for this review, or None.
+
+    Resuming that row (instead of inserting a fresh draft) keeps one row
+    per review cycle: the failed list self-cleans when the retry succeeds
+    or the draft is re-queued. Older failed duplicates — left behind by
+    earlier polls — are collapsed to `rejected` here too.
+    """
+    result = await db.execute(
+        select(ReviewReply)
+        .where(
+            ReviewReply.channel_id == channel_id,
+            ReviewReply.review_id == review_id,
+            ReviewReply.status == "failed",
+        )
+        .order_by(ReviewReply.created_at.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    siblings = await db.execute(
+        select(ReviewReply).where(
+            ReviewReply.channel_id == channel_id,
+            ReviewReply.review_id == review_id,
+            ReviewReply.status == "failed",
+            ReviewReply.id != row.id,
+        )
+    )
+    for sibling in siblings.scalars().all():
+        sibling.status = "rejected"
+        sibling.error = None
+    return row
+
+
+def _save_reply_row(
+    db: AsyncSession,
+    row: ReviewReply | None,
+    channel_id: str,
+    review,
+    reply_text: str,
+    status: str,
+    error: str | None = None,
+) -> None:
+    """Write `status` onto the resumed failed row in place, or insert a new row."""
+    if row is not None:
+        row.reply_text = reply_text
+        row.rating = review.rating
+        row.review_text = review.text
+        row.reviewer_name = review.reviewer_name
+        row.status = status
+        # The worker generated a fresh draft to get here — count it.
+        row.generation_attempt = (row.generation_attempt or 1) + 1
+        row.error = error
+        return
+    db.add(
+        ReviewReply(
+            channel_id=channel_id,
+            review_id=review.review_id,
+            rating=review.rating,
+            review_text=review.text,
+            reviewer_name=review.reviewer_name,
+            reply_text=reply_text,
+            status=status,
+            error=error,
+        )
+    )
+
+
 async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> None:
     """Mirror the inbound review as a ChannelMessage so the UI can show it."""
     import uuid
@@ -233,24 +304,31 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 # Analytics events must never break auto-reply
                 logger.warning("review.discovered enqueue failed for %s: %s", review.review_id, e)
 
+            failed_row = await _resume_failed_row(db, channel.id, review.review_id)
+
             try:
                 reply_text = await generate_review_reply(
-                    config, review.rating, review.text, review.reviewer_name, db
+                    config, review.rating, review.text, review.reviewer_name, db,
+                    attempt=(failed_row.generation_attempt or 1) + 1 if failed_row else 1,
+                    previous_draft=failed_row.reply_text if failed_row else None,
                 )
             except Exception as e:
                 logger.error("Reply generation failed for %s: %s", review.review_id, e)
-                db.add(
-                    ReviewReply(
-                        channel_id=channel.id,
-                        review_id=review.review_id,
-                        rating=review.rating,
-                        review_text=review.text,
-                        reviewer_name=review.reviewer_name,
-                        reply_text="",
-                        status="failed",
-                        error=str(e)[:2000],
+                if failed_row is not None:
+                    failed_row.error = str(e)[:2000]
+                else:
+                    db.add(
+                        ReviewReply(
+                            channel_id=channel.id,
+                            review_id=review.review_id,
+                            rating=review.rating,
+                            review_text=review.text,
+                            reviewer_name=review.reviewer_name,
+                            reply_text="",
+                            status="failed",
+                            error=str(e)[:2000],
+                        )
                     )
-                )
                 await db.commit()
                 stats["errors"] += 1
                 continue
@@ -269,31 +347,12 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                     stats["replied"] += 1
                 except GoogleReviewsError as e:
                     stats["errors"] += 1
-                    db.add(
-                        ReviewReply(
-                            channel_id=channel.id,
-                            review_id=review.review_id,
-                            rating=review.rating,
-                            review_text=review.text,
-                            reviewer_name=review.reviewer_name,
-                            reply_text=reply_text,
-                            status="failed",
-                            error=str(e)[:2000],
-                        )
+                    _save_reply_row(
+                        db, failed_row, channel.id, review, reply_text, "failed", str(e)[:2000]
                     )
                     await db.commit()
                     continue
-                db.add(
-                    ReviewReply(
-                        channel_id=channel.id,
-                        review_id=review.review_id,
-                        rating=review.rating,
-                        review_text=review.text,
-                        reviewer_name=review.reviewer_name,
-                        reply_text=reply_text,
-                        status="posted",
-                    )
-                )
+                _save_reply_row(db, failed_row, channel.id, review, reply_text, "posted")
                 await db.commit()
                 try:
                     await _enqueue_review_replied(channel, review, "posted")
@@ -301,16 +360,8 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
             else:
                 # Low rating: never auto-post — queue for human approval.
-                db.add(
-                    ReviewReply(
-                        channel_id=channel.id,
-                        review_id=review.review_id,
-                        rating=review.rating,
-                        review_text=review.text,
-                        reviewer_name=review.reviewer_name,
-                        reply_text=reply_text,
-                        status="pending_approval",
-                    )
+                _save_reply_row(
+                    db, failed_row, channel.id, review, reply_text, "pending_approval"
                 )
                 await db.commit()
                 stats["queued"] += 1

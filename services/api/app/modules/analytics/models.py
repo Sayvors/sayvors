@@ -60,6 +60,9 @@ class ReviewInsight(Base):
     # Response bookkeeping (response-rate / response-time metrics)
     replied: Mapped[bool] = mapped_column(Boolean, default=False)
     replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set when the reviewer deleted the review or Google removed it —
+    # the review is still cached locally but no reply is possible.
+    skipped: Mapped[bool] = mapped_column(Boolean, default=False)
     # Link to the review on Google (Localith `reviewLink`), for "View on Google".
     review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # When Google last updated the review (bucket date for daily rollups)
