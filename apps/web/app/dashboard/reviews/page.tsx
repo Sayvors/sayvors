@@ -1,17 +1,20 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
+import { approveReply, editReply, generateReply, regenerateReply } from "@/lib/api-analytics";
 
-type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative";
+type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
 
 interface ReviewItem {
   id: string;
   locationId: string;
+  review_id: string;
   locationName: string;
   reviewer: string;
   rating: number;
@@ -20,6 +23,8 @@ interface ReviewItem {
   replied: boolean;
   sentiment?: string;
   reviewUrl?: string;
+  reply_text?: string;
+  status?: string;
 }
 
 interface LocationOption {
@@ -39,17 +44,35 @@ export default function ReviewsPage() {
 }
 
 function ReviewsInner() {
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [tab, setTab] = useState<ReviewTab>("all");
+  const [initialTabSet, setInitialTabSet] = useState(false);
+
+  // Read tab from URL after hydration to avoid SSR mismatch
+  useEffect(() => {
+    if (!initialTabSet) {
+      const t = searchParams.get("tab");
+      if (t === "need_approval" || t === "unanswered" || t === "replied" || t === "positive" || t === "negative" || t === "all") {
+        setTab(t as ReviewTab);
+      }
+      setInitialTabSet(true);
+    }
+  }, [searchParams, initialTabSet]);
   const [view, setView] = useState<View>({ kind: "list" });
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [replyDraft, setReplyDraft] = useState("");
   const [replying, setReplying] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
+  const [needApprovalPage, setNeedApprovalPage] = useState(1);
+  const [needApprovingAll, setNeedApprovingAll] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [editingTexts, setEditingTexts] = useState<Record<string, string>>({});
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [replyMode, setReplyMode] = useState<"manual" | "ai">("manual");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiTrace, setAiTrace] = useState<StreamEvent[] | null>(null);
@@ -121,6 +144,28 @@ function ReviewsInner() {
     return mapInsights(data.items, channelNames, locations.find((l) => l.id === selectedId)?.name ?? "");
   };
 
+  const mergePendingReplies = async (reviewsToMerge: ReviewItem[]) => {
+    const channelIds = new Set(reviewsToMerge.map((r) => r.locationId).filter(Boolean));
+    const replyMap: Record<string, { reply_text?: string; status?: string }> = {};
+    for (const channelId of channelIds) {
+      try {
+        const pending = await apiFetch(`/api/v1/channels/${channelId}/reviews?status=pending_approval&limit=200`);
+        for (const r of (pending.replies ?? []) as { review_id: string; reply_text?: string; status?: string }[]) {
+          replyMap[r.review_id] = { reply_text: r.reply_text, status: r.status };
+        }
+      } catch {}
+    }
+    setReviews((prev) =>
+      prev.map((item) => {
+        const match = replyMap[item.id] ?? replyMap[item.review_id ?? ""];
+        if (match) {
+          return { ...item, reply_text: match.reply_text ?? item.reply_text, status: match.status ?? item.status };
+        }
+        return item;
+      })
+    );
+  };
+
   const fetchReviews = async (withSync: boolean) => {
     setRefreshing(true);
     try {
@@ -132,7 +177,9 @@ function ReviewsInner() {
         }
       }
       const loc = locations.find((l) => l.id === selectedId);
-      setReviews(await loadInsights(loc?.channelId));
+      const items = await loadInsights(loc?.channelId);
+      setReviews(items);
+      await mergePendingReplies(items);
       if (withSync) setBanner({ kind: "ok", text: "Reconciled with Localith." });
     } catch {
       setReviews([]);
@@ -149,6 +196,7 @@ function ReviewsInner() {
         const loc = locations.find((l) => l.id === selectedId);
         const items = await loadInsights(loc?.channelId);
         if (!cancelled) setReviews(items);
+        await mergePendingReplies(items);
       } catch {
         if (!cancelled) setReviews([]);
       }
@@ -163,11 +211,13 @@ function ReviewsInner() {
     replied: reviews.filter((r) => r.replied).length,
     positive: reviews.filter((r) => r.rating >= 4).length,
     negative: reviews.filter((r) => r.rating <= 2).length,
+    need_approval: reviews.filter((r) => !r.replied).length,
   }), [reviews]);
 
   const filtered = reviews.filter((r) => {
     if (tab === "unanswered") return !r.replied;
     if (tab === "replied") return r.replied;
+    if (tab === "need_approval") return !r.replied;
     if (tab === "positive") return r.rating >= 4;
     if (tab === "negative") return r.rating <= 2;
     return true;
@@ -223,6 +273,8 @@ function ReviewsInner() {
     }
   };
 
+  const NEED_APPROVAL_PAGE_SIZE = 5;
+
   const openDetail = (id: string) => {
     setReplyDraft("");
     setReplyMode("manual");
@@ -231,6 +283,104 @@ function ReviewsInner() {
     abortRef.current?.abort();
     setView({ kind: "detail", id });
   };
+
+  async function approveAndPublish(channelId: string, replyId: string, reviewId: string) {
+    setApprovingId(replyId);
+    try {
+      await approveReply(channelId, replyId);
+      setReviews((prev) => prev.filter((r) => r.id !== reviewId));
+      setBanner({ kind: "ok", text: "Reply approved and published to Google." });
+      setTimeout(() => setBanner(null), 3000);
+    } catch {
+      setBanner({ kind: "err", text: "Could not publish. Try again." });
+      setTimeout(() => setBanner(null), 3000);
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
+  async function approveAllAndPublish() {
+    if (needApprovingAll || approvingId !== null) return;
+    setNeedApprovingAll(true);
+    let ok = 0;
+    try {
+      for (const r of filtered) {
+        try {
+          if (isTextEdited(r)) {
+            await editReply(r.locationId, r.id, editingTexts[r.id] ?? r.reply_text ?? "");
+          }
+          await approveReply(r.locationId, r.id);
+          ok += 1;
+        } catch {}
+      }
+      setReviews((prev) => prev.filter((r) => !filtered.some((f) => f.id === r.id)));
+      setBanner({ kind: "ok", text: `${ok} of ${filtered.length} replies approved and published.` });
+      setTimeout(() => setBanner(null), 3000);
+    } catch {
+      setBanner({ kind: "err", text: "Could not publish all. Try again." });
+      setTimeout(() => setBanner(null), 3000);
+    } finally {
+      setNeedApprovingAll(false);
+    }
+  }
+
+  function getReplyText(r: ReviewItem): string {
+    return editingTexts[r.id] ?? r.reply_text ?? "";
+  }
+
+  function isTextEdited(r: ReviewItem): boolean {
+    return (editingTexts[r.id] ?? "") !== (r.reply_text ?? "");
+  }
+
+  async function handleRegenerate(r: ReviewItem) {
+    setRegeneratingId(r.id);
+    try {
+      const result = await generateReply(r.locationId, {
+        review_id: r.id,
+        rating: r.rating,
+        review_text: r.comment,
+        reviewer_name: r.reviewer,
+      });
+      setEditingTexts((prev) => ({ ...prev, [r.id]: result.reply_text }));
+      setReviews((prev) => prev.map((x) => x.id === r.id ? { ...x, reply_text: result.reply_text, status: result.status } : x));
+      setBanner({ kind: "ok", text: "Reply regenerated." });
+      setTimeout(() => setBanner(null), 3000);
+    } catch {
+      setBanner({ kind: "err", text: "Could not regenerate. Try again." });
+      setTimeout(() => setBanner(null), 3000);
+    } finally {
+      setRegeneratingId(null);
+    }
+  }
+
+  async function handleSaveEdit(r: ReviewItem) {
+    try {
+      await editReply(r.locationId, r.id, editingTexts[r.id] ?? r.reply_text ?? "");
+      setBanner({ kind: "ok", text: "Changes saved." });
+      setTimeout(() => setBanner(null), 3000);
+    } catch {
+      setBanner({ kind: "err", text: "Could not save edits." });
+      setTimeout(() => setBanner(null), 3000);
+    }
+  }
+
+  async function handleApproveAndPublish(r: ReviewItem) {
+    setApprovingId(r.id);
+    try {
+      if (isTextEdited(r)) {
+        await editReply(r.locationId, r.id, editingTexts[r.id] ?? r.reply_text ?? "");
+      }
+      await approveReply(r.locationId, r.id);
+      setReviews((prev) => prev.filter((x) => x.id !== r.id));
+      setBanner({ kind: "ok", text: "Reply approved and published to Google." });
+      setTimeout(() => setBanner(null), 3000);
+    } catch {
+      setBanner({ kind: "err", text: "Could not publish. Try again." });
+      setTimeout(() => setBanner(null), 3000);
+    } finally {
+      setApprovingId(null);
+    }
+  }
 
   const generateAiReply = async () => {
     if (view.kind !== "detail") return;
@@ -354,9 +504,13 @@ function ReviewsInner() {
   const safePage = Math.min(page, totalPages);
   const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
+  const needApprovalFiltered = tab === "need_approval" ? filtered.slice(0, needApprovalPage * NEED_APPROVAL_PAGE_SIZE) : paged;
+  const needApprovalTotalPages = Math.max(1, Math.ceil(filtered.length / NEED_APPROVAL_PAGE_SIZE));
+
   const pickTab = (t: ReviewTab) => {
     setTab(t);
     setPage(1);
+    setNeedApprovalPage(1);
   };
 
   if (loading) return <div className="flex h-full items-center justify-center"><LogoLoader size={32} /></div>;
@@ -390,7 +544,7 @@ function ReviewsInner() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
-        <div className="mx-auto max-w-3xl space-y-4">
+        <div className="mx-auto max-w-6xl">
           {view.kind === "detail" && (
             <nav className="flex items-center gap-1.5 text-[12px] text-ink/40 dark:text-fog/40">
               <button onClick={() => setView({ kind: "list" })} className="font-medium hover:text-deep-violet">Reviews</button>
@@ -421,118 +575,182 @@ function ReviewsInner() {
             </nav>
           )}
 
-          {view.kind === "list" && (
-            <>
-              {/* Insights */}
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <StatCard label="Average Rating" value={`${analytics.avg.toFixed(1)} ★`} />
-                <StatCard label="Total Reviews" value={String(analytics.total)} />
-                <StatCard label="Response Rate" value={`${analytics.responseRate}%`} />
-                <StatCard label="Unanswered" value={String(counts.unanswered)} />
-              </div>
-
-              {/* Charts */}
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
-                  <button onClick={() => setView({ kind: "intelligence" })} className="block w-full text-left">
-                    <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Rating breakdown</h3>
-                    <p className="text-[11px] text-ink/35">Sayvors-derived · tap anywhere for full intelligence.</p>
-                  </button>
-                  <div className="mt-3 space-y-1">
-                    {analytics.dist.map((d) => (
-                      <button key={d.stars} onClick={() => setView({ kind: "star", stars: d.stars, from: "list" })}
-                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-deep-violet/[0.05] hover:ring-1 hover:ring-deep-violet/20">
-                        <span className="w-8 text-[11px] font-medium text-ink/50">{d.stars} ★</span>
-                        <span className="h-2 flex-1 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
-                          <span className="block h-full rounded-full bg-gradient-to-r from-[#FBBC05] to-[#EA4335]" style={{ width: `${analytics.total ? (d.count / analytics.total) * 100 : 0}%` }} />
-                        </span>
-                        <span className="w-8 text-right text-[11px] text-ink/50">{d.count}</span>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3 text-ink/30"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                      </button>
-                    ))}
-                  </div>
-                  <button onClick={() => setView({ kind: "intelligence" })}
-                    className="mt-3 w-full rounded-xl bg-deep-violet/[0.06] py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet hover:text-white">
-                    See more insights →
-                  </button>
-                </div>
-                <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
-                  <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Reviews trend</h3>
-                  <p className="text-[11px] text-ink/35">Last 6 months · this {analytics.thisMonth} / last {analytics.lastMonth}.</p>
-                  <div className="mt-3 flex h-24 items-end gap-2">
-                    {analytics.months.map((m) => (
-                      <div key={m.label} className="flex flex-1 flex-col items-center gap-1">
-                        <div className="flex w-full flex-1 items-end rounded-md bg-ink/[0.04] dark:bg-fog/[0.05]">
-                          <div className="w-full rounded-md bg-deep-violet/70" style={{ height: `${Math.max(6, (m.count / analytics.maxMonth) * 100)}%` }} />
-                        </div>
-                        <span className="text-[9px] text-ink/40">{m.label}</span>
+{view.kind === "list" && (
+              <div className="mx-auto max-w-6xl px-4">
+                <div className="grid grid-cols-12 gap-4">
+                  {/* Left column: 3/4 - Reviews list */}
+                  <div className="col-span-12 lg:col-span-8 space-y-4">
+<div className="relative">
+                        <select value={tab} onChange={(e) => { pickTab(e.target.value as ReviewTab); }}
+                          className="appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[12px] font-semibold text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog cursor-pointer">
+                          {([
+                            { key: "all", label: `All (${counts.all})` },
+                            { key: "unanswered", label: `Unanswered (${counts.unanswered})` },
+                            { key: "need_approval", label: `Need Approval (${counts.need_approval})` },
+                            { key: "replied", label: `Replied (${counts.replied})` },
+                            { key: "positive", label: `Positive (${counts.positive})` },
+                            { key: "negative", label: `Negative (${counts.negative})` },
+                          ] as const).map((t) => (
+                            <option key={t.key} value={t.key}>{t.label}</option>
+                          ))}
+                        </select>
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40 pointer-events-none">
+                          <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
 
-              <div className="flex gap-1 overflow-x-auto rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
-                {([
-                  { key: "all", label: `All (${counts.all})` },
-                  { key: "unanswered", label: `Unanswered (${counts.unanswered})` },
-                  { key: "replied", label: `Replied (${counts.replied})` },
-                  { key: "positive", label: `Positive (${counts.positive})` },
-                  { key: "negative", label: `Negative (${counts.negative})` },
-                ] as const).map((t) => (
-                  <button key={t.key} onClick={() => pickTab(t.key)}
-                    className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-[12px] font-semibold transition ${tab === t.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"}`}>
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-
-              {filtered.length === 0 ? (
-                <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
-                  <p className="text-[14px] font-medium text-ink/40">
-                    {reviews.length === 0 && tab === "all"
-                      ? "No reviews yet — press Reconcile after syncing your listing."
-                      : "No reviews in this view"}
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <div className="space-y-2">
-                    {paged.map((r) => (
-                      <GoogleReviewCard
-                        key={r.id}
-                        review={{
-                          id: r.id,
-                          reviewer: r.reviewer,
-                          rating: r.rating,
-                          comment: r.comment,
-                          createdAt: r.createdAt,
-                          locationName: r.locationName,
-                          replied: r.replied,
-                          sentiment: r.sentiment,
-                          reviewUrl: r.reviewUrl,
-                        }}
-                        onOpen={openDetail}
-                      />
-                    ))}
+                    {filtered.length === 0 ? (
+                      <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
+                        <p className="text-[14px] font-medium text-ink/40">
+                          {reviews.length === 0 && tab === "all"
+                            ? "No reviews yet — press Reconcile after syncing your listing."
+                            : "No reviews in this view"}
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {tab === "need_approval" && (
+                          <div className="flex flex-wrap items-center gap-2 mb-3">
+                            <button
+                              onClick={() => void approveAllAndPublish()}
+                              disabled={needApprovingAll || approvingId !== null || filtered.length === 0}
+                              className="inline-flex items-center justify-center rounded-xl bg-emerald px-4 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 disabled:opacity-50"
+                            >
+                              {needApprovingAll ? "Approving all…" : `Approve all & publish (${filtered.length})`}
+                            </button>
+                          </div>
+                        )}
+                        <div className="space-y-2">
+                          {needApprovalFiltered.map((r) => (
+                            <div key={r.id} className="relative">
+                              <GoogleReviewCard
+                                review={{
+                                  id: r.id,
+                                  reviewer: r.reviewer,
+                                  rating: r.rating,
+                                  comment: r.comment,
+                                  createdAt: r.createdAt,
+                                  locationName: r.locationName,
+                                  replied: r.replied,
+                                  sentiment: r.sentiment,
+                                  reviewUrl: r.reviewUrl,
+                                }}
+                                onOpen={openDetail}
+                              />
+                              {tab === "need_approval" && !r.replied && (
+                                <div className="mt-2 rounded-lg border border-deep-violet/[0.12] bg-deep-violet/[0.02] p-3">
+                                  <div className="mb-2 flex items-center justify-between">
+                                    <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60">AI draft</p>
+                                    <button
+                                      onClick={() => void handleRegenerate(r)}
+                                      disabled={regeneratingId === r.id}
+                                      className="text-[11px] font-medium text-deep-violet hover:underline disabled:opacity-50"
+                                    >
+                                      {regeneratingId === r.id ? "Regenerating…" : "↻ Regenerate"}
+                                    </button>
+                                  </div>
+                                  <textarea
+                                    value={getReplyText(r)}
+                                    onChange={(e) => setEditingTexts((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                                    rows={3}
+                                    className="w-full resize-y rounded-lg border border-deep-violet/[0.1] bg-white p-2.5 text-[12px] leading-relaxed text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1]"
+                                  />
+                                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                                    <button
+                                      onClick={() => void handleApproveAndPublish(r)}
+                                      disabled={approvingId === r.id}
+                                      className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 disabled:opacity-50"
+                                    >
+                                      {approvingId === r.id ? "Publishing…" : "Approve & publish"}
+                                    </button>
+                                    {isTextEdited(r) && (
+                                      <button onClick={() => void handleSaveEdit(r)} className="rounded-lg bg-deep-violet/[0.07] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12]">
+                                        Save edits
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        {tab === "need_approval" ? (
+                          <div className="flex items-center justify-between pt-1">
+                            <p className="text-[11px] text-ink/40">{needApprovalFiltered.length} of {filtered.length} reviews</p>
+                            {needApprovalFiltered.length < filtered.length && (
+                              <button onClick={() => setNeedApprovalPage((p) => p + 1)} className="btn-secondary !px-3 !py-1.5">
+                                See more
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between pt-1">
+                            <p className="text-[11px] text-ink/40">Page {safePage} of {totalPages} · {filtered.length} reviews</p>
+                            <div className="flex gap-1">
+                              <button onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage <= 1} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Prev</button>
+                              {Array.from({ length: totalPages }).slice(0, 5).map((_, i) => (
+                                <button key={i} onClick={() => setPage(i + 1)}
+                                  className={`rounded-lg px-2.5 py-1.5 text-[12px] font-semibold ${safePage === i + 1 ? "bg-deep-violet text-white" : "text-ink/50 hover:bg-ink/[0.04]"}`}>
+                                  {i + 1}
+                                </button>
+                              ))}
+                              <button onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage >= totalPages} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Next</button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
-                  <div className="flex items-center justify-between pt-1">
-                    <p className="text-[11px] text-ink/40">Page {safePage} of {totalPages} · {filtered.length} reviews</p>
-                    <div className="flex gap-1">
-                      <button onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage <= 1} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Prev</button>
-                      {Array.from({ length: totalPages }).slice(0, 5).map((_, i) => (
-                        <button key={i} onClick={() => setPage(i + 1)}
-                          className={`rounded-lg px-2.5 py-1.5 text-[12px] font-semibold ${safePage === i + 1 ? "bg-deep-violet text-white" : "text-ink/50 hover:bg-ink/[0.04]"}`}>
-                          {i + 1}
-                        </button>
-                      ))}
-                      <button onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage >= totalPages} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Next</button>
+
+                  {/* Right column: 1/4 - Insights */}
+                  <div className="col-span-12 lg:col-span-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <StatCard label="Average Rating" value={`${analytics.avg.toFixed(1)} ★`} />
+                      <StatCard label="Total Reviews" value={String(analytics.total)} />
+                      <StatCard label="Response Rate" value={`${analytics.responseRate}%`} />
+                      <StatCard label="Unanswered" value={String(counts.unanswered)} />
+                    </div>
+                    <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+                      <button onClick={() => setView({ kind: "intelligence" })} className="block w-full text-left">
+                        <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Rating breakdown</h3>
+                        <p className="text-[11px] text-ink/35">Sayvors-derived · tap anywhere for full intelligence.</p>
+                      </button>
+                      <div className="mt-3 space-y-1">
+                        {analytics.dist.map((d) => (
+                          <button key={d.stars} onClick={() => setView({ kind: "star", stars: d.stars, from: "list" })}
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-deep-violet/[0.05] hover:ring-1 hover:ring-deep-violet/20">
+                            <span className="w-8 text-[11px] font-medium text-ink/50">{d.stars} ★</span>
+                            <span className="h-2 flex-1 overflow-hidden rounded-full bg-ink/[0.06] dark:bg-fog/[0.06]">
+                              <span className="block h-full rounded-full bg-gradient-to-r from-[#FBBC05] to-[#EA4335]" style={{ width: `${analytics.total ? (d.count / analytics.total) * 100 : 0}%` }} />
+                            </span>
+                            <span className="w-8 text-right text-[11px] text-ink/50">{d.count}</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3 text-ink/30"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                          </button>
+                        ))}
+                      </div>
+                      <button onClick={() => setView({ kind: "intelligence" })}
+                        className="mt-3 w-full rounded-xl bg-deep-violet/[0.06] py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet hover:text-white">
+                        See more insights →
+                      </button>
+                    </div>
+                    <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+                      <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Reviews trend</h3>
+                      <p className="text-[11px] text-ink/35">Last 6 months · this {analytics.thisMonth} / last {analytics.lastMonth}.</p>
+                      <div className="mt-3 flex h-24 items-end gap-2">
+                        {analytics.months.map((m) => (
+                          <div key={m.label} className="flex flex-1 flex-col items-center gap-1">
+                            <div className="flex w-full flex-1 items-end rounded-md bg-ink/[0.04] dark:bg-fog/[0.05]">
+                              <div className="w-full rounded-md bg-deep-violet/70" style={{ height: `${Math.max(6, (m.count / analytics.maxMonth) * 100)}%` }} />
+                            </div>
+                            <span className="text-[9px] text-ink/40">{m.label}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </>
-              )}
-            </>
-          )}
+                </div>
+              </div>
+            )}
 
           {view.kind === "star" && (
             <StarInsightPage
@@ -837,6 +1055,7 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
     const channelId = String(r.channel_id ?? "");
     return {
       id: String(r.id ?? r.review_id ?? `insight_${i}`),
+      review_id: String(r.review_id ?? r.id ?? ""),
       locationId: channelId,
       locationName: channelNames[channelId] ?? fallbackName,
       reviewer: String(r.reviewer_name ?? "Google user"),
@@ -846,6 +1065,8 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       replied: r.replied === true,
       sentiment: typeof r.sentiment === "string" ? r.sentiment : undefined,
       reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
+      reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
+      status: typeof r.status === "string" ? r.status : undefined,
     };
   });
 }
