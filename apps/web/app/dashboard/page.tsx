@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, fetchOverview, fetchTimeseries, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, fetchInsights, fetchOverview, fetchTimeseries, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
 import { MetricChart, RatingDistribution, Sparkline } from "@/components/analytics/Charts";
@@ -42,6 +42,7 @@ function AttentionQueue() {
   const [drafts, setDrafts] = useState<ReviewReplyDTO[]>([]);
   const [draftTotal, setDraftTotal] = useState(0);
   const [channelIds, setChannelIds] = useState<string[]>([]);
+  const [channelNames, setChannelNames] = useState<Record<string, string>>({});
   const [draftsOpen, setDraftsOpen] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
@@ -54,6 +55,9 @@ function AttentionQueue() {
   const [remakingAll, setRemakingAll] = useState(false);
   const [remakeProgress, setRemakeProgress] = useState({ done: 0, total: 0 });
   const [failedError, setFailedError] = useState<string | null>(null);
+  const [flagged, setFlagged] = useState<{ channel_id: string; review_id: string; rating: number; review_text: string | null; reviewer_name: string | null }[]>([]);
+  const [flaggedTotal, setFlaggedTotal] = useState(0);
+  const [flaggedOpen, setFlaggedOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +73,11 @@ function AttentionQueue() {
           (c: { platform: string }) => c.platform === "google_reviews"
         );
         if (!cancelled) setChannelIds(googleChannels.map((c: { id: string }) => c.id));
+        const names: Record<string, string> = {};
+        for (const ch of channelData?.channels ?? []) {
+          if (ch?.id) names[ch.id] = ch.display_name ?? "Google location";
+        }
+        if (!cancelled) setChannelNames(names);
         let pendingTotal = 0;
         const pendingLists: ReviewReplyDTO[][] = await Promise.all(
           googleChannels.map(async (c: { id: string }) => {
@@ -96,13 +105,29 @@ function AttentionQueue() {
               return [];
             }
           })
-        ).then((failedLists) => {
-          if (cancelled) return;
-          const uniqueFailed = dedupeDraftsByReview(failedLists.flat());
-          setFailedTotal(uniqueFailed.length);
-          setFailed(uniqueFailed.slice(0, 5));
-        });
-        const delta = overview?.period.rating_delta;
+         ).then((failedLists) => {
+           if (cancelled) return;
+           const uniqueFailed = dedupeDraftsByReview(failedLists.flat());
+           setFailedTotal(uniqueFailed.length);
+           setFailed(uniqueFailed.slice(0, 5));
+         });
+         try {
+           const data = await apiFetch("/api/v1/analytics/reviews/insights?status=skipped&limit=20");
+           if (!cancelled) {
+             const total = data.total ?? 0;
+             setFlaggedTotal(total);
+             setFlagged((data.items ?? []).map((it: { channel_id: string; review_id: string; rating: number; review_text: string | null; reviewer_name: string | null }) => ({
+               channel_id: it.channel_id,
+               review_id: it.review_id,
+               rating: it.rating,
+               review_text: it.review_text,
+               reviewer_name: it.reviewer_name,
+             })));
+           }
+         } catch {
+           /* flagged section hidden on error */
+         }
+         const delta = overview?.period.rating_delta;
         if (typeof delta === "number" && delta < 0) {
           found.push({
             severity: "high",
@@ -280,19 +305,22 @@ function AttentionQueue() {
   }
 
   if (items === null) return null;
-  const showDrafts = draftTotal > 0;
-  const showFailed = failedTotal > 0;
-  const allClear = !showDrafts && !showFailed && items.length === 0;
-  const draftTitle =
-    draftTotal === 1 ? "1 drafted reply needs your approval" : `${draftTotal} drafted replies need your approval`;
-  const failedTitle =
-    failedTotal === 1 ? "1 reply failed to publish" : `${failedTotal} replies failed to publish`;
-  // Token-flavored failures genuinely need a Google re-consent; anything
-  // else (API hiccups, transient errors) just needs a retry.
-  const needsReconnect = failed.some((d) =>
-    /refresh token|access token|invalid_grant|expired|auth|401|permission/i.test(d.error ?? "")
-  );
-  return (
+   const showDrafts = draftTotal > 0;
+   const showFailed = failedTotal > 0;
+   const showFlagged = flaggedTotal > 0;
+   const allClear = !showDrafts && !showFailed && !showFlagged && items.length === 0;
+   const draftTitle =
+     draftTotal === 1 ? "1 drafted reply needs your approval" : `${draftTotal} drafted replies across all locations need your approval`;
+   const failedTitle =
+     failedTotal === 1 ? "1 reply failed to publish" : `${failedTotal} replies failed to publish`;
+   // Token-flavored failures genuinely need a Google re-consent; anything
+   // else (API hiccups, transient errors) just needs a retry.
+   const needsReconnect = failed.some((d) =>
+     /refresh token|access token|invalid_grant|expired|auth|401|permission/i.test(d.error ?? "")
+   );
+    const flaggedTitle =
+      flaggedTotal === 1 ? "1 review marked unavailable" : `${flaggedTotal} reviews marked unavailable on Google`;
+   return (
     <section
       aria-label="Needs attention"
       className={`rounded-2xl border-2 bg-white/80 p-4 backdrop-blur-sm ${allClear ? "border-emerald-200/60" : "border-white"}`}
@@ -326,14 +354,16 @@ function AttentionQueue() {
                   {draftError && (
                     <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{draftError}</p>
                   )}
-                  {drafts.map((d) => {
-                    const busy = approvingId === d.id;
-                    return (
-                      <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
-                        <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
-                          <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
-                          <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
-                        </div>
+                   {drafts.map((d) => {
+                     const busy = approvingId === d.id;
+                     const locName = channelNames[d.channel_id] ?? "Location";
+                     return (
+                       <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                         <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
+                           <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
+                         </div>
                         {d.review_text && (
                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
                         )}
@@ -370,10 +400,10 @@ function AttentionQueue() {
                       disabled={approvingAll || approvingId !== null || draftTotal === 0}
                       className="flex-1 rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
                     >
-                      {approvingAll
-                        ? `Publishing ${approveProgress.done} of ${approveProgress.total}…`
-                        : `Approve all & publish (${draftTotal})`}
-                    </button>
+                       {approvingAll
+                         ? `Publishing ${approveProgress.done} of ${approveProgress.total} across all locations…`
+                         : `Approve & publish all across all locations (${draftTotal})`}
+                     </button>
 <Link
                        href="/dashboard/reviews?tab=need_approval"
                        className="relative flex items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
@@ -418,14 +448,16 @@ function AttentionQueue() {
                   {failedError && (
                     <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{failedError}</p>
                   )}
-                  {failed.map((d) => {
-                    const busy = generatingId === d.id;
-                    return (
-                      <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
-                        <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
-                          <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
-                          <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
-                        </div>
+                   {failed.map((d) => {
+                     const busy = generatingId === d.id;
+                     const locName = channelNames[d.channel_id] ?? "Location";
+                     return (
+                       <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                         <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
+                           <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
+                         </div>
                         {d.review_text && (
                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
                         )}
@@ -479,9 +511,54 @@ function AttentionQueue() {
                   </button>
                 </div>
               )}
-            </li>
-          )}
-          {items.map((item) => (
+             </li>
+           )}
+           {showFlagged && (
+             <li>
+               <button
+                 onClick={() => setFlaggedOpen((o) => !o)}
+                 aria-expanded={flaggedOpen}
+                 aria-controls="attention-flagged-body"
+                 className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+               >
+                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                 <span className="min-w-0 flex-1">
+                   <span className="block truncate text-[13px] font-semibold text-ink">{flaggedTitle}</span>
+                   <span className="block truncate text-[11px] text-ink/45">Marked unavailable — no AI draft needed</span>
+                 </span>
+                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 transition group-hover:text-deep-violet ${flaggedOpen ? "rotate-180" : ""}`}>
+                   <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                 </svg>
+               </button>
+               {flaggedOpen && (
+                 <div id="attention-flagged-body" className="space-y-2 px-2 pb-3 pt-1">
+                   {flagged.map((d) => {
+                     const locName = channelNames[d.channel_id] ?? "Location";
+                     return (
+                       <div key={d.review_id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                         <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
+                           <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
+                         </div>
+                         {d.review_text && (
+                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">"{d.review_text}"</p>
+                         )}
+                         <div className="mt-2 flex items-center justify-between">
+                           <span className="text-[10px] font-bold uppercase tracking-wide text-amber-600/60">Unavailable on Google</span>
+                           <Link href="/dashboard/reviews?tab=flagged" className="text-[11px] font-bold text-deep-violet underline underline-offset-2 hover:text-deep-violet/80">View all flagged →</Link>
+                         </div>
+                       </div>
+                     );
+                   })}
+                   <Link href="/dashboard/reviews?tab=flagged" className="flex items-center justify-center gap-1 rounded-xl bg-ink/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+                     See all {flaggedTotal} flagged reviews <span aria-hidden> →</span>
+                   </Link>
+                 </div>
+               )}
+             </li>
+           )}
+           {items.map((item) => (
             <li key={item.title}>
               <Link href={item.href} className="group flex items-center gap-3 rounded-xl px-2 py-2.5 outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.severity === "high" ? "bg-coral" : "bg-amber-500"}`} aria-hidden />
