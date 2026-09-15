@@ -374,10 +374,16 @@ function AttentionQueue() {
                     </button>
 <Link
                        href="/dashboard/reviews?tab=need_approval"
-                       className="flex items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                       className="relative flex items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                      >
                        Visit all reviews
                        <span aria-hidden> →</span>
+                       {draftTotal > 0 && (
+                         <span aria-hidden className="absolute -right-1 -top-1 flex h-3 w-3">
+                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-coral opacity-60" />
+                           <span className="relative inline-flex h-3 w-3 rounded-full bg-coral ring-2 ring-white" />
+                         </span>
+                       )}
                      </Link>
                   </div>
                 </div>

@@ -4,9 +4,9 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
-import GoogleReviewCard from "@/components/reviews/GoogleReviewCard";
+import GoogleReviewCard, { GoogleStars } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
-import { approveReply, editReply, generateReply, regenerateReply } from "@/lib/api-analytics";
+import { approveReply, editReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
 
 type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
@@ -69,10 +69,11 @@ function ReviewsInner() {
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [needApprovalPage, setNeedApprovalPage] = useState(1);
-  const [needApprovingAll, setNeedApprovingAll] = useState(false);
+  const [approvingAllPending, setApprovingAllPending] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
-  const [editingTexts, setEditingTexts] = useState<Record<string, string>>({});
-  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [pendingReplies, setPendingReplies] = useState<ReviewReplyDTO[]>([]);
+  const [draftTexts, setDraftTexts] = useState<Record<string, string>>({});
+  const [regenId, setRegenId] = useState<string | null>(null);
   const [replyMode, setReplyMode] = useState<"manual" | "ai">("manual");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiTrace, setAiTrace] = useState<StreamEvent[] | null>(null);
@@ -144,26 +145,38 @@ function ReviewsInner() {
     return mapInsights(data.items, channelNames, locations.find((l) => l.id === selectedId)?.name ?? "");
   };
 
-  const mergePendingReplies = async (reviewsToMerge: ReviewItem[]) => {
-    const channelIds = new Set(reviewsToMerge.map((r) => r.locationId).filter(Boolean));
-    const replyMap: Record<string, { reply_text?: string; status?: string }> = {};
-    for (const channelId of channelIds) {
+  const loadPendingReplies = async () => {
+    // Same source as the dashboard "Needs attention" queue: the
+    // review_replies table via /channels/{id}/reviews?status=pending_approval.
+    let ids: string[] = locations.map((l) => l.channelId).filter(Boolean) as string[];
+    if (ids.length === 0) {
       try {
-        const pending = await apiFetch(`/api/v1/channels/${channelId}/reviews?status=pending_approval&limit=200`);
-        for (const r of (pending.replies ?? []) as { review_id: string; reply_text?: string; status?: string }[]) {
-          replyMap[r.review_id] = { reply_text: r.reply_text, status: r.status };
-        }
-      } catch {}
+        const data = await apiFetch("/api/v1/channels/?limit=100");
+        ids = (data.channels ?? [])
+          .filter((c: { platform: string }) => c.platform === "google_reviews")
+          .map((c: { id: string }) => c.id);
+      } catch {
+        ids = [];
+      }
     }
-    setReviews((prev) =>
-      prev.map((item) => {
-        const match = replyMap[item.id] ?? replyMap[item.review_id ?? ""];
-        if (match) {
-          return { ...item, reply_text: match.reply_text ?? item.reply_text, status: match.status ?? item.status };
+    const lists: ReviewReplyDTO[][] = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const r = await apiFetch(`/api/v1/channels/${id}/reviews?status=pending_approval&limit=100`);
+          return (r.replies ?? []) as ReviewReplyDTO[];
+        } catch {
+          return [];
         }
-        return item;
       })
     );
+    // One row per review — newest draft wins (backend may hold older duplicates).
+    const seen = new Map<string, ReviewReplyDTO>();
+    for (const d of lists.flat()) {
+      const prev = seen.get(d.review_id);
+      if (!prev || d.created_at > prev.created_at) seen.set(d.review_id, d);
+    }
+    const merged = [...seen.values()].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    setPendingReplies(merged);
   };
 
   const fetchReviews = async (withSync: boolean) => {
@@ -179,7 +192,7 @@ function ReviewsInner() {
       const loc = locations.find((l) => l.id === selectedId);
       const items = await loadInsights(loc?.channelId);
       setReviews(items);
-      await mergePendingReplies(items);
+      await loadPendingReplies();
       if (withSync) setBanner({ kind: "ok", text: "Reconciled with Localith." });
     } catch {
       setReviews([]);
@@ -196,7 +209,7 @@ function ReviewsInner() {
         const loc = locations.find((l) => l.id === selectedId);
         const items = await loadInsights(loc?.channelId);
         if (!cancelled) setReviews(items);
-        await mergePendingReplies(items);
+        await loadPendingReplies();
       } catch {
         if (!cancelled) setReviews([]);
       }
@@ -211,8 +224,9 @@ function ReviewsInner() {
     replied: reviews.filter((r) => r.replied).length,
     positive: reviews.filter((r) => r.rating >= 4).length,
     negative: reviews.filter((r) => r.rating <= 2).length,
-    need_approval: reviews.filter((r) => !r.replied).length,
-  }), [reviews]);
+    // The approval queue is the source of truth for this count.
+    need_approval: pendingReplies.length,
+  }), [reviews, pendingReplies]);
 
   const filtered = reviews.filter((r) => {
     if (tab === "unanswered") return !r.replied;
@@ -284,102 +298,93 @@ function ReviewsInner() {
     setView({ kind: "detail", id });
   };
 
-  async function approveAndPublish(channelId: string, replyId: string, reviewId: string) {
-    setApprovingId(replyId);
-    try {
-      await approveReply(channelId, replyId);
-      setReviews((prev) => prev.filter((r) => r.id !== reviewId));
-      setBanner({ kind: "ok", text: "Reply approved and published to Google." });
-      setTimeout(() => setBanner(null), 3000);
-    } catch {
-      setBanner({ kind: "err", text: "Could not publish. Try again." });
-      setTimeout(() => setBanner(null), 3000);
-    } finally {
-      setApprovingId(null);
-    }
-  }
-
-  async function approveAllAndPublish() {
-    if (needApprovingAll || approvingId !== null) return;
-    setNeedApprovingAll(true);
-    let ok = 0;
-    try {
-      for (const r of filtered) {
-        try {
-          if (isTextEdited(r)) {
-            await editReply(r.locationId, r.id, editingTexts[r.id] ?? r.reply_text ?? "");
-          }
-          await approveReply(r.locationId, r.id);
-          ok += 1;
-        } catch {}
+  function detailMsg(e: unknown, fallback: string): string {
+    if (e instanceof Error) {
+      try {
+        const parsed = JSON.parse(e.message) as { detail?: unknown };
+        if (typeof parsed.detail === "string") return parsed.detail;
+      } catch {
+        /* not JSON — keep the fallback */
       }
-      setReviews((prev) => prev.filter((r) => !filtered.some((f) => f.id === r.id)));
-      setBanner({ kind: "ok", text: `${ok} of ${filtered.length} replies approved and published.` });
+    }
+    return fallback;
+  }
+
+  function getDraftText(d: ReviewReplyDTO): string {
+    return draftTexts[d.id] ?? d.reply_text ?? "";
+  }
+
+  function isDraftEdited(d: ReviewReplyDTO): boolean {
+    return (draftTexts[d.id] ?? "") !== (d.reply_text ?? "");
+  }
+
+  async function regenDraft(d: ReviewReplyDTO) {
+    setRegenId(d.id);
+    try {
+      const fresh = await regenerateReply(d.channel_id, d.id);
+      setPendingReplies((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: fresh.reply_text } : x)));
+      setDraftTexts((prev) => ({ ...prev, [d.id]: fresh.reply_text }));
+      setBanner({ kind: "ok", text: "Draft rewritten by the AI engine." });
       setTimeout(() => setBanner(null), 3000);
-    } catch {
-      setBanner({ kind: "err", text: "Could not publish all. Try again." });
-      setTimeout(() => setBanner(null), 3000);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not regenerate. Try again.") });
+      setTimeout(() => setBanner(null), 5000);
     } finally {
-      setNeedApprovingAll(false);
+      setRegenId(null);
     }
   }
 
-  function getReplyText(r: ReviewItem): string {
-    return editingTexts[r.id] ?? r.reply_text ?? "";
-  }
-
-  function isTextEdited(r: ReviewItem): boolean {
-    return (editingTexts[r.id] ?? "") !== (r.reply_text ?? "");
-  }
-
-  async function handleRegenerate(r: ReviewItem) {
-    setRegeneratingId(r.id);
+  async function saveDraft(d: ReviewReplyDTO) {
     try {
-      const result = await generateReply(r.locationId, {
-        review_id: r.id,
-        rating: r.rating,
-        review_text: r.comment,
-        reviewer_name: r.reviewer,
-      });
-      setEditingTexts((prev) => ({ ...prev, [r.id]: result.reply_text }));
-      setReviews((prev) => prev.map((x) => x.id === r.id ? { ...x, reply_text: result.reply_text, status: result.status } : x));
-      setBanner({ kind: "ok", text: "Reply regenerated." });
-      setTimeout(() => setBanner(null), 3000);
-    } catch {
-      setBanner({ kind: "err", text: "Could not regenerate. Try again." });
-      setTimeout(() => setBanner(null), 3000);
-    } finally {
-      setRegeneratingId(null);
-    }
-  }
-
-  async function handleSaveEdit(r: ReviewItem) {
-    try {
-      await editReply(r.locationId, r.id, editingTexts[r.id] ?? r.reply_text ?? "");
+      const text = getDraftText(d);
+      const saved = await editReply(d.channel_id, d.id, text);
+      setPendingReplies((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: saved.reply_text } : x)));
       setBanner({ kind: "ok", text: "Changes saved." });
       setTimeout(() => setBanner(null), 3000);
-    } catch {
-      setBanner({ kind: "err", text: "Could not save edits." });
-      setTimeout(() => setBanner(null), 3000);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not save edits.") });
+      setTimeout(() => setBanner(null), 5000);
     }
   }
 
-  async function handleApproveAndPublish(r: ReviewItem) {
-    setApprovingId(r.id);
+  async function approveDraft(d: ReviewReplyDTO) {
+    setApprovingId(d.id);
     try {
-      if (isTextEdited(r)) {
-        await editReply(r.locationId, r.id, editingTexts[r.id] ?? r.reply_text ?? "");
-      }
-      await approveReply(r.locationId, r.id);
-      setReviews((prev) => prev.filter((x) => x.id !== r.id));
+      if (isDraftEdited(d)) await editReply(d.channel_id, d.id, getDraftText(d));
+      await approveReply(d.channel_id, d.id);
+      setPendingReplies((prev) => prev.filter((x) => x.id !== d.id));
       setBanner({ kind: "ok", text: "Reply approved and published to Google." });
       setTimeout(() => setBanner(null), 3000);
-    } catch {
-      setBanner({ kind: "err", text: "Could not publish. Try again." });
-      setTimeout(() => setBanner(null), 3000);
+      void fetchReviews(false);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not publish that reply. Try again.") });
+      setTimeout(() => setBanner(null), 6000);
     } finally {
       setApprovingId(null);
     }
+  }
+
+  async function approveAllDrafts() {
+    if (approvingAllPending || approvingId !== null) return;
+    setApprovingAllPending(true);
+    let ok = 0;
+    for (const d of pendingReplies) {
+      try {
+        if (isDraftEdited(d)) await editReply(d.channel_id, d.id, getDraftText(d));
+        await approveReply(d.channel_id, d.id);
+        ok += 1;
+      } catch {}
+    }
+    setBanner({
+      kind: ok === pendingReplies.length ? "ok" : "err",
+      text: ok === pendingReplies.length
+        ? `Published all ${ok} repl${ok === 1 ? "y" : "ies"} to Google.`
+        : `Published ${ok} of ${pendingReplies.length}. The rest failed — try again.`,
+    });
+    setTimeout(() => setBanner(null), 5000);
+    await loadPendingReplies();
+    void fetchReviews(false);
+    setApprovingAllPending(false);
   }
 
   const generateAiReply = async () => {
@@ -504,8 +509,7 @@ function ReviewsInner() {
   const safePage = Math.min(page, totalPages);
   const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const needApprovalFiltered = tab === "need_approval" ? filtered.slice(0, needApprovalPage * NEED_APPROVAL_PAGE_SIZE) : paged;
-  const needApprovalTotalPages = Math.max(1, Math.ceil(filtered.length / NEED_APPROVAL_PAGE_SIZE));
+  const visiblePending = pendingReplies.slice(0, needApprovalPage * NEED_APPROVAL_PAGE_SIZE);
 
   const pickTab = (t: ReviewTab) => {
     setTab(t);
@@ -582,7 +586,11 @@ function ReviewsInner() {
                   <div className="col-span-12 lg:col-span-8 space-y-4">
 <div className="relative">
                         <select value={tab} onChange={(e) => { pickTab(e.target.value as ReviewTab); }}
-                          className="appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[12px] font-semibold text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog cursor-pointer">
+                          className={`appearance-none rounded-xl border bg-white py-2 pl-3 pr-9 text-[12px] font-semibold outline-none dark:bg-ink cursor-pointer transition ${
+                            tab === "need_approval" && counts.need_approval > 0
+                              ? "border-coral/40 text-coral focus:ring-2 focus:ring-coral/20"
+                              : "border-ink/[0.08] text-ink dark:border-fog/[0.1] dark:text-fog"
+                          }`}>
                           {([
                             { key: "all", label: `All (${counts.all})` },
                             { key: "unanswered", label: `Unanswered (${counts.unanswered})` },
@@ -597,9 +605,193 @@ function ReviewsInner() {
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40 pointer-events-none">
                           <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
+                        {counts.need_approval > 0 && (
+                          <span aria-hidden className="absolute -right-1 -top-1 flex h-3 w-3">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-coral opacity-60" />
+                            <span className="relative inline-flex h-3 w-3 rounded-full bg-coral ring-2 ring-white dark:ring-ink" />
+                          </span>
+                        )}
                       </div>
 
-                    {filtered.length === 0 ? (
+                    {tab === "need_approval" ? (
+                      pendingReplies.length === 0 ? (
+                        <div className="flex flex-col items-center rounded-2xl border-2 border-dashed border-deep-violet/15 bg-white/70 px-6 py-14 text-center backdrop-blur-sm dark:border-fog/[0.12] dark:bg-ink/60">
+                          <span aria-hidden className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald/10 text-2xl">✓</span>
+                          <p className="mt-3 text-[14px] font-bold text-ink dark:text-fog">Queue is clear</p>
+                          <p className="mt-1 max-w-xs text-[12px] leading-relaxed text-ink/45">
+                            No replies waiting for approval. New AI drafts land here automatically when Automations writes them.
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          {/* Queue header */}
+                          <div className="overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet/[0.08] via-magenta/[0.04] to-transparent p-4 backdrop-blur-sm">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <span aria-hidden className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-deep-violet text-white shadow-sm shadow-deep-violet/30">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+                                    <path d="M3 13h4l2 3h6l2-3h4" strokeLinecap="round" strokeLinejoin="round" />
+                                    <path d="M5 6h14l2 7v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5l2-7Z" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                </span>
+                                <div>
+                                  <h3 className="text-[15px] font-bold text-ink dark:text-fog">
+                                    Approval queue
+                                    <span className="ml-2 rounded-full bg-deep-violet px-2 py-0.5 text-[11px] font-bold tabular-nums text-white">{pendingReplies.length}</span>
+                                  </h3>
+                                  <p className="text-[12px] text-ink/50 dark:text-fog/50">
+                                    {pendingReplies.length === 1 ? "1 AI draft" : `${pendingReplies.length} AI drafts`} waiting — edit, rewrite, or publish to Google
+                                  </p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => void approveAllDrafts()}
+                                disabled={approvingAllPending || approvingId !== null}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald px-4 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 active:scale-[0.98] disabled:opacity-50"
+                              >
+                                {approvingAllPending ? (
+                                  <><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Approving all…</>
+                                ) : (
+                                  <>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3.5 w-3.5" aria-hidden>
+                                      <polyline points="20 6 9 17 4 12" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                    Approve all & publish
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Draft cards */}
+                          <div className="space-y-3">
+                            {visiblePending.map((d) => {
+                              const busy = approvingId === d.id;
+                              const edited = isDraftEdited(d);
+                              const text = getDraftText(d);
+                              const parts = (d.reviewer_name ?? "Anonymous").trim().split(/\s+/).filter(Boolean);
+                              const initials = parts.length > 1
+                                ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+                                : (parts[0]?.slice(0, 2) ?? "A").toUpperCase();
+                              const days = d.created_at ? Math.floor((Date.now() - new Date(d.created_at).getTime()) / 86_400_000) : null;
+                              const when = days === null ? "" : days <= 0 ? "today" : days === 1 ? "yesterday" : days < 30 ? `${days}d ago` : new Date(d.created_at).toLocaleDateString("en", { month: "short", day: "numeric" });
+                              return (
+                                <article
+                                  key={d.id}
+                                  className="rounded-2xl border-2 border-white bg-white/90 p-4 shadow-sm backdrop-blur-sm transition duration-200 hover:border-deep-violet/20 hover:shadow-md hover:shadow-deep-violet/[0.07]"
+                                >
+                                  {/* Reviewer */}
+                                  <div className="flex items-start gap-3">
+                                    <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[11px] font-bold text-deep-violet">
+                                      {initials}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                        <p className="truncate text-[13px] font-bold text-ink dark:text-fog">{d.reviewer_name ?? "Anonymous"}</p>
+                                        <GoogleStars rating={d.rating} />
+                                      </div>
+                                      <p className="mt-0.5 text-[11px] text-ink/40">left a {d.rating}★ review · {when}</p>
+                                    </div>
+                                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-600">
+                                      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                                      Pending
+                                    </span>
+                                  </div>
+
+                                  {/* Original review */}
+                                  {d.review_text && (
+                                    <blockquote className="mt-3 rounded-r-lg border-l-[3px] border-deep-violet/30 bg-ink/[0.025] py-2 pl-3 pr-2 dark:bg-fog/[0.04]">
+                                      <p className="line-clamp-3 text-[13px] italic leading-5 text-ink/65 dark:text-fog/60">“{d.review_text}”</p>
+                                    </blockquote>
+                                  )}
+
+                                  {/* AI draft */}
+                                  <div className="mt-3 rounded-xl border border-deep-violet/[0.14] bg-deep-violet/[0.03] p-3">
+                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-2.5 w-2.5" aria-hidden>
+                                          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                        AI draft
+                                      </span>
+                                      <button
+                                        onClick={() => void regenDraft(d)}
+                                        disabled={regenId === d.id || busy || approvingAllPending}
+                                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                                      >
+                                        {regenId === d.id ? (
+                                          <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet" /> Rewriting…</>
+                                        ) : (
+                                          <>
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
+                                              <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+                                            </svg>
+                                            Rewrite
+                                          </>
+                                        )}
+                                      </button>
+                                    </div>
+                                    <textarea
+                                      value={text}
+                                      onChange={(e) => setDraftTexts((prev) => ({ ...prev, [d.id]: e.target.value }))}
+                                      rows={3}
+                                      maxLength={1000}
+                                      aria-label="AI draft reply — editable"
+                                      className="w-full resize-y rounded-lg border border-deep-violet/[0.15] bg-white p-3 text-[13px] leading-6 text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/50 focus:ring-2 focus:ring-deep-violet/[0.12] dark:bg-ink dark:text-fog"
+                                    />
+                                    <div className="mt-1.5 flex items-center justify-between text-[10px] font-medium">
+                                      <span className={edited ? "text-amber-600" : "text-ink/35"}>
+                                        {edited ? "Edited — not saved yet" : "Grounded in your business profile"}
+                                      </span>
+                                      <span className="tabular-nums text-ink/35">{text.length}/1000</span>
+                                    </div>
+                                  </div>
+
+                                  {/* Actions */}
+                                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                                    <button
+                                      onClick={() => void approveDraft(d)}
+                                      disabled={busy || approvingAllPending}
+                                      className="inline-flex items-center gap-1.5 rounded-xl bg-emerald px-4 py-2 text-[12px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 active:scale-[0.98] disabled:opacity-50"
+                                    >
+                                      {busy ? (
+                                        <><span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Publishing…</>
+                                      ) : (
+                                        <>
+                                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3.5 w-3.5" aria-hidden>
+                                            <polyline points="20 6 9 17 4 12" strokeLinecap="round" strokeLinejoin="round" />
+                                          </svg>
+                                          Approve & publish
+                                        </>
+                                      )}
+                                    </button>
+                                    {edited && (
+                                      <button
+                                        onClick={() => void saveDraft(d)}
+                                        disabled={busy}
+                                        className="rounded-xl bg-deep-violet/[0.07] px-3.5 py-2 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                                      >
+                                        Save edits
+                                      </button>
+                                    )}
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+
+                          {/* See more */}
+                          {visiblePending.length < pendingReplies.length && (
+                            <button
+                              onClick={() => setNeedApprovalPage((p) => p + 1)}
+                              className="w-full rounded-xl bg-deep-violet/[0.06] py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                            >
+                              See more drafts ({pendingReplies.length - visiblePending.length} left)
+                            </button>
+                          )}
+                        </>
+                      )
+                    ) : filtered.length === 0 ? (
                       <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
                         <p className="text-[14px] font-medium text-ink/40">
                           {reviews.length === 0 && tab === "all"
@@ -609,95 +801,38 @@ function ReviewsInner() {
                       </div>
                     ) : (
                       <>
-                        {tab === "need_approval" && (
-                          <div className="flex flex-wrap items-center gap-2 mb-3">
-                            <button
-                              onClick={() => void approveAllAndPublish()}
-                              disabled={needApprovingAll || approvingId !== null || filtered.length === 0}
-                              className="inline-flex items-center justify-center rounded-xl bg-emerald px-4 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-emerald/25 outline-none transition hover:bg-emerald/90 focus-visible:ring-2 focus-visible:ring-emerald/40 disabled:opacity-50"
-                            >
-                              {needApprovingAll ? "Approving all…" : `Approve all & publish (${filtered.length})`}
-                            </button>
-                          </div>
-                        )}
                         <div className="space-y-2">
-                          {needApprovalFiltered.map((r) => (
-                            <div key={r.id} className="relative">
-                              <GoogleReviewCard
-                                review={{
-                                  id: r.id,
-                                  reviewer: r.reviewer,
-                                  rating: r.rating,
-                                  comment: r.comment,
-                                  createdAt: r.createdAt,
-                                  locationName: r.locationName,
-                                  replied: r.replied,
-                                  sentiment: r.sentiment,
-                                  reviewUrl: r.reviewUrl,
-                                }}
-                                onOpen={openDetail}
-                              />
-                              {tab === "need_approval" && !r.replied && (
-                                <div className="mt-2 rounded-lg border border-deep-violet/[0.12] bg-deep-violet/[0.02] p-3">
-                                  <div className="mb-2 flex items-center justify-between">
-                                    <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60">AI draft</p>
-                                    <button
-                                      onClick={() => void handleRegenerate(r)}
-                                      disabled={regeneratingId === r.id}
-                                      className="text-[11px] font-medium text-deep-violet hover:underline disabled:opacity-50"
-                                    >
-                                      {regeneratingId === r.id ? "Regenerating…" : "↻ Regenerate"}
-                                    </button>
-                                  </div>
-                                  <textarea
-                                    value={getReplyText(r)}
-                                    onChange={(e) => setEditingTexts((prev) => ({ ...prev, [r.id]: e.target.value }))}
-                                    rows={3}
-                                    className="w-full resize-y rounded-lg border border-deep-violet/[0.1] bg-white p-2.5 text-[12px] leading-relaxed text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1]"
-                                  />
-                                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                                    <button
-                                      onClick={() => void handleApproveAndPublish(r)}
-                                      disabled={approvingId === r.id}
-                                      className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 disabled:opacity-50"
-                                    >
-                                      {approvingId === r.id ? "Publishing…" : "Approve & publish"}
-                                    </button>
-                                    {isTextEdited(r) && (
-                                      <button onClick={() => void handleSaveEdit(r)} className="rounded-lg bg-deep-violet/[0.07] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.12]">
-                                        Save edits
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
+                          {paged.map((r) => (
+                            <GoogleReviewCard
+                              key={r.id}
+                              review={{
+                                id: r.id,
+                                reviewer: r.reviewer,
+                                rating: r.rating,
+                                comment: r.comment,
+                                createdAt: r.createdAt,
+                                locationName: r.locationName,
+                                replied: r.replied,
+                                sentiment: r.sentiment,
+                                reviewUrl: r.reviewUrl,
+                              }}
+                              onOpen={openDetail}
+                            />
                           ))}
                         </div>
-                        {tab === "need_approval" ? (
-                          <div className="flex items-center justify-between pt-1">
-                            <p className="text-[11px] text-ink/40">{needApprovalFiltered.length} of {filtered.length} reviews</p>
-                            {needApprovalFiltered.length < filtered.length && (
-                              <button onClick={() => setNeedApprovalPage((p) => p + 1)} className="btn-secondary !px-3 !py-1.5">
-                                See more
+                        <div className="flex items-center justify-between pt-1">
+                          <p className="text-[11px] text-ink/40">Page {safePage} of {totalPages} · {filtered.length} reviews</p>
+                          <div className="flex gap-1">
+                            <button onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage <= 1} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Prev</button>
+                            {Array.from({ length: totalPages }).slice(0, 5).map((_, i) => (
+                              <button key={i} onClick={() => setPage(i + 1)}
+                                className={`rounded-lg px-2.5 py-1.5 text-[12px] font-semibold ${safePage === i + 1 ? "bg-deep-violet text-white" : "text-ink/50 hover:bg-ink/[0.04]"}`}>
+                                {i + 1}
                               </button>
-                            )}
+                            ))}
+                            <button onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage >= totalPages} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Next</button>
                           </div>
-                        ) : (
-                          <div className="flex items-center justify-between pt-1">
-                            <p className="text-[11px] text-ink/40">Page {safePage} of {totalPages} · {filtered.length} reviews</p>
-                            <div className="flex gap-1">
-                              <button onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage <= 1} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Prev</button>
-                              {Array.from({ length: totalPages }).slice(0, 5).map((_, i) => (
-                                <button key={i} onClick={() => setPage(i + 1)}
-                                  className={`rounded-lg px-2.5 py-1.5 text-[12px] font-semibold ${safePage === i + 1 ? "bg-deep-violet text-white" : "text-ink/50 hover:bg-ink/[0.04]"}`}>
-                                  {i + 1}
-                                </button>
-                              ))}
-                              <button onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage >= totalPages} className="btn-secondary !px-3 !py-1.5 disabled:opacity-40">Next</button>
-                            </div>
-                          </div>
-                        )}
+                        </div>
                       </>
                     )}
                   </div>
