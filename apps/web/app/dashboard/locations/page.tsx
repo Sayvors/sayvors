@@ -74,9 +74,10 @@ function SourceBadge({ google }: { google: boolean }) {
   );
 }
 
-function CompletenessCard({ profile }: { profile: LocalithConn }) {
+function CompletenessCard({ profile, fullProfile }: { profile: LocalithConn; fullProfile?: FullProfile | null }) {
+  const displayName = fullProfile?.name ?? profile.listing_name;
   const essentials: { label: string; done: boolean; hint?: string }[] = [
-    { label: "Business name", done: !!profile.listing_name },
+    { label: "Business name", done: !!displayName },
     { label: "Address", done: !!profile.address },
     { label: "Website URL", done: !!profile.website_url },
     { label: "Phone number", done: !!profile.phone_number, hint: !profile.phone_number ? "Add phone number" : undefined },
@@ -186,26 +187,34 @@ export default function LocationsPage() {
 
   const selectedLocation = locations.find((l) => l.id === selectedId) ?? locations[0] ?? null;
 
-  // Load the merged profile (Google snapshot + Sayvors store) per location.
-  useEffect(() => {
-    if (!selectedId) {
-      setFullProfile(null);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiFetch(`/api/v1/locations/${selectedId}`);
-        if (!cancelled) setFullProfile(data as FullProfile);
-      } catch {
-        if (!cancelled) setFullProfile(null);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [selectedId]);
+   // Load the merged profile (Google snapshot + Sayvors store) per location.
+   useEffect(() => {
+     if (!selectedId) {
+       setFullProfile(null);
+       return;
+     }
+     let cancelled = false;
+     (async () => {
+       try {
+         const data = await apiFetch(`/api/v1/locations/${selectedId}`);
+         if (!cancelled) setFullProfile(data as FullProfile);
+       } catch {
+         if (!cancelled) setFullProfile(null);
+       }
+     })();
+     return () => { cancelled = true; };
+   }, [selectedId]);
+
+   // Use fullProfile.name (actual business name) over localith.listing_name when available.
+   useEffect(() => {
+     if (!fullProfile || !selectedId) return;
+     setLocations((prev) =>
+       prev.map((l) => (l.id === selectedId ? { ...l, name: fullProfile.name } : l))
+     );
+   }, [fullProfile, selectedId]);
 
 
-  const tabs = [
+   const tabs = [
     { key: "details", label: "Business Details" },
     { key: "categories", label: "Categories" },
     { key: "hours", label: "Hours" },
@@ -292,7 +301,7 @@ export default function LocationsPage() {
       )}
 
       {/* Profile completeness (Localith snapshot) */}
-      {localith && <CompletenessCard profile={localith} />}
+      {localith && <CompletenessCard profile={localith} fullProfile={fullProfile} />}
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -323,15 +332,18 @@ export default function LocationsPage() {
               <DetailsTab
                 location={selectedLocation}
                 profile={localith}
+                fullProfile={fullProfile}
                 onSave={(text, kind) => showBanner(kind ?? "ok", text)}
-                onProfile={(c) => {
+                onProfile={async (c) => {
                   setLocalith(c);
-                  setLocations([{
-                    id: c.listing_id,
-                    name: c.listing_name,
-                    address: c.address ?? "",
-                    status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
-                  }]);
+                  if (selectedId) {
+                    try {
+                      const refreshed = await apiFetch(`/api/v1/locations/${selectedId}`);
+                      setFullProfile(refreshed as FullProfile);
+                    } catch {
+                      /* ignore refresh failure — locations update already applied */
+                    }
+                  }
                 }}
               />
             )}
@@ -393,27 +405,30 @@ export default function LocationsPage() {
 function DetailsTab({
   location,
   profile,
+  fullProfile,
   onSave,
   onProfile,
 }: {
   location: LocationOption | null;
   profile: LocalithConn | null;
+  fullProfile?: FullProfile | null;
   onSave: (text: string, kind?: "ok" | "err") => void;
   onProfile: (c: LocalithConn) => void;
 }) {
-  const [name, setName] = useState(location?.name ?? "");
+  const displayName = fullProfile?.name ?? location?.name ?? "";
+  const [name, setName] = useState(displayName);
   const [address, setAddress] = useState(location?.address ?? "");
   const [phone, setPhone] = useState(profile?.phone_number ?? "");
   const [website, setWebsite] = useState(profile?.website_url ?? "");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setName(location?.name ?? "");
+    setName(fullProfile?.name ?? location?.name ?? "");
     setAddress(location?.address ?? "");
     setPhone(profile?.phone_number ?? "");
     setWebsite(profile?.website_url ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location?.id, profile?.listing_id]);
+  }, [location?.id, profile?.listing_id, fullProfile?.name]);
 
   const handleSave = async () => {
     if (!profile) {
