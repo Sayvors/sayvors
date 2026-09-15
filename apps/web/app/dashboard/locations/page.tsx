@@ -1,7 +1,6 @@
 ﻿"use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
@@ -122,6 +121,7 @@ export default function LocationsPage() {
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [localith, setLocalith] = useState<LocalithConn | null>(null);
   const [fullProfile, setFullProfile] = useState<FullProfile | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const showBanner = (kind: "ok" | "err", text: string) => setBanner({ kind, text });
 
@@ -269,24 +269,20 @@ export default function LocationsPage() {
           <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
             {locations.length ? "Google connected" : "Google not connected"}
           </span>
-          <Link
-            href="/dashboard/channels?add=location"
-            title="Connect another Google location — every connected Google channel becomes a location here."
+          <button
+            onClick={() => setCreateOpen(true)}
+            title="Create a new Google business location"
             className="rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:opacity-90"
           >
-            Connect location
-          </Link>
+            + Add location
+          </button>
         </div>
       </div>
 
       {/* Multi-location hint */}
       {locations.length > 0 && (
         <p className="rounded-xl border border-ink/[0.06] bg-white/60 p-3 text-[12px] text-ink/50 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/50">
-          Every connected Google location appears in this list — switch locations above, or{" "}
-          <Link href="/dashboard/channels?add=location" className="font-semibold text-deep-violet hover:underline">
-            connect another location
-          </Link>{" "}
-          to manage its reviews and auto-replies separately.
+          Every connected Google location appears in this list — switch locations above to manage each one separately.
         </p>
       )}
 
@@ -298,6 +294,17 @@ export default function LocationsPage() {
             <button className="shrink-0 text-[12px] underline underline-offset-2" onClick={() => setBanner(null)}>dismiss</button>
           </div>
         </div>
+      )}
+
+      {/* Add-location wizard (Google create workflow, draft-only until Google connects) */}
+      {createOpen && (
+        <AddLocationModal
+          onClose={() => setCreateOpen(false)}
+          onSaved={(text) => {
+            setCreateOpen(false);
+            showBanner("ok", text);
+          }}
+        />
       )}
 
       {/* Profile completeness (Localith snapshot) */}
@@ -972,6 +979,266 @@ function GoogleUpdatesTab() {
 /* ΓöÇΓöÇ Add Location Modal ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
 /* ΓöÇΓöÇ Shared pieces ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
+
+/* Add Location Modal (Google create-location workflow, frontend-first).
+   Steps mirror Google's recommended flow: details → duplicate check →
+   create → verification. Server calls are stubbed (TODO) until the direct
+   Google connection lands. "Save draft" persists to localStorage only. */
+
+const CREATE_DRAFT_KEY = "sayvors.locationDraft.v1";
+
+interface LocationDraft {
+  name: string;
+  category: string;
+  street: string;
+  city: string;
+  postalCode: string;
+  country: string;
+  phone: string;
+  website: string;
+}
+
+const EMPTY_DRAFT: LocationDraft = {
+  name: "",
+  category: "",
+  street: "",
+  city: "",
+  postalCode: "",
+  country: "",
+  phone: "",
+  website: "",
+};
+
+function loadCreateDraft(): LocationDraft {
+  try {
+    const raw = localStorage.getItem(CREATE_DRAFT_KEY);
+    if (!raw) return { ...EMPTY_DRAFT };
+    const parsed = JSON.parse(raw) as Partial<LocationDraft>;
+    return { ...EMPTY_DRAFT, ...parsed };
+  } catch {
+    return { ...EMPTY_DRAFT };
+  }
+}
+
+type VerifyMethod = "auto" | "email" | "sms" | "call" | "postcard";
+
+const VERIFY_METHODS: { key: VerifyMethod; label: string; hint: string }[] = [
+  { key: "auto", label: "Automatic", hint: "Google verifies instantly when eligible — nothing to do." },
+  { key: "email", label: "Email", hint: "A PIN goes to the business email address." },
+  { key: "sms", label: "SMS", hint: "A PIN goes to the business phone by text." },
+  { key: "call", label: "Phone call", hint: "Google calls the business phone with a PIN." },
+  { key: "postcard", label: "Postcard", hint: "A PIN arrives by mail in several days." },
+];
+
+function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: (text: string) => void }) {
+  const [step, setStep] = useState(1);
+  const [draft, setDraft] = useState<LocationDraft>(() => loadCreateDraft());
+  const [errors, setErrors] = useState<string[]>([]);
+  const [checked, setChecked] = useState(false);
+  const [method, setMethod] = useState<VerifyMethod>("auto");
+  const [pin, setPin] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const steps = ["Details", "Matches", "Review", "Verification"];
+
+  const nextFromDetails = () => {
+    const missing: string[] = [];
+    if (!draft.name.trim()) missing.push("Business name");
+    if (!draft.category.trim()) missing.push("Primary category");
+    if (!draft.country.trim()) missing.push("Country");
+    if (missing.length) {
+      setErrors(missing);
+      return;
+    }
+    setErrors([]);
+    setStep(2);
+  };
+
+  // TODO: POST /api/v1/locations/check — GoogleLocations duplicate matches.
+  // Runs for real once Google is connected; until then it only marks the
+  // step reviewed so the draft can be completed.
+  const runDuplicateCheck = () => {
+    setChecked(true);
+  };
+
+  const saveDraft = () => {
+    setSaving(true);
+    try {
+      localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(draft));
+    } catch {
+      /* private mode — draft stays in memory for this session */
+    } finally {
+      setSaving(false);
+    }
+    onSaved("Draft saved — it'll pre-fill Create when Google is connected.");
+  };
+
+  // TODO: POST /api/v1/locations — accounts.locations.create (validateOnly first).
+  // TODO: POST /api/v1/locations/{id}/verification-options → verify → complete.
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px]" role="presentation" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add location"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <SectionTitle title="Add location" subtitle="Create a new Google business location. Saved as a draft until Google is connected." />
+          <button onClick={onClose} aria-label="Close" className="rounded-lg px-2 py-1 text-[16px] font-bold text-ink/40 transition hover:bg-ink/[0.04] dark:text-fog/40">
+            ×
+          </button>
+        </div>
+
+        {/* Step indicator */}
+        <ol className="mb-4 flex items-center gap-1.5">
+          {steps.map((label, i) => {
+            const n = i + 1;
+            const active = n === step;
+            const done = n < step;
+            return (
+              <li key={label} className="flex flex-1 items-center gap-1.5">
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${done ? "bg-emerald-500 text-white" : active ? "bg-deep-violet text-white" : "bg-ink/[0.08] text-ink/40 dark:bg-fog/[0.08] dark:text-fog/40"}`}>
+                  {done ? "✓" : n}
+                </span>
+                <span className={`text-[11px] font-semibold ${active ? "text-deep-violet" : "text-ink/40 dark:text-fog/40"}`}>{label}</span>
+                {n < steps.length && <span className="h-px flex-1 bg-ink/[0.08] dark:bg-fog/[0.08]" aria-hidden />}
+              </li>
+            );
+          })}
+        </ol>
+
+        {step === 1 && (
+          <div className="space-y-4">
+            {errors.length > 0 && (
+              <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">
+                Required: {errors.join(", ")}.
+              </p>
+            )}
+            <Field label="Business name *">
+              <input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Sayvors Company" className="input-field" />
+            </Field>
+            <Field label="Primary category *">
+              <input value={draft.category} onChange={(e) => setDraft((d) => ({ ...d, category: e.target.value }))} placeholder="e.g. Software company" className="input-field" />
+            </Field>
+            <Field label="Street address">
+              <input value={draft.street} onChange={(e) => setDraft((d) => ({ ...d, street: e.target.value }))} placeholder="Street and number" className="input-field" />
+            </Field>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="City">
+                <input value={draft.city} onChange={(e) => setDraft((d) => ({ ...d, city: e.target.value }))} placeholder="Riyadh" className="input-field" />
+              </Field>
+              <Field label="Postal code">
+                <input value={draft.postalCode} onChange={(e) => setDraft((d) => ({ ...d, postalCode: e.target.value }))} placeholder="12213" className="input-field" />
+              </Field>
+              <Field label="Country *">
+                <input value={draft.country} onChange={(e) => setDraft((d) => ({ ...d, country: e.target.value }))} placeholder="SA" className="input-field" />
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Phone">
+                <input value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} placeholder="+966 55 000 0000" className="input-field" />
+              </Field>
+              <Field label="Website">
+                <input value={draft.website} onChange={(e) => setDraft((d) => ({ ...d, website: e.target.value }))} placeholder="https://..." className="input-field" />
+              </Field>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={onClose} className="btn-secondary">Cancel</button>
+              <button onClick={nextFromDetails} className="btn-primary">Continue →</button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-4">
+            <p className="text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">
+              Before creating, Google must be checked for an existing or claimed listing at this address — creating a duplicate can get the listing suspended.
+            </p>
+            {!checked ? (
+              <button onClick={runDuplicateCheck} className="btn-secondary w-full">
+                Check Google for existing matches
+              </button>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">
+                Live duplicate check runs against Google once connected — no live check yet. Your details are kept; you can continue and save the draft.
+              </div>
+            )}
+            <div className="flex justify-between gap-2 pt-1">
+              <button onClick={() => setStep(1)} className="btn-secondary">← Back</button>
+              <button onClick={() => setStep(3)} className="btn-primary">Continue →</button>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="space-y-4">
+            <dl className="space-y-1.5 rounded-xl bg-ink/[0.03] p-4 text-[12px] dark:bg-fog/[0.04]">
+              {[
+                ["Business name", draft.name || "—"],
+                ["Category", draft.category || "—"],
+                ["Address", [draft.street, draft.city, draft.postalCode, draft.country].filter(Boolean).join(", ") || "—"],
+                ["Phone", draft.phone || "—"],
+                ["Website", draft.website || "—"],
+              ].map(([k, v]) => (
+                <div key={k} className="flex gap-3">
+                  <dt className="w-28 shrink-0 font-medium text-ink/50 dark:text-fog/50">{k}</dt>
+                  <dd className="font-semibold text-ink dark:text-fog">{v}</dd>
+                </div>
+              ))}
+            </dl>
+            <button onClick={saveDraft} disabled={saving} className="btn-primary w-full disabled:opacity-50">
+              {saving ? "Saving..." : "Save draft"}
+            </button>
+            <button disabled title="Available once Google is connected" className="btn-secondary w-full cursor-not-allowed opacity-50">
+              Create on Google (needs connection)
+            </button>
+            <div className="flex justify-start pt-1">
+              <button onClick={() => setStep(2)} className="btn-secondary">← Back</button>
+            </div>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div className="space-y-4">
+            <p className="text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">
+              New locations stay invisible on Maps and Search until the owner verifies them. Pick how verification will run once the listing is created.
+            </p>
+            <div className="space-y-2">
+              {VERIFY_METHODS.map((m) => (
+                <label key={m.key} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${method === m.key ? "border-deep-violet/40 bg-deep-violet/[0.04]" : "border-ink/[0.08] dark:border-fog/[0.08]"}`}>
+                  <input
+                    type="radio"
+                    name="verify-method"
+                    checked={method === m.key}
+                    onChange={() => setMethod(m.key)}
+                    className="mt-0.5 accent-deep-violet"
+                  />
+                  <span>
+                    <span className="block text-[13px] font-semibold text-ink dark:text-fog">{m.label}</span>
+                    <span className="block text-[11px] text-ink/45 dark:text-fog/45">{m.hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <Field label="Verification PIN (preview — enter the code Google sends)">
+              <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="6-digit code" className="input-field" />
+            </Field>
+            <button disabled title="Available once Google is connected" className="btn-secondary w-full cursor-not-allowed opacity-50">
+              Complete verification (needs connection)
+            </button>
+            <div className="flex justify-between gap-2 pt-1">
+              <button onClick={() => setStep(3)} className="btn-secondary">← Back</button>
+              <button onClick={onClose} className="btn-primary">Done</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (

@@ -270,13 +270,6 @@ function ConnectHub() {
     }
   };
 
-  // ── Localith: add another location (keep current card, just open picker) ──
-  const addAnotherLocation = async () => {
-    setLocalithPick(null);
-    setBanner(null);
-    await openLocalithListings();
-  };
-
   // ── Localith: fetch available listings ──
   const openLocalithListings = async () => {
     setLocalithOpen(true);
@@ -373,19 +366,6 @@ function ConnectHub() {
   };
 
   const googleChannels = channels.filter((c) => c.platform === "google_reviews");
-
-  // Deep link: /dashboard/channels?add=location (from Locations tab) auto-opens the picker.
-  useEffect(() => {
-    if (params.get("add") === "location") {
-      void openLocalithListings();
-      try {
-        window.history.replaceState(null, "", "/dashboard/channels");
-      } catch {
-        /* history unavailable */
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-5">
@@ -522,45 +502,6 @@ function ConnectHub() {
                 </div>
               );
               })()}
-
-            <div className="mt-3 flex items-center gap-2">
-              <button
-                onClick={addAnotherLocation}
-                className="rounded-lg bg-deep-violet/10 px-3 py-1.5 text-[11px] font-semibold text-deep-violet transition hover:bg-deep-violet/20"
-              >
-                + Add another location
-              </button>
-              <span className="text-[11px] text-ink/30 dark:text-fog/30">Each Google location becomes its own channel + location here</span>
-            </div>
-            {localithOpen && (
-              <div className="flex items-center gap-2 rounded-xl bg-white/70 p-2 ring-1 ring-emerald-200/50 dark:bg-emerald-500/[0.08]">
-                <select
-                  value={localithPick ?? ""}
-                  onChange={(e) => setLocalithPick(e.target.value || null)}
-                  className="w-48 rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[12px] text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
-                >
-                  <option value="">Select listing...</option>
-                  {localithListings.map((l) => (
-                    <option key={l.id ?? l.googleId ?? l.google_id} value={l.id ?? l.googleId ?? l.google_id}>
-                      {l.name ?? l.id}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={saveLocalith}
-                  disabled={!localithPick || localithBusy}
-                  className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {localithBusy ? <span className="inline-flex items-center gap-1"><LogoLoader size={12} /> </span> : "Save"}
-                </button>
-                <button
-                  onClick={() => setLocalithOpen(false)}
-                  className="rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink/40 transition hover:bg-ink/[0.04] dark:text-fog/40"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
             </div>
           ) : (
 
