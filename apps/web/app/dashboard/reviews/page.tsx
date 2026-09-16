@@ -322,16 +322,16 @@ function ReviewsInner() {
     return (draftTexts[d.id] ?? "") !== (d.reply_text ?? "");
   }
 
-  async function regenDraft(d: ReviewReplyDTO) {
+  async function regenDraft(d: ReviewReplyDTO, engine = false) {
     setRegenId(d.id);
     try {
-      const fresh = await regenerateReply(d.channel_id, d.id);
+      const fresh = await regenerateReply(d.channel_id, d.id, engine);
       setPendingReplies((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: fresh.reply_text, generation_attempt: fresh.generation_attempt ?? (x.generation_attempt ?? 1) + 1 } : x)));
       setDraftTexts((prev) => ({ ...prev, [d.id]: fresh.reply_text }));
-      setBanner({ kind: "ok", text: "Draft rewritten by the AI engine." });
+      setBanner({ kind: "ok", text: engine ? "Rewritten by the full AI engine — strategies, databank and validation applied." : "Draft rewritten by the AI engine." });
       setTimeout(() => setBanner(null), 3000);
     } catch (e) {
-      setBanner({ kind: "err", text: detailMsg(e, "Could not regenerate. Try again.") });
+      setBanner({ kind: "err", text: detailMsg(e, engine ? "Engine rewrite failed. Try again." : "Could not regenerate. Try again.") });
       setTimeout(() => setBanner(null), 5000);
     } finally {
       setRegenId(null);
@@ -493,8 +493,8 @@ function ReviewsInner() {
       const msg = e instanceof Error ? e.message : "AI engine failed";
       // Surface engine's own 400 when Automations model is missing
       if (msg.includes("No reply model configured") || msg.includes("Channel not found")) {
-        setAiError("No reply model selected for this location. Set it in Automations → pick a model for this location, then try again.");
-        setBanner({ kind: "err", text: "No Automations model configured for this location." });
+        setAiError("AI replies aren't configured for this location yet. Open Automations and turn the engine on, then try again.");
+        setBanner({ kind: "err", text: "AI engine isn't configured for this location." });
       } else if (msg.toLowerCase().includes("star-only")) {
         setAiError(msg);
       } else {
@@ -769,22 +769,41 @@ function ReviewsInner() {
                                           </span>
                                         )}
                                       </span>
-                                      <button
-                                        onClick={() => void regenDraft(d)}
-                                        disabled={regenId === d.id || busy || approvingAllPending}
-                                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
-                                      >
-                                        {regenId === d.id ? (
-                                          <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet" /> Rewriting…</>
-                                        ) : (
-                                          <>
-                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
-                                              <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
-                                            </svg>
-                                            Rewrite
-                                          </>
-                                        )}
-                                      </button>
+                                      <span className="inline-flex shrink-0 items-center gap-1">
+                                        <button
+                                          onClick={() => void regenDraft(d, true)}
+                                          disabled={regenId === d.id || busy || approvingAllPending}
+                                          title="Re-run the full AI pipeline: analysis, strategies, databank tools, validation"
+                                          className="inline-flex items-center gap-1 rounded-lg bg-deep-violet/[0.08] px-2 py-1 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                                        >
+                                          {regenId === d.id ? (
+                                            <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet" /> Engine…</>
+                                          ) : (
+                                            <>
+                                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
+                                                <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" strokeLinecap="round" strokeLinejoin="round" />
+                                              </svg>
+                                              Run engine
+                                            </>
+                                          )}
+                                        </button>
+                                        <button
+                                          onClick={() => void regenDraft(d)}
+                                          disabled={regenId === d.id || busy || approvingAllPending}
+                                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                                        >
+                                          {regenId === d.id ? (
+                                            <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet" /> Rewriting…</>
+                                          ) : (
+                                            <>
+                                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
+                                                <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+                                              </svg>
+                                              Rewrite
+                                            </>
+                                          )}
+                                        </button>
+                                      </span>
                                     </div>
                                     <textarea
                                       value={text}

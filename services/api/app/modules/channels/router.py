@@ -1106,31 +1106,64 @@ async def edit_pending_reply(
 async def regenerate_reply(
     channel_id: str,
     reply_id: str,
+    engine: bool = Query(False, description="Regenerate with the full agentic review engine"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Re-generate a pending reply with the channel's current model/tone/voice."""
+    """Re-generate a pending reply: the full engine pipeline (?engine=true)
+    or a simple retry-aware rewrite."""
+    if not sys.modules.get("pytest") and not await rate_limit(f"regen:{channel_id}", 100, 60):
+        raise HTTPException(status_code=429, detail="Too many requests")
     reply = await _get_owned_reply(channel_id, reply_id, user, db)
     if reply.status != "pending_approval":
         raise HTTPException(status_code=400, detail="Only pending replies can be regenerated")
-    config = (
-        await db.execute(select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel_id))
-    ).scalar_one_or_none()
-    if not config:
-        config = AutoReplyConfig(channel_id=channel_id)
-        db.add(config)
-
-    from .review_reply import generate_review_reply
-
-    # The model knows this is a rejected draft so it writes a fresh variation.
     attempt = (reply.generation_attempt or 1) + 1
-    try:
-        reply.reply_text = await generate_review_reply(
-            config, reply.rating, reply.review_text, reply.reviewer_name, db,
-            attempt=attempt, previous_draft=reply.reply_text,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+
+    if engine:
+        if not (reply.review_text or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Star-only reviews have no text for the engine — use Rewrite instead.",
+            )
+        try:
+            from ..review_engine.schemas import ReviewEngineRequest
+            from ..review_engine.service import process_review
+
+            req = ReviewEngineRequest(
+                review_text=reply.review_text.strip()[:5000],
+                rating=reply.rating,
+                reviewer_name=reply.reviewer_name,
+                review_id=(reply.review_id or "")[:120] or None,
+                channel="google_review",
+                channel_id=channel_id,
+            )
+            resp = await process_review(req, user.id, db)
+            new_text = (resp.response_text or "").strip()
+            if not new_text:
+                raise ValueError("Engine returned an empty response")
+            reply.reply_text = new_text
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Engine generation failed: {e}")
+    else:
+        config = (
+            await db.execute(select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel_id))
+        ).scalar_one_or_none()
+        if not config:
+            config = AutoReplyConfig(channel_id=channel_id)
+            db.add(config)
+
+        from .review_reply import generate_review_reply
+
+        # The model knows this is a rejected draft so it writes a fresh variation.
+        try:
+            reply.reply_text = await generate_review_reply(
+                config, reply.rating, reply.review_text, reply.reviewer_name, db,
+                attempt=attempt, previous_draft=reply.reply_text,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
 
     async with _async_session() as write_db:
         refreshed = await write_db.get(ReviewReply, reply_id)

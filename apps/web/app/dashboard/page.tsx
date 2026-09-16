@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, fetchInsights, fetchOverview, fetchTimeseries, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, fetchInsights, fetchOverview, fetchTimeseries, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
 import { MetricChart, RatingDistribution, Sparkline } from "@/components/analytics/Charts";
@@ -45,6 +45,7 @@ function AttentionQueue() {
   const [channelNames, setChannelNames] = useState<Record<string, string>>({});
   const [draftsOpen, setDraftsOpen] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [enginingId, setEnginingId] = useState<string | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
   const [approveProgress, setApproveProgress] = useState({ done: 0, total: 0 });
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -188,8 +189,33 @@ function AttentionQueue() {
     }
   }
 
+  async function engineRedraft(d: ReviewReplyDTO) {
+    if (enginingId !== null) return;
+    setEnginingId(d.id);
+    setDraftError(null);
+    try {
+      const fresh = await regenerateReply(d.channel_id, d.id, true);
+      setDrafts((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: fresh.reply_text, generation_attempt: fresh.generation_attempt ?? (x.generation_attempt ?? 1) + 1 } : x)));
+    } catch (e) {
+      // apiFetch throws the raw response body — extract the server's detail
+      // (e.g. "Engine generation failed: 403 Access denied").
+      let msg = "Engine rewrite failed. Try again.";
+      if (e instanceof Error) {
+        try {
+          const parsed = JSON.parse(e.message) as { detail?: unknown };
+          if (typeof parsed.detail === "string") msg = parsed.detail;
+        } catch {
+          /* not JSON — keep the generic message */
+        }
+      }
+      setDraftError(msg);
+    } finally {
+      setEnginingId(null);
+    }
+  }
+
   async function approveAll() {
-    if (approvingAll || approvingId !== null) return;
+    if (approvingAll || approvingId !== null || enginingId !== null) return;
     setApprovingAll(true);
     setDraftError(null);
     try {
@@ -373,10 +399,27 @@ function AttentionQueue() {
                           </p>
                           <p className="mt-0.5 line-clamp-3 text-[12px] leading-relaxed text-ink/80">{d.reply_text}</p>
                         </div>
-                        <div className="mt-2 flex items-center justify-end">
+                        <div className="mt-2 flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => void engineRedraft(d)}
+                            disabled={enginingId !== null || approvingId !== null || approvingAll}
+                            title="Re-run the full AI pipeline: analysis, strategies, databank tools, validation"
+                            className="inline-flex items-center gap-1 rounded-lg bg-deep-violet/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                          >
+                            {enginingId === d.id ? (
+                              <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet" /> Engine…</>
+                            ) : (
+                              <>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
+                                  <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                Didn't like it? Rewrite
+                              </>
+                            )}
+                          </button>
                           <button
                             onClick={() => void approveDraft(d.channel_id, d.id)}
-                            disabled={approvingId !== null || approvingAll}
+                            disabled={approvingId !== null || approvingAll || enginingId !== null}
                             className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
                           >
                             {busy ? "Publishing…" : "Approve & publish"}
@@ -397,7 +440,7 @@ function AttentionQueue() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => void approveAll()}
-                      disabled={approvingAll || approvingId !== null || draftTotal === 0}
+                      disabled={approvingAll || approvingId !== null || enginingId !== null || draftTotal === 0}
                       className="flex-1 rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
                     >
                        {approvingAll

@@ -28,7 +28,7 @@ from ...config import settings
 from ..outbox.service import enqueue_event
 from .google_reviews import GoogleReviewsClient, GoogleReviewsError
 from .models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
-from .review_reply import generate_review_reply
+from .review_reply import generate_auto_reply
 from .service import decrypt_token
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,10 @@ def _save_reply_row(
     db: AsyncSession,
     row: ReviewReply | None,
     channel_id: str,
-    review,
+    review_id: str,
+    rating: int,
+    review_text: str | None,
+    reviewer_name: str | None,
     reply_text: str,
     status: str,
     error: str | None = None,
@@ -138,21 +141,21 @@ def _save_reply_row(
     """Write `status` onto the resumed failed row in place, or insert a new row."""
     if row is not None:
         row.reply_text = reply_text
-        row.rating = review.rating
-        row.review_text = review.text
-        row.reviewer_name = review.reviewer_name
+        row.rating = rating
+        row.review_text = review_text
+        row.reviewer_name = reviewer_name
         row.status = status
-        # The worker generated a fresh draft to get here — count it.
+        # A fresh draft was generated to get here — count it.
         row.generation_attempt = (row.generation_attempt or 1) + 1
         row.error = error
         return
     db.add(
         ReviewReply(
             channel_id=channel_id,
-            review_id=review.review_id,
-            rating=review.rating,
-            review_text=review.text,
-            reviewer_name=review.reviewer_name,
+            review_id=review_id,
+            rating=rating,
+            review_text=review_text,
+            reviewer_name=reviewer_name,
             reply_text=reply_text,
             status=status,
             error=error,
@@ -307,8 +310,9 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             failed_row = await _resume_failed_row(db, channel.id, review.review_id)
 
             try:
-                reply_text = await generate_review_reply(
-                    config, review.rating, review.text, review.reviewer_name, db,
+                reply_text = await generate_auto_reply(
+                    config, channel, review.rating, review.text, review.reviewer_name, db,
+                    review_id=review.review_id,
                     attempt=(failed_row.generation_attempt or 1) + 1 if failed_row else 1,
                     previous_draft=failed_row.reply_text if failed_row else None,
                 )
@@ -348,11 +352,17 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 except GoogleReviewsError as e:
                     stats["errors"] += 1
                     _save_reply_row(
-                        db, failed_row, channel.id, review, reply_text, "failed", str(e)[:2000]
+                        db, failed_row, channel.id, review.review_id,
+                        review.rating, review.text, review.reviewer_name,
+                        reply_text, "failed", str(e)[:2000],
                     )
                     await db.commit()
                     continue
-                _save_reply_row(db, failed_row, channel.id, review, reply_text, "posted")
+                _save_reply_row(
+                    db, failed_row, channel.id, review.review_id,
+                    review.rating, review.text, review.reviewer_name,
+                    reply_text, "posted",
+                )
                 await db.commit()
                 try:
                     await _enqueue_review_replied(channel, review, "posted")
@@ -361,7 +371,9 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             else:
                 # Low rating: never auto-post — queue for human approval.
                 _save_reply_row(
-                    db, failed_row, channel.id, review, reply_text, "pending_approval"
+                    db, failed_row, channel.id, review.review_id,
+                    review.rating, review.text, review.reviewer_name,
+                    reply_text, "pending_approval",
                 )
                 await db.commit()
                 stats["queued"] += 1

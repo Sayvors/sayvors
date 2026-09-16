@@ -59,12 +59,11 @@ def _install_fakes(monkeypatch, reviews, generate=None):
     monkeypatch.setattr(reviews_worker.settings, "GOOGLE_REVIEWS_MOCK", False)
     monkeypatch.setattr(reviews_worker, "GoogleReviewsClient", FakeGoogleClient)
 
-    async def _generate(config, rating, text, reviewer_name, db, attempt=1, previous_draft=None):
+    async def _generate(config, channel, rating, text, reviewer_name, db,
+                       review_id=None, attempt=1, previous_draft=None):
         return f"fresh AI draft (try {attempt})"
 
-    monkeypatch.setattr(
-        reviews_worker, "generate_review_reply", generate or _generate
-    )
+    monkeypatch.setattr(reviews_worker, "generate_auto_reply", generate or _generate)
 
 
 async def _active_channel(db, channel_id):
@@ -171,7 +170,8 @@ async def test_regeneration_failure_keeps_single_failed_row(
     )
     await db.commit()
 
-    async def _boom(config, rating, text, reviewer_name, db, attempt=1, previous_draft=None):
+    async def _boom(config, channel, rating, text, reviewer_name, db,
+                    review_id=None, attempt=1, previous_draft=None):
         raise RuntimeError("LLM down")
 
     _install_fakes(monkeypatch, [_review(rating=2)], generate=_boom)
