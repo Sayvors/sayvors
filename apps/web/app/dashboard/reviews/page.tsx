@@ -87,17 +87,16 @@ function ReviewsInner() {
     let cancelled = false;
     (async () => {
       try {
-        // Real location: the Localith-connected listing first.
+        // Real locations: every Localith-connected branch.
         try {
-          const prof = await apiFetch("/api/v1/integrations/localith/profile");
-          if (!cancelled && prof?.connection) {
-            const c = prof.connection as { listing_id: string; listing_name: string };
-            const locs = [{ id: c.listing_id, name: c.listing_name }];
+          const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as { listing_id: string; listing_name: string }[];
+          if (!cancelled && Array.isArray(conns) && conns.length > 0) {
+            const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
             try {
               const ch = await apiFetch("/api/v1/channels/?limit=100");
               const names: Record<string, string> = {};
               for (const channel of ch.channels ?? []) {
-                if (channel?.id) names[channel.id] = channel.display_name ?? c.listing_name;
+                if (channel?.id) names[channel.id] = channel.display_name ?? "Google location";
               }
               if (!cancelled) setChannelNames(names);
             } catch {
@@ -110,7 +109,7 @@ function ReviewsInner() {
             }
           }
         } catch {
-          /* no Localith connection — fall through to channels */
+          /* no Localith connections — fall through to channels */
         }
         const data = await apiFetch("/api/v1/channels/?limit=100");
         const googleChannels = (data.channels ?? [])

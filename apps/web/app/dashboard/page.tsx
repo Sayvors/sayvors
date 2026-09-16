@@ -65,11 +65,14 @@ function AttentionQueue() {
     (async () => {
       const found: AttentionItem[] = [];
       try {
-        const [overview, profile, channelData] = await Promise.all([
+        const [overview, connsData, channelData] = await Promise.all([
           fetchOverview(30, null).catch(() => null),
-          apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
+          apiFetch("/api/v1/integrations/localith/connections").catch(() => null),
           apiFetch("/api/v1/channels/?limit=100").catch(() => null),
         ]);
+        const conns = (Array.isArray(connsData) ? connsData : []) as {
+          listing_name?: string; phone_number?: string | null; website_url?: string | null;
+        }[];
         const googleChannels = (channelData?.channels ?? []).filter(
           (c: { platform: string }) => c.platform === "google_reviews"
         );
@@ -137,19 +140,24 @@ function AttentionQueue() {
             href: "/dashboard/reviews",
           });
         }
-        const conn = profile?.connection;
-        if (conn && !conn.phone_number) {
+        const missingPhone = conns.filter((c) => !c.phone_number);
+        if (missingPhone.length > 0) {
           found.push({
             severity: "medium",
-            title: "No phone number on your profile",
+            title: missingPhone.length === 1
+              ? `No phone number on ${missingPhone[0].listing_name ?? "your profile"}`
+              : `No phone number on ${missingPhone.length} branches`,
             detail: "Customers can't call you from Google",
             href: "/dashboard/locations?tab=details",
           });
         }
-        if (conn && !(conn.website_url || "").trim()) {
+        const missingSite = conns.filter((c) => !(c.website_url || "").trim());
+        if (missingSite.length > 0) {
           found.push({
             severity: "medium",
-            title: "No website linked",
+            title: missingSite.length === 1
+              ? `No website linked for ${missingSite[0].listing_name ?? "your profile"}`
+              : `No website linked for ${missingSite.length} branches`,
             detail: "Add one to turn views into visits",
             href: "/dashboard/locations?tab=details",
           });

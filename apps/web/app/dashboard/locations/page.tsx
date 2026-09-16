@@ -120,6 +120,7 @@ export default function LocationsPage() {
   const [activeTab, setActiveTab] = useState<string>("details");
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [localith, setLocalith] = useState<LocalithConn | null>(null);
+  const [localithConns, setLocalithConns] = useState<Record<string, LocalithConn>>({});
   const [fullProfile, setFullProfile] = useState<FullProfile | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -143,23 +144,29 @@ export default function LocationsPage() {
     let cancelled = false;
     (async () => {
       try {
-        // Localith snapshot first — it carries the real address/phone/website.
+        // Localith snapshots first — they carry the real address/phone/website.
+        // Every connected branch is listed; nothing is hidden or overwritten.
         try {
-          const prof = await apiFetch("/api/v1/integrations/localith/profile");
-          if (!cancelled && prof?.connection) {
-            const c = prof.connection as LocalithConn;
-            setLocalith(c);
-            setLocations([{
-              id: c.listing_id,
-              name: c.listing_name,
-              address: c.address ?? "",
-              status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
-            }]);
-            setSelectedId(c.listing_id);
+          const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as LocalithConn[];
+          if (!cancelled && Array.isArray(conns) && conns.length > 0) {
+            const byId: Record<string, LocalithConn> = {};
+            const opts = conns.map((c) => {
+              byId[c.listing_id] = c;
+              return {
+                id: c.listing_id,
+                name: c.listing_name,
+                address: c.address ?? "",
+                status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
+              };
+            });
+            setLocalithConns(byId);
+            setLocalith(byId[opts[0].id] ?? null);
+            setLocations(opts);
+            setSelectedId(opts[0].id);
             return;
           }
         } catch {
-          /* no Localith connection — fall through to channels */
+          /* no Localith connections — fall through to channels */
         }
         try {
           const data = await apiFetch("/api/v1/channels/?limit=100");
@@ -185,7 +192,16 @@ export default function LocationsPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const selectedLocation = locations.find((l) => l.id === selectedId) ?? locations[0] ?? null;
+   const selectedLocation = locations.find((l) => l.id === selectedId) ?? locations[0] ?? null;
+
+   // Keep the displayed Localith snapshot scoped to the selected branch.
+   useEffect(() => {
+     if (!selectedId) return;
+     setLocalith((prev) => {
+       const next = localithConns[selectedId] ?? null;
+       return prev?.listing_id === next?.listing_id ? prev : next;
+     });
+   }, [selectedId, localithConns]);
 
    // Load the merged profile (Google snapshot + Sayvors store) per location.
    useEffect(() => {
