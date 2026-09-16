@@ -12,7 +12,7 @@ import {
 const CHANNELS = ["google_review", "facebook", "instagram", "tripadvisor", "yelp"];
 
 type ChannelOpt = { id: string; display_name?: string; platform?: string };
-type ModelOpt = { id: string; name?: string; available?: boolean };
+
 
 const PRESETS = [
   {
@@ -66,8 +66,6 @@ export default function ReviewPlaygroundPage() {
   const [channel, setChannel] = useState("google_review");
   const [channelId, setChannelId] = useState("");
   const [channels, setChannels] = useState<ChannelOpt[]>([]);
-  const [models, setModels] = useState<ModelOpt[]>([]);
-  const [modelOverride, setModelOverride] = useState("");
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -82,23 +80,19 @@ export default function ReviewPlaygroundPage() {
   }, [running]);
 
   useEffect(() => {
-    // Channels + models for the sync pickers (load once)
+    // Channels for the sync picker (load once)
     (async () => {
       try {
         const { getAccessToken } = await import("@/lib/auth-context");
         const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
         const token = getAccessToken();
         const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-        const [ch, md] = await Promise.all([
-          fetch(`${API}/api/v1/channels/?limit=100`, { headers: h, credentials: "include" }).then((r) => (r.ok ? r.json() : [])),
-          fetch(`${API}/api/v1/llm/models`, { headers: h, credentials: "include" }).then((r) => (r.ok ? r.json() : { models: [] })),
-        ]);
+        const ch = await fetch(`${API}/api/v1/channels/?limit=100`, { headers: h, credentials: "include" }).then((r) => (r.ok ? r.json() : []));
         setChannels(Array.isArray(ch) ? ch : ch?.channels ?? []);
-        setModels(md?.models ?? []);
         const list: ChannelOpt[] = Array.isArray(ch) ? ch : ch?.channels ?? [];
         if (list.length > 0) setChannelId((prev) => prev || list[0].id);
       } catch {
-        // pickers stay empty — manual channel + default model still work
+        // picker stays empty — manual channel still works
       }
     })();
   }, []);
@@ -123,7 +117,6 @@ export default function ReviewPlaygroundPage() {
           reviewer_name: reviewerName || undefined,
           channel,
           channel_id: channelId || undefined,
-          model: modelOverride || undefined,
         },
         ctrl.signal
       )) {
@@ -140,9 +133,6 @@ export default function ReviewPlaygroundPage() {
 
   const doneEvent = events.find((e) => e.step === "done");
   const errorEvent = events.find((e) => e.step === "error");
-  const firstEvent = events[0];
-  const usedModel = doneEvent?.response?.model ?? firstEvent?.model;
-  const modelSource = firstEvent?.model_source;
   const analysisEvent = events.find((e) => e.step === "analyzed");
   const issuesEvent = events.find((e) => e.step === "issues");
   const relevanceEvent = events.find((e) => e.step === "relevance");
@@ -219,7 +209,7 @@ export default function ReviewPlaygroundPage() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div>
               <label className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/45">
-                Location (uses its Automations model)
+                Location
               </label>
               <select
                 value={channelId}
@@ -235,24 +225,8 @@ export default function ReviewPlaygroundPage() {
                 ))}
               </select>
               <p className="mt-1 text-[11px] text-ink/40">
-                Engine uses this location&apos;s Automations reply model — nothing else.
+                Engine uses this location&apos;s configured AI — nothing else.
               </p>
-            </div>
-            <div>
-              <label className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/45">
-                Model override (optional)
-              </label>
-              <select
-                value={modelOverride}
-                onChange={(e) => setModelOverride(e.target.value)}
-                disabled={running}
-                className="mt-1.5 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
-              >
-                <option value="">Auto (location → default)</option>
-                {models.filter((m) => m.available !== false).map((m) => (
-                  <option key={m.id} value={m.id}>{m.name || m.id}</option>
-                ))}
-              </select>
             </div>
           </div>
 
@@ -304,8 +278,8 @@ export default function ReviewPlaygroundPage() {
           <button
             type="button"
             onClick={() => void handleRun()}
-            disabled={running || !reviewText.trim() || (!channelId && !modelOverride)}
-            title={!channelId && !modelOverride ? "Select a location or a model override first" : undefined}
+            disabled={running || !reviewText.trim() || !channelId}
+            title={!channelId ? "Select a location first" : undefined}
             className="mt-4 w-full rounded-xl bg-deep-violet px-4 py-3 text-[13px] font-bold text-white shadow-md transition hover:bg-deep-violet/90 disabled:opacity-50 sm:w-auto sm:px-8"
           >
             {running ? "Running…" : "▶ Run through engine"}
@@ -325,16 +299,6 @@ export default function ReviewPlaygroundPage() {
           <div className="rounded-3xl border border-white bg-white/80 p-5 shadow-[0_12px_30px_rgba(58,39,120,0.08)]">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-[14px] font-bold text-ink">Live trace</h2>
-              {usedModel && (
-                <span className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-medium text-ink/60">
-                  Model: <b className="text-ink">{usedModel}</b>
-                  {modelSource && (
-                    <span className="ml-1 text-ink/40">
-                      ({modelSource === "channel" ? "from location" : modelSource === "request" ? "override" : "tenant default"})
-                    </span>
-                  )}
-                </span>
-              )}
             </div>
             <div className="mt-3 space-y-2">
               {progressEvents.map((e, i) => (
@@ -596,7 +560,6 @@ export default function ReviewPlaygroundPage() {
                   {doneEvent.response.response_text}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink/45">
-                  <span>Model: <b>{doneEvent.response.model}</b></span>
                   <span>Latency: <b>{doneEvent.response.latency_ms}ms</b></span>
                   <span>
                     Length: <b>{countWords(doneEvent.response.response_text)} words / {countSentences(doneEvent.response.response_text)} sentences</b>
