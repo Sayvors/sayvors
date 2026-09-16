@@ -1,7 +1,6 @@
 "use client";
 
 import Breadcrumbs from "@/components/Breadcrumbs";
-import AiModelsSection from "./AiModelsSection";
 
 export default function SettingsPage() {
   return (
@@ -13,7 +12,6 @@ export default function SettingsPage() {
           Manage your account and preferences.
         </p>
       </div>
-      <AiModelsSection />
     </div>
   );
 }

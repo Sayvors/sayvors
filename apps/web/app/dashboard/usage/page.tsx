@@ -103,11 +103,9 @@ export default function UsagePage() {
     void load(days);
   }, [days, load]);
 
-  const maxModel = Math.max(1, ...((data?.by_model ?? []).map((m) => m.total_tokens)));
   const maxPurpose = Math.max(1, ...((data?.by_purpose ?? []).map((p) => p.total_tokens)));
   // Defensive defaults: older backends may omit keys.
   const totals = data?.totals ?? { calls: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, avg_latency_ms: 0 };
-  const byModel = data?.by_model ?? [];
   const byPurpose = data?.by_purpose ?? [];
   const daily = data?.daily ?? [];
 
@@ -118,7 +116,7 @@ export default function UsagePage() {
           <div>
             <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">Token Usage</h1>
             <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">
-              Every AI call metered per model — tokens in/out, latency, and daily trend.
+              Every AI call metered by task — tokens in/out, latency, and daily trend.
             </p>
           </div>
           <div className="flex gap-1.5">
@@ -172,34 +170,7 @@ export default function UsagePage() {
               ))}
             </div>
 
-            {/* Per-model table */}
-            <div className="rounded-2xl border-2 border-white bg-white/80 p-4">
-              <h2 className="text-[16px] font-bold text-ink">By model</h2>
-              <p className="text-[12px] text-ink/50">Tokens consumed per model in the last {data.days} days.</p>
-              {byModel.length === 0 ? (
-                <p className="mt-3 text-[12px] text-ink/40">No AI calls yet in this period.</p>
-              ) : (
-                <div className="mt-3 space-y-2.5">
-                  {byModel.map((m) => (
-                    <div key={m.model}>
-                      <div className="flex items-center justify-between text-[12px]">
-                        <span className="font-semibold text-ink">{m.model}</span>
-                        <span className="tabular-nums text-ink/55">
-                          {formatTokens(m.total_tokens)} · {m.calls} calls · {formatMs(m.avg_latency_ms)}
-                        </span>
-                      </div>
-                      <div className="mt-1 h-2 overflow-hidden rounded-full bg-ink/[0.06]">
-                        <div
-                          className="h-full rounded-full bg-deep-violet"
-                          style={{ width: `${Math.max(2, (m.total_tokens / maxModel) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
+            {/* Daily + purpose breakdown */}
             <div className="grid gap-3 lg:grid-cols-2">
               {/* Daily trend */}
               <div className="rounded-2xl border-2 border-white bg-white/80 p-4 text-ink">

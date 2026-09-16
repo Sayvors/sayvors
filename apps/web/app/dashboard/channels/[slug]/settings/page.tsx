@@ -5,18 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import { channels, agents } from "@/lib/channel-data";
-import { ChannelLogo, llmLogos } from "@/components/dashboard/ChannelLogos";
-
-const llmOptions = [
-  { id: "gpt-4o", name: "GPT-4o", provider: "OpenAI", status: "active", desc: "Most capable model" },
-  { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "OpenAI", status: "active", desc: "Fast & cost-effective" },
-  { id: "claude-3.5-sonnet", name: "Claude 3.5 Sonnet", provider: "Anthropic", status: "active", desc: "Best for analysis" },
-  { id: "claude-3-haiku", name: "Claude 3 Haiku", provider: "Anthropic", status: "active", desc: "Fastest response" },
-  { id: "gemini-pro", name: "Gemini Pro", provider: "Google", status: "active", desc: "Multi-modal" },
-  { id: "grok-2", name: "Grok 2", provider: "xAI", status: "active", desc: "Real-time knowledge" },
-  { id: "mistral-large", name: "Mistral Large", provider: "Mistral", status: "active", desc: "Open-weight leader" },
-  { id: "mistral-small", name: "Mistral Small", provider: "Mistral", status: "active", desc: "Lightweight & fast" },
-];
+import { ChannelLogo } from "@/components/dashboard/ChannelLogos";
 
 function Dropdown({
   label,
@@ -109,7 +98,6 @@ export default function ChannelSettingsPage() {
   const channel = channels.find((c) => c.slug === slug);
 
   const [selectedAgent, setSelectedAgent] = useState<string>(channel?.connected ? "support-bot" : "");
-  const [selectedLLM, setSelectedLLM] = useState("gpt-4o");
   const [autoReply, setAutoReply] = useState(true);
   const [workingHours, setWorkingHours] = useState(true);
   const [workingStart, setWorkingStart] = useState("09:00");
@@ -206,55 +194,6 @@ export default function ChannelSettingsPage() {
 
           {/* ── Divider ── */}
           <div className="border-t border-deep-violet/10" />
-
-          {/* ── LLM Selection ── */}
-          <section>
-            <h2 className="mb-1 text-[15px] font-bold text-ink">Language Model</h2>
-            <p className="mb-4 text-[13px] text-ink/60">Select which LLM powers the agent on this channel.</p>
-            <Dropdown
-              label="LLM"
-              value={selectedLLM}
-              options={llmOptions}
-              onSelect={setSelectedLLM}
-              renderOption={(opt) => {
-                const Logo = llmLogos[opt.id as string];
-                const name = String(opt.name || "");
-                const provider = String(opt.provider || "");
-                const desc = String(opt.desc || "");
-                return (
-                  <>
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-ink/[0.04]">
-                      {Logo ? <Logo className="h-6 w-6" /> : <span className="text-[14px]">🤖</span>}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-semibold text-ink">{name}</span>
-                        <span className="rounded-full bg-deep-violet/10 px-1.5 py-0.5 text-[9px] font-bold text-deep-violet">{provider}</span>
-                      </div>
-                      <p className="text-[11px] text-ink/50">{desc}</p>
-                    </div>
-                    <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
-                  </>
-                );
-              }}
-              renderSelected={(opt) => {
-                const Logo = llmLogos[opt.id as string];
-                const name = String(opt.name || "");
-                const provider = String(opt.provider || "");
-                return (
-                  <>
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-ink/[0.04]">
-                      {Logo ? <Logo className="h-6 w-6" /> : <span className="text-[14px]">🤖</span>}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <span className="text-[13px] font-semibold text-ink">{name}</span>
-                      <span className="ml-2 rounded-full bg-deep-violet/10 px-1.5 py-0.5 text-[9px] font-bold text-deep-violet">{provider}</span>
-                    </div>
-                  </>
-                );
-              }}
-            />
-          </section>
 
           {/* ── Divider ── */}
           <div className="border-t border-deep-violet/10" />
