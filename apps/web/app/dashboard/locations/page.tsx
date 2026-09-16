@@ -272,6 +272,7 @@ export default function LocationsPage() {
           <button
             onClick={() => setCreateOpen(true)}
             title="Create a new Google business location"
+            data-tour="add-location"
             className="rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:opacity-90"
           >
             + Add location

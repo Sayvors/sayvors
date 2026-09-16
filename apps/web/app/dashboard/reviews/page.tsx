@@ -553,7 +553,7 @@ function ReviewsInner() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="shrink-0 border-b border-ink/[0.06] bg-white/80 px-6 py-4 backdrop-blur dark:border-fog/[0.06] dark:bg-ink/80">
+      <div className="shrink-0 border-b border-ink/[0.06] bg-white/80 px-6 py-4 backdrop-blur dark:border-fog/[0.06] dark:bg-ink/80" data-tour="reviews-header">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-[18px] font-bold text-ink dark:text-fog">Reviews</h1>

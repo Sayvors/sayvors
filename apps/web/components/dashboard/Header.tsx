@@ -9,6 +9,7 @@ import { LOCALES } from "@/lib/i18n/locales";
 import { useAuth } from "@/lib/auth-context";
 import AutoPilotDialog from "@/components/dashboard/AutoPilotDialog";
 import SearchPalette from "@/components/dashboard/SearchPalette";
+import { useTour } from "@/components/tour/TourProvider";
 import {
   derivePilotState,
   fetchPilotChannels,
@@ -22,8 +23,11 @@ export default function Header() {
   const { locale, setLocale, t } = useI18n();
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
+  const helpRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuth();
+  const { startTour } = useTour();
 
   const displayName =
     user && (user.first_name || user.last_name)
@@ -74,9 +78,13 @@ export default function Header() {
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
+      if (helpRef.current && !helpRef.current.contains(e.target as Node)) setHelpOpen(false);
     }
     function handleKeydown(e: KeyboardEvent) {
-      if (e.key === "Escape") setProfileOpen(false);
+      if (e.key === "Escape") {
+        setProfileOpen(false);
+        setHelpOpen(false);
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setSearchOpen(true);
@@ -115,6 +123,36 @@ export default function Header() {
       </button>
 
       <div className="flex items-center gap-2">
+      {/* Help — guided tour */}
+      <div className="relative" ref={helpRef}>
+        <button
+          onClick={() => setHelpOpen(!helpOpen)}
+          aria-label="Help"
+          aria-expanded={helpOpen}
+          title="Help — take the guided tour"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-deep-violet/[0.08] text-[13px] font-bold text-ink/50 outline-none transition hover:border-deep-violet/25 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:border-fog/[0.1] dark:text-fog/50 dark:hover:text-deep-violet"
+        >
+          ?
+        </button>
+        {helpOpen && (
+          <div className="absolute right-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
+            <button
+              onClick={() => {
+                setHelpOpen(false);
+                startTour();
+              }}
+              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12.5px] text-ink/70 outline-none transition hover:bg-deep-violet/[0.04] hover:text-ink dark:text-fog/70 dark:hover:bg-deep-violet/[0.08] dark:hover:text-fog"
+            >
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-3.5 w-3.5 text-deep-violet" aria-hidden>
+                <circle cx="10" cy="10" r="8" />
+                <path d="M10 14.5v.01M7.5 7.3A2.5 2.5 0 0112.5 8c0 1.7-2.5 2-2.5 3.5" strokeLinecap="round" />
+              </svg>
+              Start tour
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Connect channel */}
       <Link
         href="/dashboard/channels"
