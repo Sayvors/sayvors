@@ -1,6 +1,8 @@
 """Localith connections (single-shared-key mode v1).
 
-Each Sayvors user can save one Localith listing -> their user account.
+Each Sayvors user can save ANY number of Localith listings — one row per
+(user_id, listing_id). Every connected branch is stored, synced, and kept;
+pages filter per branch instead of assuming one location.
 The API key itself is shared (LOCALITH_API_KEY env) until we ship
 per-tenant keys; only the listing choice is per-tenant here. Same
 table + model will work for the per-tenant-key upgrade — just add an
@@ -19,7 +21,7 @@ from ...database import Base
 class LocalithConnection(Base):
     __tablename__ = "localith_connections"
     __table_args__ = (
-        UniqueConstraint("user_id", name="uq_localith_user"),
+        UniqueConstraint("user_id", "listing_id", name="uq_localith_user_listing"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

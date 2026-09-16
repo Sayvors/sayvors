@@ -43,18 +43,23 @@ async def sync_all_once(session_factory=None) -> dict:
             logger.error("Localith auto-sync: could not list connections: %s", e)
             totals["errors"] += 1
             return totals
-        user_ids = [c.user_id for c in connections]
-        for user_id in user_ids:
+        for connection in connections:
+            listing_id = getattr(connection, "listing_id", None)
             try:
-                user = await db.get(User, user_id)
+                user = await db.get(User, connection.user_id)
                 if user is None:
                     continue
                 totals["connections"] += 1
-                result = await localith_service.sync_connection(user, db)
+                result = await localith_service.sync_connection(
+                    user, db, listing_id=listing_id
+                )
                 totals["fetched"] += int(result.get("fetched", 0))
                 totals["new_reviews"] += int(result.get("new_reviews", 0))
             except Exception as e:
-                logger.error("Localith auto-sync failed for user %s: %s", user_id, e)
+                logger.error(
+                    "Localith auto-sync failed for listing %s: %s",
+                    listing_id or "?", e,
+                )
                 totals["errors"] += 1
                 try:
                     await db.rollback()

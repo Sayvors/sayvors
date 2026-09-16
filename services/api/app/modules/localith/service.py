@@ -140,25 +140,82 @@ def apply_listing_snapshot(connection, raw: dict) -> None:
     connection.profile_synced_at = datetime.now(timezone.utc)
 
 
+async def list_connections(db: AsyncSession, user_id: str) -> list:
+    """Every Localith listing row a tenant has connected (all branches)."""
+    from .models import LocalithConnection
+
+    result = await db.execute(
+        select(LocalithConnection)
+        .where(LocalithConnection.user_id == user_id)
+        .order_by(LocalithConnection.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def get_connection(
+    db: AsyncSession, user_id: str, listing_id: str | None = None
+):
+    """One connection by listing, or the first connected branch (legacy callers)."""
+    connections = await list_connections(db, user_id)
+    if listing_id:
+        return next((c for c in connections if c.listing_id == listing_id), None)
+    return connections[0] if connections else None
+
+
 async def sync_connection(
-    user: User, db: AsyncSession, metrics_days_back: int = 30
+    user: User,
+    db: AsyncSession,
+    metrics_days_back: int = 30,
+    listing_id: str | None = None,
 ) -> dict[str, int | str]:
     """Sync one tenant's Localith listing into Sayvors' normal review pipeline.
 
-    Pulls everything the read API offers:
+    With listing_id set, syncs exactly that branch; otherwise syncs every
+    connected branch and aggregates totals. Other branches are never touched.
+
+    Pulls everything the read API offers per branch:
       1. listing detail -> profile snapshot columns on the connection
       2. all review items (paginated) -> ReviewInsight rows + review events
       3. performance metrics summary (last N days) -> raw snapshot
       4. review metrics summary (last N days) -> raw snapshot
     """
-    from .models import LocalithConnection
+    from .models import LocalithConnection  # noqa: F401 (re-export for callers)
 
-    result = await db.execute(
-        select(LocalithConnection).where(LocalithConnection.user_id == user.id)
-    )
-    connection = result.scalar_one_or_none()
+    if listing_id is None:
+        connections = await list_connections(db, user.id)
+        if not connections:
+            raise ValueError("Connect a Localith listing before syncing.")
+        totals: dict[str, int | str] = {
+            "fetched": 0, "new_reviews": 0, "branches": 0, "errors": 0,
+        }
+        for connection in connections:
+            try:
+                one = await _sync_single_connection(
+                    user, db, connection, metrics_days_back
+                )
+                totals["fetched"] = int(totals["fetched"]) + int(one.get("fetched", 0))
+                totals["new_reviews"] = int(totals["new_reviews"]) + int(one.get("new_reviews", 0))
+                totals["branches"] = int(totals["branches"]) + 1
+            except Exception as e:
+                logger.error(
+                    "Localith sync failed for listing %s: %s", connection.listing_id, e
+                )
+                totals["errors"] = int(totals["errors"]) + 1
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+        return totals
+
+    connection = await get_connection(db, user.id, listing_id)
     if connection is None:
         raise ValueError("Connect a Localith listing before syncing.")
+    return await _sync_single_connection(user, db, connection, metrics_days_back)
+
+
+async def _sync_single_connection(
+    user: User, db: AsyncSession, connection, metrics_days_back: int = 30
+) -> dict[str, int | str]:
 
     channel_result = await db.execute(
         select(Channel).where(

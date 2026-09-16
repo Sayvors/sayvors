@@ -117,14 +117,29 @@ async def test_listing(
 async def sync_my_connection(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    listing_id: str | None = None,
 ):
-    """Sync the selected Localith listing into the normal Sayvors pipeline."""
+    """Sync Localith listings into the normal Sayvors pipeline.
+
+    With listing_id set, syncs exactly that branch; otherwise syncs every
+    connected branch. Other branches are never touched.
+    """
     try:
-        return await service.sync_connection(user, db)
+        return await service.sync_connection(user, db, listing_id=listing_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Localith sync failed: {e}")
+
+
+@router.get("/connections", response_model=list[ConnectionResponse])
+async def list_my_connections(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every branch this tenant has connected (all listings, all data kept)."""
+    connections = await service.list_connections(db, user.id)
+    return [_serialize(c) for c in connections]
 
 
 @router.get("/connection", response_model=ConnectionResponse | None)
@@ -132,10 +147,8 @@ async def get_my_connection(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(LocalithConnection).where(LocalithConnection.user_id == user.id)
-    )
-    c = result.scalar_one_or_none()
+    """First connected branch (legacy single-location callers)."""
+    c = await service.get_connection(db, user.id)
     return _serialize(c) if c else None
 
 
@@ -150,12 +163,14 @@ class ProfileSnapshot(BaseModel):
 async def get_my_profile(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    listing_id: str | None = None,
 ):
-    """Full synced snapshot: profile detail + both metrics summaries."""
-    result = await db.execute(
-        select(LocalithConnection).where(LocalithConnection.user_id == user.id)
-    )
-    c = result.scalar_one_or_none()
+    """Full synced snapshot: profile detail + both metrics summaries.
+
+    With listing_id set, returns exactly that branch; otherwise the first
+    connected branch (legacy single-location callers).
+    """
+    c = await service.get_connection(db, user.id, listing_id)
     if c is None:
         return None
     return ProfileSnapshot(
@@ -172,10 +187,7 @@ async def save_connection(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(LocalithConnection).where(LocalithConnection.user_id == user.id)
-    )
-    c = result.scalar_one_or_none()
+    c = await service.get_connection(db, user.id, body.listing_id)
     if c is None:
         c = LocalithConnection(
             id=__import__("uuid").uuid4().hex,
@@ -186,7 +198,8 @@ async def save_connection(
         )
         db.add(c)
     else:
-        c.listing_id = body.listing_id
+        # Same branch re-saved: refresh display fields only. Other
+        # branches are never touched (no more overwrite-the-only-row).
         c.listing_name = body.listing_name
         c.listing_google_id = body.listing_google_id
     await db.commit()
@@ -209,15 +222,13 @@ async def update_my_listing(
     body: ListingUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    listing_id: str | None = None,
 ):
     """Update the connected listing (writes back to Google via Localith),
     then refresh the stored profile snapshot."""
     import asyncio
 
-    result = await db.execute(
-        select(LocalithConnection).where(LocalithConnection.user_id == user.id)
-    )
-    c = result.scalar_one_or_none()
+    c = await service.get_connection(db, user.id, listing_id)
     if c is None:
         raise HTTPException(status_code=400, detail="Connect a Localith listing first.")
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -245,11 +256,24 @@ async def update_my_listing(
 async def delete_my_connection(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    listing_id: str | None = None,
 ):
-    result = await db.execute(
-        select(LocalithConnection).where(LocalithConnection.user_id == user.id)
-    )
-    c = result.scalar_one_or_none()
+    """Disconnect one branch (its synced artifacts go with it).
+
+    With listing_id set, disconnects exactly that branch. Without it,
+    disconnects the only branch — or 400s when several are connected so
+    one is never deleted by accident.
+    """
+    if listing_id:
+        c = await service.get_connection(db, user.id, listing_id)
+    else:
+        connections = await service.list_connections(db, user.id)
+        if len(connections) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Several branches are connected — specify listing_id.",
+            )
+        c = connections[0] if connections else None
     if c is None:
         return
     listing_id = c.listing_id

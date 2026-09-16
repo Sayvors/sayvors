@@ -20,11 +20,16 @@ logger = logging.getLogger(__name__)
 GOOGLE_SYNCED_FIELDS = ["name", "phone", "website", "description"]
 
 
-async def _connection(db: AsyncSession, user_id: str) -> LocalithConnection | None:
+async def _connection(
+    db: AsyncSession, user_id: str, listing_id: str | None = None
+) -> LocalithConnection | None:
     result = await db.execute(
         select(LocalithConnection).where(LocalithConnection.user_id == user_id)
     )
-    return result.scalar_one_or_none()
+    connections = list(result.scalars().all())
+    if listing_id:
+        return next((c for c in connections if c.listing_id == listing_id), None)
+    return connections[0] if connections else None
 
 
 async def _profile(db: AsyncSession, user_id: str, listing_id: str) -> LocationProfile:
@@ -86,7 +91,7 @@ async def get_profile(
     # rolls the session back, and rollback expires every loaded object.
     # Touching an expired attribute below would trigger a sync lazy-load
     # (MissingGreenlet); a fresh select repopulates it inside the await.
-    connection = await _connection(db, user_id)
+    connection = await _connection(db, user_id, listing_id)
 
     merged = {
         "listing_id": listing_id,
@@ -132,7 +137,7 @@ async def update_profile(
     """Update a profile. Description pushes to Google when connected."""
     from ..localith import service as localith_service
 
-    connection = await _connection(db, user_id)
+    connection = await _connection(db, user_id, listing_id)
     profile = await _profile(db, user_id, listing_id)
 
     if description is not None:
