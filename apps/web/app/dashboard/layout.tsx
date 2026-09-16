@@ -1,5 +1,6 @@
 import Sidebar from "@/components/dashboard/Sidebar";
 import Header from "@/components/dashboard/Header";
+import SayvorsChat from "@/components/chat/SayvorsChat";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthGuard } from "@/components/AuthGuard";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
@@ -17,6 +18,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {children}
               </main>
             </div>
+            <SayvorsChat />
           </div>
         </I18nProvider>
       </AuthGuard>
