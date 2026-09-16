@@ -125,6 +125,10 @@ export default function AdminOverviewPage() {
     const newShare = pct(data.signups_last_7d, total);
     const postsEntries = Object.entries(data.posts_by_status).sort((a, b) => b[1] - a[1]);
     const postsTotal = postsEntries.reduce((s, [, v]) => s + v, 0) || data.posts_total || 1;
+
+    const tenantWithReviews = data.reviews_total > 0 ? "Yes" : "No";
+    const tenantWithPosts = data.posts_total > 0 ? "Yes" : "No";
+
     return {
       verifiedRate,
       connectionRate,
@@ -138,6 +142,8 @@ export default function AdminOverviewPage() {
       newShare,
       postsEntries,
       postsTotal,
+      tenantWithReviews,
+      tenantWithPosts,
     };
   }, [data]);
 
@@ -316,32 +322,46 @@ export default function AdminOverviewPage() {
         </div>
       </section>
 
-      {/* ── 5. Go deeper — ordered by operator workflow ────────────────── */}
-      <section aria-labelledby="deeper-heading" className="rounded-[6px] border-2 border-white bg-white/60 p-4">
-        <h2 id="deeper-heading" className="text-[11px] font-bold uppercase tracking-widest text-ink/40">
-          Go deeper — operator workflow
-        </h2>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            { href: "/tenants", step: "01", title: "Tenants", desc: "Search by email or name, inspect listings, reviews & posts.", accent: "bg-deep-violet" },
-            { href: "/usage", step: "02", title: "Token usage", desc: "Global metering — calls, tokens and latency per tenant & model.", accent: "bg-sky-500" },
-            { href: "/logs", step: "03", title: "Logs & health", desc: "Service liveness + the last 20 outbox / ingest failures.", accent: hasProblems ? "bg-red-500" : "bg-emerald-500" },
-            { href: "/llms", step: "04", title: "LLM providers", desc: "Keys, model toggles & live tests — single source of truth.", accent: "bg-amber-500" },
-          ].map((card) => (
-            <Link
-              key={card.href}
-              href={card.href}
-              className="group relative flex flex-col overflow-hidden rounded-[6px] bg-white p-4 shadow-sm ring-1 ring-ink/[0.06] transition hover:shadow-md hover:ring-ink/10"
-            >
-              <div className={`absolute left-0 top-0 h-1 w-full ${card.accent}`} aria-hidden />
-              <div className="flex items-center gap-2">
-                <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold text-ink/40">{card.step}</span>
-                <span className="text-[13px] font-bold text-ink group-hover:text-deep-violet">{card.title} →</span>
-              </div>
-              <p className="mt-2 line-clamp-2 text-[12px] leading-relaxed text-ink/55">{card.desc}</p>
-            </Link>
-          ))}
+      {/* ── 3. Content coverage snapshot ──────────────────────────────────── */}
+      <section aria-labelledby="coverage-heading" className="rounded-[6px] border-2 border-white bg-white/85 p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-[13px] font-bold uppercase tracking-widest text-ink/70">Content coverage</h3>
+            <p className="mt-1 text-[12px] leading-relaxed text-ink/50">
+              Tenants actively using reviews & posts — the two signals that drive AI replies & publishing.
+            </p>
+          </div>
+          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-ink/60 ring-1 ring-ink/[0.06]">
+            Reviews: {derived.tenantWithReviews} · Posts: {derived.tenantWithPosts}
+          </span>
         </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="flex items-baseline gap-2">
+            <p className="text-[28px] font-bold tabular-nums leading-none text-ink">{fmtNum(data.reviews_total)}</p>
+            <span className="text-[12px] font-medium text-ink/40">total reviews</span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <p className="text-[28px] font-bold tabular-nums leading-none text-ink">{fmtNum(data.posts_total)}</p>
+            <span className="text-[12px] font-medium text-ink/40">total posts</span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <p className="text-[28px] font-bold tabular-nums leading-none text-ink">{derived.avgReviews}</p>
+            <span className="text-[12px] font-medium text-ink/40">avg reviews / tenant</span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <p className="text-[28px] font-bold tabular-nums leading-none text-ink">{derived.avgPosts}</p>
+            <span className="text-[12px] font-medium text-ink/40">avg posts / tenant</span>
+          </div>
+        </div>
+        <p className="mt-3 text-[11px] leading-snug text-ink/55">
+          {data.reviews_total === 0 && data.posts_total === 0
+            ? "No content yet — tenants need connected listings to sync reviews and create posts."
+            : data.reviews_total === 0
+            ? "Posts exist but no reviews synced. Check listing connections."
+            : data.posts_total === 0
+            ? "Reviews syncing but no posts created. Tenants may need onboarding."
+            : `Content pipeline healthy. ${fmtNum(data.reviews_total)} reviews & ${fmtNum(data.posts_total)} posts indexed.`}
+        </p>
       </section>
 
       {/* subtle footer */}
