@@ -62,37 +62,94 @@ async def _resolve_model(db: AsyncSession, user_id: str) -> str:
     return cfg or DEFAULT_MODEL
 
 
+MAX_LISTED_ITEMS = 200
+
+
+def _iso(dt) -> str | None:
+    try:
+        return dt.isoformat(timespec="minutes") if dt else None
+    except Exception:
+        return None
+
+
 async def _business_snapshot(db: AsyncSession, user: User) -> dict:
-    """Live structured facts: profile, channels, review stats, attention."""
+    """Complete live facts: every location, every review, every reply.
+
+    Lists are newest-first and capped (see MAX_LISTED_ITEMS); totals always
+    reflect the full database and `truncated` flags tell the model when the
+    visible list is partial — so it can say "I can't see it" instead of
+    inventing reviews, users, dates, or reply text.
+    """
     from ..localith.models import LocalithConnection
 
-    conn = (
+    owner_name = " ".join(
+        p for p in [user.first_name, user.last_name] if p
+    ).strip() or None
+
+    conns = (
         await db.execute(
             select(LocalithConnection).where(LocalithConnection.user_id == user.id)
         )
-    ).scalar_one_or_none()
-
-    business: dict = {}
-    if conn:
-        business = {
-            "name": conn.listing_name,
-            "address": conn.address,
-            "phone": conn.phone_number,
-            "website": conn.website_url,
-            "total_reviews_on_google": conn.total_reviews,
-            "average_rating_on_google": conn.average_rating,
+    ).scalars().all()
+    locations = [
+        {
+            "name": c.listing_name,
+            "address": c.address,
+            "phone": c.phone_number,
+            "website": c.website_url,
+            "maps_url": c.maps_url,
+            "verified": c.is_verified,
+            "total_reviews_on_google": c.total_reviews,
+            "average_rating_on_google": c.average_rating,
+            "last_review_on": _iso(c.last_review_on),
+            "last_reply_on": _iso(c.last_reply_on),
         }
+        for c in conns
+    ]
 
     channels = (
         await db.execute(
-            select(Channel.id, Channel.display_name).where(
-                Channel.user_id == user.id, Channel.status == "active"
-            )
+            select(Channel).where(Channel.user_id == user.id)
         )
-    ).all()
+    ).scalars().all()
     channel_ids = [c.id for c in channels]
+    channel_names = {c.id: (c.display_name or c.id) for c in channels}
 
-    stats: dict = {"connected_locations": [c.display_name or c.id for c in channels]}
+    business: dict = {
+        "owner": {"name": owner_name, "email": user.email},
+        "locations": locations,
+        "channels": [
+            {"name": c.display_name, "platform": c.platform, "status": c.status}
+            for c in channels
+        ],
+    }
+    visibility: dict = {}
+    for c in conns:
+        raw = c.raw_metrics_json or {}
+        listings = raw.get("listings") if isinstance(raw, dict) else None
+        if not listings:
+            continue
+        window = (raw.get("dateRange") or {}) if isinstance(raw, dict) else {}
+        for listing in listings:
+            search_imp = int(listing.get("googleSearchDesktop", 0) or 0) + int(
+                listing.get("googleSearchMobile", 0) or 0)
+            maps_imp = int(listing.get("googleMapsDesktop", 0) or 0) + int(
+                listing.get("googleMapsMobile", 0) or 0)
+            visibility[c.listing_name or c.listing_id] = {
+                "window": f"{window.get('startDate')} to {window.get('endDate')}",
+                "found_via_google_search": search_imp,
+                "found_via_google_maps": maps_imp,
+                "direction_requests": int(listing.get("directions", 0) or 0),
+                "call_clicks": int(listing.get("callClicks", 0) or 0),
+                "website_clicks": int(listing.get("websiteClicks", 0) or 0),
+                "messages": int(listing.get("messages", 0) or 0),
+                "bookings": int(listing.get("bookings", 0) or 0),
+                "review_response_percentage": listing.get("reviewResponsePercentage"),
+            }
+    stats: dict = {
+        "connected_locations": [c.display_name or c.id for c in channels if c.status == "active"],
+        "visibility": visibility,
+    }
     if channel_ids:
         now = datetime.now(timezone.utc)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -118,15 +175,6 @@ async def _business_snapshot(db: AsyncSession, user: User) -> dict:
                 .group_by(ReviewInsight.rating)
             )
         ).all()
-        recent = (
-            await db.execute(
-                select(ReviewInsight)
-                .where(ReviewInsight.channel_id.in_(channel_ids))
-                .order_by(ReviewInsight.review_updated_at.desc().nullslast())
-                .limit(8)
-            )
-        ).scalars().all()
-
         async def _posted_count(since: datetime | None) -> int:
             stmt = select(func.count(ReviewReply.id)).where(
                 ReviewReply.channel_id.in_(channel_ids),
@@ -155,6 +203,22 @@ async def _business_snapshot(db: AsyncSession, user: User) -> dict:
                 )
             )
         ).scalar_one()
+        all_reviews = (
+            await db.execute(
+                select(ReviewInsight)
+                .where(ReviewInsight.channel_id.in_(channel_ids))
+                .order_by(ReviewInsight.review_updated_at.desc().nullslast())
+                .limit(MAX_LISTED_ITEMS)
+            )
+        ).scalars().all()
+        all_replies = (
+            await db.execute(
+                select(ReviewReply)
+                .where(ReviewReply.channel_id.in_(channel_ids))
+                .order_by(ReviewReply.created_at.desc())
+                .limit(MAX_LISTED_ITEMS)
+            )
+        ).scalars().all()
         stats.update({
             "reviews_indexed": total,
             "average_rating": round(float(avg), 2) if avg is not None else None,
@@ -164,14 +228,38 @@ async def _business_snapshot(db: AsyncSession, user: User) -> dict:
             "replies_posted_last_7_days_utc": posted_week,
             "replies_pending_approval": pending,
             "replies_failed": failed,
-            "recent_reviews": [
+            "all_reviews": [
                 {
-                    "rating": r.rating,
-                    "text": (r.review_text or "")[:200] or "(star rating only)",
+                    "location": channel_names.get(r.channel_id),
                     "reviewer": r.reviewer_name,
+                    "rating": r.rating,
+                    "text": r.review_text or "(star rating only)",
+                    "sentiment": r.sentiment,
+                    "topics": r.topics or [],
+                    "products": r.products or [],
+                    "problems": r.problems or [],
                     "replied": bool(r.replied),
+                    "replied_at": _iso(r.replied_at),
+                    "review_url": r.review_url,
+                    "review_date_utc": _iso(r.review_updated_at),
+                    "indexed_at_utc": _iso(r.created_at),
                 }
-                for r in recent
+                for r in all_reviews
+            ],
+            "all_reviews_truncated": total > len(all_reviews),
+            "all_replies": [
+                {
+                    "location": channel_names.get(r.channel_id),
+                    "reviewer": r.reviewer_name,
+                    "rating": r.rating,
+                    "review_text": r.review_text or "(star rating only)",
+                    "reply_text": r.reply_text,
+                    "status": r.status,
+                    "generation_attempt": r.generation_attempt,
+                    "replied_at_utc": _iso(r.created_at),
+                    "publish_error": (r.error or "")[:300] if r.status == "failed" else None,
+                }
+                for r in all_replies
             ],
         })
     return {"business": business, "reviews": stats}
@@ -222,11 +310,29 @@ def _system_prompt(snapshot: dict, rag_answer: str, rag_citations: list[dict]) -
         )
     return (
         "You are Sayvors' business assistant, chatting with the business owner "
-        "inside their dashboard. Answer their question using ONLY the live data "
-        "below and the databank grounding — never invent numbers or facts.\n\n"
+        "inside their dashboard.\n\n"
         f"LIVE BUSINESS DATA:\n{context}"
         f"{rag_block}\n\n"
         "Rules:\n"
+        "- Answer ONLY from the data above. Every location is listed under "
+        "business.locations; every review under reviews.all_reviews (with "
+        "reviewer, rating, full text, sentiment, topics, and timestamps); "
+        "every reply under reviews.all_replies (with full text, status, and "
+        "timestamps).\n"
+        "- NEVER invent reviewer names, ratings, dates, review text, reply "
+        "text, or numbers. If the owner asks about a review, reply, user, or "
+        "date that is not in the lists above, say plainly that you cannot "
+        "find it in the synced data — do not guess. If all_reviews_truncated "
+        "is true, mention the visible list may be partial.\n"
+        "- When quoting dates, use the timestamps given (review_date_utc, "
+        "replied_at_utc). Today is current_time_utc. Present dates and times "
+        "in short friendly form (e.g. 'Sept 16, 3:34 PM') — never raw ISO "
+        "timestamps, seconds, or +00:00 suffixes.\n"
+        "- 'How are people finding us' questions: answer ONLY from "
+        "reviews.visibility (found_via_google_search vs found_via_google_maps "
+        "impressions, direction requests, call and website clicks, within the "
+        "stated window). Never infer a discovery source beyond what those "
+        "numbers show.\n"
         "- Be concise (max ~120 words) and concrete; quote real numbers when relevant.\n"
         "- Reply in the same language the owner writes in (Arabic stays Arabic).\n"
         "- If the data does not contain the answer, say so plainly and suggest "
