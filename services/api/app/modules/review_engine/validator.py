@@ -225,6 +225,24 @@ def _issue_covered(issue: ExtractedIssue, text_lower: str) -> str | None:
 
 # Internal taxonomy must never leak into customer copy.
 TAXONOMY_PATTERN = re.compile(r"\b[a-z]{2,}(?:_[a-z]{2,})+\b")
+
+# Em dash (U+2014) — banned from customer copy, it reads AI-generated.
+EM_DASH = "—"
+
+
+def strip_em_dashes(text: str) -> str:
+    """Replace em dashes with commas; collapse leftover spacing.
+
+    Last-resort sanitizer: runs after generation so no reply can reach
+    the merchant with an em dash even if the model ignored the ban.
+    """
+    if not text or EM_DASH not in text:
+        return text
+    out = re.sub(r"\s*—\s*", ", ", text)
+    out = re.sub(r"\s{2,}", " ", out)
+    out = re.sub(r"\s+([.,!?;:])", r"\1", out)
+    out = re.sub(r",\s*$", "", out)
+    return out.strip()
 # Spaced classification phrases no real business would write.
 TAXONOMY_PHRASES = [
     "product dissatisfaction",
@@ -635,6 +653,8 @@ def _evidence_sentence(text: str, hit: str) -> str:
 
 def _check_naturalness(text: str, text_lower: str) -> tuple[bool, str]:
     """Reject corporate-voice, repetitive, or strategy-leaking replies."""
+    if EM_DASH in (text or ""):
+        return False, "Em dash detected ('—') — rewrite using commas or periods instead."
     for opener in CORPORATE_OPENERS:
         if opener in text_lower:
             return False, f"Corporate phrasing detected ('{opener}') — rewrite like a real person."

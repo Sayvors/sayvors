@@ -554,6 +554,27 @@ def test_repetition_fails_naturalness():
     assert result.checks["naturalness"] is False
 
 
+def test_em_dash_fails_naturalness():
+    result = validate_response(
+        _resp("Thanks for the kind words! Glad you loved it — hope to see you again soon."),
+        _neg_analysis(), {"max_length": 500, "public": True},
+        review_text="Loved it!",
+    )
+    assert result.checks["naturalness"] is False
+    assert result.passed is False
+    assert any("Em dash" in issue for issue in result.issues)
+
+
+def test_strip_em_dashes():
+    from app.modules.review_engine.validator import strip_em_dashes
+
+    assert strip_em_dashes("Sorry you waited — that's not ok.") == "Sorry you waited, that's not ok."
+    assert strip_em_dashes("Glad you loved it—hope to see you again.") == "Glad you loved it, hope to see you again."
+    assert strip_em_dashes("No dashes here. Just commas, and periods.") == "No dashes here. Just commas, and periods."
+    assert strip_em_dashes("") == ""
+    assert "—" not in strip_em_dashes("A — b — c")
+
+
 def test_offer_strategy_skipped_without_data():
     result = validate_response(
         _resp("We're sorry about the slow service and we take this seriously."),
@@ -1082,7 +1103,7 @@ def test_pricing_reply_passes_without_billing_language():
                                product_reference="AI tool")
     issues = extract_issues(review, analysis)
     assert "pricing" in [i.key for i in issues]
-    reply = ("We're sorry the AI tool feels too expensive — we're glad you like it, "
+    reply = ("We're sorry the AI tool feels too expensive, we're glad you like it, "
              "and we understand pricing is an important consideration. We appreciate the feedback.")
     tier = select_tier(2, analysis, review, n_issues=len(issues))
     result = validate_response(
@@ -1691,7 +1712,7 @@ def test_validate_arabic_complaint_reply_with_covered_facts_passes():
         keywords=["الانتظار"], semantic=["تأخر"],
     )]
     result = validate_response(
-        _resp("نعتذر عن الانتظار الطويل — هذا ليس المستوى الذي نسعى إليه، وسنعمل على تحسينه."),
+        _resp("نعتذر عن الانتظار الطويل، هذا ليس المستوى الذي نسعى إليه، وسنعمل على تحسينه."),
         analysis, {"max_length": 500, "public": True},
         review_text="الانتظار كان طويلاً جداً",
         issues=issues,

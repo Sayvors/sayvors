@@ -13,6 +13,7 @@ from .schemas import (
     StrategyMatch,
     ToolCall,
 )
+from .validator import strip_em_dashes
 
 logger = logging.getLogger(__name__)
 
@@ -68,13 +69,15 @@ LANGUAGE — SIMPLE & HUMAN (non-negotiable):
 - One idea per sentence. Short sentences. Max 15 words per sentence.
 - Warm but not over-the-top. No exclamation spam (max one ! per reply, often none).
 - Sound like ONE person, not a PR team.
+- NEVER use em dashes (—). This is strict: no em dash anywhere in the reply.
+  Use commas or periods instead. "Sorry you waited, that's not ok." — never "Sorry you waited — that's not ok."
 
 Rules:
 - Follow the selected strategies' instructions closely.
 - The Hard Requirements section is binding — violating one fails validation.
 - COMPRESS: multiple strategies per sentence. 5 strategies ≠ 5 sentences.
   E.g. acknowledge + apologize + address can be ONE sentence:
-  "Sorry you waited 45 minutes for cold food — that's not ok."
+  "Sorry you waited 45 minutes for cold food, that's not ok."
 - If the customer did not ask for products, alternatives, offers, or a
   return visit, do NOT pitch any. A complaint needs acknowledgment, apology,
   specifics, and a useful next step — nothing more.
@@ -94,7 +97,7 @@ Rules:
 - If asked WHY and Business Context has no verified reason, say so plainly
   ("we don't have that detail here") or just acknowledge — never invent
   pricing rationale, ingredient stories, or process explanations.
-- Product suggestions: only if Business Context lists a verified complementary product. Use its exact name. If a URL/link is in the Context, you may add it as " — see: https://..." in the same clause. If no link is in Context, do NOT invent one. Keep it to one brief clause, like "If you're curious, our Voice AI Pro pairs nicely — happy to share more if you want."
+- Product suggestions: only if Business Context lists a verified complementary product. Use its exact name. If a URL/link is in the Context, you may add it as ", see: https://..." in the same clause. If no link is in Context, do NOT invent one. Keep it to one brief clause, like "If you're curious, our Voice AI Pro pairs nicely — happy to share more if you want."
 - Never invent links/URLs. Only share a link that appears verbatim in Business Context.
 - Never leak strategy names or AI self-references into the reply.
 - Do NOT invent facts, prices, discounts, refund amounts, or actions taken.
@@ -107,9 +110,9 @@ Rules:
 - ALWAYS close the JSON object. Never stop mid-sentence.
 
 EXAMPLES — copy this tone:
-- 5★ "Loved the food!" → "Thanks so much! Glad you loved it — hope to see you again soon."
+- 5★ "Loved the food!" → "Thanks so much! Glad you loved it, hope to see you again soon."
 - 5★ no text → "Thanks for the 5 stars! Really appreciate it."
-- 1★ "Waited 45 min, cold food, rude staff" → "Sorry about the long wait, cold food, and rude service — that's not ok. Thanks for telling us, we'll fix it."
+- 1★ "Waited 45 min, cold food, rude staff" → "Sorry about the long wait, cold food, and rude service, that's not ok. Thanks for telling us, we'll fix it."
 - Pricing "Great but costly" → "Thanks for the honest note — glad you like the tool. We hear you on price and appreciate you sharing."
 """
 
@@ -232,6 +235,13 @@ async def generate_response(
         elif raw and not raw.startswith("{"):
             logger.warning("Failed to parse response JSON, using raw: %s", raw[:200])
             response_text = raw
+
+    # Guarantee: no em dash may reach the merchant, even if the model
+    # ignored the ban and validation passed on the final iteration.
+    cleaned = strip_em_dashes(response_text)
+    if cleaned != response_text:
+        logger.warning("Stripped em dash(es) from generated reply")
+        response_text = cleaned
 
     if not response_text:
         logger.error(
