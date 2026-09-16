@@ -334,3 +334,79 @@ async def test_sync_all_once_skips_missing_user(monkeypatch):
     )
     assert totals["connections"] == 0
     assert calls == []
+
+@pytest.mark.asyncio
+async def test_autopilot_auto_posts_high_and_queues_low(db, user_id, channel_id, monkeypatch):
+    """Auto Pilot: auto mode + rating >= min_rating_auto posts live via Localith
+    immediately; lower ratings (or approval mode) still queue for approval."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.modules.channels.models import AutoReplyConfig
+    from app.modules.localith.models import LocalithConnection
+    from app.modules.channels.models import ReviewReply
+
+    db.add(LocalithConnection(
+        id="lc-auto-1", user_id=user_id, listing_id="demo-loc-456",
+        listing_name="Auto Listing",
+    ))
+    db.add(AutoReplyConfig(
+        id="cfg-auto-1", channel_id=channel_id, enabled=True,
+        approval_mode="auto", min_rating_auto=4,
+    ))
+    await db.commit()
+
+    items = [
+        {"id": "hi5", "rating": 5, "captionText": "Great product", "authorName": "Adeel"},
+        {"id": "lo2", "rating": 2, "captionText": "Late delivery", "authorName": "Sara"},
+    ]
+    monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _detail(listing_id):
+        return {}
+
+    monkeypatch.setattr(service, "get_listing_detail", _detail)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
+    monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
+
+    async def _gen(config, channel, rating, text, reviewer, db_,
+                   review_id=None, attempt=1, previous_draft=None):
+        return "engine draft"
+
+    monkeypatch.setattr(service, "generate_auto_reply", _gen)
+
+    posted = []
+
+    async def _post(item_id, text):
+        posted.append((item_id, text))
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "post_reply", _post)
+
+    # enqueue_event writes to the REAL Postgres outbox via its own global
+    # session (not the test engine) — keep the test hermetic.
+    events = []
+
+    async def _fake_enqueue(event_type, payload, topic="review-events"):
+        events.append((event_type, payload.get("review_id")))
+        return "evt"
+
+    monkeypatch.setattr(service, "enqueue_event", _fake_enqueue)
+
+    totals = await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    assert posted == [("hi5", "engine draft")]
+    assert sorted(events) == [
+        ("review.discovered", "localith:hi5"),
+        ("review.discovered", "localith:lo2"),
+    ]
+    rows = {
+        r.review_id: r
+        for r in (await db.execute(select(ReviewReply))).scalars().all()
+    }
+    assert rows["localith:hi5"].status == "posted"
+    assert rows["localith:hi5"].error is None
+    assert rows["localith:lo2"].status == "pending_approval"

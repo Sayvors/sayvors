@@ -337,6 +337,33 @@ async def sync_connection(
             )
             await db.commit()
             continue
+        # Auto Pilot: "auto" mode + rating >= threshold posts the reply live
+        # through Localith immediately — the same publish path the Approve
+        # button uses (POST /items/{id}/replies). Mock/dev mode never posts.
+        auto_post = (
+            config.approval_mode == "auto"
+            and review.rating >= config.min_rating_auto
+            and not settings.GOOGLE_REVIEWS_MOCK
+        )
+        if auto_post:
+            try:
+                await post_reply(review_id, reply_text)
+            except Exception as e:
+                logger.warning("Localith auto-post failed review=%s item=%s: %s", review_id, review_id, e)
+                _save_reply_row(
+                    db, failed_row, channel.id, full_review_id,
+                    review.rating, review.text, review.reviewer,
+                    reply_text, "failed", str(e)[:2000],
+                )
+                await db.commit()
+                continue
+            _save_reply_row(
+                db, failed_row, channel.id, full_review_id,
+                review.rating, review.text, review.reviewer,
+                reply_text, "posted",
+            )
+            drafted += 1
+            continue
         _save_reply_row(
             db, failed_row, channel.id, full_review_id,
             review.rating, review.text, review.reviewer,
