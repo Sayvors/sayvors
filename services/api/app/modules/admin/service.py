@@ -118,14 +118,17 @@ async def list_tenants(
     conns = (
         await db.execute(select(LocalithConnection).where(LocalithConnection.user_id.in_(ids)))
     ).scalars().all()
-    conn_by_user = {c.user_id: c for c in conns}
+    conn_by_user: dict[str, list] = {}
+    for c in conns:
+        conn_by_user.setdefault(c.user_id, []).append(c)
     review_counts = await _counts_by_user(db, ReviewInsight)
     post_counts = await _counts_by_user(db, LocationPost)
     bank_counts = await _counts_by_user(db, Databank)
 
     items = []
     for u in users:
-        c = conn_by_user.get(u.id)
+        user_conns = conn_by_user.get(u.id, [])
+        c = user_conns[0] if user_conns else None
         items.append({
             "id": u.id,
             "email": u.email,
@@ -135,6 +138,7 @@ async def list_tenants(
             "created_at": u.created_at.isoformat() if u.created_at else None,
             "has_connection": c is not None,
             "listing_name": c.listing_name if c else None,
+            "listings_count": len(user_conns),
             "last_synced_at": c.last_synced_at.isoformat() if c and c.last_synced_at else None,
             "reviews": review_counts.get(u.id, 0),
             "posts": post_counts.get(u.id, 0),
@@ -149,9 +153,11 @@ async def get_tenant(db: AsyncSession, user_id: str) -> dict | None:
         return None
     conn = (
         await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == user_id)
+            select(LocalithConnection)
+            .where(LocalithConnection.user_id == user_id)
+            .order_by(LocalithConnection.created_at)
         )
-    ).scalar_one_or_none()
+    ).scalars().first()
     review_counts = await _counts_by_user(db, ReviewInsight)
     post_counts = await _counts_by_user(db, LocationPost)
     bank_counts = await _counts_by_user(db, Databank)

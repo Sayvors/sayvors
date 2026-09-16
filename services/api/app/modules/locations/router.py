@@ -26,10 +26,12 @@ async def list_locations(
 
     out: list[LocationSummary] = []
     result = await db.execute(
-        select(LocalithConnection).where(LocalithConnection.user_id == user.id)
+        select(LocalithConnection)
+        .where(LocalithConnection.user_id == user.id)
+        .order_by(LocalithConnection.created_at)
     )
-    connection = result.scalar_one_or_none()
-    if connection is not None:
+    connections = list(result.scalars().all())
+    for connection in connections:
         out.append(LocationSummary(
             listing_id=connection.listing_id,
             name=connection.listing_name,
@@ -46,7 +48,7 @@ async def list_locations(
             )
         )
     ).scalars().all()
-    seen = {c.listing_id for c in [connection] if c}
+    seen = {c.listing_id for c in connections}
     for ch in channels:
         if ch.platform_user_id and ch.platform_user_id not in seen:
             out.append(LocationSummary(

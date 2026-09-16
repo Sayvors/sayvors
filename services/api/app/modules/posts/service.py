@@ -63,15 +63,16 @@ async def _owned_post(db: AsyncSession, user_id: str, post_id: str) -> LocationP
 
 
 async def _require_localith_listing(db: AsyncSession, user_id: str, listing_id: str) -> LocalithConnection:
-    """Posts can only publish to the connected Localith listing."""
+    """Posts can only publish to a connected Localith listing (any branch)."""
     result = await db.execute(
-        select(LocalithConnection).where(LocalithConnection.user_id == user_id)
+        select(LocalithConnection).where(
+            LocalithConnection.user_id == user_id,
+            LocalithConnection.listing_id == listing_id,
+        )
     )
     connection = result.scalar_one_or_none()
     if connection is None:
-        raise ValueError("Connect a Localith listing before publishing posts.")
-    if connection.listing_id != listing_id:
-        raise ValueError("Posts can only publish to the connected listing.")
+        raise ValueError("Connect that branch in Localith before publishing posts.")
     return connection
 
 

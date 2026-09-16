@@ -303,7 +303,7 @@ async def test_sync_all_once_counts_and_isolates_failures(monkeypatch):
     monkeypatch.setattr(service, "_key_present", lambda: True)
     calls = []
 
-    async def _fake_sync(user, db):
+    async def _fake_sync(user, db, listing_id=None):
         calls.append(user.id)
         if user.id == "bad":
             raise RuntimeError("boom")
@@ -410,3 +410,53 @@ async def test_autopilot_auto_posts_high_and_queues_low(db, user_id, channel_id,
     assert rows["localith:hi5"].status == "posted"
     assert rows["localith:hi5"].error is None
     assert rows["localith:lo2"].status == "pending_approval"
+
+@pytest.mark.asyncio
+async def test_get_connection_selects_branch(db, user_id):
+    """Two branches coexist; lookup selects by listing, default is first."""
+    from app.modules.localith.models import LocalithConnection
+
+    db.add(LocalithConnection(
+        id="lc-b1", user_id=user_id, listing_id="list-one", listing_name="Branch One",
+    ))
+    db.add(LocalithConnection(
+        id="lc-b2", user_id=user_id, listing_id="list-two", listing_name="Branch Two",
+    ))
+    await db.commit()
+
+    assert (await service.get_connection(db, user_id, "list-two")).listing_name == "Branch Two"
+    assert (await service.get_connection(db, user_id, "list-one")).listing_name == "Branch One"
+    assert (await service.get_connection(db, user_id)).listing_name == "Branch One"
+    assert await service.get_connection(db, user_id, "nope") is None
+    assert len(await service.list_connections(db, user_id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_sync_connection_loops_all_branches(db, user_id, monkeypatch):
+    """No listing_id -> every branch syncs, totals aggregate, none skipped."""
+    from types import SimpleNamespace
+
+    from app.modules.localith.models import LocalithConnection
+
+    db.add(LocalithConnection(
+        id="lc-c1", user_id=user_id, listing_id="list-a", listing_name="A",
+    ))
+    db.add(LocalithConnection(
+        id="lc-c2", user_id=user_id, listing_id="list-b", listing_name="B",
+    ))
+    await db.commit()
+
+    seen = []
+
+    async def _fake_single(user, db_, connection, days_back=30):
+        seen.append(connection.listing_id)
+        return {"fetched": 1, "new_reviews": 2}
+
+    monkeypatch.setattr(service, "_sync_single_connection", _fake_single)
+
+    totals = await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    assert sorted(seen) == ["list-a", "list-b"]
+    assert totals["fetched"] == 2
+    assert totals["new_reviews"] == 4
+    assert totals["branches"] == 2
