@@ -33,6 +33,7 @@ Rules you MUST follow (Google review reply policy):
 - Never ask or hint for the reviewer to change or remove their rating.
 - Do not include personal data of the reviewer or staff.
 - Keep it short: 2-4 sentences, plain text only (no markdown, no emoji spam).
+- NEVER use em dashes (—). This is strict: no em dash anywhere in the reply. Use commas or periods instead.
 
 Tone: {tone}.
 {rating_guidance}
@@ -141,7 +142,7 @@ async def generate_review_reply(
         if lang == "ar":
             if rating >= 4:
                 return (
-                    f"شكراً جزيلاً يا {name}! سعدنا بتجربتك الرائعة معنا — آراء مثل رأيك "
+                    f"شكراً جزيلاً يا {name}! سعدنا بتجربتك الرائعة معنا، وآراء مثل رأيك "
                     f"تحفز فريقنا على الاستمرار. نتطلع لرؤيتك مرة أخرى قريباً!"
                 )
             if rating == 3:
@@ -156,7 +157,7 @@ async def generate_review_reply(
         if rating >= 4:
             return (
                 f"Thank you so much, {name}! We're happy you had a great experience "
-                f"with us — feedback like yours keeps our team motivated. We hope to see you again soon!"
+                f"with us, feedback like yours keeps our team motivated. We hope to see you again soon!"
             )
         if rating == 3:
             return (
@@ -226,7 +227,14 @@ async def generate_review_reply(
     reply = resp.content.strip()
     if not reply:
         raise ProviderError(config.model, "Empty reply generated", 502)
-    return reply
+    # Guarantee: no em dash may reach the merchant, even if the model
+    # ignored the ban.
+    from ..review_engine.validator import strip_em_dashes
+
+    cleaned = strip_em_dashes(reply)
+    if cleaned != reply:
+        logger.warning("Stripped em dash(es) from simple-prompt reply")
+    return cleaned
 
 
 async def generate_auto_reply(
