@@ -391,6 +391,12 @@ async def process_review(
     # Step 6: Length tier + binding generation requirements (final set)
     tier = select_tier(req.rating, analysis, req.review_text, n_issues=len(issues))
     requirements = build_requirements(analysis, issues, strategies, suppressed, tier, business_context)
+    if (req.previous_draft or "").strip():
+        requirements.append(
+            "The merchant REJECTED this previous draft: "
+            f"\"{req.previous_draft.strip()[:400]}\" — write a clearly different reply; "
+            "do not reuse its wording, opening line or structure."
+        )
     if relevance.verdict == "off_topic":
         requirements.append(
             "Possible off-topic review: do NOT discuss, apologize for, or make claims about "
@@ -596,6 +602,12 @@ async def process_review_stream(
         yield {"step": step, "strategy": sp.model_dump(), "progress": 62}
     tier = select_tier(req.rating, analysis, req.review_text, n_issues=len(issues))
     requirements = build_requirements(analysis, issues, strategies, suppressed, tier, business_context)
+    if (req.previous_draft or "").strip():
+        requirements.append(
+            "The merchant REJECTED this previous draft: "
+            f"\"{req.previous_draft.strip()[:400]}\" — write a clearly different reply; "
+            "do not reuse its wording, opening line or structure."
+        )
     if relevance.verdict == "off_topic":
         requirements.append(
             "Possible off-topic review: do NOT discuss, apologize for, or make claims about "

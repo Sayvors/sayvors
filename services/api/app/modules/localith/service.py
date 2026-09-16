@@ -26,7 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from ..analytics.models import ReviewInsight
 from ..channels.models import AutoReplyConfig, Channel, ReviewReply
-from ..channels.review_reply import generate_review_reply
+from ..channels.review_reply import generate_auto_reply
+from ..channels.reviews_worker import _resume_failed_row, _save_reply_row
 from ..outbox.service import enqueue_event
 from ..users.models import User
 
@@ -317,23 +318,29 @@ async def sync_connection(
         )).scalar_one_or_none()
         if insight and insight.skipped:
             continue
+        failed_row = await _resume_failed_row(db, channel.id, full_review_id)
         try:
-            reply_text = await generate_review_reply(
-                config, review.rating, review.text, review.reviewer, db
+            reply_text = await generate_auto_reply(
+                config, channel, review.rating, review.text, review.reviewer, db,
+                review_id=full_review_id,
+                attempt=(failed_row.generation_attempt or 1) + 1 if failed_row else 1,
+                previous_draft=failed_row.reply_text if failed_row else None,
             )
         except Exception as e:
             logger.warning("Localith draft generation failed review=%s: %s", review_id, e)
-            continue
-        db.add(
-            ReviewReply(
-                channel_id=channel.id,
-                review_id=full_review_id,
-                rating=review.rating,
-                review_text=review.text,
-                reviewer_name=review.reviewer,
-                reply_text=reply_text,
-                status="pending_approval",
+            # Surface the failure in the approval queue instead of letting the
+            # review vanish — Retry regenerates once the LLM is reachable.
+            _save_reply_row(
+                db, failed_row, channel.id, full_review_id,
+                review.rating, review.text, review.reviewer,
+                "", "failed", str(e)[:2000],
             )
+            await db.commit()
+            continue
+        _save_reply_row(
+            db, failed_row, channel.id, full_review_id,
+            review.rating, review.text, review.reviewer,
+            reply_text, "pending_approval",
         )
         drafted += 1
     if drafted:

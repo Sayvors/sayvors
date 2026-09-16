@@ -93,6 +93,8 @@ class ReviewEngineRequest(BaseModel):
     # Optional explicit model override (catalog id, e.g. "groq:oss-120b").
     # If omitted and channel_id is set, the channel's auto-reply config model is used.
     model: str | None = Field(default=None, max_length=100)
+    # Draft the merchant rejected — the generator must write something different.
+    previous_draft: str | None = Field(default=None, max_length=4000)
 
 
 class ReviewEngineResponse(BaseModel):

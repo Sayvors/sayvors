@@ -297,8 +297,8 @@ export function editReply(channelId: string, replyId: string, replyText: string)
   });
 }
 
-export function regenerateReply(channelId: string, replyId: string): Promise<ReviewReplyDTO> {
-  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}/regenerate`, { method: "POST" });
+export function regenerateReply(channelId: string, replyId: string, engine = false): Promise<ReviewReplyDTO> {
+  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}/regenerate${engine ? "?engine=true" : ""}`, { method: "POST" });
 }
 
 export function approveReply(channelId: string, replyId: string): Promise<ReviewReplyDTO> {

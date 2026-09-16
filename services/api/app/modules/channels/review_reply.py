@@ -227,3 +227,55 @@ async def generate_review_reply(
     if not reply:
         raise ProviderError(config.model, "Empty reply generated", 502)
     return reply
+
+
+async def generate_auto_reply(
+    config: AutoReplyConfig,
+    channel,
+    rating: int,
+    review_text: str | None,
+    reviewer_name: str | None,
+    db: AsyncSession,
+    review_id: str | None = None,
+    attempt: int = 1,
+    previous_draft: str | None = None,
+) -> str:
+    """Draft entry point for the auto-pipelines (worker + Localith sync).
+
+    Prefers the agentic review engine (analysis → strategies → tools →
+    validation → brand voice) for every generation — retries included,
+    with the rejected draft passed along so the engine writes a clearly
+    different reply. Falls back to the simple single-shot prompt when the
+    engine is unavailable or the review has no text (star-only).
+    """
+    from ...config import settings as _settings
+
+    if _settings.GOOGLE_REVIEWS_MOCK:
+        return await generate_review_reply(config, rating, review_text, reviewer_name, db)
+
+    if (review_text or "").strip():
+        try:
+            from ..review_engine.schemas import ReviewEngineRequest
+            from ..review_engine.service import process_review
+
+            req = ReviewEngineRequest(
+                review_text=review_text.strip()[:5000],
+                rating=rating,
+                reviewer_name=(reviewer_name or None),
+                review_id=(review_id[:120] if review_id else None),
+                channel="google_review",
+                channel_id=getattr(channel, "id", None),
+                previous_draft=(previous_draft or None),
+            )
+            resp = await process_review(req, getattr(channel, "user_id", None), db)
+            text = (resp.response_text or "").strip()
+            if text:
+                return text
+            logger.warning("Review engine returned empty text; using simple prompt fallback")
+        except Exception as e:
+            logger.warning("Review engine failed (%s); using simple prompt fallback", e)
+
+    return await generate_review_reply(
+        config, rating, review_text, reviewer_name, db,
+        attempt=attempt, previous_draft=previous_draft,
+    )
