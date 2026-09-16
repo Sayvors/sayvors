@@ -135,6 +135,7 @@ export default function Sidebar() {
                   <Link
                     key={item.href}
                     href={item.href}
+                    data-tour={`nav-${item.key}`}
                     aria-current={active ? "page" : undefined}
                     title={collapsed ? label : undefined}
                     className={`group relative flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-violet-light/60 ${

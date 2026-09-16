@@ -429,6 +429,7 @@ function ConnectHub() {
               <button
                 onClick={resyncLocalith}
                 disabled={localithBusy}
+                data-tour="sync-now"
                 className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
               >
                 {localithBusy ? <LogoLoader size={14} /> : "Sync now"}
@@ -505,7 +506,7 @@ function ConnectHub() {
             </div>
           ) : (
 
-          <div className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+          <div className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink" data-tour="connect-location">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-[20px] text-white shadow-sm">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
                 <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />

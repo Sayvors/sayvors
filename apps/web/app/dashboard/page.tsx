@@ -349,6 +349,7 @@ function AttentionQueue() {
    return (
     <section
       aria-label="Needs attention"
+      data-tour="attention"
       className={`rounded-2xl border-2 bg-white/80 p-4 backdrop-blur-sm ${allClear ? "border-emerald-200/60" : "border-white"}`}
     >
       <div className="mb-2 flex items-center gap-2">
