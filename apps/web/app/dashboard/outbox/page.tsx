@@ -315,7 +315,7 @@ export default function OutboxPage() {
         <div className="flex flex-col items-center gap-3 rounded-xl border border-ink/[0.06] bg-white py-14 text-center dark:border-fog/[0.06] dark:bg-ink">
           <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">No locations yet</p>
           <p className="max-w-sm text-[12px] text-ink/45 dark:text-fog/45">
-            Connect your Localith listing and the engine will start drafting replies here.
+            Connect your Google Business Profile and the engine will start drafting replies here.
           </p>
           <Link
             href="/dashboard/channels"
