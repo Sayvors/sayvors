@@ -190,6 +190,10 @@ async def sync_connection(
             "fetched": 0, "new_reviews": 0, "branches": 0, "errors": 0,
         }
         for connection in connections:
+            # Plain values up front: rollback() below expires ORM state,
+            # and sync attribute access afterwards raises MissingGreenlet.
+            listing_id = connection.listing_id
+            listing_name = connection.listing_name
             try:
                 one = await _sync_single_connection(
                     user, db, connection, metrics_days_back
@@ -199,11 +203,22 @@ async def sync_connection(
                 totals["branches"] = int(totals["branches"]) + 1
             except Exception as e:
                 logger.error(
-                    "Localith sync failed for listing %s: %s", connection.listing_id, e
+                    "Localith sync failed for listing %s: %s", listing_id, e
                 )
                 totals["errors"] = int(totals["errors"]) + 1
                 try:
                     await db.rollback()
+                except Exception:
+                    pass
+                await notify(
+                    db, user.id, "sync_failed",
+                    f"Sync failed for {listing_name or 'location'}",
+                    str(e)[:160],
+                    data={"listing_id": listing_id},
+                    href="/dashboard/channels",
+                )
+                try:
+                    await db.commit()
                 except Exception:
                     pass
         return totals
@@ -338,17 +353,21 @@ async def _sync_single_connection(
     connection.last_synced_at = datetime.now(timezone.utc)
     await db.commit()
 
-    # Sync summary — only when something actually arrived (no per-minute spam).
+    # Sync receipt — every sync, even quiet ones, so the bell tells the
+    # truth about what ran.
     if synced > 0:
-        await notify(
-            db, user.id, "sync_completed",
-            f"Synced {connection.listing_name or 'location'} — {synced} new review(s)",
-            None,
-            data={"listing_id": connection.listing_id, "channel_id": channel.id,
-                  "new_reviews": synced},
-            href="/dashboard",
-        )
-        await db.commit()
+        title = f"Synced {connection.listing_name or 'location'} — {synced} new review(s)"
+    else:
+        title = f"Synced {connection.listing_name or 'location'} — nothing new"
+    await notify(
+        db, user.id, "sync_completed",
+        title,
+        None,
+        data={"listing_id": connection.listing_id, "channel_id": channel.id,
+              "new_reviews": synced},
+        href="/dashboard",
+    )
+    await db.commit()
 
     # Reply drafts: Localith reviews flow through the same reply engine as
     # OAuth channels. Approving a draft posts it live via Localith's

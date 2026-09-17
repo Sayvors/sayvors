@@ -63,7 +63,7 @@ async def test_list_newest_first_with_counts(db, user_id):
     await _seed(db, user_id, n=3, read_first=1)
 
     resp = await notif_router.list_notifications(
-        unread_only=False, limit=30, offset=0,
+        unread_only=False, category=None, limit=30, offset=0,
         user=_user(user_id), db=db,
     )
     assert resp.total == 3
@@ -76,7 +76,7 @@ async def test_list_unread_only(db, user_id):
     await _seed(db, user_id, n=3, read_first=1)
 
     resp = await notif_router.list_notifications(
-        unread_only=True, limit=30, offset=0,
+        unread_only=True, category=None, limit=30, offset=0,
         user=_user(user_id), db=db,
     )
     assert resp.total == 2
@@ -88,11 +88,11 @@ async def test_list_paginates(db, user_id):
     await _seed(db, user_id, n=5)
 
     page1 = await notif_router.list_notifications(
-        unread_only=False, limit=2, offset=0,
+        unread_only=False, category=None, limit=2, offset=0,
         user=_user(user_id), db=db,
     )
     page2 = await notif_router.list_notifications(
-        unread_only=False, limit=2, offset=2,
+        unread_only=False, category=None, limit=2, offset=2,
         user=_user(user_id), db=db,
     )
     assert page1.total == 5
@@ -145,3 +145,55 @@ async def test_read_all(db, user_id):
 
     count = await notif_router.unread_count(user=_user(user_id), db=db)
     assert count == {"unread": 0}
+
+@pytest.mark.asyncio
+async def test_list_filters_by_category(db, user_id):
+    from app.modules.notifications import router as notif_router
+
+    for i, (t, title) in enumerate([
+        ("sync_completed", "Synced A"),
+        ("review_pulled", "New review"),
+        ("reply_posted", "Replied"),
+        ("sync_failed", "Sync broke"),
+    ]):
+        db.add(Notification(
+            id=f"n-cat-{i}", user_id=user_id, type=t, title=title,
+        ))
+    await db.commit()
+
+    syncs = await notif_router.list_notifications(
+        unread_only=False, category="syncs", limit=30, offset=0,
+        user=_user(user_id), db=db,
+    )
+    assert syncs.total == 2
+    assert sorted(i.type for i in syncs.items) == ["sync_completed", "sync_failed"]
+
+    replies = await notif_router.list_notifications(
+        unread_only=False, category="replies", limit=30, offset=0,
+        user=_user(user_id), db=db,
+    )
+    assert replies.total == 1
+    assert replies.items[0].type == "reply_posted"
+
+    reviews = await notif_router.list_notifications(
+        unread_only=False, category="reviews", limit=30, offset=0,
+        user=_user(user_id), db=db,
+    )
+    assert reviews.total == 1
+
+
+@pytest.mark.asyncio
+async def test_category_summary_counts(db, user_id):
+    from app.modules.notifications import router as notif_router
+
+    await _seed(db, user_id, n=3, read_first=1)  # 3x review_pulled, 1 read
+    db.add(Notification(
+        id="n-cat-s1", user_id=user_id, type="sync_completed", title="Synced",
+    ))
+    await db.commit()
+
+    out = await notif_router.category_summary(user=_user(user_id), db=db)
+    cats = out["categories"]
+    assert cats["reviews"] == {"total": 3, "unread": 2}
+    assert cats["syncs"] == {"total": 1, "unread": 1}
+    assert cats["replies"] == {"total": 0, "unread": 0}

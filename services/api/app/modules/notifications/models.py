@@ -1,7 +1,7 @@
 """Notification rows: one per user-visible event.
 
-Types: sync_completed | review_pulled | reply_posted | reply_failed
-       | review_edited (wired when edit detection lands)
+Types: sync_completed | sync_failed | review_pulled | reply_posted
+       | reply_failed | review_edited (wired when edit detection lands)
 `data` carries the detail payload (reviewer, rating, branch, counts…).
 `href` deep-links the dashboard page that shows the full context.
 """

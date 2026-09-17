@@ -460,3 +460,74 @@ async def test_sync_connection_loops_all_branches(db, user_id, monkeypatch):
     assert totals["fetched"] == 2
     assert totals["new_reviews"] == 4
     assert totals["branches"] == 2
+
+@pytest.mark.asyncio
+async def test_quiet_sync_still_notifies(db, user_id, channel_id, monkeypatch):
+    """A sync with zero new reviews still leaves a summary notification."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.modules.localith.models import LocalithConnection
+    from app.modules.notifications.models import Notification
+
+    db.add(LocalithConnection(
+        id="lc-quiet-1", user_id=user_id, listing_id="demo-loc-456",
+        listing_name="Quiet Branch",
+    ))
+    await db.commit()
+
+    monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _detail(listing_id):
+        return {}
+
+    async def _no_events(event_type, payload, topic="review-events"):
+        return "evt"
+
+    monkeypatch.setattr(service, "get_listing_detail", _detail)
+    monkeypatch.setattr(service, "enqueue_event", _no_events)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: [])
+    monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
+    monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
+
+    totals = await service.sync_connection(SimpleNamespace(id=user_id), db)
+    assert totals["new_reviews"] == 0
+
+    rows = (await db.execute(select(Notification))).scalars().all()
+    summaries = [r for r in rows if r.type == "sync_completed"]
+    assert len(summaries) == 1
+    assert "nothing new" in summaries[0].title
+    assert "Quiet Branch" in summaries[0].title
+
+
+@pytest.mark.asyncio
+async def test_branch_failure_notifies(db, user_id, monkeypatch):
+    """A branch that blows up leaves a sync_failed notification, not silence."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.modules.localith.models import LocalithConnection
+    from app.modules.notifications.models import Notification
+
+    db.add(LocalithConnection(
+        id="lc-dead-1", user_id=user_id, listing_id="ghost-listing",
+        listing_name="Ghost Branch",
+    ))
+    await db.commit()
+
+    async def _boom(user, db_, connection, days_back=30):
+        raise RuntimeError("404 Not Found for url ghost")
+
+    monkeypatch.setattr(service, "_sync_single_connection", _boom)
+
+    totals = await service.sync_connection(SimpleNamespace(id=user_id), db)
+    assert totals["errors"] == 1
+
+    rows = (await db.execute(select(Notification))).scalars().all()
+    failed = [r for r in rows if r.type == "sync_failed"]
+    assert len(failed) == 1
+    assert "Ghost Branch" in failed[0].title
+    assert failed[0].href == "/dashboard/channels"

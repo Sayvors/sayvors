@@ -20,6 +20,7 @@ const POLL_MS = 45000;
 
 const TYPE_META: Record<string, { icon: string; tint: string }> = {
   sync_completed: { icon: "⟳", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300" },
+  sync_failed: { icon: "⚠", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
   review_pulled: { icon: "★", tint: "bg-amber-500/10 text-amber-600 dark:text-amber-300" },
   reply_posted: { icon: "✓", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
   reply_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },

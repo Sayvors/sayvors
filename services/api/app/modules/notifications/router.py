@@ -61,9 +61,48 @@ def _to_item(n: Notification) -> NotificationItem:
     )
 
 
+# Category tabs (the standard notification-center pattern): the feed never
+# loads everything at once — one category per query, counts up front.
+CATEGORIES: dict[str, list[str]] = {
+    "syncs": ["sync_completed", "sync_failed"],
+    "reviews": ["review_pulled", "review_edited"],
+    "replies": ["reply_posted", "reply_failed"],
+}
+
+
+@router.get("/categories")
+async def category_summary(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-category total + unread counts for the tab bar."""
+    uid = _uid(user)
+    out: dict[str, dict[str, int]] = {}
+    for name, types in CATEGORIES.items():
+        total = (
+            await db.execute(
+                select(func.count(Notification.id)).where(
+                    Notification.user_id == uid, Notification.type.in_(types)
+                )
+            )
+        ).scalar_one()
+        unread = (
+            await db.execute(
+                select(func.count(Notification.id)).where(
+                    Notification.user_id == uid,
+                    Notification.type.in_(types),
+                    Notification.read_at.is_(None),
+                )
+            )
+        ).scalar_one()
+        out[name] = {"total": total, "unread": unread}
+    return {"categories": out}
+
+
 @router.get("", response_model=NotificationListResponse)
 async def list_notifications(
     unread_only: bool = Query(False),
+    category: str | None = Query(None, pattern="^(syncs|reviews|replies)$"),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user: User = Depends(get_current_user),
@@ -74,6 +113,8 @@ async def list_notifications(
     filt = [Notification.user_id == uid]
     if unread_only:
         filt.append(Notification.read_at.is_(None))
+    if category:
+        filt.append(Notification.type.in_(CATEGORIES[category]))
     total = (
         await db.execute(select(func.count(Notification.id)).where(*filt))
     ).scalar_one()

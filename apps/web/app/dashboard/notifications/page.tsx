@@ -9,6 +9,7 @@ import { apiFetch } from "@/lib/api-rag";
 
 const TYPE_META: Record<string, { icon: string; tint: string; label: string }> = {
   sync_completed: { icon: "⟳", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300", label: "Sync" },
+  sync_failed: { icon: "⚠", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Sync failed" },
   review_pulled: { icon: "★", tint: "bg-amber-500/10 text-amber-600 dark:text-amber-300", label: "New review" },
   reply_posted: { icon: "✓", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", label: "Reply posted" },
   reply_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Reply failed" },
@@ -53,7 +54,20 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState<"all" | "unread">("all");
+  const [category, setCategory] = useState<"all" | "syncs" | "reviews" | "replies">("all");
+  const [catCounts, setCatCounts] = useState<Record<string, { total: number; unread: number }>>({});
   const loadingRef = useRef(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await apiFetch("/api/v1/notifications/categories");
+        if (r?.categories) setCatCounts(r.categories);
+      } catch {
+        /* tabs render without counts */
+      }
+    })();
+  }, []);
 
   const load = useCallback(async (offset: number, append: boolean) => {
     if (loadingRef.current) return;
@@ -62,7 +76,7 @@ export default function NotificationsPage() {
     else setLoading(true);
     try {
       const r = await apiFetch(
-        `/api/v1/notifications?limit=30&offset=${offset}${filter === "unread" ? "&unread_only=true" : ""}`
+        `/api/v1/notifications?limit=30&offset=${offset}${filter === "unread" ? "&unread_only=true" : ""}${category === "all" ? "" : `&category=${category}`}`
       );
       const fresh = (r.items ?? []) as BellNotification[];
       setItems((prev) => (append ? [...prev, ...fresh] : fresh));
@@ -75,7 +89,7 @@ export default function NotificationsPage() {
       setLoadingMore(false);
       loadingRef.current = false;
     }
-  }, [filter]);
+  }, [filter, category]);
 
   useEffect(() => {
     setItems([]);
@@ -120,6 +134,27 @@ export default function NotificationsPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <div className="flex rounded-lg bg-ink/[0.04] p-0.5 dark:bg-fog/[0.06]">
+                {(["all", "syncs", "reviews", "replies"] as const).map((c) => {
+                  const unreadN = catCounts[c]?.unread ?? 0;
+                  return (
+                    <button
+                      key={c}
+                      onClick={() => setCategory(c)}
+                      className={`relative rounded-md px-3 py-1.5 text-[12px] font-semibold capitalize outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                        category === c ? "bg-white text-ink shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 dark:text-fog/45"
+                      }`}
+                    >
+                      {c}
+                      {unreadN > 0 && (
+                        <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-coral px-1 text-[9px] font-bold tabular-nums text-white">
+                          {unreadN > 99 ? "99+" : unreadN}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
               <div className="flex rounded-lg bg-ink/[0.04] p-0.5 dark:bg-fog/[0.06]">
                 {(["all", "unread"] as const).map((f) => (
                   <button
