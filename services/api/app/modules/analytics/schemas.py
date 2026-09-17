@@ -249,6 +249,35 @@ class OpportunitiesResponse(BaseModel):
 
 # ── Benchmarking pillar ─────────────────────────────────────────────
 
+class BranchBenchmark(BaseModel):
+    channel_id: str
+    name: str
+    avg_rating: float
+    reviews_total: int
+    positive_pct: float
+    response_rate: float
+    reputation_score: int
+    rating_delta: float | None = None
+    reviews_delta_pct: float | None = None
+    top_problem: str | None = None
+    top_problem_mentions: int = 0
+    customer_actions: int = 0
+    rank: int
+
+
+class BranchHighlight(BaseModel):
+    channel_id: str
+    name: str
+    reasons: list[str]
+
+
+class BranchRecommendation(BaseModel):
+    channel_id: str
+    name: str
+    priority: str
+    text: str
+
+
 class BenchmarkResponse(BaseModel):
     days: int
     current_avg_rating: float
@@ -269,6 +298,10 @@ class BenchmarkResponse(BaseModel):
     underperforms: list[str]
     competitive_opportunities: list[str]
     industry_trends: list[str]
+    branches: list[BranchBenchmark] = []
+    leader: BranchHighlight | None = None
+    needs_attention: BranchHighlight | None = None
+    recommendations: list[BranchRecommendation] = []
 
 
 class ExecutiveSummaryResponse(BaseModel):

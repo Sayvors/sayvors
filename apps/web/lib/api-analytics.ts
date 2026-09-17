@@ -260,6 +260,39 @@ export interface BenchmarkResponse {
   underperforms: string[];
   competitive_opportunities: string[];
   industry_trends: string[];
+  branches: BranchBenchmark[];
+  leader: BranchHighlight | null;
+  needs_attention: BranchHighlight | null;
+  recommendations: BranchRecommendation[];
+}
+
+export interface BranchBenchmark {
+  channel_id: string;
+  name: string;
+  avg_rating: number;
+  reviews_total: number;
+  positive_pct: number;
+  response_rate: number;
+  reputation_score: number;
+  rating_delta: number | null;
+  reviews_delta_pct: number | null;
+  top_problem: string | null;
+  top_problem_mentions: number;
+  customer_actions: number;
+  rank: number;
+}
+
+export interface BranchHighlight {
+  channel_id: string;
+  name: string;
+  reasons: string[];
+}
+
+export interface BranchRecommendation {
+  channel_id: string;
+  name: string;
+  priority: string;
+  text: string;
 }
 
 export const fetchBenchmark = (days: number, channelId?: string | null): Promise<BenchmarkResponse> => apiFetch(`/api/v1/analytics/benchmark/comparison?${qs(days, channelId)}`);
