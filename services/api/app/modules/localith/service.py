@@ -28,6 +28,7 @@ from ..analytics.models import ReviewInsight
 from ..channels.models import AutoReplyConfig, Channel, ReviewReply
 from ..channels.review_reply import generate_auto_reply
 from ..channels.reviews_worker import _resume_failed_row, _save_reply_row
+from ..notifications.service import MAX_PER_SYNC, notify
 from ..outbox.service import enqueue_event
 from ..users.models import User
 
@@ -254,6 +255,7 @@ async def _sync_single_connection(
         embedsocial.fetch_all_items, connection.listing_id
     )
     synced = 0
+    pulled: list = []
     for item in items:
         review_id = str(item.get("id") or item.get("review_id") or item.get("uid") or "")
         if not review_id:
@@ -285,6 +287,16 @@ async def _sync_single_connection(
                 insight.replied_at = datetime.now(timezone.utc)
             db.add(insight)
             synced += 1
+            if len(pulled) < MAX_PER_SYNC:
+                pulled.append(review)
+                await notify(
+                    db, user.id, "review_pulled",
+                    f"New ★{review.rating} review from {review.reviewer or 'a customer'}",
+                    (review.text or "(star rating only)")[:160],
+                    data={"review_id": f"localith:{review_id}", "channel_id": channel.id,
+                          "rating": review.rating, "listing": connection.listing_name},
+                    href="/dashboard/reviews",
+                )
         else:
             # Backfill fields that older syncs didn't capture (never
             # overwrites enriched/curated data — only fills gaps).
@@ -325,6 +337,18 @@ async def _sync_single_connection(
 
     connection.last_synced_at = datetime.now(timezone.utc)
     await db.commit()
+
+    # Sync summary — only when something actually arrived (no per-minute spam).
+    if synced > 0:
+        await notify(
+            db, user.id, "sync_completed",
+            f"Synced {connection.listing_name or 'location'} — {synced} new review(s)",
+            None,
+            data={"listing_id": connection.listing_id, "channel_id": channel.id,
+                  "new_reviews": synced},
+            href="/dashboard",
+        )
+        await db.commit()
 
     # Reply drafts: Localith reviews flow through the same reply engine as
     # OAuth channels. Approving a draft posts it live via Localith's
@@ -392,6 +416,14 @@ async def _sync_single_connection(
                 review.rating, review.text, review.reviewer,
                 "", "failed", str(e)[:2000],
             )
+            await notify(
+                db, user.id, "reply_failed",
+                f"Could not draft a reply for ★{review.rating} review",
+                "Open the Outbox and tap Retry once the AI is reachable.",
+                data={"review_id": full_review_id, "channel_id": channel.id,
+                      "listing": connection.listing_name},
+                href="/dashboard/outbox",
+            )
             await db.commit()
             continue
         # Auto Pilot: "auto" mode + rating >= threshold posts the reply live
@@ -412,12 +444,28 @@ async def _sync_single_connection(
                     review.rating, review.text, review.reviewer,
                     reply_text, "failed", str(e)[:2000],
                 )
+                await notify(
+                    db, user.id, "reply_failed",
+                    f"Auto-reply failed for ★{review.rating} review",
+                    str(e)[:160],
+                    data={"review_id": full_review_id, "channel_id": channel.id,
+                          "listing": connection.listing_name},
+                    href="/dashboard/outbox",
+                )
                 await db.commit()
                 continue
             _save_reply_row(
                 db, failed_row, channel.id, full_review_id,
                 review.rating, review.text, review.reviewer,
                 reply_text, "posted",
+            )
+            await notify(
+                db, user.id, "reply_posted",
+                f"Auto-replied to ★{review.rating} review from {review.reviewer or 'a customer'}",
+                (reply_text or "")[:160],
+                data={"review_id": full_review_id, "channel_id": channel.id,
+                      "listing": connection.listing_name},
+                href="/dashboard/reviews",
             )
             drafted += 1
             continue
