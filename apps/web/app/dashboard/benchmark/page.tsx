@@ -1,12 +1,47 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { fetchBenchmark, type BenchmarkResponse } from "@/lib/api-analytics";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  fetchBenchmark,
+  type BenchmarkResponse,
+  type BranchBenchmark,
+} from "@/lib/api-analytics";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
+
+type MetricFocus = "reputation" | "rating" | "sentiment" | "response" | "volume";
+
+const FOCUS_META: Record<MetricFocus, { label: string; hint: string; max: number; unit: string }> = {
+  reputation: { label: "Reputation", hint: "0–100 composite of rating, replies & sentiment", max: 100, unit: "" },
+  rating: { label: "Rating", hint: "Average Google stars", max: 5, unit: "★" },
+  sentiment: { label: "Sentiment", hint: "% of reviews classified positive", max: 100, unit: "%" },
+  response: { label: "Response rate", hint: "% of reviews your business replied to", max: 100, unit: "%" },
+  volume: { label: "Volume", hint: "Total reviews indexed", max: 0, unit: "" },
+};
+
+function focusValue(b: BranchBenchmark, f: MetricFocus): number {
+  switch (f) {
+    case "reputation": return b.reputation_score;
+    case "rating": return b.avg_rating;
+    case "sentiment": return b.positive_pct;
+    case "response": return b.response_rate;
+    case "volume": return b.reviews_total;
+  }
+}
+
+function fmtValue(b: BranchBenchmark, f: MetricFocus): string {
+  const v = focusValue(b, f);
+  if (f === "rating") return `${v.toFixed(1)}★`;
+  if (f === "sentiment" || f === "response") return `${v.toFixed(0)}%`;
+  return `${Math.round(v)}`;
+}
+
+const MEDALS = ["🥇", "🥈", "🥉"];
 
 export default function BenchmarkPage() {
   const [days, setDays] = useState<number>(30);
   const [channelId, setChannelId] = useState<string | null>(null);
+  const [focus, setFocus] = useState<MetricFocus>("reputation");
   const channels = useGoogleChannels();
   const [benchmark, setBenchmark] = useState<BenchmarkResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,12 +69,28 @@ export default function BenchmarkPage() {
     };
   }, [days, channelId, retryCount]);
 
+  const branches = useMemo(() => {
+    const list = [...(benchmark?.branches ?? [])];
+    list.sort((a, b) => focusValue(b, focus) - focusValue(a, focus) || b.reviews_total - a.reviews_total);
+    return list;
+  }, [benchmark, focus]);
+
+  const focusMax = useMemo(() => {
+    if (focus === "volume") return Math.max(1, ...branches.map((b) => b.reviews_total));
+    return FOCUS_META[focus].max;
+  }, [branches, focus]);
+
+  const accountAvg = useMemo(() => {
+    if (branches.length === 0) return 0;
+    return branches.reduce((s, b) => s + focusValue(b, focus), 0) / branches.length;
+  }, [branches, focus]);
+
   return (
     <div className="h-full overflow-y-auto bg-[#f3f0ff] p-4 sm:p-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">Benchmark</h1>
-          <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">Compare your business against comparable businesses.</p>
+          <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">Your branches, ranked against each other — real data, no estimates.</p>
         </div>
         <RangeChannelControls
           days={days}
@@ -64,85 +115,180 @@ export default function BenchmarkPage() {
         <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
           <p className="text-[14px] font-bold text-ink">No comparison data yet</p>
           <p className="max-w-sm text-[12px] text-ink/50">
-            Once enough comparable businesses are aggregated (Premium feature), competitive intelligence appears here.
+            Connect at least one location and sync its reviews — branch comparison appears here.
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {/* Comparison cards */}
-          <div className="grid gap-3 lg:grid-cols-3">
-            <div className="rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet to-magenta p-5 text-white shadow-md shadow-deep-violet/20 backdrop-blur-sm">
-              <h3 className="text-[14px] font-bold tracking-wide">Your business</h3>
-              <p className="mt-1 text-[22px] font-bold">⭐ {benchmark?.current_avg_rating ?? "--"}</p>
-              <p className="mt-1 text-[11px] text-white/70">Avg rating · {benchmark?.current_reviews_total ?? 0} reviews</p>
-            </div>
-            <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-              <h3 className="text-[14px] font-bold tracking-wide text-ink">Similar businesses</h3>
-              <p className="mt-1 text-[22px] font-bold text-ink">⭐ {benchmark?.similar_avg_rating ?? "--"}</p>
-              <p className="mt-1 text-[11px] text-ink/45">Avg · {benchmark?.similar_reviews_total ?? 0} reviews</p>
-            </div>
-            <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-              <h3 className="text-[14px] font-bold tracking-wide text-ink">Performance</h3>
-              <p className="mt-1 text-[22px] font-bold text-ink">Top {benchmark?.percentile_text ? benchmark.percentile_text.replace("You're in the top ", "").replace("% of comparable businesses", "%") : "--"}</p>
-              <p className="mt-1 text-[11px] text-ink/45">Reputation benchmark</p>
-            </div>
+          {/* Metric focus filter */}
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison metric">
+            {(Object.keys(FOCUS_META) as MetricFocus[]).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFocus(f)}
+                aria-pressed={focus === f}
+                title={FOCUS_META[f].hint}
+                className={`rounded-full px-3.5 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                  focus === f
+                    ? "bg-deep-violet text-white shadow-sm shadow-deep-violet/25"
+                    : "border border-ink/[0.08] bg-white/70 text-ink/55 hover:text-ink"
+                }`}
+              >
+                {FOCUS_META[f].label}
+              </button>
+            ))}
           </div>
 
-          {/* Benchmark text */}
-          {benchmark && (
-            <section aria-label="Benchmark analysis" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm space-y-3">
-              <h3 className="text-[14px] font-bold text-ink">Benchmark &amp; competitive outlook</h3>
-              <p className="text-[12px] leading-relaxed text-ink/70">{benchmark.benchmark_text}</p>
-              {benchmark.outperforms.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald">Where you lead</p>
-                  <ul className="mt-1.5 space-y-0.5 text-[12px] text-ink/70">
-                    {benchmark.outperforms.map((o) => (
-                      <li key={o} className="flex items-start gap-1.5">
-                        <span className="mt-0.5 h-1 w-1 shrink-0 rounded-full bg-emerald" aria-hidden />
-                        {o}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {benchmark.underperforms.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-coral">Where to improve</p>
-                  <ul className="mt-1.5 space-y-0.5 text-[12px] text-ink/70">
-                    {benchmark.underperforms.map((o) => (
-                      <li key={o} className="flex items-start gap-1.5">
-                        <span className="mt-0.5 h-1 w-1 shrink-0 rounded-full bg-coral" aria-hidden />
-                        {o}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <div className="mt-2 border-t border-deep-violet/[0.06] pt-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-deep-violet">Opportunities</p>
-                <ul className="mt-1.5 space-y-1 text-[12px] text-ink/60">
-                  {benchmark.competitive_opportunities.map((o, i) => (
-                    <li key={i} className="flex items-start gap-1.5">
-                      <span className="mt-0.5 h-1 w-1 shrink-0 rounded-full bg-amber" aria-hidden />
-                      {o}
-                    </li>
-                  ))}
-                </ul>
+          {/* Leader spotlight */}
+          {benchmark?.leader && (
+            <section aria-label="Leading branch" className="rounded-2xl border-2 border-amber-300/70 bg-gradient-to-r from-amber-50 to-white p-5 shadow-sm backdrop-blur-sm">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-amber-600">🏆 Leading branch — why {benchmark.leader.name} is great</p>
+              <ul className="mt-2 space-y-1">
+                {benchmark.leader.reasons.map((r) => (
+                  <li key={r} className="flex items-start gap-1.5 text-[13px] font-medium text-ink/80">
+                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                    {r}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {/* Branch leaderboard */}
+          <section aria-label="Branch ranking" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+            <div className="mb-1 flex items-baseline justify-between gap-2">
+              <h3 className="text-[14px] font-bold text-ink">Branch ranking · {FOCUS_META[focus].label}</h3>
+              <p className="text-[11px] text-ink/45">Account average: {focus === "rating" ? accountAvg.toFixed(1) + "★" : focus === "volume" ? Math.round(accountAvg) : `${accountAvg.toFixed(0)}${FOCUS_META[focus].unit}`}</p>
+            </div>
+            <p className="mb-4 text-[11px] text-ink/45">{FOCUS_META[focus].hint}</p>
+            {branches.length === 0 ? (
+              <p className="py-6 text-center text-[12px] text-ink/45">No branches with data in this period.</p>
+            ) : (
+              <div className="space-y-3">
+                {branches.map((b, i) => {
+                  const v = focusValue(b, focus);
+                  const pct = Math.max(2, Math.min(100, (v / focusMax) * 100));
+                  const empty = b.reviews_total === 0;
+                  return (
+                    <div key={b.channel_id}>
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-6 shrink-0 text-center text-[15px]" aria-hidden>
+                          {empty ? "💤" : (MEDALS[i] ?? `#${i + 1}`)}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <p className="truncate text-[13px] font-bold text-ink">
+                              {b.name}
+                              {b.top_problem ? (
+                                <span className="ml-2 truncate text-[10.5px] font-medium text-coral">
+                                  ⚠ guests mention “{b.top_problem}” ×{b.top_problem_mentions}
+                                </span>
+                              ) : null}
+                            </p>
+                            <p className="shrink-0 text-[15px] font-bold tabular-nums text-deep-violet">
+                              {empty ? "—" : fmtValue(b, focus)}
+                            </p>
+                          </div>
+                          <div className="mt-1 h-2 overflow-hidden rounded-full bg-ink/[0.06]">
+                            <div
+                              className={`h-full rounded-full transition-all ${empty ? "bg-ink/10" : i === 0 ? "bg-gradient-to-r from-deep-violet to-magenta" : "bg-deep-violet/40"}`}
+                              style={{ width: `${empty ? 100 : pct}%` }}
+                            />
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10.5px] text-ink/45">
+                            <span>⭐ {b.avg_rating.toFixed(1)} · {b.reviews_total} reviews</span>
+                            <span>😊 {b.positive_pct.toFixed(0)}% positive</span>
+                            <span>↩️ {b.response_rate.toFixed(0)}% replied</span>
+                            {typeof b.rating_delta === "number" && b.rating_delta !== 0 && (
+                              <span className={b.rating_delta > 0 ? "font-semibold text-emerald" : "font-semibold text-coral"}>
+                                {b.rating_delta > 0 ? "▲" : "▼"} {Math.abs(b.rating_delta).toFixed(1)}★ this period
+                              </span>
+                            )}
+                          </div>
+                          {empty && (
+                            <p className="mt-1 text-[10.5px] italic text-ink/40">
+                              No reviews synced yet — still waiting on Google. Excluded from ranking.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="mt-2 border-t border-deep-violet/[0.06] pt-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-deep-violet">Industry trends</p>
-                <ul className="mt-1.5 space-y-1 text-[12px] text-ink/60">
-                  {benchmark.industry_trends.map((t) => (
-                    <li key={t} className="flex items-start gap-1.5">
-                      <span className="mt-0.5 h-1 w-1 shrink-0 rounded-full bg-deep-violet/40" aria-hidden />
-                      {t}
-                    </li>
-                  ))}
-                </ul>
+            )}
+          </section>
+
+          {/* Needs attention */}
+          {benchmark?.needs_attention && (
+            <section aria-label="Branch needing attention" className="rounded-2xl border-2 border-coral/30 bg-coral/[0.04] p-5 backdrop-blur-sm">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-coral">🎯 Needs attention — {benchmark.needs_attention.name}</p>
+              <ul className="mt-2 space-y-1">
+                {benchmark.needs_attention.reasons.map((r) => (
+                  <li key={r} className="flex items-start gap-1.5 text-[13px] font-medium text-ink/80">
+                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
+                    {r}
+                  </li>
+                ))}
+              </ul>
+              <Link
+                href="/dashboard/reviews"
+                className="mt-3 inline-block rounded-lg bg-coral px-3.5 py-1.5 text-[12px] font-bold text-white transition hover:opacity-90"
+              >
+                Fix it in Reviews →
+              </Link>
+            </section>
+          )}
+
+          {/* Per-branch recommendations */}
+          {(benchmark?.recommendations?.length ?? 0) > 0 && (
+            <section aria-label="Branch recommendations" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+              <h3 className="text-[14px] font-bold text-ink">What to do next, per branch</h3>
+              <div className="mt-3 grid gap-2.5 md:grid-cols-2">
+                {benchmark!.recommendations.map((rec, i) => (
+                  <div
+                    key={`${rec.channel_id}-${i}`}
+                    className={`rounded-xl border p-3.5 ${
+                      rec.priority === "high"
+                        ? "border-coral/25 bg-coral/[0.05]"
+                        : rec.priority === "win"
+                          ? "border-emerald/25 bg-emerald/[0.05]"
+                          : "border-ink/[0.06] bg-ink/[0.02]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
+                        rec.priority === "high"
+                          ? "bg-coral/15 text-coral"
+                          : rec.priority === "win"
+                            ? "bg-emerald/15 text-emerald"
+                            : "bg-ink/[0.06] text-ink/50"
+                      }`}>
+                        {rec.priority === "win" ? "Playbook" : rec.priority}
+                      </span>
+                      <p className="truncate text-[12px] font-bold text-ink">{rec.name}</p>
+                    </div>
+                    <p className="mt-1.5 text-[12px] leading-relaxed text-ink/65">{rec.text}</p>
+                  </div>
+                ))}
               </div>
             </section>
           )}
+
+          {/* External estimate — honestly labeled secondary reference */}
+          <section aria-label="Industry estimate" className="rounded-2xl border border-dashed border-ink/15 bg-white/40 p-4 backdrop-blur-sm">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/40">
+              Industry estimate · approximated from similar profiles, not live competitor data
+            </p>
+            <p className="mt-1 text-[12px] text-ink/60">
+              Similar businesses average <strong>{benchmark?.similar_avg_rating?.toFixed(1) ?? "—"}★</strong>
+              {" "}across <strong>{benchmark?.similar_reviews_total ?? 0}</strong> reviews
+              {typeof benchmark?.similar_response_rate === "number" && (
+                <> · <strong>{benchmark.similar_response_rate.toFixed(0)}%</strong> reply rate</>
+              )}
+              . {benchmark?.benchmark_text}
+            </p>
+          </section>
         </div>
       )}
     </div>

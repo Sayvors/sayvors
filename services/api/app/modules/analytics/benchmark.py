@@ -1,18 +1,20 @@
 """Benchmarking / competitive intelligence — P4 pillar backend.
 
-Compares the current tenant against an anonymized aggregate profile (the
-second demo account: syab293@gmail.com / Pizza Palace) so the comparison
-works out-of-the-box with the demo dataset. In a multi-tenant production
-environment this would query anonymized cross-tenant aggregates; here the
-benchmark user acts as the stand-in "similar business" for demonstration.
+Two comparison layers:
+1. Branch vs branch (primary, always real): the tenant's own locations
+   ranked against each other on rating, sentiment, response rate, volume
+   and reputation — with per-branch reasons and recommendations.
+2. External aggregate (secondary estimate): an anonymized aggregate
+   profile (second demo account) as an industry reference point.
 """
 import logging
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..channels.models import Channel
 from .models import LocationDailyMetric, ReviewInsight
-from .service import get_overview
+from .service import get_overview, reputation_score
 
 logger = logging.getLogger(__name__)
 BENCHMARK_USER_EMAIL = "syab293@gmail.com"
@@ -36,6 +38,145 @@ async def _find_benchmark_user_id(db: AsyncSession, current_user_id: str) -> str
     )
     bench_fallback = row.scalar_one_or_none()
     return bench_fallback
+
+
+async def _branch_breakdown(
+    db: AsyncSession, user_id: str, days: int = 30
+) -> list[dict]:
+    """Per-branch scorecards, ranked by reputation (then review volume)."""
+    from .intelligence import get_problems
+
+    rows = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == user_id,
+                Channel.platform == "google_reviews",
+            )
+        )
+    ).scalars().all()
+
+    branches: list[dict] = []
+    for ch in rows:
+        try:
+            ov = await get_overview(db, user_id, ch.id, days)
+        except Exception as e:
+            logger.warning("Branch overview failed for %s: %s", ch.id, e)
+            continue
+        try:
+            probs = (await get_problems(db, user_id, ch.id, days))["problems"]
+            top = probs[0] if probs else None
+        except Exception:
+            top = None
+        rep = ov.get("reputation_score") or reputation_score(
+            ov.get("avg_rating", 0.0) or 0.0,
+            ov.get("response_rate", 0.0) or 0.0,
+            (ov.get("sentiment", {}) or {}).get("positive_pct", 0.0) / 100.0,
+        )
+        branches.append({
+            "channel_id": ch.id,
+            "name": ch.display_name or "Location",
+            "avg_rating": ov.get("avg_rating", 0.0) or 0.0,
+            "reviews_total": ov.get("total_reviews", 0) or 0,
+            "positive_pct": (ov.get("sentiment", {}) or {}).get("positive_pct", 0.0) or 0.0,
+            "response_rate": round((ov.get("response_rate", 0.0) or 0.0) * 100, 1)
+            if (ov.get("response_rate", 0.0) or 0.0) <= 1.0
+            else round(ov.get("response_rate", 0.0) or 0.0, 1),
+            "reputation_score": rep,
+            "rating_delta": ((ov.get("period", {}) or {}).get("rating_delta")),
+            "reviews_delta_pct": ((ov.get("period", {}) or {}).get("reviews_delta_pct")),
+            "top_problem": (top or {}).get("name"),
+            "top_problem_mentions": (top or {}).get("mentions", 0),
+            "customer_actions": ((ov.get("google_performance", {}) or {}).get("customer_actions", 0)) or 0,
+        })
+    branches.sort(key=lambda b: (-b["reputation_score"], -b["reviews_total"]))
+    for i, b in enumerate(branches):
+        b["rank"] = i + 1
+    return branches
+
+
+def _branch_highlights(
+    branches: list[dict],
+) -> tuple[dict | None, dict | None, list[dict]]:
+    """Leader + needs-attention spotlight and per-branch recommendations."""
+    if not branches:
+        return None, None, []
+    rated = [b for b in branches if b["reviews_total"] > 0] or branches
+    n = len(rated)
+    avg_rating = sum(b["avg_rating"] for b in rated) / n
+    avg_resp = sum(b["response_rate"] for b in rated) / n
+
+    def _strengths(b: dict) -> list[str]:
+        out = []
+        if b["avg_rating"] >= avg_rating and b["avg_rating"] > 0:
+            out.append(f"Highest guest love ({b['avg_rating']:.1f}★ avg)")
+        if b["response_rate"] >= 100:
+            out.append("Replies to every single review")
+        elif b["response_rate"] >= avg_resp and b["response_rate"] > 0:
+            out.append(f"Fastest responses ({b['response_rate']:.0f}% reply rate)")
+        if (b["reviews_total"] or 0) > 0 and b["reviews_total"] >= max(
+            (x["reviews_total"] or 0) for x in rated
+        ):
+            out.append(f"Most reviewed ({b['reviews_total']} reviews)")
+        if (b.get("rating_delta") or 0) > 0:
+            out.append(f"Rating climbing (+{b['rating_delta']:.1f}★ this period)")
+        return out[:2]
+
+    def _pains(b: dict) -> list[str]:
+        out = []
+        if b["avg_rating"] < 4.0 and b["avg_rating"] > 0:
+            out.append(f"Below the 4.0★ visibility line ({b['avg_rating']:.1f}★)")
+        if b["response_rate"] < 70:
+            out.append(f"Only {b['response_rate']:.0f}% of reviews answered")
+        if b.get("top_problem"):
+            out.append(f"Guests keep mentioning “{b['top_problem']}” ({b.get('top_problem_mentions', 0)}×)")
+        if (b.get("reviews_delta_pct") or 0) < 0:
+            out.append("Review volume is shrinking")
+        return out[:2]
+
+    leader = rated[0]
+    leader_out = {
+        "channel_id": leader["channel_id"],
+        "name": leader["name"],
+        "reasons": _strengths(leader) or ["Steady all-round performance"],
+    }
+    attention = None
+    if len(rated) > 1:
+        worst = rated[-1]
+        pains = _pains(worst)
+        if pains:
+            attention = {
+                "channel_id": worst["channel_id"],
+                "name": worst["name"],
+                "reasons": pains,
+            }
+
+    recommendations: list[dict] = []
+    for b in rated:
+        pains = _pains(b)
+        if pains and b is not leader:
+            recommendations.append({
+                "channel_id": b["channel_id"],
+                "name": b["name"],
+                "priority": "high" if b["avg_rating"] < 4.0 or b["response_rate"] < 50 else "medium",
+                "text": f"Fix this first at {b['name']}: {pains[0].lower()}.",
+            })
+        elif b is leader:
+            recommendations.append({
+                "channel_id": b["channel_id"],
+                "name": b["name"],
+                "priority": "win",
+                "text": f"Copy what works at {b['name']} to your other locations"
+                + (f" — start with “{b['top_problem']}” fixes elsewhere." if b.get("top_problem") else "."),
+            })
+    if attention is None and len(rated) == 1:
+        only = rated[0]
+        recommendations.append({
+            "channel_id": only["channel_id"],
+            "name": only["name"],
+            "priority": "medium",
+            "text": f"Connect more locations to unlock branch-vs-branch comparison for {only['name']}.",
+        })
+    return leader_out, attention, recommendations[:6]
 
 
 async def get_benchmark(
@@ -95,7 +236,14 @@ async def get_benchmark(
     bench_problems = (await get_problems(db, bench_user or user_id, None, days))["problems"]
     common_complaints = [p["name"] for p in bench_problems[:3]]
 
+    branches = await _branch_breakdown(db, user_id, days)
+    leader, attention, recommendations = _branch_highlights(branches)
+
     return {
+        "branches": branches,
+        "leader": leader,
+        "needs_attention": attention,
+        "recommendations": recommendations,
         "days": days,
         "current_avg_rating": cur["avg_rating"],
         "similar_avg_rating": similar["avg_rating"],
