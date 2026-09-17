@@ -42,6 +42,8 @@ export default function BenchmarkPage() {
   const [days, setDays] = useState<number>(30);
   const [channelId, setChannelId] = useState<string | null>(null);
   const [focus, setFocus] = useState<MetricFocus>("reputation");
+  const [branchSearch, setBranchSearch] = useState("");
+  const [branchFilter, setBranchFilter] = useState<"all" | "with_reviews" | "no_reviews" | "top3" | "needs_attention">("all");
   const channels = useGoogleChannels();
   const [benchmark, setBenchmark] = useState<BenchmarkResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,10 +72,22 @@ export default function BenchmarkPage() {
   }, [days, channelId, retryCount]);
 
   const branches = useMemo(() => {
-    const list = [...(benchmark?.branches ?? [])];
+    let list = [...(benchmark?.branches ?? [])];
+    // Text search
+    if (branchSearch.trim()) {
+      const q = branchSearch.toLowerCase();
+      list = list.filter((b) => b.name.toLowerCase().includes(q));
+    }
+    // Status filter
+    if (branchFilter === "with_reviews") list = list.filter((b) => b.reviews_total > 0);
+    if (branchFilter === "no_reviews") list = list.filter((b) => b.reviews_total === 0);
+    if (branchFilter === "top3") list = [...list].sort((a, b) => b.reputation_score - a.reputation_score).slice(0, 3);
+    if (branchFilter === "needs_attention" && benchmark?.needs_attention) {
+      list = list.filter((b) => b.channel_id === benchmark.needs_attention!.channel_id);
+    }
     list.sort((a, b) => focusValue(b, focus) - focusValue(a, focus) || b.reviews_total - a.reviews_total);
     return list;
-  }, [benchmark, focus]);
+  }, [benchmark, focus, branchSearch, branchFilter]);
 
   const focusMax = useMemo(() => {
     if (focus === "volume") return Math.max(1, ...branches.map((b) => b.reviews_total));
@@ -137,6 +151,44 @@ export default function BenchmarkPage() {
                 {FOCUS_META[f].label}
               </button>
             ))}
+          </div>
+
+          {/* Filter options */}
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white bg-white/60 p-3 backdrop-blur-sm">
+            <div className="relative flex-1 min-w-[180px]">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/30" aria-hidden>
+                <circle cx="11" cy="11" r="7" />
+                <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
+              </svg>
+              <input
+                value={branchSearch}
+                onChange={(e) => setBranchSearch(e.target.value)}
+                placeholder="Filter branches by name…"
+                className="w-full rounded-xl border border-ink/10 bg-white py-2 pl-8 pr-3 text-[12px] font-medium text-ink placeholder:text-ink/30 outline-none transition focus:border-deep-violet/30 focus:bg-white"
+              />
+            </div>
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value as typeof branchFilter)}
+              className="rounded-xl border border-ink/10 bg-white px-3 py-2 text-[12px] font-semibold text-ink/70 outline-none focus:border-deep-violet/30"
+            >
+              <option value="all">All branches ({benchmark?.branches.length ?? 0})</option>
+              <option value="with_reviews">With reviews</option>
+              <option value="no_reviews">No reviews yet</option>
+              <option value="top3">Top 3 performers</option>
+              <option value="needs_attention">Needs attention</option>
+            </select>
+            {(branchSearch || branchFilter !== "all") && (
+              <button
+                onClick={() => { setBranchSearch(""); setBranchFilter("all"); }}
+                className="rounded-xl bg-ink/[0.06] px-3 py-2 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.08]"
+              >
+                Clear filters
+              </button>
+            )}
+            <span className="ml-auto text-[11px] font-medium text-ink/40">
+              {branches.length} of {benchmark?.branches.length ?? 0} shown
+            </span>
           </div>
 
           {/* Leader spotlight */}
