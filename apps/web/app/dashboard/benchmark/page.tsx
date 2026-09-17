@@ -352,6 +352,79 @@ export default function BenchmarkPage() {
             </section>
           )}
 
+          {/* Recommended locations */}
+          {benchmark?.branches && benchmark.branches.length > 0 && (
+            <section aria-label="Recommended locations" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+              <h3 className="text-[14px] font-bold text-ink">📍 Recommended locations</h3>
+              <p className="mt-1 text-[11px] text-ink/45">Where to send customers & where to focus improvement — based on your real branch scores.</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                {benchmark.branches.slice(0, 2).map((b) => (
+                  <div key={b.channel_id} className="rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-[13px] font-bold text-ink">{b.name}</p>
+                      <span className="shrink-0 rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-bold text-deep-violet">#{b.rank} · {b.reputation_score}</span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-ink/50">⭐ {b.avg_rating.toFixed(1)} · {b.reviews_total} reviews · {b.positive_pct.toFixed(0)}% positive · {b.response_rate.toFixed(0)}% replied</p>
+                    <p className="mt-2 text-[11px] font-medium text-ink/60">
+                      {b.rank === 1 ? "🏆 Top choice to recommend — show this location first." : b.avg_rating < 4 ? "🔧 Priority for improvement — lift rating above 4.0★." : "✨ Solid performer — keep the momentum."}
+                    </p>
+                    <Link href="/dashboard/locations" className="mt-2 inline-block text-[11px] font-semibold text-deep-violet hover:underline">View location →</Link>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Recommended services */}
+          {(benchmark && (benchmark.top_services?.length > 0 || benchmark.needs_fix_services?.length > 0)) && (
+            <section aria-label="Service recommendations" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+              <h3 className="text-[14px] font-bold text-ink">🛎️ Recommended services</h3>
+              <p className="mt-1 text-[11px] text-ink/45">What to promote vs fix — derived from review mentions & sentiment.</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-emerald/20 bg-emerald/[0.04] p-3.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-emerald">Promote these</p>
+                  {(benchmark.top_services ?? []).length === 0 ? (
+                    <p className="mt-2 text-[12px] text-ink/45">No standout services yet — need more reviews mentioning specific services.</p>
+                  ) : (
+                    <ul className="mt-2 space-y-1.5">
+                      {(benchmark.top_services ?? []).map((s) => (
+                        <li key={s.name} className="flex items-start justify-between gap-2 text-[12px]">
+                          <span className="font-semibold text-ink">{s.name}</span>
+                          <span className="shrink-0 text-[11px] text-ink/50">{s.positive_pct.toFixed(0)}% positive · {s.mentions}×{s.avg_rating ? ` · ${s.avg_rating.toFixed(1)}★` : ""}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="rounded-xl border border-coral/20 bg-coral/[0.04] p-3.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-coral">Fix these</p>
+                  {(benchmark.needs_fix_services ?? []).length === 0 ? (
+                    <p className="mt-2 text-[12px] text-ink/45">No recurring service complaints detected. Keep monitoring.</p>
+                  ) : (
+                    <ul className="mt-2 space-y-1.5">
+                      {(benchmark.needs_fix_services ?? []).map((s) => (
+                        <li key={s.name} className="flex items-start justify-between gap-2 text-[12px]">
+                          <span className="font-semibold text-ink">{s.name}</span>
+                          <span className="shrink-0 text-[11px] text-coral">{s.negative} negative · {s.mentions}×</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+              {(benchmark.top_topics ?? []).length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {(benchmark.top_topics ?? []).slice(0, 6).map((t: { name: string; mentions: number }) => (
+                    <span key={t.name} className="rounded-full bg-ink/[0.06] px-2.5 py-1 text-[11px] font-medium text-ink/60">
+                      #{t.name} · {t.mentions}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <Link href="/dashboard/services" className="mt-3 inline-block text-[11px] font-semibold text-deep-violet hover:underline">Manage services →</Link>
+            </section>
+          )}
+
           {/* External estimate — honestly labeled secondary reference */}
           <section aria-label="Industry estimate" className="rounded-2xl border border-dashed border-ink/15 bg-white/40 p-4 backdrop-blur-sm">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/40">

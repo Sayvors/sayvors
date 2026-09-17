@@ -271,6 +271,14 @@ class BranchHighlight(BaseModel):
     reasons: list[str]
 
 
+class ServiceHighlight(BaseModel):
+    name: str
+    mentions: int = 0
+    positive_pct: float = 0
+    avg_rating: float | None = None
+    negative: int = 0
+
+
 class BranchRecommendation(BaseModel):
     channel_id: str
     name: str
@@ -302,6 +310,9 @@ class BenchmarkResponse(BaseModel):
     leader: BranchHighlight | None = None
     needs_attention: BranchHighlight | None = None
     recommendations: list[BranchRecommendation] = []
+    top_services: list[ServiceHighlight] = []
+    needs_fix_services: list[ServiceHighlight] = []
+    top_topics: list[dict] = []
 
 
 class ExecutiveSummaryResponse(BaseModel):

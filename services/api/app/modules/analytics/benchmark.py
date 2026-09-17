@@ -94,6 +94,34 @@ async def _branch_breakdown(
     return branches
 
 
+async def _service_recommendations(
+    db: AsyncSession, user_id: str, days: int
+) -> dict:
+    """Top services/products to promote vs fix, from intelligence."""
+    try:
+        from .intelligence import get_products, get_topics
+        prods = (await get_products(db, user_id, None, days)).get("products", [])[:8]
+        topics = (await get_topics(db, user_id, None, days)).get("topics", [])[:8]
+    except Exception:
+        return {"top_services": [], "needs_fix_services": [], "top_topics": []}
+    top_services = []
+    needs_fix = []
+    for p in prods:
+        name = p.get("name") or "Unknown"
+        mentions = p.get("mentions", 0) or 0
+        pos = p.get("positive_pct", 0) or 0
+        neg = p.get("negative", 0) or 0
+        avg = p.get("avg_rating")
+        if mentions >= 2 and pos >= 70:
+            top_services.append({"name": name, "mentions": mentions, "positive_pct": pos, "avg_rating": avg})
+        if mentions >= 2 and (neg >= 2 or (100 - pos) >= 50):
+            needs_fix.append({"name": name, "mentions": mentions, "positive_pct": pos, "avg_rating": avg, "negative": neg})
+    top_services = sorted(top_services, key=lambda x: (-x["positive_pct"], -x["mentions"]))[:4]
+    needs_fix = sorted(needs_fix, key=lambda x: (-x["negative"], -x["mentions"]))[:4]
+    top_topics = sorted(topics, key=lambda x: -x.get("mentions", 0))[:4]
+    return {"top_services": top_services, "needs_fix_services": needs_fix, "top_topics": top_topics}
+
+
 def _branch_highlights(
     branches: list[dict],
 ) -> tuple[dict | None, dict | None, list[dict]]:
@@ -238,12 +266,16 @@ async def get_benchmark(
 
     branches = await _branch_breakdown(db, user_id, days)
     leader, attention, recommendations = _branch_highlights(branches)
+    svc = await _service_recommendations(db, user_id, days)
 
     return {
         "branches": branches,
         "leader": leader,
         "needs_attention": attention,
         "recommendations": recommendations,
+        "top_services": svc["top_services"],
+        "needs_fix_services": svc["needs_fix_services"],
+        "top_topics": svc["top_topics"],
         "days": days,
         "current_avg_rating": cur["avg_rating"],
         "similar_avg_rating": similar["avg_rating"],
