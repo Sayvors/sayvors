@@ -877,6 +877,34 @@ async def verify_posted_replies(
     }
 
 
+async def _notify_reply_posted(db, user_id: str, channel, reply) -> None:
+    """User-facing receipt for a published reply (never raises)."""
+    from ..notifications.service import notify
+
+    await notify(
+        db, user_id, "reply_posted",
+        f"Published reply to ★{reply.rating} review from {reply.reviewer_name or 'a customer'}",
+        (reply.reply_text or "")[:160],
+        data={"review_id": reply.review_id, "channel_id": channel.id,
+              "location": getattr(channel, "display_name", None)},
+        href="/dashboard/reviews",
+    )
+
+
+async def _notify_reply_failed(db, user_id: str, channel, reply, reason: str) -> None:
+    """User-facing receipt for a failed publish (never raises)."""
+    from ..notifications.service import notify
+
+    await notify(
+        db, user_id, "reply_failed",
+        f"Reply failed for ★{reply.rating} review",
+        (reason or "")[:160],
+        data={"review_id": reply.review_id, "channel_id": channel.id,
+              "location": getattr(channel, "display_name", None)},
+        href="/dashboard/outbox",
+    )
+
+
 @router.post("/{channel_id}/reviews/{reply_id}/approve", response_model=ReviewReplyResponse)
 async def approve_review_reply(
     channel_id: str,
@@ -922,6 +950,7 @@ async def approve_review_reply(
             reply.status = "failed"
             reply.error = str(e)[:2000]
             await db.commit()
+            await _notify_reply_failed(db, user.id, channel, reply, str(e))
             raise HTTPException(
                 status_code=502,
                 detail=f"Failed to post reply via Localith: {e}",
@@ -929,6 +958,7 @@ async def approve_review_reply(
         reply.status = "posted"
         reply.error = None
         await db.commit()
+        await _notify_reply_posted(db, user.id, channel, reply)
     else:
         access_token = decrypt_token(channel.access_token) if channel.access_token else None
         refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
@@ -953,14 +983,17 @@ async def approve_review_reply(
                     "listing. Approve again to retry."
                 )
                 await db.commit()
+                await _notify_reply_failed(db, user.id, channel, reply, reply.error)
                 raise HTTPException(status_code=502, detail=reply.error)
             reply.status = "posted"
             reply.error = None
             await db.commit()
+            await _notify_reply_posted(db, user.id, channel, reply)
         except GoogleReviewsError as e:
             reply.status = "failed"
             reply.error = str(e)[:2000]
             await db.commit()
+            await _notify_reply_failed(db, user.id, channel, reply, str(e))
             # Surface the real reason (e.g. "No refresh token available") —
             # a generic message hides that re-consent is the only fix.
             raise HTTPException(

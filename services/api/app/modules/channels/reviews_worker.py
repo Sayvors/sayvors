@@ -29,6 +29,7 @@ from ..outbox.service import enqueue_event
 from .google_reviews import GoogleReviewsClient, GoogleReviewsError
 from .models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
 from .review_reply import generate_auto_reply
+from ..notifications.service import notify
 from .service import decrypt_token
 
 logger = logging.getLogger(__name__)
@@ -356,12 +357,26 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                         review.rating, review.text, review.reviewer_name,
                         reply_text, "failed", str(e)[:2000],
                     )
+                    await notify(
+                        db, channel.user_id, "reply_failed",
+                        f"Auto-reply failed for ★{review.rating} review",
+                        str(e)[:160],
+                        data={"review_id": review.review_id, "channel_id": channel.id},
+                        href="/dashboard/outbox",
+                    )
                     await db.commit()
                     continue
                 _save_reply_row(
                     db, failed_row, channel.id, review.review_id,
                     review.rating, review.text, review.reviewer_name,
                     reply_text, "posted",
+                )
+                await notify(
+                    db, channel.user_id, "reply_posted",
+                    f"Auto-replied to ★{review.rating} review from {review.reviewer_name or 'a customer'}",
+                    (reply_text or "")[:160],
+                    data={"review_id": review.review_id, "channel_id": channel.id},
+                    href="/dashboard/reviews",
                 )
                 await db.commit()
                 try:

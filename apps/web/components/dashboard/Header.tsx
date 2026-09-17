@@ -8,6 +8,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { LOCALES } from "@/lib/i18n/locales";
 import { useAuth } from "@/lib/auth-context";
 import AutoPilotDialog from "@/components/dashboard/AutoPilotDialog";
+import NotificationsBell from "@/components/dashboard/NotificationsBell";
 import SearchPalette from "@/components/dashboard/SearchPalette";
 import { useTour } from "@/components/tour/TourProvider";
 import {
@@ -123,6 +124,7 @@ export default function Header() {
       </button>
 
       <div className="flex items-center gap-2">
+      <NotificationsBell />
       {/* Help — guided tour */}
       <div className="relative" ref={helpRef}>
         <button
