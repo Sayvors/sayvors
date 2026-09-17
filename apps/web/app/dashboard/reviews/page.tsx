@@ -44,6 +44,8 @@ export default function ReviewsPage() {
   );
 }
 
+const ALL_BRANCHES = "__all__";
+
 function ReviewsInner() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
@@ -104,7 +106,7 @@ function ReviewsInner() {
             }
             if (!cancelled) {
               setLocations(locs);
-              setSelectedId(locs[0].id);
+              setSelectedId(locs.length > 0 ? ALL_BRANCHES : null);
               return;
             }
           }
@@ -126,7 +128,7 @@ function ReviewsInner() {
           }
           setChannelNames(names);
           setLocations(googleChannels);
-          if (googleChannels.length) setSelectedId(googleChannels[0].id);
+          if (googleChannels.length) setSelectedId(ALL_BRANCHES);
         }
       } catch {
         if (!cancelled) {
@@ -564,6 +566,7 @@ function ReviewsInner() {
             <div className="relative">
               <select value={selectedId ?? ""} onChange={(e) => { setSelectedId(e.target.value); setPage(1); setView({ kind: "list" }); }}
                 className="w-52 appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog">
+                <option value={ALL_BRANCHES}>All branches{locations.length > 0 ? ` (${locations.length})` : ""}</option>
                 {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
               <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
