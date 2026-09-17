@@ -12,6 +12,7 @@ export interface Profile {
   bio: string | null;
   business_name: string | null;
   phone: string | null;
+  country: string | null;
   theme: string;
   language: string;
   plan: string;
@@ -44,6 +45,7 @@ export async function updateProfile(data: {
   bio?: string;
   business_name?: string;
   phone?: string;
+  country?: string | null;
 }): Promise<Profile> {
   return apiFetch("/api/v1/profile", { method: "PATCH", body: JSON.stringify(data) });
 }

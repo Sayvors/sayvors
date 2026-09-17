@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import { apiFetch } from "@/lib/api-rag";
@@ -86,22 +86,6 @@ export default function AutomationsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  const setChannelTone = useCallback(async (channelId: string, tone: string) => {
-    setBusy(`${channelId}:tone`);
-    try {
-      const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
-        method: "PUT",
-        body: JSON.stringify({ tone }),
-      });
-      setConfigs((prev) => ({ ...prev, [channelId]: cfg }));
-      setBanner({ kind: "ok", text: "Response tone updated." });
-    } catch {
-      setBanner({ kind: "err", text: "Could not save the tone choice." });
-    } finally {
-      setBusy(null);
-    }
   }, []);
 
   const pendingTotal = useMemo(
@@ -216,29 +200,15 @@ export default function AutomationsPage() {
                     )}
                   </div>
                   <div className="mt-2 flex items-center gap-2">
-                    <label className="text-[11px] font-medium text-ink/40 dark:text-fog/40">
-                      Response tone
-                    </label>
-                    <select
-                      value={cfg?.tone ?? "friendly"}
-                      disabled={busy !== null}
-                      onChange={(e) => {
-                        if (e.target.value) void setChannelTone(c.id, e.target.value);
-                      }}
-                      aria-label={`Response tone for ${c.display_name || "location"}`}
-                      className="max-w-[220px] truncate rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] font-medium text-ink outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog disabled:opacity-50"
+                    <span className="text-[11px] font-medium text-ink/40 dark:text-fog/40">
+                      Tone: {cfg?.tone ?? "friendly"}
+                    </span>
+                    <Link
+                      href="/dashboard/settings"
+                      className="text-[11px] font-semibold text-deep-violet hover:underline"
                     >
-                      <option value="friendly">Friendly — warm and casual</option>
-                      <option value="professional">Professional — formal and polished</option>
-                      <option value="apologetic">Apologetic — extra empathetic</option>
-                      <option value="playful">Playful — light and fun</option>
-                      {cfg?.tone && !["friendly", "professional", "apologetic", "playful"].includes(cfg.tone) && (
-                        <option value={cfg.tone}>{cfg.tone}</option>
-                      )}
-                    </select>
-                    {busy === `${c.id}:tone` && (
-                      <span className="text-[11px] text-ink/40">Saving…</span>
-                    )}
+                      Change in Configuration
+                    </Link>
                   </div>
                 </div>
                 <Link
