@@ -92,6 +92,23 @@ async def list_dialects(
     return [{"code": "auto", "dialect_en": "Auto (match the review)", "dialect_ar": "تلقائي", "examples": []}] + rows
 
 
+class ToneOut(BaseModel):
+    code: str
+    label: str
+    description: str
+
+
+@router.get("/tones", response_model=list[ToneOut])
+async def list_tones(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Response tone catalog for reply personality (admin-managed)."""
+    from .tones import list_tones as _list_tones
+
+    return await _list_tones(db)
+
+
 @router.get("/strategies", response_model=list[ReviewStrategyOut])
 async def list_strategies(
     user: User = Depends(get_current_user),

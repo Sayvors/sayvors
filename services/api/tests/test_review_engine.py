@@ -2041,3 +2041,110 @@ async def test_admin_dialect_crud(db):
             "nope", _admin={}, _rate_limit=None, db=db,
         )
     assert missing.value.status_code == 404
+
+@pytest.mark.asyncio
+async def test_tone_catalog_db_backed(db):
+    from app.modules.review_engine.models import Tone
+    from app.modules.review_engine.tones import (
+        get_tone,
+        is_valid_tone_db,
+        list_tones,
+    )
+
+    db.add(Tone(code="friendly", label="Friendly", description="warm and casual"))
+    db.add(Tone(code="formal", label="Formal", description="polished"))
+    await db.commit()
+
+    rows = await list_tones(db)
+    assert [r["code"] for r in rows] == ["formal", "friendly"]
+    assert (await get_tone("friendly", db))["label"] == "Friendly"
+    assert await get_tone("nope", db) is None
+    assert await get_tone(None, db) is None
+    assert await is_valid_tone_db("formal", db) is True
+    assert await is_valid_tone_db("Formal", db) is True
+    assert await is_valid_tone_db("nope", db) is False
+    assert await is_valid_tone_db("", db) is False
+
+
+@pytest.mark.asyncio
+async def test_admin_tone_crud(db):
+    from fastapi import HTTPException
+
+    from app.modules.admin.router import (
+        ToneCreate,
+        admin_tone_create,
+        admin_tone_delete,
+    )
+    from app.modules.review_engine.tones import get_tone
+
+    created = await admin_tone_create(
+        ToneCreate(code="Bold", label="Bold", description="direct"),
+        _admin={},
+        _rate_limit=None,
+        db=db,
+    )
+    assert created.code == "bold"
+    assert (await get_tone("bold", db))["label"] == "Bold"
+
+    with pytest.raises(HTTPException) as dup:
+        await admin_tone_create(
+            ToneCreate(code="bold", label="Dup", description=""),
+            _admin={},
+            _rate_limit=None,
+            db=db,
+        )
+    assert dup.value.status_code == 409
+
+    await admin_tone_delete("bold", _admin={}, _rate_limit=None, db=db)
+    assert await get_tone("bold", db) is None
+
+    with pytest.raises(HTTPException) as missing:
+        await admin_tone_delete("nope", _admin={}, _rate_limit=None, db=db)
+    assert missing.value.status_code == 404
+
+@pytest.mark.asyncio
+async def test_admin_tone_update(db):
+    from fastapi import HTTPException
+
+    from app.modules.admin.router import (
+        ToneCreate,
+        ToneUpdate,
+        admin_tone_create,
+        admin_tone_delete,
+        admin_tone_update,
+    )
+    from app.modules.review_engine.tones import get_tone
+
+    await admin_tone_create(
+        ToneCreate(code="warm", label="Warm", description="cozy"),
+        _admin={},
+        _rate_limit=None,
+        db=db,
+    )
+    updated = await admin_tone_update(
+        "warm",
+        ToneUpdate(label="Very Warm", description="extra cozy"),
+        _admin={},
+        _rate_limit=None,
+        db=db,
+    )
+    assert updated.label == "Very Warm"
+    assert (await get_tone("warm", db))["description"] == "extra cozy"
+
+    partial = await admin_tone_update(
+        "warm",
+        ToneUpdate(label="Warm Again"),
+        _admin={},
+        _rate_limit=None,
+        db=db,
+    )
+    assert partial.label == "Warm Again"
+    assert partial.description == "extra cozy"
+
+    with pytest.raises(HTTPException) as missing:
+        await admin_tone_update(
+            "nope", ToneUpdate(label="Ghost"), _admin={}, _rate_limit=None, db=db,
+        )
+    assert missing.value.status_code == 404
+
+    await admin_tone_delete("warm", _admin={}, _rate_limit=None, db=db)
