@@ -63,6 +63,13 @@ class ReviewInsight(Base):
     # Set when the reviewer deleted the review or Google removed it —
     # the review is still cached locally but no reply is possible.
     skipped: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Reviewer edited the review after we first synced it (detected by
+    # content comparison at sync time — Localith sends no edit timestamp).
+    # Cleared when the updated reply is posted or the edit is dismissed.
+    edited: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    previous_review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    previous_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Link to the review on Google (Localith `reviewLink`), for "View on Google".
     review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # When Google last updated the review (bucket date for daily rollups)
