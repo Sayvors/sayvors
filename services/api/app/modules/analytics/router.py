@@ -118,7 +118,7 @@ async def list_review_insights(
     channel_id: str | None = Query(None),
     sentiment: str | None = Query(None, pattern="^(positive|neutral|negative)$"),
     rating: int | None = Query(None, ge=1, le=5),
-    status: str | None = Query(None, pattern="^(replied|unanswered)$"),
+    status: str | None = Query(None, pattern="^(replied|unanswered|skipped)$"),
     search: str | None = Query(None, max_length=200),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),

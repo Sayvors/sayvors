@@ -2,6 +2,7 @@ import Sidebar from "@/components/dashboard/Sidebar";
 import Header from "@/components/dashboard/Header";
 import SayvorsChat from "@/components/chat/SayvorsChat";
 import TourProvider from "@/components/tour/TourProvider";
+import ToastProvider from "@/components/feedback/ToastStack";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthGuard } from "@/components/AuthGuard";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
@@ -11,6 +12,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <ThemeProvider>
       <AuthGuard>
         <I18nProvider>
+          <ToastProvider>
           <TourProvider>
             <div className="flex h-screen overflow-hidden bg-fog font-sans text-ink dark:bg-ink dark:text-fog">
               <Sidebar />
@@ -23,6 +25,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <SayvorsChat />
             </div>
           </TourProvider>
+          </ToastProvider>
         </I18nProvider>
       </AuthGuard>
     </ThemeProvider>
