@@ -117,6 +117,7 @@ def _serialize(user: User, feedback: dict[str, int]) -> dict:
         "bio": user.bio,
         "business_name": user.business_name,
         "phone": user.phone,
+        "country": user.country,
         "theme": user.theme or "light",
         "language": user.language or "en",
         "plan": "pro",
@@ -145,7 +146,7 @@ async def get_profile(user_id: str, db: AsyncSession) -> dict:
 
 
 async def update_profile(user_id: str, data: dict, db: AsyncSession) -> dict:
-    allowed = {"first_name", "last_name", "bio", "business_name", "phone"}
+    allowed = {"first_name", "last_name", "bio", "business_name", "phone", "country"}
     patch = {k: v for k, v in data.items() if k in allowed and v is not None}
     if not patch:
         raise ValueError("No valid fields to update")

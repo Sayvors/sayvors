@@ -488,6 +488,70 @@ async def admin_llm_model_delete(
     logger.info("Admin deleted custom model %s", model_id)
 
 
+class DialectCreate(BaseModel):
+    code: str = Field(..., min_length=2, max_length=30, pattern="^[A-Za-z0-9-]+$")
+    dialect_en: str = Field(..., min_length=2, max_length=120)
+    dialect_ar: str = Field(..., min_length=2, max_length=120)
+    examples: list[str] = Field(default_factory=list, max_length=10)
+
+
+class DialectOut(BaseModel):
+    code: str
+    dialect_en: str
+    dialect_ar: str
+    examples: list[str]
+
+
+@router.post("/dialects", response_model=DialectOut, status_code=201)
+async def admin_dialect_create(
+    body: DialectCreate,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a dialect to the catalog. Code must be unique ('auto' is reserved)."""
+    from ..review_engine.models import Dialect
+
+    code = body.code.strip().lower()
+    if code == "auto":
+        raise HTTPException(status_code=422, detail="'auto' is reserved.")
+    existing = await db.execute(select(Dialect).where(Dialect.code == code))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"Dialect '{code}' already exists.")
+    row = Dialect(
+        code=code,
+        dialect_en=body.dialect_en.strip(),
+        dialect_ar=body.dialect_ar.strip(),
+        examples=[e.strip() for e in body.examples if e and e.strip()][:10],
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    logger.info("Admin added dialect %s", code)
+    return DialectOut(
+        code=row.code, dialect_en=row.dialect_en,
+        dialect_ar=row.dialect_ar, examples=list(row.examples or []),
+    )
+
+
+@router.delete("/dialects/{code}", status_code=204)
+async def admin_dialect_delete(
+    code: str,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a dialect row. Channels still referencing the code fall back
+    to 'auto' behavior — nothing breaks, generation just loses the dialect
+    flavor until reconfigured."""
+    from ..review_engine.models import Dialect
+
+    row = await db.get(Dialect, code.strip().lower())
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown dialect: {code}")
+    await db.delete(row)
+    await db.commit()
+    logger.info("Admin deleted dialect %s", code)
+
+
 @router.get("/models", response_model=list[SavedModel])
 async def admin_models_list(
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),

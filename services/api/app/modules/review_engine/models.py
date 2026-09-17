@@ -36,6 +36,24 @@ class ResponseStrategy(Base):
     )
 
 
+class Dialect(Base):
+    """Arabic dialect catalog row — admin-managed, seeded with 23 dialects.
+
+    Reply generation reads this table (never hardcoded lists); deleting a
+    code is safe — channels still referencing it fall back to "auto".
+    """
+
+    __tablename__ = "dialects"
+
+    code: Mapped[str] = mapped_column(String(30), primary_key=True)
+    dialect_en: Mapped[str] = mapped_column(String(120))
+    dialect_ar: Mapped[str] = mapped_column(String(120))
+    examples: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class ReviewResponseLog(Base):
     __tablename__ = "review_response_logs"
 

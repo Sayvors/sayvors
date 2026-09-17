@@ -41,6 +41,7 @@ Tone: {tone}.
 {context_block}
 {retry_block}
 {language_block}
+{marketing_block}
 Write only the reply text — nothing else."""
 
 POSITIVE_GUIDANCE = "This is a positive review: thank the reviewer warmly and mention something specific they praised if possible."
@@ -124,15 +125,55 @@ async def generate_review_reply(
             "(earlier attempts failed to generate)."
         )
     lang = _review_language(review_text)
-    if lang == "ar":
+    policy = (getattr(config, "reply_language", None) or "match").strip().lower()
+    if policy not in ("match", "en", "ar"):
+        policy = "match"
+    eff = policy if policy in ("en", "ar") else (lang or "en")
+    dialect_entry = None
+    dialect_code = (getattr(config, "dialect", None) or "auto").strip().lower()
+    if eff == "ar" and dialect_code not in ("", "auto"):
+        try:
+            from ..review_engine.dialects import get_dialect as _get_dialect
+
+            dialect_entry = await _get_dialect(dialect_code, db)
+        except Exception:
+            dialect_entry = None
+    if eff == "ar":
         language_block = (
-            "Language: the review is written in Arabic — write your ENTIRE reply "
-            "in Arabic (العربية). Never switch to English."
+            "Language: write your ENTIRE reply in Arabic (العربية). Never switch to English."
+        )
+        if dialect_entry:
+            examples = " / ".join(dialect_entry.get("examples", [])[:4])
+            language_block += (
+                f" Dialect (binding): write in {dialect_entry.get('dialect_en')} "
+                f"({dialect_entry.get('dialect_ar')}). Copy this flavor: {examples}. "
+                f"Do not mix dialects."
+            )
+    elif lang == "ar":
+        language_block = (
+            "Language: write your ENTIRE reply in English, even though the review "
+            "is in Arabic — never switch languages."
         )
     else:
         language_block = (
             "Language: reply in the SAME language as the review — an Arabic review "
             "gets an Arabic reply, an English review gets an English reply."
+        )
+    marketing_block = ""
+    if getattr(config, "promo_product_mentions", False) or getattr(config, "promo_links", False):
+        max_ctas = getattr(config, "promo_max_ctas", 1) or 1
+        bits = []
+        if getattr(config, "promo_product_mentions", False):
+            bits.append("you may name a relevant product/service by its exact name")
+        if getattr(config, "promo_links", False):
+            bits.append(
+                f"you may include at most {max_ctas} link(s), ONLY a URL that appears "
+                f"verbatim in the business facts below — never invent one"
+            )
+        if getattr(config, "promo_only_relevant", True):
+            bits.append("only when directly relevant to what the reviewer wrote")
+        marketing_block = (
+            "Merchant allows promotion in replies: " + "; ".join(bits) + "."
         )
 
     # Dev mock mode: canned, policy-safe replies — no LLM call.
@@ -186,6 +227,7 @@ async def generate_review_reply(
         context_block=context_block,
         retry_block=retry_block,
         language_block=language_block,
+        marketing_block=marketing_block,
     )
 
     review_desc = review_text.strip() if review_text and review_text.strip() else "(no written comment, star rating only)"

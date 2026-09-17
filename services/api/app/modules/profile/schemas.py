@@ -11,6 +11,7 @@ class ProfileResponse(BaseModel):
     bio: str | None = None
     business_name: str | None = None
     phone: str | None = None
+    country: str | None = None
     theme: str = "light"
     language: str = "en"
     plan: str = "pro"
@@ -24,6 +25,7 @@ class ProfileUpdateRequest(BaseModel):
     bio: str | None = Field(default=None, max_length=2000)
     business_name: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=50)
+    country: str | None = Field(default=None, max_length=8, description="Account-wide ISO country code, e.g. SA")
 
 
 class PreferencesUpdateRequest(BaseModel):

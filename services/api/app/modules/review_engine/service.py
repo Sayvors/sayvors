@@ -92,6 +92,85 @@ async def _resolve_engine_model(req: ReviewEngineRequest, tenant_id: str, db: As
     )
 
 
+async def _resolve_reply_prefs(req: ReviewEngineRequest, tenant_id: str, db: AsyncSession) -> dict:
+    """Dialect, language policy, and promo flags for this generation.
+
+    Priority: explicit request override, else the channel's auto-reply
+    config, else safe defaults (auto/match, all promo OFF).
+    """
+    from sqlalchemy import select
+
+    prefs: dict = {
+        "dialect": "auto",
+        "reply_language": "match",
+        "promo_product_mentions": False,
+        "promo_links": False,
+        "promo_only_relevant": True,
+        "promo_max_ctas": 1,
+    }
+    if req.dialect:
+        from .dialects import is_valid_dialect_db
+
+        if not await is_valid_dialect_db(req.dialect, db):
+            raise ValueError(f"Unknown dialect '{req.dialect}'.")
+        prefs["dialect"] = req.dialect
+    if req.reply_language:
+        prefs["reply_language"] = req.reply_language
+    if req.channel_id:
+        from ..channels.models import AutoReplyConfig
+
+        cfg = (
+            await db.execute(
+                select(AutoReplyConfig).where(
+                    AutoReplyConfig.channel_id == req.channel_id
+                )
+            )
+        ).scalar_one_or_none()
+        if cfg is not None:
+            if not req.dialect and (cfg.dialect or "auto") != "auto":
+                prefs["dialect"] = cfg.dialect
+            if not req.reply_language and (cfg.reply_language or "match") != "match":
+                prefs["reply_language"] = cfg.reply_language
+            prefs["promo_product_mentions"] = bool(cfg.promo_product_mentions)
+            prefs["promo_links"] = bool(cfg.promo_links)
+            prefs["promo_only_relevant"] = (
+                True if cfg.promo_only_relevant is None else bool(cfg.promo_only_relevant)
+            )
+            prefs["promo_max_ctas"] = (
+                cfg.promo_max_ctas if cfg.promo_max_ctas is not None else 1
+            )
+    return prefs
+
+
+def marketing_requirements(prefs: dict) -> list[str]:
+    """Binding requirements for merchant-opted-in promotion.
+
+    Empty when everything is off (historical no-promo behavior unchanged).
+    Relevance gating itself lives in the offer/product machinery; these
+    lines only grant permission and the CTA cap.
+    """
+    reqs: list[str] = []
+    if prefs.get("promo_product_mentions"):
+        line = (
+            "Promotional product mentions are ALLOWED for this merchant: you may "
+            "name a relevant product/service by its exact name when it fits naturally."
+        )
+        if prefs.get("promo_only_relevant", True):
+            line += " Only when directly relevant to what the reviewer wrote — never pitch unprompted."
+        reqs.append(line)
+    if prefs.get("promo_links"):
+        max_ctas = prefs.get("promo_max_ctas", 1)
+        line = (
+            "Promotional links are ALLOWED: you may include at most "
+            f"{max_ctas} link(s), and ONLY a URL that appears verbatim in "
+            "Business Context — never invent one."
+        )
+        if prefs.get("promo_only_relevant", True):
+            line += " Only when directly relevant to what the reviewer wrote."
+        reqs.append(line)
+    return reqs
+
+
 def build_requirements(
     analysis: ReviewAnalysis,
     issues: list[ExtractedIssue],
@@ -313,6 +392,16 @@ async def process_review(
     model, model_source = await _resolve_engine_model(req, tenant_id, db)
     logger.info("Review engine using model %s (source: %s)", model, model_source)
 
+    # Resolve reply prefs (dialect, language policy, promo flags).
+    prefs = await _resolve_reply_prefs(req, tenant_id, db)
+    if prefs["dialect"] != "auto":
+        from .dialects import get_dialect
+
+        # Deleted codes fall back to auto — never break generation.
+        dialect_entry: dict | None = await get_dialect(prefs["dialect"], db)
+    else:
+        dialect_entry = None
+
     # Channel's linked databank (Automations) — tools search here first.
     channel_bank = await _channel_databank_id(req.channel_id, tenant_id, db)
 
@@ -402,6 +491,7 @@ async def process_review(
             "Possible off-topic review: do NOT discuss, apologize for, or make claims about "
             "the specific mentioned item — keep the reply general and brief."
         )
+    requirements.extend(marketing_requirements(prefs))
 
     # Step 4: Get channel policy + brand voice
     channel_policy = CHANNEL_POLICIES.get(req.channel, CHANNEL_POLICIES["google_review"])
@@ -418,6 +508,11 @@ async def process_review(
     gen_stats = {"model": model, "tokens": 0, "latency_ms": 0}
     previous_issues: list[str] | None = None
     suppressed_ids = [s.strategy_id for s in suppressed]
+    promo_cap = (
+        prefs["promo_max_ctas"]
+        if (prefs["promo_links"] or prefs["promo_product_mentions"])
+        else None
+    )
 
     for iteration in range(MAX_TOOL_ROUNDS):
         generated, gen_stats = await generate_response(
@@ -434,6 +529,8 @@ async def process_review(
             tenant_id=tenant_id,
             channel_id=req.channel_id,
             review_text=req.review_text,
+            dialect=dialect_entry,
+            reply_language=prefs["reply_language"],
         )
 
         # Validate against the REVIEW (issues, fulfillment), not just the response
@@ -443,6 +540,7 @@ async def process_review(
             active_strategies=strategies, suppressed_ids=suppressed_ids,
             tier=tier, business_context=business_context,
             has_offer_data=has_offer_data, rating=req.rating,
+            promo_max_ctas=promo_cap,
         )
 
         if validation.passed:
@@ -525,6 +623,13 @@ async def process_review_stream(
 
     model, model_source = await _resolve_engine_model(req, tenant_id, db)
     logger.info("Review engine (stream) using model %s (source: %s)", model, model_source)
+    prefs = await _resolve_reply_prefs(req, tenant_id, db)
+    if prefs["dialect"] != "auto":
+        from .dialects import get_dialect as _get_dialect
+
+        dialect_entry: dict | None = await _get_dialect(prefs["dialect"], db)
+    else:
+        dialect_entry = None
     channel_bank = await _channel_databank_id(req.channel_id, tenant_id, db)
     yield {"step": "analyzing", "message": f"Analyzing with {model}...", "progress": 10, "model": model, "model_source": model_source}
 
@@ -613,6 +718,7 @@ async def process_review_stream(
             "Possible off-topic review: do NOT discuss, apologize for, or make claims about "
             "the specific mentioned item — keep the reply general and brief."
         )
+    requirements.extend(marketing_requirements(prefs))
     yield {"step": "requirements", "message": f"{len(requirements)} binding generation requirement(s).",
             "requirements": requirements, "tier": tier, "progress": 65}
 
@@ -630,6 +736,11 @@ async def process_review_stream(
     gen_stats = {"model": model, "tokens": 0, "latency_ms": 0}
     previous_issues: list[str] | None = None
     suppressed_ids = [s.strategy_id for s in suppressed]
+    promo_cap = (
+        prefs["promo_max_ctas"]
+        if (prefs["promo_links"] or prefs["promo_product_mentions"])
+        else None
+    )
 
     for iteration in range(MAX_TOOL_ROUNDS):
         generated, gen_stats = await generate_response(
@@ -640,6 +751,8 @@ async def process_review_stream(
             previous_issues=previous_issues, tier=tier,
             tenant_id=tenant_id, channel_id=req.channel_id,
             review_text=req.review_text,
+            dialect=dialect_entry,
+            reply_language=prefs["reply_language"],
         )
 
         validation = validate_response(
@@ -648,6 +761,7 @@ async def process_review_stream(
             active_strategies=strategies, suppressed_ids=suppressed_ids,
             tier=tier, business_context=business_context,
             has_offer_data=has_offer_data, rating=req.rating,
+            promo_max_ctas=promo_cap,
         )
         yield {"step": "fulfillment", "message": f"Validation attempt {iteration + 1}: {'passed' if validation.passed else 'failed'}.",
                 "fulfillment": [f.model_dump() for f in validation.strategy_fulfillment],

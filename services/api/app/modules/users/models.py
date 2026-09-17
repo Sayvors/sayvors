@@ -27,6 +27,8 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     theme: Mapped[str] = mapped_column(String(20), default="light")
     language: Mapped[str] = mapped_column(String(10), default="en")
+    # Account-wide country (ISO code) — display/defaults only, never listings.
+    country: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

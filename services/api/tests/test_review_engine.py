@@ -1762,3 +1762,282 @@ def test_generator_adds_binding_language_instruction():
     assert out.response_text == "شكراً لك!"
     assert "LANGUAGE (binding)" in captured["user_msg"]
     assert "Arabic" in captured["user_msg"]
+
+
+# ── localization + marketing prefs ───────
+
+def _seed_dialects(db):
+    from app.modules.review_engine.models import Dialect
+
+    rows = [
+        ("egyptian", "Egyptian Arabic", "اللهجة المصرية", ["أهلاً", "إزيك؟"]),
+        ("najdi", "Najdi Arabic", "اللهجة النجدية", ["هلا", "وشلونك؟"]),
+    ]
+    for code, en, ar, examples in rows:
+        db.add(Dialect(code=code, dialect_en=en, dialect_ar=ar, examples=examples))
+
+
+@pytest.mark.asyncio
+async def test_dialect_catalog_db_backed(db):
+    from app.modules.review_engine.dialects import (
+        AUTO,
+        get_dialect,
+        is_valid_dialect_db,
+        list_dialects,
+    )
+
+    _seed_dialects(db)
+    await db.commit()
+
+    rows = await list_dialects(db)
+    assert {r["code"] for r in rows} == {"egyptian", "najdi"}
+    assert (await get_dialect("egyptian", db))["dialect_ar"] == "اللهجة المصرية"
+    assert await get_dialect("auto", db) is None
+    assert await get_dialect("klingon", db) is None
+    assert await is_valid_dialect_db("auto", db) is True
+    assert await is_valid_dialect_db("najdi", db) is True
+    assert await is_valid_dialect_db("klingon", db) is False
+    assert await is_valid_dialect_db(None, db) is False
+    assert AUTO == "auto"
+
+
+def test_marketing_requirements_off_by_default():
+    from app.modules.review_engine.service import marketing_requirements
+
+    assert marketing_requirements({
+        "promo_product_mentions": False, "promo_links": False,
+        "promo_only_relevant": True, "promo_max_ctas": 1,
+    }) == []
+
+
+def test_marketing_requirements_permission_lines():
+    from app.modules.review_engine.service import marketing_requirements
+
+    reqs = marketing_requirements({
+        "promo_product_mentions": True, "promo_links": True,
+        "promo_only_relevant": True, "promo_max_ctas": 1,
+    })
+    assert len(reqs) == 2
+    assert any("exact name" in r for r in reqs)
+    assert any("at most 1 link" in r for r in reqs)
+    assert any("directly relevant" in r for r in reqs)
+
+
+@pytest.mark.asyncio
+async def test_resolve_reply_prefs_channel_config(db, user_id):
+    """Channel config wins; explicit request fields override it."""
+    from app.modules.channels.models import AutoReplyConfig
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from app.modules.review_engine.service import _resolve_reply_prefs
+
+    _seed_dialects(db)
+    db.add(AutoReplyConfig(
+        channel_id="pref-ch-1", dialect="egyptian", reply_language="ar",
+        promo_product_mentions=True, promo_links=True,
+        promo_only_relevant=False, promo_max_ctas=2,
+    ))
+    await db.commit()
+
+    base = ReviewEngineRequest(review_text="good", rating=5, channel_id="pref-ch-1")
+    prefs = await _resolve_reply_prefs(base, user_id, db)
+    assert prefs["dialect"] == "egyptian"
+    assert prefs["reply_language"] == "ar"
+    assert prefs["promo_product_mentions"] is True
+    assert prefs["promo_links"] is True
+    assert prefs["promo_only_relevant"] is False
+    assert prefs["promo_max_ctas"] == 2
+
+    over = ReviewEngineRequest(
+        review_text="good", rating=5, channel_id="pref-ch-1",
+        dialect="najdi", reply_language="en",
+    )
+    prefs2 = await _resolve_reply_prefs(over, user_id, db)
+    assert prefs2["dialect"] == "najdi"
+    assert prefs2["reply_language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_resolve_reply_prefs_bad_dialect_raises(db, channel_id, user_id):
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from app.modules.review_engine.service import _resolve_reply_prefs
+
+    req = ReviewEngineRequest(review_text="good", rating=5, dialect="klingon")
+    with pytest.raises(ValueError, match="Unknown dialect"):
+        await _resolve_reply_prefs(req, user_id, db)
+
+
+def test_promo_cta_cap_enforced():
+    reply = _resp("Thanks! See our deal https://a.example/x and also https://b.example/y today.")
+    result = validate_response(
+        reply, _neg_analysis(), {"max_length": 500, "public": True},
+        review_text="ok", promo_max_ctas=1,
+    )
+    assert result.checks["promo_cta"] is False
+    assert result.passed is False
+    assert any("promotional links" in i for i in result.issues)
+
+
+def test_promo_cta_cap_passes_within_limit():
+    reply = _resp("Thanks! See our deal https://a.example/x today.")
+    result = validate_response(
+        reply, _neg_analysis(), {"max_length": 500, "public": True},
+        review_text="ok", promo_max_ctas=2,
+    )
+    assert result.checks["promo_cta"] is True
+
+
+def test_promo_cta_unset_means_no_restriction():
+    reply = _resp("Thanks! See https://a.example/x and https://b.example/y and https://c.example/z.")
+    result = validate_response(
+        reply, _neg_analysis(), {"max_length": 500, "public": True},
+        review_text="ok",
+    )
+    assert result.checks["promo_cta"] is True
+
+
+def test_generator_adds_dialect_instruction():
+    import asyncio
+    from app.modules.review_engine import generator as gen
+
+    captured = {}
+    egyptian = {
+        "code": "egyptian", "dialect_en": "Egyptian Arabic",
+        "dialect_ar": "اللهجة المصرية", "examples": ["أهلاً", "إزيك؟"],
+    }
+
+    class _FakeProvider:
+        async def complete(self, req):
+            captured["user_msg"] = req.messages[0].content
+            from app.modules.llm.providers.base import LLMResponse, LLMUsage
+            return LLMResponse(
+                content='{"response_text": "done"}',
+                provider="test", model="test/m",
+                usage=LLMUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                finish_reason="stop",
+            )
+
+    orig_get = gen.get_provider_for_model
+    orig_resolve = gen._resolve_model
+    gen.get_provider_for_model = lambda model: _FakeProvider()
+    gen._resolve_model = lambda model: ("test/m", {})
+    try:
+        out, _usage = asyncio.run(gen.generate_response(
+            analysis=_ar_analysis(),
+            strategies=[_match("show_appreciation", "Show appreciation", 80)],
+            channel_policy={"max_length": 500, "public": True},
+            brand_voice={},
+            business_context=None,
+            model="test:m",
+            review_text="review",
+            dialect=egyptian,
+            reply_language="match",
+        ))
+    finally:
+        gen.get_provider_for_model = orig_get
+        gen._resolve_model = orig_resolve
+
+    assert out.response_text == "done"
+    assert "DIALECT (binding)" in captured["user_msg"]
+    assert "Egyptian Arabic" in captured["user_msg"]
+    assert "Copy this flavor" in captured["user_msg"]
+
+
+def test_generator_forced_english_over_arabic():
+    import asyncio
+    from app.modules.review_engine import generator as gen
+
+    captured = {}
+
+    class _FakeProvider:
+        async def complete(self, req):
+            captured["user_msg"] = req.messages[0].content
+            from app.modules.llm.providers.base import LLMResponse, LLMUsage
+            return LLMResponse(
+                content='{"response_text": "Thanks!"}',
+                provider="test", model="test/m",
+                usage=LLMUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                finish_reason="stop",
+            )
+
+    orig_get = gen.get_provider_for_model
+    orig_resolve = gen._resolve_model
+    gen.get_provider_for_model = lambda model: _FakeProvider()
+    gen._resolve_model = lambda model: ("test/m", {})
+    try:
+        asyncio.run(gen.generate_response(
+            analysis=_ar_analysis(),
+            strategies=[_match("show_appreciation", "Show appreciation", 80)],
+            channel_policy={"max_length": 500, "public": True},
+            brand_voice={},
+            business_context=None,
+            model="test:m",
+            review_text="review",
+            reply_language="en",
+        ))
+    finally:
+        gen.get_provider_for_model = orig_get
+        gen._resolve_model = orig_resolve
+
+    assert "ENTIRE reply in English" in captured["user_msg"]
+    assert "DIALECT" not in captured["user_msg"]
+
+@pytest.mark.asyncio
+async def test_admin_dialect_crud(db):
+    """Admin can add and remove dialect rows; validation is enforced."""
+    from fastapi import HTTPException
+
+    from app.modules.admin.router import (
+        DialectCreate,
+        admin_dialect_create,
+        admin_dialect_delete,
+    )
+    from app.modules.review_engine.dialects import get_dialect
+
+    created = await admin_dialect_create(
+        DialectCreate(
+            code="Test-Dialect",
+            dialect_en="Test Arabic",
+            dialect_ar="اللهجة التجريبية",
+            examples=["مرحبا"],
+        ),
+        _admin={},
+        _rate_limit=None,
+        db=db,
+    )
+    assert created.code == "test-dialect"
+    assert (await get_dialect("test-dialect", db))["dialect_en"] == "Test Arabic"
+
+    with pytest.raises(HTTPException) as dup:
+        await admin_dialect_create(
+            DialectCreate(
+                code="test-dialect", dialect_en="Dup",
+                dialect_ar="مكرر", examples=[],
+            ),
+            _admin={},
+            _rate_limit=None,
+            db=db,
+        )
+    assert dup.value.status_code == 409
+
+    with pytest.raises(HTTPException) as reserved:
+        await admin_dialect_create(
+            DialectCreate(
+                code="auto", dialect_en="Auto",
+                dialect_ar="تلقائي", examples=[],
+            ),
+            _admin={},
+            _rate_limit=None,
+            db=db,
+        )
+    assert reserved.value.status_code == 422
+
+    await admin_dialect_delete(
+        "test-dialect", _admin={}, _rate_limit=None, db=db,
+    )
+    assert await get_dialect("test-dialect", db) is None
+
+    with pytest.raises(HTTPException) as missing:
+        await admin_dialect_delete(
+            "nope", _admin={}, _rate_limit=None, db=db,
+        )
+    assert missing.value.status_code == 404

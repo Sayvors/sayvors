@@ -287,6 +287,7 @@ def validate_response(
     business_context: str | None = None,
     has_offer_data: bool = False,
     rating: int | None = None,
+    promo_max_ctas: int | None = None,
 ) -> ValidationResult:
     """Policy + fulfillment + grounding + quality. New args optional (legacy tests)."""
     checks: dict[str, bool] = {}
@@ -321,6 +322,19 @@ def validate_response(
             instruction_ok = False
             problems.append("Policy violation: asking to change review or promising fix")
     checks["instruction_compliance"] = instruction_ok
+
+    # Promotional CTA cap — only enforced when the merchant opted into
+    # promotion (caller passes the configured max); otherwise untouched.
+    promo_ok = True
+    if promo_max_ctas is not None:
+        cta_count = len(re.findall(r"https?://\S+", text))
+        if cta_count > promo_max_ctas:
+            promo_ok = False
+            problems.append(
+                f"Too many promotional links: {cta_count} found, "
+                f"at most {promo_max_ctas} allowed — keep only the most relevant one."
+            )
+    checks["promo_cta"] = promo_ok
 
     max_len = channel_policy.get("max_length", 500)
     length_ok = len(text) <= max_len

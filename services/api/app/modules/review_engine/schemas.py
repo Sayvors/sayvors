@@ -95,6 +95,11 @@ class ReviewEngineRequest(BaseModel):
     model: str | None = Field(default=None, max_length=100)
     # Draft the merchant rejected — the generator must write something different.
     previous_draft: str | None = Field(default=None, max_length=4000)
+    # Optional explicit dialect override (catalog code, e.g. "egyptian").
+    # If omitted and channel_id is set, the channel's auto-reply config wins.
+    dialect: str | None = Field(default=None, max_length=30)
+    # Optional explicit language policy: match the review, or force en/ar.
+    reply_language: str | None = Field(default=None, pattern="^(match|en|ar)$")
 
 
 class ReviewEngineResponse(BaseModel):

@@ -131,6 +131,8 @@ async def generate_response(
     tenant_id: str | None = None,
     channel_id: str | None = None,
     review_text: str | None = None,
+    dialect: dict | None = None,
+    reply_language: str = "match",
 ) -> tuple[GeneratedResponse, dict]:
     """Generate a review response from analysis + strategies."""
     user_parts = []
@@ -147,14 +149,32 @@ async def generate_response(
     if analysis.product_reference:
         user_parts.append(f'CRITICAL: Mention the product "{analysis.product_reference}" by exact name in your reply.')
 
-    # Reply language must match the review language (analysis detects it).
-    lang = (analysis.language or "en").strip().lower()
-    if lang and lang != "en":
-        lang_name = _LANGUAGE_NAMES.get(lang, lang)
+    # Reply language: explicit merchant policy wins, else match the review
+    # language (analysis detects it).
+    detected = (analysis.language or "en").strip().lower()
+    if reply_language in ("en", "ar"):
+        eff = reply_language
+    else:
+        eff = detected
+    if eff != "en":
+        lang_name = _LANGUAGE_NAMES.get(eff, eff)
         user_parts.append(
             f"LANGUAGE (binding): the review is written in {lang_name}. "
             f"Write your ENTIRE reply in {lang_name} — never switch to English. "
             f"Keep the same warm, simple tone."
+        )
+        if dialect:
+            examples = " / ".join(dialect.get("examples", [])[:4])
+            user_parts.append(
+                f"DIALECT (binding): write in {dialect.get('dialect_en')} "
+                f"({dialect.get('dialect_ar')}). Copy this flavor: {examples}. "
+                f"Do not mix dialects."
+            )
+    elif detected != "en":
+        user_parts.append(
+            "LANGUAGE (binding): write your ENTIRE reply in English, even though "
+            "the review is in another language — never switch languages. "
+            "Keep the same warm, simple tone."
         )
 
     if tier:

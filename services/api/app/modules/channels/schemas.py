@@ -97,6 +97,12 @@ class AutoReplyConfigUpdate(BaseModel):
     model: str | None = Field(None, description="LLM catalog model id, e.g. openai:gpt-4o-mini")
     approval_mode: str | None = Field(None, pattern="^(auto|approval)$", description="auto = post above threshold; approval = all replies wait for human approval")
     custom_instructions: str | None = Field(None, max_length=2000, description="Brand voice / house rules injected into every reply prompt; empty to clear")
+    dialect: str | None = Field(None, max_length=30, description="Arabic dialect catalog code or 'auto'")
+    reply_language: str | None = Field(None, pattern="^(match|en|ar)$", description="match = reply in the review's language; en/ar = force a language")
+    promo_product_mentions: bool | None = Field(None, description="Allow promotional product mentions in replies")
+    promo_links: bool | None = Field(None, description="Allow promotional links in replies")
+    promo_only_relevant: bool | None = Field(None, description="Only promote when relevant to the review")
+    promo_max_ctas: int | None = Field(None, ge=0, le=5, description="Maximum promotional CTAs per reply")
 
 
 class AutoReplyConfigResponse(BaseModel):
@@ -108,6 +114,12 @@ class AutoReplyConfigResponse(BaseModel):
     model: str
     approval_mode: str = "auto"
     custom_instructions: str | None = None
+    dialect: str = "auto"
+    reply_language: str = "match"
+    promo_product_mentions: bool = False
+    promo_links: bool = False
+    promo_only_relevant: bool = True
+    promo_max_ctas: int = 1
 
 
 class ReviewReplyResponse(BaseModel):

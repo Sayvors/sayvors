@@ -5,6 +5,7 @@ from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,6 +71,25 @@ async def generate_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+class DialectOut(BaseModel):
+    code: str
+    dialect_en: str
+    dialect_ar: str
+    examples: list[str]
+
+
+@router.get("/dialects", response_model=list[DialectOut])
+async def list_dialects(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Arabic dialect catalog for reply localization (plus 'auto')."""
+    from .dialects import list_dialects as _list_dialects
+
+    rows = await _list_dialects(db)
+    return [{"code": "auto", "dialect_en": "Auto (match the review)", "dialect_ar": "تلقائي", "examples": []}] + rows
 
 
 @router.get("/strategies", response_model=list[ReviewStrategyOut])
