@@ -264,6 +264,17 @@ export interface BenchmarkResponse {
   leader: BranchHighlight | null;
   needs_attention: BranchHighlight | null;
   recommendations: BranchRecommendation[];
+  top_services: ServiceHighlight[];
+  needs_fix_services: ServiceHighlight[];
+  top_topics: { name: string; mentions: number }[];
+}
+
+export interface ServiceHighlight {
+  name: string;
+  mentions: number;
+  positive_pct: number;
+  avg_rating: number | null;
+  negative: number;
 }
 
 export interface BranchBenchmark {
