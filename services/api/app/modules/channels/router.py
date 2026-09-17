@@ -636,6 +636,10 @@ async def get_autoreply_config(
         db.add(config)
         await db.commit()
         await db.refresh(config)
+    return _config_response(config)
+
+
+def _config_response(config: AutoReplyConfig) -> AutoReplyConfigResponse:
     return AutoReplyConfigResponse(
         channel_id=config.channel_id,
         enabled=config.enabled,
@@ -645,6 +649,14 @@ async def get_autoreply_config(
         model=config.model,
         approval_mode=config.approval_mode,
         custom_instructions=config.custom_instructions,
+        dialect=config.dialect or "auto",
+        reply_language=config.reply_language or "match",
+        promo_product_mentions=bool(config.promo_product_mentions),
+        promo_links=bool(config.promo_links),
+        promo_only_relevant=config.promo_only_relevant
+        if config.promo_only_relevant is not None else True,
+        promo_max_ctas=config.promo_max_ctas
+        if config.promo_max_ctas is not None else 1,
     )
 
 
@@ -700,19 +712,29 @@ async def update_autoreply_config(
         config.approval_mode = body.approval_mode
     if body.custom_instructions is not None:
         config.custom_instructions = body.custom_instructions.strip()[:2000] or None
+    if body.dialect is not None:
+        from ..review_engine.dialects import is_valid_dialect_db
+
+        if not await is_valid_dialect_db(body.dialect, db):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown dialect '{body.dialect}'. See GET /api/v1/review-engine/dialects.",
+            )
+        config.dialect = body.dialect
+    if body.reply_language is not None:
+        config.reply_language = body.reply_language
+    if body.promo_product_mentions is not None:
+        config.promo_product_mentions = body.promo_product_mentions
+    if body.promo_links is not None:
+        config.promo_links = body.promo_links
+    if body.promo_only_relevant is not None:
+        config.promo_only_relevant = body.promo_only_relevant
+    if body.promo_max_ctas is not None:
+        config.promo_max_ctas = body.promo_max_ctas
 
     await db.commit()
     await db.refresh(config)
-    return AutoReplyConfigResponse(
-        channel_id=config.channel_id,
-        enabled=config.enabled,
-        tone=config.tone,
-        databank_id=config.databank_id,
-        min_rating_auto=config.min_rating_auto,
-        model=config.model,
-        approval_mode=config.approval_mode,
-        custom_instructions=config.custom_instructions,
-    )
+    return _config_response(config)
 
 
 # ── Review replies ──────────────────────────────────────

@@ -94,6 +94,15 @@ class AutoReplyConfig(Base):
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     # LLM model id (provider catalog id, e.g. "groq:openai/gpt-oss-120b")
     model: Mapped[str] = mapped_column(String(100), default="groq:openai/gpt-oss-120b")
+    # Arabic dialect code (review_engine.dialects catalog) or "auto".
+    dialect: Mapped[str] = mapped_column(String(30), default="auto")
+    # Reply language policy: match the review, or force en/ar.
+    reply_language: Mapped[str] = mapped_column(String(10), default="match")
+    # Promotional toggles — all default OFF (historical no-promo behavior).
+    promo_product_mentions: Mapped[bool] = mapped_column(Boolean, default=False)
+    promo_links: Mapped[bool] = mapped_column(Boolean, default=False)
+    promo_only_relevant: Mapped[bool] = mapped_column(Boolean, default=True)
+    promo_max_ctas: Mapped[int] = mapped_column(Integer, default=1)
     # Polling lease (atomic claim across worker instances)
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     polling_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
