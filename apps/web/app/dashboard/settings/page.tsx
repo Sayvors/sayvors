@@ -36,11 +36,18 @@ interface DialectOpt {
   examples: string[];
 }
 
-const TONES = [
-  { id: "friendly", label: "Friendly — warm and casual" },
-  { id: "professional", label: "Professional — formal and polished" },
-  { id: "apologetic", label: "Apologetic — extra empathetic" },
-  { id: "playful", label: "Playful — light and fun" },
+interface ToneOpt {
+  code: string;
+  label: string;
+  description: string;
+}
+
+// Fallback if the catalog endpoint is unreachable — mirrors the DB seed.
+const FALLBACK_TONES: ToneOpt[] = [
+  { code: "friendly", label: "Friendly", description: "warm and casual" },
+  { code: "professional", label: "Professional", description: "formal and polished" },
+  { code: "apologetic", label: "Apologetic", description: "extra empathetic" },
+  { code: "playful", label: "Playful", description: "light and fun" },
 ];
 
 const COUNTRIES: { code: string; name: string }[] = [
@@ -145,6 +152,8 @@ export default function SettingsPage() {
   const isBulk = selectedId === ALL;
   const bulkBranches = isBulk ? channels.map((c) => ({ id: c.id, name: c.display_name || "Location" })) : [];
 
+  const [tones, setTones] = useState<ToneOpt[]>(FALLBACK_TONES);
+
   // Per-location form state, reset whenever the branch or its config loads.
   const [tone, setTone] = useState("friendly");
   const [replyLang, setReplyLang] = useState("match");
@@ -158,9 +167,10 @@ export default function SettingsPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [chData, diaData, prof] = await Promise.all([
+        const [chData, diaData, toneData, prof] = await Promise.all([
           apiFetch("/api/v1/channels/?limit=100"),
           apiFetch("/api/v1/review-engine/dialects").catch(() => ({})),
+          apiFetch("/api/v1/review-engine/tones").catch(() => []),
           getProfile().catch(() => null),
         ]);
         if (cancelled) return;
@@ -170,6 +180,7 @@ export default function SettingsPage() {
         setChannels(google);
         if (google.length > 0) setSelectedId((prev) => prev ?? (google.length > 1 ? ALL : google[0].id));
         setDialects(diaData?.dialects ?? diaData ?? []);
+        if (Array.isArray(toneData) && toneData.length > 0) setTones(toneData);
         if (prof) {
           setCountry(prof.country ?? "");
           setSavedCountry(prof.country ?? null);
@@ -608,10 +619,14 @@ export default function SettingsPage() {
               <Section title="Tone & voice" subtitle={isBulk ? `Personality of replies for all ${bulkBranches.length} branches.` : `Personality of replies for ${selectedName}.`}>
                 <Field label="Response tone" varies={bulk?.varies.has("tone") ?? false}>
                   <select value={tone} onChange={(e) => setTone(e.target.value)} disabled={busy !== null} className={selectCls}>
-                    <option value="friendly">Friendly — warm and casual</option>
-                    <option value="professional">Professional — formal and polished</option>
-                    <option value="apologetic">Apologetic — extra empathetic</option>
-                    <option value="playful">Playful — light and fun</option>
+                    {tones.map((t) => (
+                      <option key={t.code} value={t.code}>
+                        {t.label}{t.description ? ` — ${t.description}` : ""}
+                      </option>
+                    ))}
+                    {!tones.some((t) => t.code === tone) && (
+                      <option value={tone}>{tone}</option>
+                    )}
                   </select>
                 </Field>
                 <button

@@ -691,6 +691,13 @@ async def update_autoreply_config(
     if body.enabled is not None:
         config.enabled = body.enabled
     if body.tone is not None:
+        from ..review_engine.tones import is_valid_tone_db
+
+        if not await is_valid_tone_db(body.tone, db):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown tone '{body.tone}'. See GET /api/v1/review-engine/tones.",
+            )
         config.tone = body.tone[:50]
     if body.databank_id is not None:
         config.databank_id = body.databank_id or None

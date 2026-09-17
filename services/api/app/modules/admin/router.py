@@ -552,6 +552,87 @@ async def admin_dialect_delete(
     logger.info("Admin deleted dialect %s", code)
 
 
+class ToneCreate(BaseModel):
+    code: str = Field(..., min_length=2, max_length=30, pattern="^[A-Za-z0-9-]+$")
+    label: str = Field(..., min_length=2, max_length=120)
+    description: str = Field(default="", max_length=255)
+
+
+class ToneOut(BaseModel):
+    code: str
+    label: str
+    description: str
+
+
+@router.post("/tones", response_model=ToneOut, status_code=201)
+async def admin_tone_create(
+    body: ToneCreate,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a response tone to the catalog. Code must be unique."""
+    from ..review_engine.models import Tone
+
+    code = body.code.strip().lower()
+    existing = await db.execute(select(Tone).where(Tone.code == code))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"Tone '{code}' already exists.")
+    row = Tone(code=code, label=body.label.strip(), description=body.description.strip())
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    logger.info("Admin added tone %s", code)
+    return ToneOut(code=row.code, label=row.label, description=row.description or "")
+
+
+class ToneUpdate(BaseModel):
+    label: str | None = Field(default=None, min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=255)
+
+
+@router.put("/tones/{code}", response_model=ToneOut)
+async def admin_tone_update(
+    code: str,
+    body: ToneUpdate,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit a tone's label/description. The code itself is immutable —
+    channels reference it, so renaming would orphan them; delete + recreate
+    instead (channels on a deleted code keep working untouched)."""
+    from ..review_engine.models import Tone
+
+    row = await db.get(Tone, code.strip().lower())
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown tone: {code}")
+    if body.label is not None:
+        row.label = body.label.strip()
+    if body.description is not None:
+        row.description = body.description.strip()
+    await db.commit()
+    await db.refresh(row)
+    logger.info("Admin updated tone %s", row.code)
+    return ToneOut(code=row.code, label=row.label, description=row.description or "")
+
+
+@router.delete("/tones/{code}", status_code=204)
+async def admin_tone_delete(
+    code: str,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a tone row. Channels still referencing the code keep their
+    stored string — generation reads it as-is."""
+    from ..review_engine.models import Tone
+
+    row = await db.get(Tone, code.strip().lower())
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown tone: {code}")
+    await db.delete(row)
+    await db.commit()
+    logger.info("Admin deleted tone %s", code)
+
+
 @router.get("/models", response_model=list[SavedModel])
 async def admin_models_list(
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),

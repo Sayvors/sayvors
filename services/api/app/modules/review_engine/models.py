@@ -54,6 +54,23 @@ class Dialect(Base):
     )
 
 
+class Tone(Base):
+    """Response tone catalog row — admin-managed, seeded with 4 tones.
+
+    The Settings tone picker reads this table; deleting a code is safe —
+    channels still referencing it keep their stored string.
+    """
+
+    __tablename__ = "tones"
+
+    code: Mapped[str] = mapped_column(String(30), primary_key=True)
+    label: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class ReviewResponseLog(Base):
     __tablename__ = "review_response_logs"
 
