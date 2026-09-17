@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
-/* ΓöÇΓöÇ Types ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
+/* ---------------------------------------------------------------------------------------*/
 
 interface Location {
   id: string;
@@ -99,6 +99,7 @@ function CompletenessCard({ profile, fullProfile }: { profile: LocalithConn; ful
     { label: "Phone number", done: !!profile.phone_number, hint: !profile.phone_number ? "Add phone number" : undefined },
   ];
   const done = essentials.filter((e) => e.done).length;
+  if (done >= essentials.length) return null;
   return (
     <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -695,6 +696,18 @@ export default function LocationsPage() {
               </button>
             ))}
           </div>
+          {!isBulk && locations.length > 1 && (
+            <p className="rounded-xl border border-deep-violet/15 bg-deep-violet/[0.04] px-3.5 py-2 text-[12px] text-ink/55 dark:text-fog/55">
+              💡 To bulk-edit these sections across every branch at once, switch to{" "}
+              <button
+                onClick={() => setSelectedId(ALL)}
+                className="font-bold text-deep-violet underline underline-offset-2 outline-none transition hover:text-deep-violet/80 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+              >
+                All branches
+              </button>{" "}
+              in the dropdown above.
+            </p>
+          )}
 
           {/* Tab content */}
           <div className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
