@@ -462,8 +462,8 @@ async def test_sync_connection_loops_all_branches(db, user_id, monkeypatch):
     assert totals["branches"] == 2
 
 @pytest.mark.asyncio
-async def test_quiet_sync_still_notifies(db, user_id, channel_id, monkeypatch):
-    """A sync with zero new reviews still leaves a summary notification."""
+async def test_truly_quiet_sync_stays_silent(db, user_id, channel_id, monkeypatch):
+    """No new reviews and zero engagement movement -> no notification."""
     from types import SimpleNamespace
 
     from sqlalchemy import select
@@ -496,10 +496,86 @@ async def test_quiet_sync_still_notifies(db, user_id, channel_id, monkeypatch):
     assert totals["new_reviews"] == 0
 
     rows = (await db.execute(select(Notification))).scalars().all()
+    assert [r for r in rows if r.type == "sync_completed"] == []
+
+
+def _metrics_payload(**kwargs):
+    base = {
+        "googleMapsDesktop": 0, "googleMapsMobile": 0,
+        "googleSearchDesktop": 0, "googleSearchMobile": 0,
+        "messages": 0, "directions": 0, "callClicks": 0,
+        "websiteClicks": 0, "bookings": 0,
+    }
+    base.update(kwargs)
+    return {"dateRange": {}, "listings": [base]}
+
+
+@pytest.mark.asyncio
+async def test_metrics_movement_notifies(db, user_id, channel_id, monkeypatch):
+    """No new reviews, but impressions/visits moved -> summary fires."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.modules.localith.models import LocalithConnection
+    from app.modules.notifications.models import Notification
+
+    db.add(LocalithConnection(
+        id="lc-busy-1", user_id=user_id, listing_id="demo-loc-456",
+        listing_name="Busy Branch", raw_metrics_json=_metrics_payload(),
+    ))
+    await db.commit()
+
+    monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _detail(listing_id):
+        return {}
+
+    async def _no_events(event_type, payload, topic="review-events"):
+        return "evt"
+
+    monkeypatch.setattr(service, "get_listing_detail", _detail)
+    monkeypatch.setattr(service, "enqueue_event", _no_events)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: [])
+    monkeypatch.setattr(
+        embedsocial, "fetch_listing_metrics",
+        lambda *a, **k: _metrics_payload(googleSearchMobile=8, directions=3),
+    )
+    monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
+
+    totals = await service.sync_connection(SimpleNamespace(id=user_id), db)
+    assert totals["new_reviews"] == 0
+
+    rows = (await db.execute(select(Notification))).scalars().all()
     summaries = [r for r in rows if r.type == "sync_completed"]
     assert len(summaries) == 1
-    assert "nothing new" in summaries[0].title
-    assert "Quiet Branch" in summaries[0].title
+    assert "Busy Branch" in summaries[0].title
+    assert "8 impressions" in summaries[0].title
+    assert "3 direction requests" in summaries[0].title
+
+
+def test_moved_parts_unit():
+    from app.modules.localith.service import _engagement_totals, _moved_parts
+
+    assert _engagement_totals(None) == {
+        "impressions": 0, "directions": 0, "calls": 0,
+        "website": 0, "messages": 0, "bookings": 0,
+    }
+    totals = _engagement_totals(_metrics_payload(
+        googleMapsDesktop=4, googleSearchMobile=3, directions=12, callClicks="x",
+    ))
+    assert totals == {
+        "impressions": 7, "directions": 12, "calls": 0,
+        "website": 0, "messages": 0, "bookings": 0,
+    }
+
+    zeros = _engagement_totals({})
+    assert _moved_parts(0, zeros, zeros) == []
+    assert _moved_parts(2, zeros, zeros) == ["2 new review(s)"]
+    assert _moved_parts(0, zeros, totals) == ["+7 impressions", "+12 direction requests"]
+    # Decreases are window noise, not news.
+    assert _moved_parts(0, totals, zeros) == []
 
 
 @pytest.mark.asyncio

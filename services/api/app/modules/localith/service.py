@@ -163,6 +163,71 @@ async def get_connection(
     return connections[0] if connections else None
 
 
+_ACTIVITY_LABELS = (
+    ("impressions", "impressions"),
+    ("directions", "direction requests"),
+    ("calls", "calls"),
+    ("website", "website visits"),
+    ("messages", "messages"),
+    ("bookings", "bookings"),
+)
+
+
+def _engagement_totals(raw) -> dict[str, int]:
+    """Summed engagement metrics from a listing-metrics payload.
+
+    Returns zeros for missing/empty payloads (e.g. first sync ever).
+    """
+    totals = {key: 0 for key, _ in _ACTIVITY_LABELS}
+    if not isinstance(raw, dict):
+        return totals
+    listings = raw.get("listings")
+    if not isinstance(listings, list):
+        return totals
+    for listing in listings:
+        if not isinstance(listing, dict):
+            continue
+
+        def num(*keys: str) -> int:
+            total = 0
+            for key in keys:
+                try:
+                    total += int(listing.get(key) or 0)
+                except (TypeError, ValueError):
+                    pass
+            return total
+
+        totals["impressions"] += num(
+            "googleMapsDesktop", "googleMapsMobile",
+            "googleSearchDesktop", "googleSearchMobile",
+        )
+        totals["directions"] += num("directions")
+        totals["calls"] += num("callClicks")
+        totals["website"] += num("websiteClicks")
+        totals["messages"] += num("messages")
+        totals["bookings"] += num("bookings")
+    return totals
+
+
+def _moved_parts(synced: int, old: dict[str, int], new: dict[str, int]) -> list[str]:
+    """Human-readable list of what moved this sync (empty = quiet sync).
+
+    New reviews always count. Metric movement counts only as an increase —
+    trailing windows shift, so decreases are noise, not news. With no
+    previous snapshot, any nonzero metric counts as activity.
+    """
+    parts = []
+    if synced > 0:
+        parts.append(f"{synced} new review(s)")
+    had_previous = any(v > 0 for v in old.values())
+    for key, label in _ACTIVITY_LABELS:
+        before = old.get(key, 0)
+        after = new.get(key, 0)
+        if after > before or (not had_previous and after > 0):
+            parts.append(f"+{after - before if had_previous else after} {label}")
+    return parts
+
+
 async def sync_connection(
     user: User,
     db: AsyncSession,
@@ -335,12 +400,14 @@ async def _sync_single_connection(
     # 3+4. Metrics summaries over the trailing window.
     end = date.today()
     start = end - timedelta(days=max(1, metrics_days_back))
+    old_activity = _engagement_totals(connection.raw_metrics_json)
     metrics = await asyncio.to_thread(
         embedsocial.fetch_listing_metrics, start, end, connection.listing_id
     )
     item_metrics = await asyncio.to_thread(
         embedsocial.fetch_item_metrics, start, end, connection.listing_id
     )
+    new_activity = _engagement_totals(metrics) if metrics else {}
     if metrics:
         connection.raw_metrics_json = metrics
     if item_metrics:
@@ -353,21 +420,21 @@ async def _sync_single_connection(
     connection.last_synced_at = datetime.now(timezone.utc)
     await db.commit()
 
-    # Sync receipt — every sync, even quiet ones, so the bell tells the
-    # truth about what ran.
-    if synced > 0:
-        title = f"Synced {connection.listing_name or 'location'} — {synced} new review(s)"
-    else:
-        title = f"Synced {connection.listing_name or 'location'} — nothing new"
-    await notify(
-        db, user.id, "sync_completed",
-        title,
-        None,
-        data={"listing_id": connection.listing_id, "channel_id": channel.id,
-              "new_reviews": synced},
-        href="/dashboard",
-    )
-    await db.commit()
+    # Sync receipt — only when something actually happened: new reviews,
+    # or any engagement metric (impressions, visits, calls, directions…)
+    # moved since the last sync. Truly quiet syncs stay silent.
+    moved = _moved_parts(synced, old_activity, new_activity)
+    if moved:
+        title = f"Synced {connection.listing_name or 'location'} — {', '.join(moved)}"
+        await notify(
+            db, user.id, "sync_completed",
+            title,
+            None,
+            data={"listing_id": connection.listing_id, "channel_id": channel.id,
+                  "new_reviews": synced, "activity": new_activity},
+            href="/dashboard",
+        )
+        await db.commit()
 
     # Reply drafts: Localith reviews flow through the same reply engine as
     # OAuth channels. Approving a draft posts it live via Localith's
