@@ -157,7 +157,32 @@ export default function BenchmarkPage() {
           {/* Branch leaderboard */}
           <section aria-label="Branch ranking" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
             <div className="mb-1 flex items-baseline justify-between gap-2">
-              <h3 className="text-[14px] font-bold text-ink">Branch ranking · {FOCUS_META[focus].label}</h3>
+              <h3 className="inline-flex items-center gap-1.5 text-[14px] font-bold text-ink">
+                Branch ranking · {FOCUS_META[focus].label}
+                <span className="group relative inline-flex">
+                  <span
+                    tabIndex={0}
+                    role="button"
+                    aria-label="How is this calculated?"
+                    className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-ink/15 bg-ink/[0.04] text-[10px] font-bold leading-none text-ink/60 outline-none transition hover:border-deep-violet/30 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30"
+                  >
+                    i
+                  </span>
+                  <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 hidden w-[420px] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-ink/10 bg-ink px-4 py-3 text-left text-[11px] font-normal leading-relaxed text-white shadow-2xl group-hover:block group-focus-within:block">
+                    <span className="block text-[11px] font-bold text-white">How scores are calculated</span>
+                    <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-white/70">
+                      <span>avg rating, response rate & positive % are live SQL aggregates per branch.</span>
+                      <span className="font-mono text-[10px] text-white/90">
+                        reputation = (avg&nbsp;rating&nbsp;/&nbsp;5&nbsp;×&nbsp;50) + (response&nbsp;rate&nbsp;×&nbsp;25) + (positive&nbsp;%&nbsp;×&nbsp;25)
+                      </span>
+                    </span>
+                    <span className="mt-2 flex items-center justify-between gap-3 border-t border-white/10 pt-2 text-white/60">
+                      <span>Al&nbsp;Malqa: 4.86★ →48.6 + 86% →21.5 + 29% →7.1 = <span className="font-bold text-white">~77</span></span>
+                      <span className="shrink-0 text-white/40">Avg = mean of branches</span>
+                    </span>
+                  </span>
+                </span>
+              </h3>
               <p className="text-[11px] text-ink/45">Account average: {focus === "rating" ? accountAvg.toFixed(1) + "★" : focus === "volume" ? Math.round(accountAvg) : `${accountAvg.toFixed(0)}${FOCUS_META[focus].unit}`}</p>
             </div>
             <p className="mb-4 text-[11px] text-ink/45">{FOCUS_META[focus].hint}</p>

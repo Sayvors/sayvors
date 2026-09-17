@@ -257,7 +257,7 @@ export default function Header() {
                 )}
                 {theme === "light" ? t.header.switchToDark : t.header.switchToLight}
               </button>
-              {LOCALES.map((l) => (
+              {LOCALES.filter((l) => l.code === "en").map((l) => (
                 <button
                   key={l.code}
                   onClick={() => setLocale(l.code)}
@@ -274,6 +274,19 @@ export default function Header() {
                     </svg>
                   )}
                 </button>
+              ))}
+              {LOCALES.filter((l) => l.code !== "en").map((l) => (
+                <div
+                  key={l.code}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-ink/35 dark:text-fog/35"
+                  title="Coming soon"
+                >
+                  <span className="text-[14px] opacity-50" aria-hidden>{l.flag}</span>
+                  <span className="flex-1">{l.label}</span>
+                  <span className="rounded-full bg-ink/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40">
+                    Soon
+                  </span>
+                </div>
               ))}
             </div>
 
