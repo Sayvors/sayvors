@@ -4,6 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
+import {
+  loadSeenIds,
+  notifyPill,
+  pillKindFor,
+  rememberSeenIds,
+} from "@/lib/notifications";
 
 export interface BellNotification {
   id: string;
@@ -45,29 +51,81 @@ export default function NotificationsBell() {
   const [items, setItems] = useState<BellNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const seenRef = useRef<Set<string> | null>(null);
+  const prevUnreadRef = useRef(0);
+
+  const seenIds = () => {
+    if (!seenRef.current) seenRef.current = loadSeenIds();
+    return seenRef.current;
+  };
+
+  const remember = useCallback((ids: string[]) => {
+    const seen = seenIds();
+    let changed = false;
+    for (const id of ids) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        changed = true;
+      }
+    }
+    if (changed) rememberSeenIds(seen);
+  }, []);
+
+  const maybeFirePills = useCallback(
+    (list: BellNotification[]) => {
+      // Reminder pills surface ONLY new pulled reviews / failed replies.
+      const fresh = list
+        .filter((n) => !n.read_at && !seenIds().has(n.id) && pillKindFor(n.type) !== null)
+        .slice(-3);
+      for (const n of fresh) {
+        const kind = pillKindFor(n.type);
+        if (kind) notifyPill(n.title, kind);
+      }
+      remember(list.map((n) => n.id));
+    },
+    [remember]
+  );
 
   const refreshCount = useCallback(async () => {
     try {
       const r = await apiFetch("/api/v1/notifications/unread-count");
-      if (typeof r?.unread === "number") setUnread(r.unread);
+      if (typeof r?.unread !== "number") return;
+      const before = prevUnreadRef.current;
+      prevUnreadRef.current = r.unread;
+      setUnread(r.unread);
+      // Count rose → fetch the newcomers; pills fire for pulled/failed only.
+      if (r.unread > before) {
+        try {
+          const list = await apiFetch("/api/v1/notifications?limit=10");
+          maybeFirePills((list.items ?? []) as BellNotification[]);
+        } catch {
+          /* next poll retries */
+        }
+      }
     } catch {
       /* backend down — badge stays */
     }
-  }, []);
+  }, [maybeFirePills]);
 
   const openDropdown = useCallback(async () => {
     setOpen(true);
     setLoading(true);
     try {
       const r = await apiFetch("/api/v1/notifications?limit=8");
-      setItems((r.items ?? []) as BellNotification[]);
-      if (typeof r?.unread === "number") setUnread(r.unread);
+      const list = (r.items ?? []) as BellNotification[];
+      setItems(list);
+      // Seen in the dropdown = no pill later for these.
+      remember(list.map((n) => n.id));
+      if (typeof r?.unread === "number") {
+        prevUnreadRef.current = r.unread;
+        setUnread(r.unread);
+      }
     } catch {
       /* list stays empty */
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [remember]);
 
   useEffect(() => {
     void refreshCount();
