@@ -50,13 +50,32 @@ router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
 MAX_WEBHOOK_BODY_BYTES = 1_000_000  # 1 MB
 
 
-@router.post("/", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
-async def connect_channel(
-    body: ChannelCreate,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    channel = await create_channel(body, user, db)
+def _channel_source_info(channel: Channel) -> tuple[str | None, str | None]:
+    """(source, listing_id) for a channel.
+
+    "localith" = mirrored from a Localith listing sync (managed on the
+    Localith card); "google" = native Google OAuth channel. parsed from
+    metadata_json so the UI can show each branch exactly once.
+    """
+    import json as _json
+
+    try:
+        meta = _json.loads(channel.metadata_json or "{}")
+    except (ValueError, TypeError):
+        meta = {}
+    if not isinstance(meta, dict):
+        return None, None
+    provider = str(meta.get("provider") or "").lower()
+    if provider == "localith" or "listing_id" in meta:
+        return "localith", str(meta.get("listing_id") or meta.get("location_id") or "")
+    if channel.platform == "google_reviews":
+        loc = meta.get("location_id")
+        return "google", str(loc) if loc else None
+    return None, None
+
+
+def _channel_response(channel: Channel) -> ChannelResponse:
+    source, listing_id = _channel_source_info(channel)
     return ChannelResponse(
         id=channel.id,
         platform=channel.platform,
@@ -65,7 +84,19 @@ async def connect_channel(
         status=channel.status,
         avatar_url=channel.avatar_url,
         created_at=channel.created_at.isoformat(),
+        source=source,
+        listing_id=listing_id or None,
     )
+
+
+@router.post("/", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
+async def connect_channel(
+    body: ChannelCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    channel = await create_channel(body, user, db)
+    return _channel_response(channel)
 
 
 @router.get("/", response_model=ChannelListResponse)
@@ -77,18 +108,7 @@ async def get_channels(
 ):
     channels, total = await list_channels(user, db, limit, offset)
     return ChannelListResponse(
-        channels=[
-            ChannelResponse(
-                id=c.id,
-                platform=c.platform,
-                platform_user_id=c.platform_user_id,
-                display_name=c.display_name,
-                status=c.status,
-                avatar_url=c.avatar_url,
-                created_at=c.created_at.isoformat(),
-            )
-            for c in channels
-        ],
+        channels=[_channel_response(c) for c in channels],
         total=total,
     )
 
@@ -102,15 +122,7 @@ async def get_channel_by_id(
     channel = await get_channel(channel_id, user, db)
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
-    return ChannelResponse(
-        id=channel.id,
-        platform=channel.platform,
-        platform_user_id=channel.platform_user_id,
-        display_name=channel.display_name,
-        status=channel.status,
-        avatar_url=channel.avatar_url,
-        created_at=channel.created_at.isoformat(),
-    )
+    return _channel_response(channel)
 
 
 @router.delete("/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1107,8 +1119,27 @@ async def generate_reply_for_review(
         ).limit(1)
     )
     existing_reply = existing.scalar_one_or_none()
-    if existing_reply is not None and existing_reply.status in ("pending_approval", "posted"):
-        raise HTTPException(status_code=409, detail="A reply already exists for this review")
+    if existing_reply is not None and existing_reply.status == "pending_approval":
+        # Idempotent: the queued draft IS the response — hand it back so
+        # callers (e.g. the dashboard's edit-follow-up cards) can never
+        # create duplicate drafts for the same review.
+        return _reply_response(existing_reply)
+    if existing_reply is not None and existing_reply.status == "posted":
+        # A reply is already live on Google. A new draft is only legitimate
+        # as an edit follow-up — the reviewer changed the review after we
+        # answered it.
+        from ..analytics.models import ReviewInsight
+
+        insight = (
+            await db.execute(
+                select(ReviewInsight).where(
+                    ReviewInsight.channel_id == channel.id,
+                    ReviewInsight.review_id == body.review_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not (insight is not None and insight.edited):
+            raise HTTPException(status_code=409, detail="A reply already exists for this review")
     if existing_reply is not None:
         # Dead draft (rejected/failed) — clear it so a fresh one can be made.
         await db.delete(existing_reply)
@@ -1128,23 +1159,21 @@ async def generate_reply_for_review(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
 
-    # Reopen DB session for logging
-    async with _async_session() as write_db:
-        reply = ReviewReply(
-            id=str(uuid.uuid4()),
-            channel_id=channel.id,
-            review_id=body.review_id,
-            rating=body.rating,
-            review_text=body.review_text,
-            reviewer_name=body.reviewer_name,
-            reply_text=reply_text,
-            status="pending_approval",
-            generation_attempt=1,
-        )
-        write_db.add(reply)
-        await write_db.commit()
-        await write_db.refresh(reply)
-        return _reply_response(reply)
+    reply = ReviewReply(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        review_id=body.review_id,
+        rating=body.rating,
+        review_text=body.review_text,
+        reviewer_name=body.reviewer_name,
+        reply_text=reply_text,
+        status="pending_approval",
+        generation_attempt=1,
+    )
+    db.add(reply)
+    await db.commit()
+    await db.refresh(reply)
+    return _reply_response(reply)
 
 @router.put("/{channel_id}/reviews/{reply_id}", response_model=ReviewReplyResponse)
 async def edit_pending_reply(
@@ -1227,13 +1256,12 @@ async def regenerate_reply(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
 
-    async with _async_session() as write_db:
-        refreshed = await write_db.get(ReviewReply, reply_id)
-        refreshed.reply_text = reply.reply_text
-        refreshed.generation_attempt = attempt
-        await write_db.commit()
-        await write_db.refresh(refreshed)
-        return _reply_response(refreshed)
+    refreshed = await db.get(ReviewReply, reply_id)
+    refreshed.reply_text = reply.reply_text
+    refreshed.generation_attempt = attempt
+    await db.commit()
+    await db.refresh(refreshed)
+    return _reply_response(refreshed)
 
 
 @router.post("/{channel_id}/reviews/{reply_id}/retry", response_model=ReviewReplyResponse)
@@ -1271,16 +1299,15 @@ async def retry_failed_reply(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
 
-    async with _async_session() as write_db:
-        refreshed = await write_db.get(ReviewReply, reply_id)
-        refreshed.status = "pending_approval"
-        refreshed.error = None
-        refreshed.generation_attempt = attempt
-        if reply.reply_text:
-            refreshed.reply_text = reply.reply_text
-        await write_db.commit()
-        await write_db.refresh(refreshed)
-        return _reply_response(refreshed)
+    refreshed = await db.get(ReviewReply, reply_id)
+    refreshed.status = "pending_approval"
+    refreshed.error = None
+    refreshed.generation_attempt = attempt
+    if reply.reply_text:
+        refreshed.reply_text = reply.reply_text
+    await db.commit()
+    await db.refresh(refreshed)
+    return _reply_response(refreshed)
 
 
 @router.delete("/{channel_id}/reviews/{reply_id}", response_model=ReviewReplyResponse)

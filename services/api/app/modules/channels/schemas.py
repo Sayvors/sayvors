@@ -19,6 +19,12 @@ class ChannelResponse(BaseModel):
     status: str
     avatar_url: str | None = None
     created_at: str
+    # Where this channel came from: "localith" = mirrored from a Localith
+    # listing sync (managed on the Localith card), "google" = native Google
+    # OAuth. Lets the UI show each branch once.
+    source: str | None = None
+    # Localith listing_id (or Google location_id for native channels).
+    listing_id: str | None = None
 
 
 class ChannelListResponse(BaseModel):

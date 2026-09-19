@@ -16,6 +16,10 @@ interface ApiChannel {
   display_name: string | null;
   status: string;
   created_at: string;
+  // "localith" = mirrored from a Localith listing sync (managed on the
+  // Localith card); "google" = native Google OAuth. Absent on old backends.
+  source?: string | null;
+  listing_id?: string | null;
 }
 
 interface AutoReply {
@@ -91,6 +95,168 @@ function num(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/* ── Backend error bodies are JSON {"detail": "..."} — surface the real cause ── */
+function errDetail(e: unknown, fallback: string): string {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  try {
+    const parsed = JSON.parse(msg) as { detail?: unknown };
+    if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+      return parsed.detail.slice(0, 300);
+    }
+  } catch {
+    /* not JSON — use the raw text */
+  }
+  const t = msg.trim();
+  return (t || fallback).slice(0, 300);
+}
+
+/* ── AI auto-reply controls: one copy, used by native Google cards AND Localith rows ── */
+
+function AiReplyControls({
+  channel,
+  cfg,
+  busy,
+  expanded,
+  approvalDraft,
+  toneDraft,
+  voiceDraft,
+  saving,
+  onToggle,
+  onToggleExpand,
+  onApproval,
+  onTone,
+  onVoice,
+  onSave,
+}: {
+  channel: ApiChannel;
+  cfg: AutoReply | null;
+  busy: boolean;
+  expanded: boolean;
+  approvalDraft: "auto" | "approval";
+  toneDraft: string;
+  voiceDraft: string;
+  saving: boolean;
+  onToggle: (channelId: string, enable: boolean) => void;
+  onToggleExpand: (channelId: string) => void;
+  onApproval: (v: "auto" | "approval") => void;
+  onTone: (v: string) => void;
+  onVoice: (v: string) => void;
+  onSave: (channelId: string) => void;
+}) {
+  const enabled = cfg?.enabled ?? false;
+  return (
+    <div>
+      <div className="flex items-center gap-4">
+        <div className="flex-1">
+          <p className="text-[12px] text-ink/40 dark:text-fog/40">
+            {enabled
+              ? cfg?.approval_mode === "approval"
+                ? "AI drafts every reply — you approve all"
+                : "AI replies on ★4–5 · ★1–3 need your approval"
+              : "Auto-reply off"}
+          </p>
+        </div>
+        <button
+          onClick={() => onToggleExpand(channel.id)}
+          className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-deep-violet transition hover:bg-deep-violet/[0.06]"
+        >
+          {expanded ? "Close" : "AI settings"}
+        </button>
+        <button
+          onClick={() => onToggle(channel.id, !enabled)}
+          disabled={busy}
+          className={`relative h-6 w-11 rounded-full transition ${
+            enabled ? "bg-emerald-500" : "bg-ink/15 dark:bg-fog/15"
+          } ${busy ? "opacity-50" : ""}`}
+          aria-label={enabled ? "Turn off auto-reply" : "Turn on auto-reply"}
+        >
+          <span
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+              enabled ? "left-[22px]" : "left-0.5"
+            }`}
+          />
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="mt-4 space-y-4 border-t border-ink/[0.05] pt-4">
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">
+              Approval mode
+            </p>
+            <div className="flex rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.06]">
+              {([
+                { key: "auto", label: "Fully automatic" },
+                { key: "approval", label: "I approve everything" },
+              ] as const).map((m) => (
+                <button
+                  key={m.key}
+                  onClick={() => onApproval(m.key)}
+                  aria-pressed={approvalDraft === m.key}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                    approvalDraft === m.key
+                      ? "bg-white text-deep-violet shadow-sm dark:bg-ink"
+                      : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[10px] text-ink/35 dark:text-fog/35">
+              Automatic: replies post instantly above your rating threshold. Approval: every draft waits for you.
+            </p>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">
+              Response tone
+            </p>
+            <select
+              value={toneDraft}
+              onChange={(e) => onTone(e.target.value)}
+              aria-label="Response tone"
+              className="w-full rounded-lg border border-ink/[0.08] bg-white px-2.5 py-2 text-[12px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+            >
+              <option value="friendly">Friendly — warm and casual</option>
+              <option value="professional">Professional — formal and polished</option>
+              <option value="apologetic">Apologetic — extra empathetic</option>
+              <option value="playful">Playful — light and fun</option>
+              {!["friendly", "professional", "apologetic", "playful"].includes(toneDraft) && (
+                <option value={toneDraft}>{toneDraft}</option>
+              )}
+            </select>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">
+              Brand voice &amp; house rules
+            </p>
+            <textarea
+              value={voiceDraft}
+              onChange={(e) => onVoice(e.target.value)}
+              rows={3}
+              maxLength={2000}
+              placeholder="e.g. We never promise refunds in replies. Mention our loyalty program to happy customers."
+              className="w-full resize-y rounded-lg border border-ink/[0.08] bg-white p-2.5 text-[12px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+            />
+          </div>
+
+          <button
+            onClick={() => onSave(channel.id)}
+            disabled={saving}
+            className="rounded-lg bg-deep-violet px-3.5 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+          >
+            {saving ? (
+              <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span>
+            ) : "Save AI settings"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── One connected branch (Localith listing): profile, per-branch sync ── */
 
 function LocalithListingRow({
@@ -101,6 +267,17 @@ function LocalithListingRow({
   onEnable,
   onDisable,
   onResync,
+  ai,
+  approvalDraft,
+  toneDraft,
+  voiceDraft,
+  savingConfig,
+  onToggleAi,
+  onOpenAi,
+  onApprovalAi,
+  onToneAi,
+  onVoiceAi,
+  onSaveAi,
 }: {
   listing: { id: string; name: string; address?: string | null };
   conn: LocalithConnection | null;
@@ -109,6 +286,17 @@ function LocalithListingRow({
   onEnable: (listingId: string) => void;
   onDisable: (listingId: string) => void;
   onResync: (listingId: string) => void;
+  ai: { channel: ApiChannel; cfg: AutoReply | null; busy: boolean; open: boolean } | null;
+  approvalDraft: "auto" | "approval";
+  toneDraft: string;
+  voiceDraft: string;
+  savingConfig: boolean;
+  onToggleAi: (channelId: string, enable: boolean) => void;
+  onOpenAi: (channelId: string) => void;
+  onApprovalAi: (v: "auto" | "approval") => void;
+  onToneAi: (v: string) => void;
+  onVoiceAi: (v: string) => void;
+  onSaveAi: (channelId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const connected = conn !== null;
@@ -239,6 +427,29 @@ function LocalithListingRow({
           </div>
         );
               })()}
+      {expanded && ai && (
+        <div className="mt-2 border-t border-emerald-200/60 pt-2 dark:border-emerald-500/10">
+          <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700/60 dark:text-emerald-300/60">
+            AI replies
+          </p>
+          <AiReplyControls
+            channel={ai.channel}
+            cfg={ai.cfg}
+            busy={ai.busy}
+            expanded={ai.open}
+            approvalDraft={approvalDraft}
+            toneDraft={toneDraft}
+            voiceDraft={voiceDraft}
+            saving={savingConfig}
+            onToggle={onToggleAi}
+            onToggleExpand={onOpenAi}
+            onApproval={onApprovalAi}
+            onTone={onToneAi}
+            onVoice={onVoiceAi}
+            onSave={onSaveAi}
+          />
+        </div>
+      )}
       {conn && (
         <div className="mt-2 flex items-center justify-between gap-2 border-t border-emerald-200/60 pt-2 dark:border-emerald-500/10">
           <span className="text-[11px] text-emerald-700/60 dark:text-emerald-300/60">
@@ -271,6 +482,10 @@ function ConnectHub() {
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [urlDismissed, setUrlDismissed] = useState(false);
+
+  // Syncs pull reviews + generate AI drafts server-side and can take a
+  // while — give them 3 minutes instead of the default 60s timeout.
+  const SYNC_TIMEOUT_MS = 180000;
 
   // ── Localith state: every connected branch is stored, never replaced ──
   const [localithConns, setLocalithConns] = useState<LocalithConnection[]>([]);
@@ -439,8 +654,8 @@ function ConnectHub() {
         body: JSON.stringify({ enabled: enable }),
       });
       setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
-    } catch {
-      setBanner({ kind: "err", text: "Could not save the auto-reply setting." });
+    } catch (e) {
+      setBanner({ kind: "err", text: errDetail(e, "Could not save the auto-reply setting.") });
     } finally {
       setBusy(null);
     }
@@ -463,8 +678,8 @@ function ConnectHub() {
       });
       setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
       setBanner({ kind: "ok", text: "Response engine settings saved." });
-    } catch {
-      setBanner({ kind: "err", text: "Could not save the response engine settings." });
+    } catch (e) {
+      setBanner({ kind: "err", text: errDetail(e, "Could not save the response engine settings.") });
     } finally {
       setSavingConfig(false);
     }
@@ -489,7 +704,8 @@ function ConnectHub() {
       try {
         await apiFetch(
           `/api/v1/integrations/localith/sync?listing_id=${encodeURIComponent(listingId)}`,
-          { method: "POST" }
+          { method: "POST" },
+          SYNC_TIMEOUT_MS
         );
         await refreshLocalithConns();
         await refreshLocalithProfile(listingId);
@@ -511,7 +727,7 @@ function ConnectHub() {
       const url = listingId
         ? `/api/v1/integrations/localith/sync?listing_id=${encodeURIComponent(listingId)}`
         : "/api/v1/integrations/localith/sync";
-      const syncRes = await apiFetch(url, { method: "POST" });
+      const syncRes = await apiFetch(url, { method: "POST" }, SYNC_TIMEOUT_MS);
       const conns = await refreshLocalithConns();
       if (listingId) {
         await refreshLocalithProfile(listingId);
@@ -521,8 +737,8 @@ function ConnectHub() {
       const bits: string[] = [];
       if (typeof syncRes?.fetched === "number") bits.push(`${syncRes.fetched} review(s)`);
       setBanner({ kind: "ok", text: `Localith re-synced: ${bits.join(" · ") || "nothing new"}.` });
-    } catch {
-      setBanner({ kind: "err", text: "Localith sync failed — try again in a minute." });
+    } catch (e) {
+      setBanner({ kind: "err", text: errDetail(e, "Localith sync failed — try again in a minute.") });
     } finally {
       setBusyBranch(null);
     }
@@ -561,6 +777,52 @@ function ConnectHub() {
     : null;
 
   const googleChannels = channels.filter((c) => c.platform === "google_reviews");
+
+  // Localith-mirrored channels are managed on the Localith card above — the
+  // bottom list shows native Google OAuth locations only, so each branch
+  // appears exactly once. Falls back to name-matching when the backend
+  // predates the `source` field.
+  const hasChannelSource = googleChannels.some((c) => c.source != null);
+  const localithNameSet = useMemo(
+    () => new Set(localithConns.map((c) => c.listing_name.toLowerCase())),
+    [localithConns]
+  );
+  const isLocalithBacked = useCallback(
+    (c: ApiChannel) => {
+      if (c.source === "localith") return true;
+      if (c.source != null) return false;
+      if (hasChannelSource) return false;
+      return localithNameSet.has((c.display_name || "").toLowerCase());
+    },
+    [hasChannelSource, localithNameSet]
+  );
+  const googleChannelsNative = googleChannels.filter((c) => !isLocalithBacked(c));
+  const localithChannelByKey = useMemo(() => {
+    const m = new Map<string, ApiChannel>();
+    for (const c of googleChannels) {
+      if (!isLocalithBacked(c)) continue;
+      if (c.listing_id) m.set(c.listing_id, c);
+      if (c.display_name) m.set(c.display_name.toLowerCase(), c);
+    }
+    return m;
+  }, [googleChannels, isLocalithBacked]);
+  const aiForRow = useCallback(
+    (conn: LocalithConnection | null) => {
+      if (!conn) return null;
+      const ch =
+        localithChannelByKey.get(conn.listing_id) ??
+        localithChannelByKey.get((conn.listing_name || "").toLowerCase()) ??
+        null;
+      if (!ch) return null;
+      return {
+        channel: ch,
+        cfg: autoreply[ch.id] ?? null,
+        busy: busy === ch.id,
+        open: expandedConfig === ch.id,
+      };
+    },
+    [localithChannelByKey, autoreply, busy, expandedConfig]
+  );
 
   // Every listing on the Localith account, joined with connection state.
   // Connected branches missing from the API list are appended so nothing vanishes.
@@ -653,6 +915,17 @@ function ConnectHub() {
                 onEnable={(id) => void enableListing(id)}
                 onDisable={(id) => setConfirmDisconnect(id)}
                 onResync={(id) => void resyncLocalith(id)}
+                ai={aiForRow(row.conn)}
+                approvalDraft={approvalDraft}
+                toneDraft={toneDraft}
+                voiceDraft={voiceDraft}
+                savingConfig={savingConfig}
+                onToggleAi={(id, enable) => void toggleAutoReply(id, enable)}
+                onOpenAi={openConfig}
+                onApprovalAi={setApprovalDraft}
+                onToneAi={setToneDraft}
+                onVoiceAi={setVoiceDraft}
+                onSaveAi={(id) => void saveConfig(id)}
               />
             ))}
             {listingRows.length === 0 && (
@@ -690,131 +963,38 @@ function ConnectHub() {
         ))}
       </div>
 
-      {/* ── Connected Google locations + auto-reply toggle ── */}
-      {googleChannels.length > 0 && (
+      {/* ── Native Google OAuth locations only. Localith-mirrored branches
+          live on the Localith card above (with their AI controls), so each
+          branch appears exactly once. ── */}
+      {googleChannelsNative.length > 0 && (
         <div className="space-y-3">
           <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Google Business locations</h2>
-          {googleChannels.map((c) => {
-            const cfg = autoreply[c.id];
-            const enabled = cfg?.enabled ?? false;
-            return (
-              <div
-                key={c.id}
-                className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="flex-1">
-                    <p className="text-[14px] font-semibold text-ink dark:text-fog">
-                      {c.display_name || "Business location"}
-                    </p>
-                    <p className="text-[12px] text-ink/40 dark:text-fog/40">
-                      {enabled
-                        ? cfg?.approval_mode === "approval"
-                          ? "AI drafts every reply — you approve all"
-                          : "AI replies on ★4–5 · ★1–3 need your approval"
-                        : "Auto-reply off"}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => openConfig(c.id)}
-                    className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-deep-violet transition hover:bg-deep-violet/[0.06]"
-                  >
-                    {expandedConfig === c.id ? "Close" : "AI settings"}
-                  </button>
-                  <button
-                    onClick={() => toggleAutoReply(c.id, !enabled)}
-                    disabled={busy === c.id}
-                    className={`relative h-6 w-11 rounded-full transition ${
-                      enabled ? "bg-emerald-500" : "bg-ink/15 dark:bg-fog/15"
-                    } ${busy === c.id ? "opacity-50" : ""}`}
-                    aria-label={enabled ? "Turn off auto-reply" : "Turn on auto-reply"}
-                  >
-                    <span
-                      className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                        enabled ? "left-[22px]" : "left-0.5"
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {expandedConfig === c.id && (
-                  <div className="mt-4 space-y-4 border-t border-ink/[0.05] pt-4">
-                    <div>
-                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">
-                        Approval mode
-                      </p>
-                      <div className="flex rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.06]">
-                        {([
-                          { key: "auto", label: "Fully automatic" },
-                          { key: "approval", label: "I approve everything" },
-                        ] as const).map((m) => (
-                          <button
-                            key={m.key}
-                            onClick={() => setApprovalDraft(m.key)}
-                            aria-pressed={approvalDraft === m.key}
-                            className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
-                              approvalDraft === m.key
-                                ? "bg-white text-deep-violet shadow-sm dark:bg-ink"
-                                : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
-                            }`}
-                          >
-                            {m.label}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="mt-1 text-[10px] text-ink/35 dark:text-fog/35">
-                        Automatic: replies post instantly above your rating threshold. Approval: every draft waits for you.
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">
-                        Response tone
-                      </p>
-                      <select
-                        value={toneDraft}
-                        onChange={(e) => setToneDraft(e.target.value)}
-                        aria-label="Response tone"
-                        className="w-full rounded-lg border border-ink/[0.08] bg-white px-2.5 py-2 text-[12px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
-                      >
-                        <option value="friendly">Friendly — warm and casual</option>
-                        <option value="professional">Professional — formal and polished</option>
-                        <option value="apologetic">Apologetic — extra empathetic</option>
-                        <option value="playful">Playful — light and fun</option>
-                        {!["friendly", "professional", "apologetic", "playful"].includes(toneDraft) && (
-                          <option value={toneDraft}>{toneDraft}</option>
-                        )}
-                      </select>
-                    </div>
-
-                    <div>
-                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">
-                        Brand voice &amp; house rules
-                      </p>
-                      <textarea
-                        value={voiceDraft}
-                        onChange={(e) => setVoiceDraft(e.target.value)}
-                        rows={3}
-                        maxLength={2000}
-                        placeholder="e.g. We never promise refunds in replies. Mention our loyalty program to happy customers."
-                        className="w-full resize-y rounded-lg border border-ink/[0.08] bg-white p-2.5 text-[12px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
-                      />
-                    </div>
-
-                    <button
-                      onClick={() => saveConfig(c.id)}
-                      disabled={savingConfig}
-                      className="rounded-lg bg-deep-violet px-3.5 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
-                    >
-                      {savingConfig ? (
-                        <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span>
-                      ) : "Save AI settings"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {googleChannelsNative.map((c) => (
+            <div
+              key={c.id}
+              className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
+            >
+              <p className="mb-2 text-[14px] font-semibold text-ink dark:text-fog">
+                {c.display_name || "Business location"}
+              </p>
+              <AiReplyControls
+                channel={c}
+                cfg={autoreply[c.id] ?? null}
+                busy={busy === c.id}
+                expanded={expandedConfig === c.id}
+                approvalDraft={approvalDraft}
+                toneDraft={toneDraft}
+                voiceDraft={voiceDraft}
+                saving={savingConfig}
+                onToggle={(id, enable) => void toggleAutoReply(id, enable)}
+                onToggleExpand={openConfig}
+                onApproval={setApprovalDraft}
+                onTone={setToneDraft}
+                onVoice={setVoiceDraft}
+                onSave={(id) => void saveConfig(id)}
+              />
+            </div>
+          ))}
         </div>
       )}
 
