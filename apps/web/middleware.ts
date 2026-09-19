@@ -46,7 +46,10 @@ export function middleware(request: NextRequest) {
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
 
-  const scriptExtras = isProd ? "" : " 'unsafe-eval' 'unsafe-inline'";
+  // Next.js injects inline bootstrap scripts and allows no per-request nonce
+  // yet — without 'unsafe-inline', every production page renders with dead
+  // JS (all inline scripts blocked). Nonce-based CSP is the proper follow-up.
+  const scriptExtras = isProd ? " 'unsafe-inline'" : " 'unsafe-eval' 'unsafe-inline'";
   const csp = [
     "default-src 'self'",
     // API host: serves the proxied Meta SDK script (cross-origin script tag).
