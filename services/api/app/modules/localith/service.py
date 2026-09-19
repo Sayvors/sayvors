@@ -20,7 +20,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -228,7 +228,60 @@ def _moved_parts(synced: int, old: dict[str, int], new: dict[str, int]) -> list[
     return parts
 
 
+# Postgres advisory-lock key serializing Localith syncs across uvicorn
+# workers and API instances (arbitrary 64-bit key, must just be unique).
+_SYNC_ADVISORY_LOCK_KEY = 64821410933
+
+
+async def _acquire_sync_lock(db: AsyncSession) -> bool:
+    """Hold the sync lock for the whole connection sync (multi-commit body).
+
+    Without this, two `--workers` processes both pass the channel
+    check-then-insert and create duplicate channels (plus unique-constraint
+    collisions on reviews). Session-level lock: auto-released on disconnect,
+    explicitly released in `sync_connection`'s finally. Returns False on
+    non-Postgres sessions (sqlite test DBs have no advisory locks) — callers
+    then proceed unlocked.
+    """
+    try:
+        await db.execute(sa_text(f"SELECT pg_advisory_lock({_SYNC_ADVISORY_LOCK_KEY})"))
+        return True
+    except Exception as e:
+        logger.debug("Localith sync lock unavailable, proceeding unlocked: %s", e)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return False
+
+
+async def _release_sync_lock(db: AsyncSession) -> None:
+    try:
+        await db.execute(sa_text(f"SELECT pg_advisory_unlock({_SYNC_ADVISORY_LOCK_KEY})"))
+    except Exception:
+        pass
+
+
 async def sync_connection(
+    user: User,
+    db: AsyncSession,
+    metrics_days_back: int = 30,
+    listing_id: str | None = None,
+) -> dict[str, int | str]:
+    """Sync one tenant's Localith listing into Sayvors' normal review pipeline.
+
+    Serialized via a Postgres advisory lock (see `_acquire_sync_lock`) so
+    concurrent passes never duplicate channels or reviews.
+    """
+    locked = await _acquire_sync_lock(db)
+    try:
+        return await _sync_connection_inner(user, db, metrics_days_back, listing_id)
+    finally:
+        if locked:
+            await _release_sync_lock(db)
+
+
+async def _sync_connection_inner(
     user: User,
     db: AsyncSession,
     metrics_days_back: int = 30,
