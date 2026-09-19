@@ -1,0 +1,3 @@
+api.staging.sayvors.com {
+	reverse_proxy api:8000
+}
