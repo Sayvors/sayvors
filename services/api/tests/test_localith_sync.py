@@ -295,12 +295,18 @@ async def test_sync_all_once_skips_without_key(monkeypatch):
     totals = await localith_worker.sync_all_once(
         session_factory=_make_factory([SimpleNamespace(user_id="u1")], {})
     )
-    assert totals == {"connections": 0, "fetched": 0, "new_reviews": 0, "errors": 0}
+    assert totals == {"connections": 0, "fetched": 0, "new_reviews": 0, "errors": 0, "skipped": 0}
 
 
 @pytest.mark.asyncio
 async def test_sync_all_once_counts_and_isolates_failures(monkeypatch):
     monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _await_true():
+        return True
+
+    monkeypatch.setattr(service, "_try_acquire_sync_lock", lambda db, lid=None: _await_true())
+    monkeypatch.setattr(service, "_release_sync_lock", lambda db, lid=None: _await_true())
     calls = []
 
     async def _fake_sync(user, db, listing_id=None):
@@ -315,8 +321,33 @@ async def test_sync_all_once_counts_and_isolates_failures(monkeypatch):
     totals = await localith_worker.sync_all_once(
         session_factory=_make_factory(conns, users)
     )
-    assert totals == {"connections": 2, "fetched": 3, "new_reviews": 2, "errors": 1}
+    assert totals == {"connections": 2, "fetched": 3, "new_reviews": 2, "errors": 1, "skipped": 0}
     assert calls == ["u1", "bad"]
+
+
+@pytest.mark.asyncio
+async def test_sync_all_once_skips_locked_branch(monkeypatch):
+    """Another worker holds the branch: skip instead of piling on."""
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _await_false():
+        return False
+
+    monkeypatch.setattr(service, "_try_acquire_sync_lock", lambda db, lid=None: _await_false())
+    calls = []
+
+    async def _fake_sync(user, db, listing_id=None):
+        calls.append(user.id)
+        return {"fetched": 1, "new_reviews": 0}
+
+    monkeypatch.setattr(service, "sync_connection", _fake_sync)
+    conns = [SimpleNamespace(user_id="u1", listing_id="abc")]
+    users = {"u1": SimpleNamespace(id="u1")}
+    totals = await localith_worker.sync_all_once(
+        session_factory=_make_factory(conns, users)
+    )
+    assert totals == {"connections": 0, "fetched": 0, "new_reviews": 0, "errors": 0, "skipped": 1}
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -410,6 +441,321 @@ async def test_autopilot_auto_posts_high_and_queues_low(db, user_id, channel_id,
     assert rows["localith:hi5"].status == "posted"
     assert rows["localith:hi5"].error is None
     assert rows["localith:lo2"].status == "pending_approval"
+
+@pytest.mark.asyncio
+async def test_sync_flags_edited_review_and_notifies_once(db, user_id, channel_id, monkeypatch):
+    """Reviewer edits a review between syncs: content comparison flags the
+    insight, snapshots the original, notifies once — and stays quiet while
+    the content doesn't change again."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.modules.analytics.models import ReviewInsight
+    from app.modules.channels.models import AutoReplyConfig
+    from app.modules.localith.models import LocalithConnection
+    from app.modules.notifications.models import Notification
+
+    db.add(LocalithConnection(
+        id="lc-edit-1", user_id=user_id, listing_id="demo-loc-456",
+        listing_name="Edit Branch",
+    ))
+    db.add(AutoReplyConfig(
+        id="cfg-edit-1", channel_id=channel_id, enabled=True,
+        approval_mode="approval", min_rating_auto=4,
+    ))
+    await db.commit()
+
+    items = [
+        {"id": "rv-edit", "rating": 5, "captionText": "Great product", "authorName": "Adeel"},
+    ]
+    monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", True)
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _detail(listing_id):
+        return {}
+
+    async def _no_events(event_type, payload, topic="review-events"):
+        return "evt"
+
+    monkeypatch.setattr(service, "get_listing_detail", _detail)
+    monkeypatch.setattr(service, "enqueue_event", _no_events)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
+    monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
+
+    async def _gen(*a, **k):
+        return "draft"
+
+    monkeypatch.setattr(service, "generate_auto_reply", _gen)
+
+    # First sync: brand-new review — never flagged.
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+    row = (await db.execute(
+        select(ReviewInsight).where(ReviewInsight.review_id == "localith:rv-edit")
+    )).scalar_one()
+    assert row.edited is False
+    assert row.rating == 5
+
+    # Reviewer edits: rating drop + new text.
+    items[0]["rating"] = 2
+    items[0]["captionText"] = "Actually broke after a week"
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    db.expire_all()
+    row = (await db.execute(
+        select(ReviewInsight).where(ReviewInsight.review_id == "localith:rv-edit")
+    )).scalar_one()
+    assert row.edited is True
+    assert row.previous_rating == 5
+    assert row.previous_review_text == "Great product"
+    assert row.rating == 2
+    assert row.review_text == "Actually broke after a week"
+    # Enrichment re-queued — sentiment must be recomputed on the new text.
+    assert row.enrichment_status == "pending"
+
+    notes = (await db.execute(
+        select(Notification).where(Notification.type == "review_edited")
+    )).scalars().all()
+    assert len(notes) == 1
+    assert "★5 → ★2" in notes[0].title
+    assert notes[0].data["review_id"] == "localith:rv-edit"
+    assert notes[0].href == "/dashboard/reviews?tab=edited"
+
+    # Unchanged content on the next pass: no duplicate notification.
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+    db.expire_all()
+    notes = (await db.execute(
+        select(Notification).where(Notification.type == "review_edited")
+    )).scalars().all()
+    assert len(notes) == 1
+    row = (await db.execute(
+        select(ReviewInsight).where(ReviewInsight.review_id == "localith:rv-edit")
+    )).scalar_one()
+    assert row.edited is True
+    assert row.previous_review_text == "Great product"
+
+
+@pytest.mark.asyncio
+async def test_sync_backfill_is_not_an_edit(db, user_id, channel_id, monkeypatch):
+    """Filling fields older syncs missed (empty text, missing URL) must not
+    flag the review as edited."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.modules.analytics.models import ReviewInsight
+    from app.modules.channels.models import AutoReplyConfig
+    from app.modules.localith.models import LocalithConnection
+    from app.modules.notifications.models import Notification
+
+    db.add(LocalithConnection(
+        id="lc-bf-1", user_id=user_id, listing_id="demo-loc-456",
+        listing_name="Backfill Branch",
+    ))
+    db.add(AutoReplyConfig(
+        id="cfg-bf-1", channel_id=channel_id, enabled=True,
+        approval_mode="approval", min_rating_auto=4,
+    ))
+    await db.commit()
+
+    # First sync: stars only, no caption, no link.
+    items = [{"id": "rv-bf", "rating": 4, "authorName": "Omar"}]
+    monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", True)
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _detail(listing_id):
+        return {}
+
+    async def _no_events(event_type, payload, topic="review-events"):
+        return "evt"
+
+    monkeypatch.setattr(service, "get_listing_detail", _detail)
+    monkeypatch.setattr(service, "enqueue_event", _no_events)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
+    monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
+
+    async def _gen(*a, **k):
+        return "draft"
+
+    monkeypatch.setattr(service, "generate_auto_reply", _gen)
+
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    # Second sync: the same review now carries text + link (backfill).
+    items[0]["captionText"] = "Nice place"
+    items[0]["reviewLink"] = "https://search.google.com/local/reviews?placeid=X"
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    db.expire_all()
+    row = (await db.execute(
+        select(ReviewInsight).where(ReviewInsight.review_id == "localith:rv-bf")
+    )).scalar_one()
+    assert row.review_text == "Nice place"
+    assert row.review_url == "https://search.google.com/local/reviews?placeid=X"
+    assert row.edited is False
+
+    notes = (await db.execute(
+        select(Notification).where(Notification.type == "review_edited")
+    )).scalars().all()
+    assert notes == []
+
+
+@pytest.mark.asyncio
+async def test_edited_review_regenerates_pending_draft_in_place(db, user_id, channel_id, monkeypatch):
+    """A queued draft written from pre-edit content must be regenerated from
+    the new content — same row, refreshed text, bumped attempt."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.modules.analytics.models import ReviewInsight
+    from app.modules.channels.models import AutoReplyConfig, ReviewReply
+    from app.modules.localith.models import LocalithConnection
+
+    db.add(LocalithConnection(
+        id="lc-rg-1", user_id=user_id, listing_id="demo-loc-456",
+        listing_name="Regen Branch",
+    ))
+    db.add(AutoReplyConfig(
+        id="cfg-rg-1", channel_id=channel_id, enabled=True,
+        approval_mode="approval", min_rating_auto=4,
+    ))
+    await db.commit()
+
+    items = [
+        {"id": "rv-rg", "rating": 5, "captionText": "Great product", "authorName": "Adeel"},
+    ]
+    monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", True)
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _detail(listing_id):
+        return {}
+
+    async def _no_events(event_type, payload, topic="review-events"):
+        return "evt"
+
+    monkeypatch.setattr(service, "get_listing_detail", _detail)
+    monkeypatch.setattr(service, "enqueue_event", _no_events)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
+    monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
+
+    async def _gen(config, channel, rating, text, reviewer, db_,
+                   review_id=None, attempt=1, previous_draft=None):
+        return f"AI reply to: {text} (try {attempt})"
+
+    monkeypatch.setattr(service, "generate_auto_reply", _gen)
+
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+    row = (await db.execute(select(ReviewReply))).scalar_one()
+    assert row.status == "pending_approval"
+    assert row.reply_text == "AI reply to: Great product (try 1)"
+    row_id = row.id
+
+    # Reviewer edits the review while the draft is still queued.
+    items[0]["rating"] = 2
+    items[0]["captionText"] = "Actually broke after a week"
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    db.expire_all()
+    rows = (await db.execute(select(ReviewReply))).scalars().all()
+    assert len(rows) == 1  # regenerated in place — no duplicate draft
+    row = rows[0]
+    assert row.id == row_id
+    assert row.status == "pending_approval"
+    assert row.reply_text == "AI reply to: Actually broke after a week (try 2)"
+    assert row.review_text == "Actually broke after a week"
+    assert row.rating == 2
+    assert row.generation_attempt == 2
+
+
+@pytest.mark.asyncio
+async def test_edited_review_after_posted_reply_queues_followup(db, user_id, channel_id, monkeypatch):
+    """When a reply is already live and the reviewer edits the review, the
+    sync queues a fresh pending draft from the new content — never auto-posts."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.modules.analytics.models import ReviewInsight
+    from app.modules.channels.models import AutoReplyConfig, ReviewReply
+    from app.modules.localith.models import LocalithConnection
+
+    db.add(LocalithConnection(
+        id="lc-fu-1", user_id=user_id, listing_id="demo-loc-456",
+        listing_name="Follow-up Branch",
+    ))
+    db.add(AutoReplyConfig(
+        id="cfg-fu-1", channel_id=channel_id, enabled=True,
+        approval_mode="auto", min_rating_auto=4,
+    ))
+    await db.commit()
+
+    items = [
+        {"id": "rv-fu", "rating": 5, "captionText": "Great product", "authorName": "Adeel"},
+    ]
+    monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", True)
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _detail(listing_id):
+        return {}
+
+    async def _no_events(event_type, payload, topic="review-events"):
+        return "evt"
+
+    monkeypatch.setattr(service, "get_listing_detail", _detail)
+    monkeypatch.setattr(service, "enqueue_event", _no_events)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
+    monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
+
+    posted_via_api: list[tuple[str, str]] = []
+
+    async def _post(item_id, text):
+        posted_via_api.append((item_id, text))
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "post_reply", _post)
+
+    async def _gen(config, channel, rating, text, reviewer, db_,
+                   review_id=None, attempt=1, previous_draft=None):
+        return f"AI reply to: {text} (try {attempt})"
+
+    monkeypatch.setattr(service, "generate_auto_reply", _gen)
+
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+    row = (await db.execute(select(ReviewReply))).scalar_one()
+    # Simulate the merchant approving: the reply is now live on Google.
+    row.status = "posted"
+    await db.commit()
+
+    # Reviewer edits the review after the reply went live.
+    items[0]["rating"] = 2
+    items[0]["captionText"] = "Actually broke after a week"
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    db.expire_all()
+    rows = (await db.execute(
+        select(ReviewReply).order_by(ReviewReply.created_at.asc())
+    )).scalars().all()
+    assert len(rows) == 2
+    posted = [r for r in rows if r.status == "posted"]
+    pending = [r for r in rows if r.status == "pending_approval"]
+    assert len(posted) == 1 and posted[0].reply_text == "AI reply to: Great product (try 1)"
+    assert len(pending) == 1
+    assert pending[0].review_text == "Actually broke after a week"
+    assert pending[0].reply_text == "AI reply to: Actually broke after a week (try 1)"
+
+    # The follow-up is never auto-posted, even in auto mode.
+    assert posted_via_api == []
+
+    insight = (await db.execute(
+        select(ReviewInsight).where(ReviewInsight.review_id == "localith:rv-fu")
+    )).scalar_one()
+    assert insight.edited is True  # clears only when the follow-up is posted
+
 
 @pytest.mark.asyncio
 async def test_get_connection_selects_branch(db, user_id):

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...database import Base
@@ -9,6 +9,12 @@ from ...database import Base
 
 class Channel(Base):
     __tablename__ = "channels"
+    __table_args__ = (
+        # One row per location: (user, platform, listing_key). NULL keys
+        # (channels with no location identity) never conflict — both
+        # Postgres and SQLite treat NULLs as distinct here.
+        UniqueConstraint("user_id", "platform", "listing_key", name="uq_channels_user_platform_key"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), index=True)
@@ -36,6 +42,13 @@ class Channel(Base):
     avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     webhook_secret: Mapped[str | None] = mapped_column(String(100), nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Stable dedupe key: Localith listing_id, or Google location_id for
+    # native OAuth channels. NULL for channels with no location identity.
+    # Uniqueness is enforced by a partial unique index
+    # (user_id, platform, listing_key) WHERE listing_key IS NOT NULL, so a
+    # race between workers can never twin a row — the loser reuses the
+    # winner's row (get-or-create). Safe at any --workers count.
+    listing_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

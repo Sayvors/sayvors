@@ -68,10 +68,13 @@ async def verify_webhook_signature(
 async def create_channel(body: ChannelCreate, user: User, db: AsyncSession) -> Channel:
     import json as _json
 
+    from sqlalchemy.exc import IntegrityError
+
     metadata: dict = {}
     if body.location_id:
         metadata["location_id"] = body.location_id
 
+    key = channel_listing_key(body.platform, metadata)
     channel = Channel(
         id=str(uuid.uuid4()),
         user_id=user.id,
@@ -82,11 +85,57 @@ async def create_channel(body: ChannelCreate, user: User, db: AsyncSession) -> C
         refresh_token=encrypt_token(body.refresh_token) if body.refresh_token else None,
         webhook_secret=body.webhook_secret or None,
         metadata_json=_json.dumps(metadata) if metadata else None,
+        listing_key=key,
     )
     db.add(channel)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Lost a race (or double-clicked): the row already exists.
+        await db.rollback()
+        raise ValueError("Channel already connected")
     await db.refresh(channel)
     return channel
+
+
+def parse_channel_metadata(metadata_json: str | None) -> dict:
+    """metadata_json parsed safely (never raises — {} on garbage)."""
+    if not metadata_json:
+        return {}
+    try:
+        meta = json.loads(metadata_json)
+    except (ValueError, TypeError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def channel_listing_key(platform: str, metadata: dict) -> str | None:
+    """Stable per-location identity for google_reviews channels.
+
+    Localith-mirrored rows carry listing_id; native OAuth rows carry
+    location_id. Different ID spaces, so the two sources never collide.
+    None for channels with no location identity (never deduped).
+    """
+    if not isinstance(metadata, dict):
+        return None
+    if platform == "google_reviews":
+        key = metadata.get("listing_id") or metadata.get("location_id")
+        return str(key) if key else None
+    return None
+
+
+async def find_channel_by_key(
+    db: AsyncSession, user_id: str, platform: str, listing_key: str
+) -> Channel | None:
+    """Indexed lookup of one location's channel (the get in get-or-create)."""
+    result = await db.execute(
+        select(Channel).where(
+            Channel.user_id == user_id,
+            Channel.platform == platform,
+            Channel.listing_key == listing_key,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def list_channels(

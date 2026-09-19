@@ -228,23 +228,35 @@ def _moved_parts(synced: int, old: dict[str, int], new: dict[str, int]) -> list[
     return parts
 
 
-# Postgres advisory-lock key serializing Localith syncs across uvicorn
-# workers and API instances (arbitrary 64-bit key, must just be unique).
+# Locking for Localith syncs across uvicorn workers and API instances.
+# Same branch => same lock (serial: twins impossible even before the unique
+# index is hit). Different branches => different locks (parallel: speed).
+# Whole-pass syncs (no listing) take the legacy global key.
 _SYNC_ADVISORY_LOCK_KEY = 64821410933
+_SYNC_LOCK_PREFIX = "sayvors:localith-sync:"
 
 
-async def _acquire_sync_lock(db: AsyncSession) -> bool:
+def _lock_stmt(blocking: bool, listing_id: str | None):
+    """pg_advisory_lock (blocking) or pg_try_advisory_lock (non-blocking)."""
+    if listing_id is None:
+        fn = "pg_advisory_lock" if blocking else "pg_try_advisory_lock"
+        return sa_text(f"SELECT {fn}({_SYNC_ADVISORY_LOCK_KEY})")
+    fn = "pg_advisory_lock" if blocking else "pg_try_advisory_lock"
+    return sa_text(
+        f"SELECT {fn}(hashtext('{_SYNC_LOCK_PREFIX}' || :lid))"
+    ).bindparams(lid=str(listing_id))
+
+
+async def _acquire_sync_lock(db: AsyncSession, listing_id: str | None = None) -> bool:
     """Hold the sync lock for the whole connection sync (multi-commit body).
 
-    Without this, two `--workers` processes both pass the channel
-    check-then-insert and create duplicate channels (plus unique-constraint
-    collisions on reviews). Session-level lock: auto-released on disconnect,
-    explicitly released in `sync_connection`'s finally. Returns False on
-    non-Postgres sessions (sqlite test DBs have no advisory locks) — callers
-    then proceed unlocked.
+    Session-level lock: auto-released on disconnect, explicitly released in
+    `sync_connection`'s finally. Returns False on non-Postgres sessions
+    (sqlite test DBs have no advisory locks) — callers then proceed
+    unlocked; correctness there rests on the unique index.
     """
     try:
-        await db.execute(sa_text(f"SELECT pg_advisory_lock({_SYNC_ADVISORY_LOCK_KEY})"))
+        await db.execute(_lock_stmt(True, listing_id))
         return True
     except Exception as e:
         logger.debug("Localith sync lock unavailable, proceeding unlocked: %s", e)
@@ -255,9 +267,39 @@ async def _acquire_sync_lock(db: AsyncSession) -> bool:
         return False
 
 
-async def _release_sync_lock(db: AsyncSession) -> None:
+async def _try_acquire_sync_lock(db: AsyncSession, listing_id: str | None = None) -> bool:
+    """Non-blocking take: True when we now hold the lock, False when another
+    worker/pass already holds it (caller should SKIP, not wait — this is how
+    the two auto-sync loops stop racing each other). Only call on a clean
+    session (nothing pending): a miss ends with a rollback."""
     try:
-        await db.execute(sa_text(f"SELECT pg_advisory_unlock({_SYNC_ADVISORY_LOCK_KEY})"))
+        row = (await db.execute(_lock_stmt(False, listing_id))).scalar()
+        if row:
+            return True
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return False
+    except Exception as e:
+        logger.debug("Localith try-lock unavailable, proceeding unlocked: %s", e)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return False
+
+
+async def _release_sync_lock(db: AsyncSession, listing_id: str | None = None) -> None:
+    try:
+        if listing_id is None:
+            await db.execute(sa_text(f"SELECT pg_advisory_unlock({_SYNC_ADVISORY_LOCK_KEY})"))
+        else:
+            await db.execute(
+                sa_text(
+                    f"SELECT pg_advisory_unlock(hashtext('{_SYNC_LOCK_PREFIX}' || :lid))"
+                ).bindparams(lid=str(listing_id))
+            )
     except Exception:
         pass
 
@@ -270,15 +312,17 @@ async def sync_connection(
 ) -> dict[str, int | str]:
     """Sync one tenant's Localith listing into Sayvors' normal review pipeline.
 
-    Serialized via a Postgres advisory lock (see `_acquire_sync_lock`) so
-    concurrent passes never duplicate channels or reviews.
+    Serialized per branch via a Postgres advisory lock (see
+    `_acquire_sync_lock`) so concurrent passes never duplicate channels or
+    reviews; different branches sync in parallel. The unique index on
+    channels (user_id, platform, listing_key) is the final backstop.
     """
-    locked = await _acquire_sync_lock(db)
+    locked = await _acquire_sync_lock(db, listing_id)
     try:
         return await _sync_connection_inner(user, db, metrics_days_back, listing_id)
     finally:
         if locked:
-            await _release_sync_lock(db)
+            await _release_sync_lock(db, listing_id)
 
 
 async def _sync_connection_inner(
@@ -351,14 +395,29 @@ async def _sync_single_connection(
     user: User, db: AsyncSession, connection, metrics_days_back: int = 30
 ) -> dict[str, int | str]:
 
-    channel_result = await db.execute(
-        select(Channel).where(
-            Channel.user_id == user.id,
-            Channel.platform == "google_reviews",
-            Channel.metadata_json.contains(connection.listing_id),
+    from sqlalchemy.exc import IntegrityError as _IntegrityError
+
+    from ..channels.service import find_channel_by_key as _find_by_key
+
+    # Get-or-create on the indexed listing key: parallel syncs (two workers,
+    # double-clicks, auto-sync colliding with a manual one) can never twin
+    # the row. The unique index admits one winner; losers reuse that row.
+    # The insert runs in a SAVEPOINT so losing the race never disturbs the
+    # sync's surrounding transaction.
+    key = connection.listing_id
+    channel = await _find_by_key(db, user.id, "google_reviews", key)
+    if channel is None:
+        # Legacy rows predate listing_key: one metadata scan, then heal.
+        legacy = await db.execute(
+            select(Channel).where(
+                Channel.user_id == user.id,
+                Channel.platform == "google_reviews",
+                Channel.metadata_json.contains(connection.listing_id),
+            )
         )
-    )
-    channel = channel_result.scalar_one_or_none()
+        channel = legacy.scalar_one_or_none()
+        if channel is not None and channel.listing_key is None:
+            channel.listing_key = key
     if channel is None:
         channel = Channel(
             id=str(uuid.uuid4()),
@@ -372,9 +431,18 @@ async def _sync_single_connection(
                 "listing_id": connection.listing_id,
                 "location_id": connection.listing_google_id or connection.listing_id,
             }),
+            listing_key=key,
         )
         db.add(channel)
-        await db.flush()
+        try:
+            async with db.begin_nested():
+                await db.flush()
+        except _IntegrityError:
+            # Lost the race: discard our copy, reuse the winner's row.
+            db.expunge(channel)
+            channel = await _find_by_key(db, user.id, "google_reviews", key)
+            if channel is None:
+                raise RuntimeError("Channel vanished mid-sync — retry the sync.")
 
     # 1. Profile snapshot — every field the detail endpoint returns.
     detail = await get_listing_detail(connection.listing_id)

@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, fetchInsights, fetchOverview, fetchTimeseries, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { dedupeBusinesses } from "@/lib/channel-identity";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
 import { MetricChart, RatingDistribution, Sparkline } from "@/components/analytics/Charts";
@@ -17,7 +18,7 @@ const checklistDefs = [
 
 const CHECKLIST_KEY = "sayvors.onboarding.checklist";
 
-type DashboardChannel = { id: string; platform: string; display_name: string | null };
+type DashboardChannel = { id: string; platform: string; display_name: string | null; listing_id?: string | null; source?: string | null };
 type DashboardService = { is_offered: boolean };
 
 interface AttentionItem {
@@ -35,6 +36,30 @@ function dedupeDraftsByReview(list: ReviewReplyDTO[]): ReviewReplyDTO[] {
     if (!prev || d.created_at > prev.created_at) seen.set(d.review_id, d);
   }
   return [...seen.values()];
+}
+
+function detailFromError(e: unknown, fallback: string): string {
+  // apiFetch throws the raw response body — extract the server's detail
+  // (e.g. "Failed to post reply to Google: No refresh token available").
+  if (e instanceof Error) {
+    try {
+      const parsed = JSON.parse(e.message) as { detail?: unknown };
+      if (typeof parsed.detail === "string") return parsed.detail;
+    } catch {
+      /* not JSON — keep the fallback */
+    }
+  }
+  return fallback;
+}
+
+interface EditedItem {
+  id: string;
+  review_id: string;
+  channel_id: string;
+  rating: number;
+  review_text: string | null;
+  reviewer_name: string | null;
+  previous_rating: number | null;
 }
 
 function AttentionQueue() {
@@ -59,6 +84,14 @@ function AttentionQueue() {
   const [flagged, setFlagged] = useState<{ channel_id: string; review_id: string; rating: number; review_text: string | null; reviewer_name: string | null }[]>([]);
   const [flaggedTotal, setFlaggedTotal] = useState(0);
   const [flaggedOpen, setFlaggedOpen] = useState(false);
+  const [edited, setEdited] = useState<EditedItem[]>([]);
+  const [editedTotal, setEditedTotal] = useState(0);
+  const [editedOpen, setEditedOpen] = useState(false);
+  const [editedDrafts, setEditedDrafts] = useState<Record<string, ReviewReplyDTO>>({});
+  const [editedApprovingId, setEditedApprovingId] = useState<string | null>(null);
+  const [editedRewritingId, setEditedRewritingId] = useState<string | null>(null);
+  const [editedGeneratingId, setEditedGeneratingId] = useState<string | null>(null);
+  const [editedError, setEditedError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,9 +106,10 @@ function AttentionQueue() {
         const conns = (Array.isArray(connsData) ? connsData : []) as {
           listing_name?: string; phone_number?: string | null; website_url?: string | null;
         }[];
-        const googleChannels = (channelData?.channels ?? []).filter(
+        const rawChannels: DashboardChannel[] = (channelData?.channels ?? []).filter(
           (c: { platform: string }) => c.platform === "google_reviews"
         );
+        const googleChannels = dedupeBusinesses(rawChannels);
         if (!cancelled) setChannelIds(googleChannels.map((c: { id: string }) => c.id));
         const names: Record<string, string> = {};
         for (const ch of channelData?.channels ?? []) {
@@ -130,6 +164,50 @@ function AttentionQueue() {
            }
          } catch {
            /* flagged section hidden on error */
+         }
+         try {
+           const data = await apiFetch("/api/v1/analytics/reviews/insights?edited=true&limit=50");
+           if (!cancelled) {
+             // A backend older than the edit-detection feature ignores the
+             // edited param — filter locally so this card only ever lists
+             // genuinely-edited reviews.
+             const flagged = ((data.items ?? []) as { id: string; review_id: string; channel_id: string; rating: number; review_text: string | null; reviewer_name: string | null; previous_rating: number | null; edited?: boolean }[])
+               .filter((it) => it.edited === true);
+             const topEdited = flagged.slice(0, 5).map((it) => ({
+               id: it.id,
+               review_id: it.review_id,
+               channel_id: it.channel_id,
+               rating: it.rating,
+               review_text: it.review_text,
+               reviewer_name: it.reviewer_name,
+               previous_rating: it.previous_rating,
+             }));
+             setEditedTotal(flagged.length);
+             setEdited(topEdited);
+             // The AI pipeline queues a follow-up draft (pending_approval)
+             // for every edited review — pull it in so the merchant can
+             // approve & publish right from this card.
+             const channelSet = new Set(topEdited.map((it) => it.channel_id));
+             const editedReviewIds = new Set(topEdited.map((it) => it.review_id));
+             const draftMap: Record<string, ReviewReplyDTO> = {};
+             await Promise.all(
+               [...channelSet].map(async (chId) => {
+                 try {
+                   const r = await apiFetch(`/api/v1/channels/${chId}/reviews?status=pending_approval&limit=100`);
+                   for (const d of (r.replies ?? []) as ReviewReplyDTO[]) {
+                     if (!editedReviewIds.has(d.review_id)) continue;
+                     const prev = draftMap[d.review_id];
+                     if (!prev || (d.created_at ?? "") > (prev.created_at ?? "")) draftMap[d.review_id] = d;
+                   }
+                 } catch {
+                   /* queue unavailable — card falls back to the no-draft hint */
+                 }
+               })
+             );
+             if (!cancelled) setEditedDrafts(draftMap);
+           }
+         } catch {
+           /* edited section hidden on error */
          }
          const delta = overview?.period.rating_delta;
         if (typeof delta === "number" && delta < 0) {
@@ -194,6 +272,67 @@ function AttentionQueue() {
       setDraftError(msg);
     } finally {
       setApprovingId(null);
+    }
+  }
+
+  async function approveEditedDraft(d: ReviewReplyDTO, reviewId: string) {
+    setEditedApprovingId(d.id);
+    setEditedError(null);
+    try {
+      await approveReply(d.channel_id, d.id);
+      // Publishing the updated reply clears the edited flag server-side
+      // (review.replied → posted) — drop the card locally right away.
+      setEdited((prev) => prev.filter((x) => x.review_id !== reviewId));
+      setEditedTotal((t) => Math.max(0, t - 1));
+      setEditedDrafts((prev) => {
+        const next = { ...prev };
+        delete next[reviewId];
+        return next;
+      });
+    } catch (e) {
+      setEditedError(detailFromError(e, "Could not publish that reply. Try again."));
+    } finally {
+      setEditedApprovingId(null);
+    }
+  }
+
+  async function rewriteEditedDraft(d: ReviewReplyDTO) {
+    if (editedRewritingId !== null) return;
+    setEditedRewritingId(d.id);
+    setEditedError(null);
+    try {
+      const fresh = await regenerateReply(d.channel_id, d.id, true);
+      setEditedDrafts((prev) => ({
+        ...prev,
+        [d.review_id]: {
+          ...d,
+          reply_text: fresh.reply_text,
+          generation_attempt: fresh.generation_attempt ?? (d.generation_attempt ?? 1) + 1,
+        },
+      }));
+    } catch (e) {
+      setEditedError(detailFromError(e, "Engine rewrite failed. Try again."));
+    } finally {
+      setEditedRewritingId(null);
+    }
+  }
+
+  async function generateEditedDraft(d: EditedItem) {
+    if (editedGeneratingId !== null) return;
+    setEditedGeneratingId(d.id);
+    setEditedError(null);
+    try {
+      const fresh = await generateReply(d.channel_id, {
+        review_id: d.review_id,
+        rating: d.rating,
+        review_text: d.review_text,
+        reviewer_name: d.reviewer_name,
+      });
+      setEditedDrafts((prev) => ({ ...prev, [d.review_id]: fresh }));
+    } catch (e) {
+      setEditedError(detailFromError(e, "Could not draft a reply. Try again."));
+    } finally {
+      setEditedGeneratingId(null);
     }
   }
 
@@ -342,7 +481,8 @@ function AttentionQueue() {
    const showDrafts = draftTotal > 0;
    const showFailed = failedTotal > 0;
    const showFlagged = flaggedTotal > 0;
-   const allClear = !showDrafts && !showFailed && !showFlagged && items.length === 0;
+   const showEdited = editedTotal > 0;
+   const allClear = !showDrafts && !showFailed && !showFlagged && !showEdited && items.length === 0;
    const draftTitle =
      draftTotal === 1 ? "1 drafted reply needs your approval" : `${draftTotal} drafted replies across all locations need your approval`;
    const failedTitle =
@@ -354,6 +494,8 @@ function AttentionQueue() {
    );
     const flaggedTitle =
       flaggedTotal === 1 ? "1 review marked unavailable" : `${flaggedTotal} reviews marked unavailable on Google`;
+   const editedTitle =
+     editedTotal === 1 ? "1 review was edited by its author" : `${editedTotal} reviews were edited by their authors`;
    return (
     <section
       aria-label="Needs attention"
@@ -565,6 +707,99 @@ function AttentionQueue() {
               )}
              </li>
            )}
+           {showEdited && (
+             <li>
+               <button
+                 onClick={() => setEditedOpen((o) => !o)}
+                 aria-expanded={editedOpen}
+                 aria-controls="attention-edited-body"
+                 className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+               >
+                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-deep-violet" aria-hidden />
+                 <span className="min-w-0 flex-1">
+                   <span className="block truncate text-[13px] font-semibold text-ink">{editedTitle}</span>
+                   <span className="block truncate text-[11px] text-ink/45">See what changed and respond to the new version</span>
+                 </span>
+                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 transition group-hover:text-deep-violet ${editedOpen ? "rotate-180" : ""}`}>
+                   <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                 </svg>
+               </button>
+               {editedOpen && (
+                 <div id="attention-edited-body" className="space-y-2 px-2 pb-3 pt-1">
+                   {editedError && (
+                     <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{editedError}</p>
+                   )}
+                   {edited.map((d) => {
+                     const locName = channelNames[d.channel_id] ?? "Location";
+                     const draft = editedDrafts[d.review_id];
+                     const busy = draft != null && editedApprovingId === draft.id;
+                     return (
+                       <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                         <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           {d.previous_rating != null && d.previous_rating !== d.rating && (
+                             <span aria-label={`was ${d.previous_rating} stars`} className="text-[10px] font-medium text-ink/40 line-through">{d.previous_rating}★</span>
+                           )}
+                           <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
+                           <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
+                         </div>
+                         {d.review_text && (
+                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
+                         )}
+                         {draft ? (
+                           <div className="mt-2 rounded-lg bg-deep-violet/[0.05] p-2.5">
+                             <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60">
+                               AI draft — refreshed for the edited review{(draft.generation_attempt ?? 1) > 1 ? ` · try #${draft.generation_attempt}` : ""}
+                             </p>
+                             <p className="mt-0.5 line-clamp-3 text-[12px] leading-relaxed text-ink/80">{draft.reply_text}</p>
+                             <div className="mt-2 flex items-center justify-end gap-2">
+                               <button
+                                 onClick={() => void rewriteEditedDraft(draft)}
+                                 disabled={editedRewritingId !== null || busy}
+                                 title="Re-run the full AI pipeline on the new review text"
+                                 className="inline-flex items-center gap-1 rounded-lg bg-deep-violet/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                               >
+                                 {editedRewritingId === draft.id ? "Rewriting…" : "Rewrite"}
+                               </button>
+                               <button
+                                 onClick={() => void approveEditedDraft(draft, d.review_id)}
+                                 disabled={busy || editedApprovingId !== null}
+                                 className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
+                               >
+                                 {busy ? "Publishing…" : "Approve & publish"}
+                               </button>
+                             </div>
+                           </div>
+                         ) : (
+                           <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-ink/[0.03] px-3 py-2.5">
+                             <p className="text-[11px] leading-4 text-ink/45">No AI draft for the new text yet.</p>
+                             <button
+                               onClick={() => void generateEditedDraft(d)}
+                               disabled={editedGeneratingId === d.id}
+                               className="shrink-0 rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
+                             >
+                               {editedGeneratingId === d.id ? (
+                                 <><span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white align-[-2px]" /> Drafting…</>
+                               ) : (
+                                 "Generate draft now"
+                               )}
+                             </button>
+                           </div>
+                         )}
+                         <div className="mt-2 flex items-center justify-between">
+                           <span className="text-[10px] font-bold uppercase tracking-wide text-deep-violet/60">Edited after sync</span>
+                           <Link href="/dashboard/reviews?tab=edited" className="text-[11px] font-bold text-deep-violet underline underline-offset-2 hover:text-deep-violet/80">See what changed →</Link>
+                         </div>
+                       </div>
+                     );
+                   })}
+                   <Link href="/dashboard/reviews?tab=edited" className="flex items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+                     Review &amp; respond to all {editedTotal} <span aria-hidden> →</span>
+                   </Link>
+                 </div>
+               )}
+             </li>
+           )}
            {showFlagged && (
              <li>
                <button
@@ -647,9 +882,10 @@ function BusinessPulse() {
     async function loadPulse() {
       try {
         const channelData = await apiFetch("/api/v1/channels/?limit=100");
-        const googleChannels = (channelData.channels ?? []).filter(
+        const rawChannels: DashboardChannel[] = (channelData.channels ?? []).filter(
           (channel: DashboardChannel) => channel.platform === "google_reviews"
         );
+        const googleChannels = dedupeBusinesses(rawChannels);
         const [nextOverview, nextPoints, serviceResults] = await Promise.all([
           fetchOverview(30, channelId || null),
           fetchTimeseries(30, channelId || null),

@@ -27,7 +27,11 @@ services:
       - ./.env.prod
     expose:
       - "8000"
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    # Workers are speed-safe at any count: channel identity rests on the DB
+    # unique index (user_id, platform, listing_key), so racers can never twin
+    # rows. Set UVICORN_WORKERS in .env.prod (default 2). On a 4GB box use 3
+    # and raise mem_limit below to ~1536m; on 2GB keep 2.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"
     depends_on:
       redis:
         condition: service_healthy

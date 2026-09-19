@@ -95,7 +95,10 @@ async def connect_channel(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    channel = await create_channel(body, user, db)
+    try:
+        channel = await create_channel(body, user, db)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     return _channel_response(channel)
 
 
@@ -567,30 +570,44 @@ async def google_callback(
             expires_in = int(tokens.get("expires_in") or 3600)
             token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
-            # Skip if this location is already connected for this user
+            # Get-or-create on the indexed listing key: rapid callbacks
+            # (double consent, retries, racing workers) can never twin a row.
+            # The unique index admits one winner; the loser reuses that row.
+            # The insert runs in a SAVEPOINT so losing the race never
+            # disturbs the loop's surrounding transaction.
+            from sqlalchemy.exc import IntegrityError as _IntegrityError
+
+            from .service import find_channel_by_key as _find_by_key
+
             import json as _json
-            existing = await db.execute(
-                select(Channel).where(
-                    Channel.user_id == user_id,
-                    Channel.platform == "google_reviews",
-                    Channel.status == "active",
+
+            key = location_id
+            matching = await _find_by_key(db, user_id, "google_reviews", key)
+            if matching is None:
+                # Legacy rows predate listing_key: fall back to a metadata
+                # scan once, and heal the row so next time hits the index.
+                legacy = await db.execute(
+                    select(Channel).where(
+                        Channel.user_id == user_id,
+                        Channel.platform == "google_reviews",
+                        Channel.status == "active",
+                    )
                 )
-            )
-            matching = [
-                c
-                for c in existing.scalars().all()
-                if _channel_meta_meta(c).get("location_id") == location_id
-            ]
-            if matching:
+                for c in legacy.scalars().all():
+                    if _channel_meta_meta(c).get("location_id") == location_id:
+                        matching = c
+                        if c.listing_key is None:
+                            c.listing_key = key
+                        break
+            if matching is not None:
                 # Re-consent heals tokens: a fresh refresh_token repairs
                 # channels that can't publish ("No refresh token available").
                 # Never overwrite a stored refresh token with nothing —
                 # Google only sends one on fresh consent.
                 if refresh_token:
-                    for c in matching:
-                        c.access_token = encrypt_token(access_token)
-                        c.refresh_token = encrypt_token(refresh_token)
-                        c.token_expires_at = token_expires_at
+                    matching.access_token = encrypt_token(access_token)
+                    matching.refresh_token = encrypt_token(refresh_token)
+                    matching.token_expires_at = token_expires_at
                 continue
 
             channel = Channel(
@@ -604,8 +621,22 @@ async def google_callback(
                 token_expires_at=token_expires_at,
                 status="active",
                 metadata_json=_json.dumps({"location_id": location_id, "account_name": account_name}),
+                listing_key=key,
             )
             db.add(channel)
+            try:
+                async with db.begin_nested():
+                    await db.flush()
+            except _IntegrityError:
+                # Lost the race to a parallel callback: discard our copy
+                # and reuse the winner's row (healing tokens as usual).
+                db.expunge(channel)
+                matching = await _find_by_key(db, user_id, "google_reviews", key)
+                if matching is not None and refresh_token:
+                    matching.access_token = encrypt_token(access_token)
+                    matching.refresh_token = encrypt_token(refresh_token)
+                    matching.token_expires_at = token_expires_at
+                continue
             created += 1
 
     await db.commit()
