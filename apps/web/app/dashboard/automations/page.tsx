@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import { apiFetch } from "@/lib/api-rag";
+import { dedupeBusinesses } from "@/lib/channel-identity";
 import { fetchOverview } from "@/lib/api-analytics";
 
 interface AutoReply {
@@ -20,6 +21,8 @@ interface GoogleChannel {
   id: string;
   display_name: string | null;
   status: string;
+  listing_id?: string | null;
+  source?: string | null;
 }
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -47,8 +50,10 @@ export default function AutomationsPage() {
       try {
         const data = await apiFetch("/api/v1/channels/?limit=100");
         if (cancelled) return;
-        const google: GoogleChannel[] = (data.channels ?? []).filter(
-          (c: { platform: string }) => c.platform === "google_reviews"
+        const google: GoogleChannel[] = dedupeBusinesses(
+          (data.channels ?? []).filter(
+            (c: { platform: string }) => c.platform === "google_reviews"
+          )
         );
         setChannels(google);
         const cfgs: Record<string, AutoReply> = {};

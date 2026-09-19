@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
+import { dedupeBusinesses } from "@/lib/channel-identity";
 import {
   fetchOverview,
   fetchTimeseries,
@@ -220,12 +221,14 @@ function OverviewPanel() {
   useEffect(() => {
     apiFetch("/api/v1/channels/")
       .then((data) => {
-        const google = (data.channels ?? [])
-          .filter((c: { platform: string }) => c.platform === "google_reviews")
-          .map((c: { id: string; display_name: string | null }) => ({
-            id: c.id,
-            label: c.display_name ?? "Google Business",
-          }));
+        const google = dedupeBusinesses(
+          (data.channels ?? []).filter(
+            (c: { platform: string }) => c.platform === "google_reviews"
+          )
+        ).map((c: { id: string; display_name: string | null }) => ({
+          id: c.id,
+          label: c.display_name ?? "Google Business",
+        }));
         setChannels(google);
       })
       .catch(() => setChannels([]));
