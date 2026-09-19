@@ -9,12 +9,15 @@ Covers the twin-row prevention stack:
   (create_channel raises ValueError -> HTTP 409).
 """
 import uuid
+from pathlib import Path
+import sys
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.modules.channels.models import Channel
+from app.modules.analytics.models import ReviewInsight
+from app.modules.channels.models import AutoReplyConfig, Channel, ChannelMessage
 from app.modules.channels.schemas import ChannelCreate
 from app.modules.channels.service import (
     channel_listing_key,
@@ -23,6 +26,9 @@ from app.modules.channels.service import (
     parse_channel_metadata,
 )
 from app.modules.users.models import User
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from dedupe_channels import _merge_one  # noqa: E402  (ops script, same merge as the migration)
 
 
 def _user(uid: str) -> User:
@@ -151,3 +157,98 @@ async def test_create_channel_second_call_conflicts(db):
         )
     ).scalars().all()
     assert len(rows) == 1
+
+
+def _insight(uid: str, channel_id: str, review_id: str, **kw) -> ReviewInsight:
+    base = dict(
+        id=f"ri-{channel_id[-4:]}-{review_id}",
+        user_id=uid,
+        channel_id=channel_id,
+        review_id=review_id,
+        rating=5,
+    )
+    base.update(kw)
+    return ReviewInsight(**base)
+
+
+@pytest.mark.asyncio
+async def test_merge_twins_with_identical_reviews(db, user_id):
+    """Replay of the staging crash (c4d5e6f7a8b9 upgrade):
+
+    twin channels hold the SAME review_ids, so a blind re-point dies on
+    uq_review_insights_channel_review. The merge must fold instead:
+    survivor wins, gaps filled, dupe rows gone, nothing lost.
+    """
+    db.add(_user(user_id))
+    await db.commit()
+    surv = Channel(
+        id=str(uuid.uuid4()), user_id=user_id, platform="google_reviews",
+        platform_user_id="p", display_name="Shop", status="active", listing_key="kA",
+    )
+    dupe = Channel(
+        id=str(uuid.uuid4()), user_id=user_id, platform="google_reviews",
+        platform_user_id="p", display_name="Shop", status="active", listing_key="kB",
+    )
+    db.add_all([surv, dupe])
+    await db.commit()
+    # Same review on both: survivor bare, dupe enriched.
+    db.add(_insight(user_id, surv.id, "localith:r1"))
+    db.add(
+        _insight(
+            user_id, dupe.id, "localith:r1",
+            review_text="Great!", reviewer_name="Sara",
+            replied=True, enrichment_status="done",
+            sentiment="positive", topics=[{"name": "service"}],
+        )
+    )
+    # Review only on the dupe: must move over.
+    db.add(_insight(user_id, dupe.id, "localith:r2", review_text="Ok"))
+    db.add(
+        ChannelMessage(
+            id=str(uuid.uuid4()), channel_id=dupe.id,
+            direction="inbound", content="hi",
+        )
+    )
+    db.add(AutoReplyConfig(channel_id=surv.id, enabled=True))
+    db.add(AutoReplyConfig(channel_id=dupe.id, enabled=False))
+    await db.commit()
+
+    await _merge_one(db, surv.id, dupe.id)
+    await db.commit()
+
+    rows = (
+        await db.execute(
+            select(ReviewInsight).where(ReviewInsight.channel_id == surv.id)
+        )
+    ).scalars().all()
+    by_review = {r.review_id: r for r in rows}
+    assert set(by_review) == {"localith:r1", "localith:r2"}
+    r1 = by_review["localith:r1"]
+    assert r1.review_text == "Great!"
+    assert r1.reviewer_name == "Sara"
+    assert r1.replied is True
+    assert r1.enrichment_status == "done"
+    assert r1.sentiment == "positive"
+    leftover = (
+        await db.execute(
+            select(ReviewInsight).where(ReviewInsight.channel_id == dupe.id)
+        )
+    ).scalars().all()
+    assert leftover == []
+    msgs = (
+        await db.execute(
+            select(ChannelMessage).where(ChannelMessage.channel_id == surv.id)
+        )
+    ).scalars().all()
+    assert len(msgs) == 1
+    cfgs = (
+        await db.execute(
+            select(AutoReplyConfig).where(AutoReplyConfig.channel_id == surv.id)
+        )
+    ).scalars().all()
+    assert len(cfgs) == 1 and cfgs[0].enabled is True
+    assert (
+        await db.execute(
+            select(AutoReplyConfig).where(AutoReplyConfig.channel_id == dupe.id)
+        )
+    ).scalars().all() == []

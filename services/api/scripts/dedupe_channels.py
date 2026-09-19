@@ -26,14 +26,140 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.database import async_session  # noqa: E402
 from app.modules.channels.models import Channel  # noqa: E402
 
-CHILD_TABLES: tuple[tuple[str, bool], ...] = (
-    ("channel_messages", False),
-    ("review_replies", False),
-    ("review_insights", False),
-    ("channel_services", False),
-    ("auto_reply_configs", True),
-    ("channel_verifications", True),
+PLAIN_TABLES: tuple[str, ...] = (
+    "channel_messages",
+    "review_replies",
+    "channel_services",
+    "llm_usage_events",
+    "review_response_logs",
 )
+
+# Single-row-per-channel tables: keep the survivor's row when it has one.
+UNIQUE_TABLES: tuple[str, ...] = (
+    "auto_reply_configs",
+    "channel_verifications",
+)
+
+
+async def _merge_insights(db, survivor: str, dupe: str) -> None:
+    """Fold the dupe's reviews into the survivor's (see the c4d5e6f7a8b9
+    migration for the full rationale). Survivor wins; gaps filled."""
+    from sqlalchemy import text as _text
+
+    await db.execute(
+        _text(
+            # NOTE: target table written WITHOUT alias — SQLite (tests)
+            # rejects aliased UPDATE targets; Postgres accepts both.
+            """
+            UPDATE review_insights SET
+              review_text = COALESCE(NULLIF(review_insights.review_text, ''), d.review_text),
+              reviewer_name = COALESCE(NULLIF(review_insights.reviewer_name, ''), d.reviewer_name),
+              review_url = COALESCE(NULLIF(review_insights.review_url, ''), d.review_url),
+              replied = review_insights.replied OR d.replied,
+              replied_at = COALESCE(review_insights.replied_at, d.replied_at),
+              skipped = review_insights.skipped OR d.skipped,
+              edited = review_insights.edited OR d.edited,
+              edited_at = COALESCE(review_insights.edited_at, d.edited_at),
+              previous_review_text = COALESCE(review_insights.previous_review_text, d.previous_review_text),
+              previous_rating = COALESCE(review_insights.previous_rating, d.previous_rating),
+              sentiment = CASE WHEN review_insights.enrichment_status = 'pending'
+                                 AND d.enrichment_status = 'done'
+                               THEN d.sentiment ELSE review_insights.sentiment END,
+              sentiment_score = CASE WHEN review_insights.enrichment_status = 'pending'
+                                       AND d.enrichment_status = 'done'
+                                     THEN d.sentiment_score ELSE review_insights.sentiment_score END,
+              topics = CASE WHEN review_insights.enrichment_status = 'pending'
+                              AND d.enrichment_status = 'done'
+                            THEN d.topics ELSE review_insights.topics END,
+              products = CASE WHEN review_insights.enrichment_status = 'pending'
+                                AND d.enrichment_status = 'done'
+                              THEN d.products ELSE review_insights.products END,
+              problems = CASE WHEN review_insights.enrichment_status = 'pending'
+                                AND d.enrichment_status = 'done'
+                              THEN d.problems ELSE review_insights.problems END,
+              enrichment_status = CASE WHEN review_insights.enrichment_status = 'pending'
+                                         AND d.enrichment_status = 'done'
+                                       THEN d.enrichment_status ELSE review_insights.enrichment_status END
+            FROM review_insights d
+            WHERE d.channel_id = :dupe
+              AND review_insights.channel_id = :surv
+              AND review_insights.review_id = d.review_id
+            """
+        ),
+        {"dupe": dupe, "surv": survivor},
+    )
+    await db.execute(
+        _text(
+            "DELETE FROM review_insights WHERE channel_id = :dupe "
+            "AND review_id IN "
+            "(SELECT review_id FROM review_insights WHERE channel_id = :surv)"
+        ),
+        {"dupe": dupe, "surv": survivor},
+    )
+    await db.execute(
+        _text("UPDATE review_insights SET channel_id = :surv WHERE channel_id = :dupe"),
+        {"dupe": dupe, "surv": survivor},
+    )
+
+
+async def _merge_one(db, survivor: str, dupe: str) -> None:
+    """Merge one dupe channel into its survivor (collision-safe)."""
+    from sqlalchemy import text as _text
+
+    await _merge_insights(db, survivor, dupe)
+    await db.execute(
+        _text(
+            "DELETE FROM location_daily_metrics WHERE channel_id = :dupe "
+            "AND date IN "
+            "(SELECT date FROM location_daily_metrics WHERE channel_id = :surv)"
+        ),
+        {"dupe": dupe, "surv": survivor},
+    )
+    await db.execute(
+        _text(
+            "UPDATE location_daily_metrics SET channel_id = :surv "
+            "WHERE channel_id = :dupe"
+        ),
+        {"dupe": dupe, "surv": survivor},
+    )
+    await db.execute(
+        _text(
+            "DELETE FROM review_intelligence_reports WHERE channel_id = :dupe "
+            "AND (user_id, days) IN "
+            "(SELECT user_id, days FROM review_intelligence_reports "
+            "WHERE channel_id = :surv)"
+        ),
+        {"dupe": dupe, "surv": survivor},
+    )
+    await db.execute(
+        _text(
+            "UPDATE review_intelligence_reports SET channel_id = :surv "
+            "WHERE channel_id = :dupe"
+        ),
+        {"dupe": dupe, "surv": survivor},
+    )
+    for table in PLAIN_TABLES:
+        await db.execute(
+            _text(f"UPDATE {table} SET channel_id = :s WHERE channel_id = :d"),
+            {"s": survivor, "d": dupe},
+        )
+    for table in UNIQUE_TABLES:
+        has_own = (
+            await db.execute(
+                _text(f"SELECT 1 FROM {table} WHERE channel_id = :s LIMIT 1"),
+                {"s": survivor},
+            )
+        ).first()
+        if has_own:
+            await db.execute(
+                _text(f"DELETE FROM {table} WHERE channel_id = :d"),
+                {"d": dupe},
+            )
+            continue
+        await db.execute(
+            _text(f"UPDATE {table} SET channel_id = :s WHERE channel_id = :d"),
+            {"s": survivor, "d": dupe},
+        )
 
 
 def _key_of(channel: Channel) -> str | None:
@@ -55,8 +181,6 @@ async def main() -> int:
     args.add_argument("--user", default=None, help="limit to one user_id")
     args.add_argument("--backfill-only", action="store_true", help="only fill missing listing_key values")
     ns = args.parse_args()
-
-    from sqlalchemy import text as _text
 
     async with async_session() as db:
         q = select(Channel).where(Channel.platform == "google_reviews")
@@ -110,24 +234,7 @@ async def main() -> int:
             rows.sort(key=lambda c: (c.created_at, c.id))
             survivor, dupes = rows[0], rows[1:]
             for dupe in dupes:
-                for table, unique_per_channel in CHILD_TABLES:
-                    if unique_per_channel:
-                        has_own = (
-                            await db.execute(
-                                _text(f"SELECT 1 FROM {table} WHERE channel_id = :s LIMIT 1"),
-                                {"s": survivor.id},
-                            )
-                        ).first()
-                        if has_own:
-                            await db.execute(
-                                _text(f"DELETE FROM {table} WHERE channel_id = :d"),
-                                {"d": dupe.id},
-                            )
-                            continue
-                    await db.execute(
-                        _text(f"UPDATE {table} SET channel_id = :s WHERE channel_id = :d"),
-                        {"s": survivor.id, "d": dupe.id},
-                    )
+                await _merge_one(db, survivor.id, dupe.id)
                 await db.delete(dupe)
                 merged += 1
         await db.commit()
