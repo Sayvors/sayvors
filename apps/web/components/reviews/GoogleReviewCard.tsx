@@ -12,6 +12,9 @@ export interface GoogleReview {
   locationName: string;
   replied: boolean;
   skipped?: boolean;
+  edited?: boolean;
+  previousText?: string | null;
+  previousRating?: number | null;
   sentiment?: string;
   reviewUrl?: string;
 }
@@ -187,7 +190,44 @@ export default function GoogleReviewCard({
       <div className="flex items-center gap-2 px-4 pt-2.5">
         <GoogleStars rating={review.rating} />
         <span className="text-[12px] font-medium text-[#202124]">{review.rating.toFixed(1)}</span>
+        <span className="flex-1" />
+        {review.edited && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-[#FDE293] bg-[#FEF7E0] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#B45309]">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden className="h-2.5 w-2.5">
+              <path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" />
+            </svg>
+            After the edit
+          </span>
+        )}
       </div>
+
+      {/* Before-the-edit snapshot — reviewer changed this review */}
+      {review.edited && (review.previousText || review.previousRating != null) && (
+        <div className="px-4 pt-2">
+          <div
+            className="rounded-lg border border-[#FDE293] bg-[#FEF7E0]/60 px-3 py-2.5"
+            style={{ fontFamily: "Roboto, Arial, sans-serif" }}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[#B45309]">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden className="h-3 w-3">
+                  <path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" strokeWidth={1.8} strokeLinejoin="round" />
+                </svg>
+                Before the edit
+              </span>
+              {review.previousRating != null && (
+                <span className="ml-auto inline-flex items-center gap-1.5">
+                  <GoogleStars rating={review.previousRating} size="h-3 w-3" />
+                  <span className="text-[11px] font-medium text-[#B45309]">{review.previousRating.toFixed(1)}</span>
+                </span>
+              )}
+            </div>
+            <p className="mt-1 line-clamp-3 text-[12.5px] italic leading-[18px] text-[#8A6A3B] line-through decoration-[#D9B98C]/70 decoration-1">
+              {review.previousText ? `“${review.previousText}”` : <span className="not-italic">No written comment — star rating only.</span>}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Comment — expandable */}
       <div className="px-4 pt-2">
@@ -238,6 +278,19 @@ export default function GoogleReviewCard({
         </span>
 
         <span className="flex-1" />
+
+        {/* Reviewer edited this review after the first sync — amber chip */}
+        {review.edited && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-[#FDE293] bg-[#FEF7E0] px-2 py-0.5 text-[11px] font-medium text-[#B45309]"
+            title="The customer changed this review after it was first synced"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden className="h-3 w-3">
+              <path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round" />
+            </svg>
+            Edited
+          </span>
+        )}
 
         {/* Optional external link — blue Material link */}
         {review.reviewUrl && (
