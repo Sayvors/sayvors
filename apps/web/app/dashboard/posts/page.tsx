@@ -67,6 +67,11 @@ function PostsInner() {
 
   const [title, setTitle] = useState("");
   const [postLocationId, setPostLocationId] = useState("");
+  // Create-mode only: one tap posts the same content to every connected
+  // branch. Implemented as one POST per location (works against today's
+  // single-listing endpoint; a native bulk endpoint can replace the fan-out
+  // later without touching this UI).
+  const [bulkAll, setBulkAll] = useState(false);
   const [businessName, setBusinessName] = useState("");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -162,6 +167,7 @@ function PostsInner() {
   const resetForm = (locId?: string) => {
     setTitle("");
     setPostLocationId(locId ?? selectedId ?? locations[0]?.id ?? "");
+    setBulkAll(false);
     setBusinessName("Sayvors");
     setDescription("");
     setTags([]);
@@ -185,6 +191,7 @@ function PostsInner() {
     if (!p) return;
     setTitle(p.title);
     setPostLocationId(p.locationId);
+    setBulkAll(false);
     setBusinessName(p.businessName);
     setDescription(p.description);
     setTags(p.tags);
@@ -225,7 +232,8 @@ function PostsInner() {
     return null;
   })();
 
-  const valid = title.trim() && businessName.trim() && description.trim() && postLocationId && (!scheduleEnabled || scheduledAt) && !deleteErr;
+  const targetIds = bulkAll ? locations.map((l) => l.id) : [postLocationId];
+  const valid = title.trim() && businessName.trim() && description.trim() && targetIds.length > 0 && targetIds.every(Boolean) && (!scheduleEnabled || scheduledAt) && !deleteErr;
 
   const showBannerTimed = (kind: "ok" | "err", text: string) => {
     setBanner({ kind, text });
@@ -244,36 +252,58 @@ function PostsInner() {
     if (!valid) return;
     setSubmitting(true);
     try {
-      const res = await apiFetch("/api/v1/posts/", {
-        method: "POST",
-        body: JSON.stringify({
-          listing_id: postLocationId,
-          location_name: locations.find((l) => l.id === postLocationId)?.name ?? "",
-          business_name: businessName.trim(),
-          title: title.trim(),
-          description: description.trim(),
-          tags,
-          keywords,
-          image_urls: images,
-          action: scheduleEnabled ? "schedule" : "publish",
-          scheduled_on: scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : null,
-          // Future contract (ignored by the backend until scheduled
-          // deletion lands — see note at top).
-          delete_at: deleteEnabled && deleteAt ? new Date(deleteAt).toISOString() : null,
-        }),
-      });
-      const newId = res?.post?.id ?? res?.id;
+      const ids = bulkAll ? locations.map((l) => l.id) : [postLocationId];
+      const deleteIso = deleteEnabled && deleteAt ? new Date(deleteAt).toISOString() : null;
+      const scheduleIso = scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : null;
+      let ok = 0;
+      let failed = 0;
+      let firstErr = "";
+      let skipped = 0;
       let nextOverlay = deleteOverlay;
-      if (deleteEnabled && deleteAt && newId) {
-        nextOverlay = { ...deleteOverlay, [String(newId)]: new Date(deleteAt).toISOString() };
-        setDeleteOverlay(nextOverlay);
+      for (const lid of ids) {
+        try {
+          const res = await apiFetch("/api/v1/posts/", {
+            method: "POST",
+            body: JSON.stringify({
+              listing_id: lid,
+              location_name: locations.find((l) => l.id === lid)?.name ?? "",
+              business_name: businessName.trim(),
+              title: title.trim(),
+              description: description.trim(),
+              tags,
+              keywords,
+              image_urls: images,
+              action: scheduleEnabled ? "schedule" : "publish",
+              scheduled_on: scheduleIso,
+              // Future contract (ignored by the backend until scheduled
+              // deletion lands — see note at top).
+              delete_at: deleteIso,
+            }),
+          });
+          ok += 1;
+          skipped = Math.max(skipped, res?.images_skipped ?? 0);
+          const newId = res?.post?.id ?? res?.id;
+          if (deleteIso && newId) {
+            nextOverlay = { ...nextOverlay, [String(newId)]: deleteIso };
+          }
+        } catch (e) {
+          failed += 1;
+          if (!firstErr) firstErr = e instanceof Error ? e.message.slice(0, 160) : "Request failed.";
+        }
       }
+      if (nextOverlay !== deleteOverlay) setDeleteOverlay(nextOverlay);
       await refreshPosts(nextOverlay);
       setView({ kind: "list" });
-      const skipped = res?.images_skipped ?? 0;
-      showBannerTimed("ok", scheduleEnabled
-        ? "Post scheduled — our worker will publish it to Google at that time."
-        : `Published to Google.${skipped ? ` ${skipped} local image(s) not sent — attach hosted URLs to include images.` : ""}`);
+      if (ids.length > 1) {
+        showBannerTimed(failed === 0 ? "ok" : "err",
+          failed === 0
+            ? `${scheduleEnabled ? "Scheduled" : "Published"} in all ${ids.length} locations.`
+            : `Done in ${ok} of ${ids.length} locations, ${failed} failed — ${firstErr}`);
+      } else {
+        showBannerTimed("ok", scheduleEnabled
+          ? "Post scheduled — our worker will publish it to Google at that time."
+          : `Published to Google.${skipped ? ` ${skipped} local image(s) not sent — attach hosted URLs to include images.` : ""}`);
+      }
     } catch (e) {
       showBannerTimed("err", e instanceof Error ? e.message.slice(0, 200) : "Could not save post.");
     } finally {
@@ -511,6 +541,7 @@ function PostsInner() {
             <PostForm
               title={title} setTitle={setTitle}
               postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
+              allowBulk bulkAll={bulkAll} setBulkAll={setBulkAll}
               businessName={businessName} setBusinessName={setBusinessName}
               description={description} setDescription={setDescription}
               tags={tags} tagInput={tagInput} setTagInput={setTagInput}
@@ -525,6 +556,7 @@ function PostsInner() {
               deleteEnabled={deleteEnabled} setDeleteEnabled={setDeleteEnabled}
               deleteAt={deleteAt} setDeleteAt={setDeleteAt}
               deleteErr={deleteErr}
+              valid={!!valid}
               onBack={backToList} onSubmit={handleCreate} submitting={submitting}
               submitLabel={scheduleEnabled ? "Schedule Post" : "Publish Post"}
               heading="New post" subheading="Title, location, description, tags, keywords and images."
@@ -537,6 +569,7 @@ function PostsInner() {
                 <PostForm
                   title={title} setTitle={setTitle}
                   postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
+                  allowBulk={false} bulkAll={false} setBulkAll={() => {}}
                   businessName={businessName} setBusinessName={setBusinessName}
                   description={description} setDescription={setDescription}
                   tags={tags} tagInput={tagInput} setTagInput={setTagInput}
@@ -551,6 +584,7 @@ function PostsInner() {
                   deleteEnabled={deleteEnabled} setDeleteEnabled={setDeleteEnabled}
                   deleteAt={deleteAt} setDeleteAt={setDeleteAt}
                   deleteErr={deleteErr}
+                  valid={!!valid}
                   onBack={() => openDetail(activePost.id, false)} onSubmit={handleUpdate} submitting={submitting}
                   submitLabel="Save Changes" heading="Edit post" subheading="Update every field, then save."
                 />
@@ -671,6 +705,7 @@ function normalizePosts(raw: unknown, deleteOverlay?: Record<string, string | nu
 function PostForm(props: {
   title: string; setTitle: (v: string) => void;
   postLocationId: string; setPostLocationId: (v: string) => void; locations: LocationOption[];
+  allowBulk: boolean; bulkAll: boolean; setBulkAll: (v: boolean) => void;
   businessName: string; setBusinessName: (v: string) => void;
   description: string; setDescription: (v: string) => void;
   tags: string[]; tagInput: string; setTagInput: (v: string) => void; onAddTag: () => void; onRemoveTag: (t: string) => void;
@@ -681,6 +716,7 @@ function PostForm(props: {
   deleteEnabled: boolean; setDeleteEnabled: (v: boolean) => void;
   deleteAt: string; setDeleteAt: (v: string) => void;
   deleteErr: string | null;
+  valid: boolean;
   onBack: () => void; onSubmit: () => void; submitting: boolean;
   submitLabel: string; heading: string; subheading: string;
 }) {
@@ -697,9 +733,21 @@ function PostForm(props: {
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-[12px] font-medium text-ink/50">Location *</label>
-            <select value={p.postLocationId} onChange={(e) => p.setPostLocationId(e.target.value)} className="input-field">
+            <select value={p.postLocationId} onChange={(e) => p.setPostLocationId(e.target.value)} disabled={p.bulkAll} className="input-field disabled:opacity-50">
               {p.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
+            {p.allowBulk && p.locations.length > 1 && (
+              <label className="mt-2 flex cursor-pointer items-center justify-between rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
+                <span>
+                  <span className="block text-[12px] font-semibold text-ink dark:text-fog">All {p.locations.length} locations at once</span>
+                  <span className="block text-[11px] text-ink/40">Same content posted to every branch.</span>
+                </span>
+                <span onClick={() => p.setBulkAll(!p.bulkAll)}
+                  className={`h-5 w-9 shrink-0 rounded-full transition ${p.bulkAll ? "bg-deep-violet" : "bg-ink/15 dark:bg-fog/15"}`}>
+                  <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${p.bulkAll ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                </span>
+              </label>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-[12px] font-medium text-ink/50">Business name *</label>
@@ -788,7 +836,7 @@ function PostForm(props: {
         )}
         <div className="flex items-center justify-between pt-1">
           <button onClick={p.onBack} className="text-[12px] font-medium text-ink/40 hover:text-ink">Back</button>
-          <button onClick={p.onSubmit} disabled={p.submitting} className="btn-primary disabled:opacity-50">
+          <button onClick={p.onSubmit} disabled={p.submitting || !p.valid} title={p.valid ? undefined : "Fill the required fields first"} className="btn-primary disabled:opacity-50">
             {p.submitting ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : p.submitLabel}
           </button>
         </div>
