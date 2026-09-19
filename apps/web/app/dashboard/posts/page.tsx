@@ -570,7 +570,13 @@ function PostsInner() {
               deleteErr={deleteErr}
               valid={!!valid}
               onBack={backToList} onSubmit={handleCreate} submitting={submitting}
-              submitLabel={scheduleEnabled ? "Schedule Post" : "Publish Post"}
+              submitLabel={
+                selectedLocIds.length > 1
+                  ? scheduleEnabled
+                    ? `Schedule for ${selectedLocIds.length} locations`
+                    : `Publish to ${selectedLocIds.length} locations`
+                  : scheduleEnabled ? "Schedule Post" : "Publish Post"
+              }
               heading="New post" subheading="Title, location, description, tags, keywords and images."
             />
           )}
