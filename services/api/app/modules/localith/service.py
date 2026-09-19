@@ -389,6 +389,7 @@ async def _sync_single_connection(
     )
     synced = 0
     pulled: list = []
+    edited_pinged: list = []
     for item in items:
         review_id = str(item.get("id") or item.get("review_id") or item.get("uid") or "")
         if not review_id:
@@ -433,6 +434,8 @@ async def _sync_single_connection(
         else:
             # Backfill fields that older syncs didn't capture (never
             # overwrites enriched/curated data — only fills gaps).
+            stored_rating = insight.rating
+            stored_text = insight.review_text
             touched = False
             if not insight.review_text and review.text:
                 insight.review_text = review.text
@@ -447,19 +450,75 @@ async def _sync_single_connection(
                 insight.replied = True
                 insight.replied_at = datetime.now(timezone.utc)
                 touched = True
+            # Edit detection: Localith sends no edit timestamp, so compare
+            # content against what was stored before this sync. Filling a
+            # previously-empty field (backfill above) is not an edit — only
+            # a rating change or a non-empty text change counts. First
+            # detection snapshots the original text and rating for the
+            # dashboard; the flag clears when an updated reply is posted
+            # or the edit is dismissed.
+            content_changed = (
+                review.rating != stored_rating
+                or (bool(stored_text) and (review.text or None) != (stored_text or None))
+            )
+            if content_changed:
+                if not insight.edited:
+                    insight.previous_rating = stored_rating
+                    insight.previous_review_text = stored_text
+                insight.rating = review.rating
+                insight.review_text = review.text
+                insight.edited = True
+                insight.edited_at = datetime.now(timezone.utc)
+                # Re-run enrichment on the new content — the re-enqueued
+                # review.discovered event below picks this up.
+                insight.enrichment_status = "pending"
+                insight.review_updated_at = datetime.now(timezone.utc)
+                touched = True
+                if len(edited_pinged) < MAX_PER_SYNC:
+                    edited_pinged.append(review)
+                    reviewer = review.reviewer or "A customer"
+                    if (
+                        insight.previous_rating is not None
+                        and insight.previous_rating != review.rating
+                    ):
+                        title = (
+                            f"{reviewer} changed their rating "
+                            f"★{insight.previous_rating} → ★{review.rating}"
+                        )
+                    else:
+                        title = f"{reviewer} edited their ★{review.rating} review"
+                    await notify(
+                        db, user.id, "review_edited",
+                        title,
+                        (review.text or "(text removed)")[:160],
+                        data={"review_id": f"localith:{review_id}", "channel_id": channel.id,
+                              "rating": review.rating,
+                              "previous_rating": insight.previous_rating,
+                              "listing": connection.listing_name},
+                        href="/dashboard/reviews?tab=edited",
+                    )
             if touched:
                 synced += 1
 
-    # 3+4. Metrics summaries over the trailing window.
+    # 3+4. Metrics summaries over the trailing window. Metrics are
+    # best-effort: a metrics outage must never fail the review sync.
     end = date.today()
     start = end - timedelta(days=max(1, metrics_days_back))
     old_activity = _engagement_totals(connection.raw_metrics_json)
-    metrics = await asyncio.to_thread(
-        embedsocial.fetch_listing_metrics, start, end, connection.listing_id
-    )
-    item_metrics = await asyncio.to_thread(
-        embedsocial.fetch_item_metrics, start, end, connection.listing_id
-    )
+    try:
+        metrics = await asyncio.to_thread(
+            embedsocial.fetch_listing_metrics, start, end, connection.listing_id
+        )
+    except Exception as e:
+        logger.warning("Localith listing-metrics failed for %s: %s", connection.listing_id, e)
+        metrics = None
+    try:
+        item_metrics = await asyncio.to_thread(
+            embedsocial.fetch_item_metrics, start, end, connection.listing_id
+        )
+    except Exception as e:
+        logger.warning("Localith item-metrics failed for %s: %s", connection.listing_id, e)
+        item_metrics = None
     new_activity = _engagement_totals(metrics) if metrics else {}
     if metrics:
         connection.raw_metrics_json = metrics
@@ -514,20 +573,7 @@ async def _sync_single_connection(
         if not review_id:
             continue
         review = embedsocial.to_internal_review(item)
-        if review.has_replies:
-            continue
         full_review_id = f"localith:{review_id}"
-        existing_reply = (
-            await db.execute(
-                select(ReviewReply.id).where(
-                    ReviewReply.channel_id == channel.id,
-                    ReviewReply.review_id == full_review_id,
-                    ReviewReply.status.in_(["pending_approval", "posted", "approved"]),
-                )
-            )
-        ).scalar_one_or_none()
-        if existing_reply:
-            continue
         # Don't generate drafts for reviews the merchant marked
         # as deleted/removed on Google.
         insight = (await db.execute(
@@ -537,6 +583,94 @@ async def _sync_single_connection(
             )
         )).scalar_one_or_none()
         if insight and insight.skipped:
+            continue
+        latest_reply = (
+            await db.execute(
+                select(ReviewReply).where(
+                    ReviewReply.channel_id == channel.id,
+                    ReviewReply.review_id == full_review_id,
+                    ReviewReply.status.in_(["pending_approval", "posted", "approved"]),
+                )
+                .order_by(ReviewReply.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+        # Reviewer edited the review after we first synced it — whatever is
+        # on file answers content that no longer exists. Keep the response
+        # in step with the review: regenerate a still-queued draft from the
+        # fresh text, or queue a follow-up draft behind an already-posted
+        # reply. An edit follow-up never auto-posts — it always waits for
+        # the merchant's approval.
+        if insight is not None and insight.edited and latest_reply is not None:
+            # Missing stored text gives no baseline to compare — leave alone.
+            content_matches = (
+                latest_reply.rating == review.rating
+                and (
+                    not latest_reply.review_text
+                    or (latest_reply.review_text or None) == (review.text or None)
+                )
+            )
+            if content_matches:
+                continue  # draft/reply already reflects the current content
+            if latest_reply.status == "pending_approval":
+                try:
+                    reply_text = await generate_auto_reply(
+                        config, channel, review.rating, review.text, review.reviewer, db,
+                        review_id=full_review_id,
+                        attempt=(latest_reply.generation_attempt or 1) + 1,
+                        previous_draft=latest_reply.reply_text,
+                    )
+                except Exception as e:
+                    # Keep the queued draft — it is still better than an
+                    # empty queue; retry the refresh on the next sync.
+                    logger.warning("Localith re-draft failed for edited review=%s: %s", review_id, e)
+                    continue
+                latest_reply.reply_text = reply_text
+                latest_reply.rating = review.rating
+                latest_reply.review_text = review.text
+                latest_reply.reviewer_name = review.reviewer
+                latest_reply.generation_attempt = (latest_reply.generation_attempt or 1) + 1
+                latest_reply.error = None
+                drafted += 1
+                continue
+            # posted/approved: queue a follow-up draft for the new content.
+            failed_row = await _resume_failed_row(db, channel.id, full_review_id)
+            try:
+                reply_text = await generate_auto_reply(
+                    config, channel, review.rating, review.text, review.reviewer, db,
+                    review_id=full_review_id,
+                    attempt=(failed_row.generation_attempt or 1) + 1 if failed_row else 1,
+                    previous_draft=failed_row.reply_text if failed_row else None,
+                )
+            except Exception as e:
+                logger.warning("Localith follow-up draft failed review=%s: %s", review_id, e)
+                _save_reply_row(
+                    db, failed_row, channel.id, full_review_id,
+                    review.rating, review.text, review.reviewer,
+                    "", "failed", str(e)[:2000],
+                )
+                await notify(
+                    db, user.id, "reply_failed",
+                    f"Could not draft an updated reply for the edited ★{review.rating} review",
+                    "Open the Outbox and tap Retry once the AI is reachable.",
+                    data={"review_id": full_review_id, "channel_id": channel.id,
+                          "listing": connection.listing_name},
+                    href="/dashboard/outbox",
+                )
+                await db.commit()
+                continue
+            _save_reply_row(
+                db, failed_row, channel.id, full_review_id,
+                review.rating, review.text, review.reviewer,
+                reply_text, "pending_approval",
+            )
+            drafted += 1
+            continue
+
+        if review.has_replies:
+            continue
+        if latest_reply:
             continue
         failed_row = await _resume_failed_row(db, channel.id, full_review_id)
         try:
@@ -598,6 +732,13 @@ async def _sync_single_connection(
                 review.rating, review.text, review.reviewer,
                 reply_text, "posted",
             )
+            # The reply was generated from the fresh (post-edit) content —
+            # the edit has been addressed, so clear the flag.
+            if insight is not None and insight.edited:
+                insight.edited = False
+                insight.edited_at = None
+                insight.previous_rating = None
+                insight.previous_review_text = None
             await notify(
                 db, user.id, "reply_posted",
                 f"Auto-replied to ★{review.rating} review from {review.reviewer or 'a customer'}",
@@ -634,19 +775,22 @@ async def _sync_single_connection(
         )).scalar_one_or_none()
         if _ins and _ins.skipped:
             continue
-        await enqueue_event(
-            "review.discovered",
-            {
-                "user_id": user.id,
-                "channel_id": channel.id,
-                "review_id": f"localith:{review_id}",
-                "rating": review.rating,
-                "text": review.text,
-                "reviewer_name": review.reviewer,
-                "review_updated_at": review.published_at,
-            },
-            topic="review-events",
-        )
+        try:
+            await enqueue_event(
+                "review.discovered",
+                {
+                    "user_id": user.id,
+                    "channel_id": channel.id,
+                    "review_id": f"localith:{review_id}",
+                    "rating": review.rating,
+                    "text": review.text,
+                    "reviewer_name": review.reviewer,
+                    "review_updated_at": review.published_at,
+                },
+                topic="review-events",
+            )
+        except Exception as e:
+            logger.warning("Localith discover-event enqueue failed review=%s: %s", review_id, e)
 
     return {
         "channel_id": channel.id,
