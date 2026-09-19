@@ -24,17 +24,10 @@ export function middleware(request: NextRequest) {
     return new NextResponse("Too many requests", { status: 429, headers: { "Retry-After": "60" } });
   }
 
-  const { pathname } = request.nextUrl;
-
-  // Server-side auth guard: redirect /dashboard/* to /login if no refresh_token cookie
-  if (pathname.startsWith("/dashboard")) {
-    const refreshToken = request.cookies.get("refresh_token");
-    if (!refreshToken) {
-      const loginUrl = new URL("/login", request.url);
-      loginUrl.searchParams.set("redirect", pathname);
-      return NextResponse.redirect(loginUrl);
-    }
-  }
+  // NOTE: no server-side auth gate here on purpose. The session cookies
+  // (refresh_token / csrf_token) live on the API origin, which the frontend
+  // middleware can never see cross-domain — gating on them would bounce every
+  // /dashboard visit to /login. The client-side <AuthGuard> is the real gate.
 
   const response = NextResponse.next();
   const isProd = process.env.NODE_ENV === "production";
