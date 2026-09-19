@@ -4,6 +4,16 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
+// ── Future backend contract for scheduled deletion (UI-first: the UI
+// speaks it today; the backend ignores unknown fields until it lands).
+//   POST /api/v1/posts/            accepts `delete_at: <ISO>|null`
+//   PUT  /api/v1/posts/{id}        accepts `delete_at: <ISO>` to schedule,
+//                                  `delete_at: null` to cancel
+//   GET  /api/v1/posts[/{id}]      echoes `delete_at: <ISO>|null`
+//   worker                         deletes rows whose delete_at has passed
+// Until GET echoes it, this page keeps a session overlay (deleteOverlay)
+// so a just-saved schedule stays visible across refreshes.
+
 type PostStatus = "LIVE" | "SCHEDULED" | "ARCHIVED" | "DRAFT" | "FAILED";
 type PostTab = "all" | "scheduled" | "archived";
 type View = { kind: "list" } | { kind: "create" } | { kind: "detail"; id: string; editing: boolean };
@@ -21,6 +31,8 @@ interface PostItem {
   status: PostStatus;
   createdAt: string;
   scheduledAt?: string;
+  // Auto-deletion time (ISO). Absent = no scheduled deletion.
+  deleteAt?: string;
 }
 
 interface LocationOption {
@@ -64,6 +76,12 @@ function PostsInner() {
   const [images, setImages] = useState<string[]>([]);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
+  const [deleteEnabled, setDeleteEnabled] = useState(false);
+  const [deleteAt, setDeleteAt] = useState("");
+  // Session overlay for scheduled deletion until the backend echoes
+  // delete_at (see contract note at top). Key present = overlay wins:
+  // ISO string = pending schedule, null = pending cancel.
+  const [deleteOverlay, setDeleteOverlay] = useState<Record<string, string | null>>({});
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -107,10 +125,10 @@ function PostsInner() {
     return () => { cancelled = true; };
   }, []);
 
-  const loadPosts = async () => {
+  const loadPosts = async (overlay?: Record<string, string | null>) => {
     const q = selectedId ? `?listing_id=${encodeURIComponent(selectedId)}` : "";
     const data = await apiFetch(`/api/v1/posts/${q}`);
-    return normalizePosts(data);
+    return normalizePosts(data, overlay ?? deleteOverlay);
   };
 
   useEffect(() => {
@@ -153,6 +171,8 @@ function PostsInner() {
     setImages([]);
     setScheduleEnabled(false);
     setScheduledAt("");
+    setDeleteEnabled(false);
+    setDeleteAt("");
   };
 
   const openCreate = () => {
@@ -172,6 +192,8 @@ function PostsInner() {
     setImages(p.images);
     setScheduleEnabled(p.status === "SCHEDULED");
     setScheduledAt((p.scheduledAt ?? "").slice(0, 16));
+    setDeleteEnabled(!!p.deleteAt);
+    setDeleteAt((p.deleteAt ?? "").slice(0, 16));
     setView({ kind: "detail", id, editing });
   };
 
@@ -188,16 +210,31 @@ function PostsInner() {
     setImages((prev) => [...prev, ...names].slice(0, 5));
   };
 
-  const valid = title.trim() && businessName.trim() && description.trim() && postLocationId && (!scheduleEnabled || scheduledAt);
+  // Scheduled deletion must be in the future — and after the scheduled
+  // publish time when both are set.
+  const deleteErr = (() => {
+    if (!deleteEnabled) return null;
+    if (!deleteAt) return "Pick a deletion date and time.";
+    const t = new Date(deleteAt).getTime();
+    if (Number.isNaN(t)) return "Pick a valid date and time.";
+    if (t <= Date.now()) return "Deletion must be in the future.";
+    if (scheduleEnabled && scheduledAt) {
+      const s = new Date(scheduledAt).getTime();
+      if (!Number.isNaN(s) && t <= s) return "Deletion must be after the scheduled publish time.";
+    }
+    return null;
+  })();
+
+  const valid = title.trim() && businessName.trim() && description.trim() && postLocationId && (!scheduleEnabled || scheduledAt) && !deleteErr;
 
   const showBannerTimed = (kind: "ok" | "err", text: string) => {
     setBanner({ kind, text });
     setTimeout(() => setBanner(null), 4000);
   };
 
-  const refreshPosts = async () => {
+  const refreshPosts = async (overlay?: Record<string, string | null>) => {
     try {
-      setPosts(await loadPosts());
+      setPosts(await loadPosts(overlay));
     } catch {
       /* keep current list on failure */
     }
@@ -220,9 +257,18 @@ function PostsInner() {
           image_urls: images,
           action: scheduleEnabled ? "schedule" : "publish",
           scheduled_on: scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : null,
+          // Future contract (ignored by the backend until scheduled
+          // deletion lands — see note at top).
+          delete_at: deleteEnabled && deleteAt ? new Date(deleteAt).toISOString() : null,
         }),
       });
-      await refreshPosts();
+      const newId = res?.post?.id ?? res?.id;
+      let nextOverlay = deleteOverlay;
+      if (deleteEnabled && deleteAt && newId) {
+        nextOverlay = { ...deleteOverlay, [String(newId)]: new Date(deleteAt).toISOString() };
+        setDeleteOverlay(nextOverlay);
+      }
+      await refreshPosts(nextOverlay);
       setView({ kind: "list" });
       const skipped = res?.images_skipped ?? 0;
       showBannerTimed("ok", scheduleEnabled
@@ -255,11 +301,26 @@ function PostsInner() {
         body.status = "draft";
         body.scheduled_on = null;
       }
+      // Future contract: schedule / cancel auto-deletion (ignored by the
+      // backend until scheduled deletion lands — see note at top).
+      if (deleteEnabled && deleteAt) {
+        body.delete_at = new Date(deleteAt).toISOString();
+      } else if (activePost?.deleteAt) {
+        body.delete_at = null;
+      }
       await apiFetch(`/api/v1/posts/${view.id}`, {
         method: "PUT",
         body: JSON.stringify(body),
       });
-      await refreshPosts();
+      let nextOverlay = deleteOverlay;
+      if (deleteEnabled && deleteAt) {
+        nextOverlay = { ...deleteOverlay, [view.id]: new Date(deleteAt).toISOString() };
+        setDeleteOverlay(nextOverlay);
+      } else if (activePost?.deleteAt) {
+        nextOverlay = { ...deleteOverlay, [view.id]: null };
+        setDeleteOverlay(nextOverlay);
+      }
+      await refreshPosts(nextOverlay);
       setView({ kind: "detail", id: view.id, editing: false });
       showBannerTimed("ok", "Post updated.");
     } catch (e) {
@@ -274,11 +335,32 @@ function PostsInner() {
     try {
       await apiFetch(`/api/v1/posts/${id}`, { method: "DELETE" });
       setPosts((prev) => prev.filter((p) => p.id !== id));
+      setDeleteOverlay((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
       showBannerTimed("ok", "Post deleted.");
     } catch {
       showBannerTimed("err", "Could not delete post.");
     }
     setView({ kind: "list" });
+  };
+
+  const handleCancelDeletion = async (id: string) => {
+    try {
+      await apiFetch(`/api/v1/posts/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ delete_at: null }),
+      });
+      const nextOverlay = { ...deleteOverlay, [id]: null };
+      setDeleteOverlay(nextOverlay);
+      await refreshPosts(nextOverlay);
+      showBannerTimed("ok", "Scheduled deletion cancelled.");
+    } catch (e) {
+      showBannerTimed("err", e instanceof Error ? e.message.slice(0, 200) : "Could not cancel scheduled deletion.");
+    }
   };
 
   const handleArchive = async (id: string) => {
@@ -412,6 +494,11 @@ function PostsInner() {
                         {p.status === "SCHEDULED" && p.scheduledAt && (
                           <span className="ml-auto text-[11px] text-ink/35 dark:text-fog/35">Publishes {new Date(p.scheduledAt).toLocaleString()}</span>
                         )}
+                        {p.deleteAt && (
+                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">
+                            🗑 {new Date(p.deleteAt).toLocaleString()}
+                          </span>
+                        )}
                       </span>
                     </button>
                   ))}
@@ -435,6 +522,9 @@ function PostsInner() {
               images={images} onFiles={handleFiles} onRemoveImage={(n) => setImages(images.filter((x) => x !== n))}
               scheduleEnabled={scheduleEnabled} setScheduleEnabled={setScheduleEnabled}
               scheduledAt={scheduledAt} setScheduledAt={setScheduledAt}
+              deleteEnabled={deleteEnabled} setDeleteEnabled={setDeleteEnabled}
+              deleteAt={deleteAt} setDeleteAt={setDeleteAt}
+              deleteErr={deleteErr}
               onBack={backToList} onSubmit={handleCreate} submitting={submitting}
               submitLabel={scheduleEnabled ? "Schedule Post" : "Publish Post"}
               heading="New post" subheading="Title, location, description, tags, keywords and images."
@@ -458,6 +548,9 @@ function PostsInner() {
                   images={images} onFiles={handleFiles} onRemoveImage={(n) => setImages(images.filter((x) => x !== n))}
                   scheduleEnabled={scheduleEnabled} setScheduleEnabled={setScheduleEnabled}
                   scheduledAt={scheduledAt} setScheduledAt={setScheduledAt}
+                  deleteEnabled={deleteEnabled} setDeleteEnabled={setDeleteEnabled}
+                  deleteAt={deleteAt} setDeleteAt={setDeleteAt}
+                  deleteErr={deleteErr}
                   onBack={() => openDetail(activePost.id, false)} onSubmit={handleUpdate} submitting={submitting}
                   submitLabel="Save Changes" heading="Edit post" subheading="Update every field, then save."
                 />
@@ -495,6 +588,14 @@ function PostsInner() {
                       Created {activePost.createdAt}
                       {activePost.status === "SCHEDULED" && activePost.scheduledAt ? ` · Publishes ${new Date(activePost.scheduledAt).toLocaleString()}` : ""}
                     </p>
+                    {activePost.deleteAt && (
+                      <p className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 dark:bg-red-500/10 dark:text-red-300">
+                        <span>🗑 Scheduled deletion {new Date(activePost.deleteAt).toLocaleString()}</span>
+                        <button onClick={() => handleCancelDeletion(activePost.id)} className="ml-auto rounded-lg border border-red-200 px-2.5 py-1 text-[11px] font-semibold hover:bg-red-100 dark:hover:bg-red-500/20">
+                          Cancel deletion
+                        </button>
+                      </p>
+                    )}
                     <div className="mt-4 flex flex-wrap gap-2 border-t border-ink/[0.05] pt-4">
                       {activePost.status !== "ARCHIVED" && (
                         <button onClick={() => openDetail(activePost.id, true)} className="btn-secondary">Edit</button>
@@ -543,22 +644,28 @@ function StatusBadge({ status }: { status: PostStatus }) {
   );
 }
 
-function normalizePosts(raw: unknown): PostItem[] {
+function normalizePosts(raw: unknown, deleteOverlay?: Record<string, string | null>): PostItem[] {
   if (!Array.isArray(raw)) return [];
-  return (raw as Record<string, unknown>[]).map((p: Record<string, unknown>, i: number) => ({
-    id: String(p.id ?? `p_${i}`),
-    title: String(p.title ?? "Untitled post"),
-    locationId: String(p.listing_id ?? p.locationId ?? p.location_id ?? ""),
-    locationName: String(p.location_name ?? p.locationName ?? ""),
-    businessName: String(p.business_name ?? p.businessName ?? "Sayvors"),
-    description: String(p.description ?? ""),
-    tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
-    keywords: Array.isArray(p.keywords) ? p.keywords.map(String) : [],
-    images: Array.isArray(p.image_urls ?? p.images) ? ((p.image_urls ?? p.images) as unknown[]).map(String) : [],
-    status: BACKEND_STATUS[String(p.status)] ?? "DRAFT",
-    createdAt: String(p.created_at ?? p.createdAt ?? new Date().toISOString().slice(0, 10)).slice(0, 10),
-    scheduledAt: p.scheduled_on ? String(p.scheduled_on) : p.scheduledAt ? String(p.scheduledAt) : undefined,
-  }));
+  return (raw as Record<string, unknown>[]).map((p: Record<string, unknown>, i: number) => {
+    const id = String(p.id ?? `p_${i}`);
+    const backendDelete = p.delete_at ? String(p.delete_at) : p.deleteAt ? String(p.deleteAt) : undefined;
+    const overlayDelete = deleteOverlay && id in deleteOverlay ? deleteOverlay[id] : undefined;
+    return {
+      id,
+      title: String(p.title ?? "Untitled post"),
+      locationId: String(p.listing_id ?? p.locationId ?? p.location_id ?? ""),
+      locationName: String(p.location_name ?? p.locationName ?? ""),
+      businessName: String(p.business_name ?? p.businessName ?? "Sayvors"),
+      description: String(p.description ?? ""),
+      tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
+      keywords: Array.isArray(p.keywords) ? p.keywords.map(String) : [],
+      images: Array.isArray(p.image_urls ?? p.images) ? ((p.image_urls ?? p.images) as unknown[]).map(String) : [],
+      status: BACKEND_STATUS[String(p.status)] ?? "DRAFT",
+      createdAt: String(p.created_at ?? p.createdAt ?? new Date().toISOString().slice(0, 10)).slice(0, 10),
+      scheduledAt: p.scheduled_on ? String(p.scheduled_on) : p.scheduledAt ? String(p.scheduledAt) : undefined,
+      deleteAt: backendDelete ?? overlayDelete ?? undefined,
+    };
+  });
 }
 
 function PostForm(props: {
@@ -571,6 +678,9 @@ function PostForm(props: {
   images: string[]; onFiles: (f: FileList | null) => void; onRemoveImage: (n: string) => void;
   scheduleEnabled: boolean; setScheduleEnabled: (v: boolean) => void;
   scheduledAt: string; setScheduledAt: (v: string) => void;
+  deleteEnabled: boolean; setDeleteEnabled: (v: boolean) => void;
+  deleteAt: string; setDeleteAt: (v: string) => void;
+  deleteErr: string | null;
   onBack: () => void; onSubmit: () => void; submitting: boolean;
   submitLabel: string; heading: string; subheading: string;
 }) {
@@ -659,6 +769,22 @@ function PostForm(props: {
         </label>
         {p.scheduleEnabled && (
           <input type="datetime-local" value={p.scheduledAt} onChange={(e) => p.setScheduledAt(e.target.value)} className="input-field" />
+        )}
+        <label className="flex cursor-pointer items-center justify-between rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
+          <span>
+            <span className="block text-[13px] font-semibold text-ink dark:text-fog">Schedule deletion</span>
+            <span className="block text-[11px] text-ink/40">Auto-delete this post at that time (Google copy stays).</span>
+          </span>
+          <span onClick={() => p.setDeleteEnabled(!p.deleteEnabled)}
+            className={`h-5 w-9 shrink-0 rounded-full transition ${p.deleteEnabled ? "bg-red-500" : "bg-ink/15 dark:bg-fog/15"}`}>
+            <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${p.deleteEnabled ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+          </span>
+        </label>
+        {p.deleteEnabled && (
+          <div>
+            <input type="datetime-local" value={p.deleteAt} onChange={(e) => p.setDeleteAt(e.target.value)} className="input-field" />
+            {p.deleteErr && <p className="mt-1 text-[11px] font-medium text-red-600">{p.deleteErr}</p>}
+          </div>
         )}
         <div className="flex items-center justify-between pt-1">
           <button onClick={p.onBack} className="text-[12px] font-medium text-ink/40 hover:text-ink">Back</button>
