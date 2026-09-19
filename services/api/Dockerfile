@@ -11,10 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libpq-dev curl \
  && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
-COPY app/ ./app/
-COPY alembic/ ./alembic/
-COPY alembic.ini ./
+# Build context is the REPO ROOT (see deploy-staging.yml): the API imports
+# integrations/channels/embedsocial.py from the repo root at runtime.
+COPY services/api/pyproject.toml ./
+COPY services/api/app/ ./app/
+COPY services/api/alembic/ ./alembic/
+COPY services/api/alembic.ini ./
+COPY integrations/ ./integrations/
 
 RUN pip install --upgrade pip && pip install -e . && pip install "uvicorn[standard]"
 
