@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     CSRF_COOKIE_NAME: str = "csrf_token"
     REFRESH_COOKIE_NAME: str = "refresh_token"
     REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
+    # Parent domain shared by the SPA and the API (e.g. ".sayvors.com").
+    # Lets the SPA origin read the non-httpOnly CSRF cookie for the
+    # X-CSRF-Token double-submit header in split-domain deployments.
+    # None = host-only cookies (local dev).
+    COOKIE_DOMAIN: str | None = None
     ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
 
     # ── File uploads ────────────────────────────────────

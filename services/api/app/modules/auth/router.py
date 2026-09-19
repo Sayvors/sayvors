@@ -29,6 +29,54 @@ from .service import (
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
+def _set_csrf_cookie(response: Response, token: str | None = None) -> str:
+    """Mint the double-submit CSRF cookie the SPA sends back as X-CSRF-Token."""
+    domain = settings.COOKIE_DOMAIN or None
+    if domain:
+        # One-shot transition: drop the pre-domain host-only cookie so it
+        # can never shadow the shared one.
+        response.delete_cookie(settings.CSRF_COOKIE_NAME, path="/")
+    csrf_token = token or generate_csrf_token()
+    response.set_cookie(
+        key=settings.CSRF_COOKIE_NAME,
+        value=csrf_token,
+        httponly=False,
+        secure=True,
+        samesite="none",
+        max_age=settings.REFRESH_COOKIE_MAX_AGE,
+        path="/",
+        domain=domain,
+    )
+    return csrf_token
+
+
+def _set_session_cookies(response: Response, refresh_token: str) -> None:
+    """Refresh + CSRF cookies, shared across the parent domain when configured."""
+    domain = settings.COOKIE_DOMAIN or None
+    if domain:
+        response.delete_cookie(settings.REFRESH_COOKIE_NAME, path="/")
+    response.set_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=settings.REFRESH_COOKIE_MAX_AGE,
+        path="/",
+        domain=domain,
+    )
+    _set_csrf_cookie(response)
+
+
+def _clear_session_cookies(response: Response) -> None:
+    """Remove both the host-only and the shared-domain cookie variants."""
+    response.delete_cookie(settings.REFRESH_COOKIE_NAME, path="/")
+    response.delete_cookie(settings.CSRF_COOKIE_NAME, path="/")
+    if settings.COOKIE_DOMAIN:
+        response.delete_cookie(settings.REFRESH_COOKIE_NAME, path="/", domain=settings.COOKIE_DOMAIN)
+        response.delete_cookie(settings.CSRF_COOKIE_NAME, path="/", domain=settings.COOKIE_DOMAIN)
+
+
 def _ip_in_trusted_proxy(ip: str) -> bool:
     """Check whether a peer IP matches a configured trusted proxy (IP or CIDR)."""
     import ipaddress
@@ -90,28 +138,7 @@ async def signup_endpoint(
         raise HTTPException(status_code=409, detail=str(e))
 
     verification_token = result.pop("verification_token", None)
-    refresh_token = result.pop("refresh_token")
-
-    response.set_cookie(
-        key=settings.REFRESH_COOKIE_NAME,
-        value=refresh_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
-        path="/",
-    )
-
-    csrf_token = generate_csrf_token()
-    response.set_cookie(
-        key=settings.CSRF_COOKIE_NAME,
-        value=csrf_token,
-        httponly=False,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
-        path="/",
-    )
+    _set_session_cookies(response, result.pop("refresh_token"))
 
     return {
         "access_token": result["access_token"],
@@ -145,27 +172,7 @@ async def login_endpoint(
         raise HTTPException(status_code=401, detail=str(e))
 
     refresh_token = result.pop("refresh_token")
-
-    response.set_cookie(
-        key=settings.REFRESH_COOKIE_NAME,
-        value=refresh_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
-        path="/",
-    )
-
-    csrf_token = generate_csrf_token()
-    response.set_cookie(
-        key=settings.CSRF_COOKIE_NAME,
-        value=csrf_token,
-        httponly=False,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
-        path="/",
-    )
+    _set_session_cookies(response, refresh_token)
 
     return result
 
@@ -191,26 +198,7 @@ async def refresh_endpoint(
         raise HTTPException(status_code=401, detail=str(e))
 
     new_refresh = result.pop("refresh_token")
-    response.set_cookie(
-        key=settings.REFRESH_COOKIE_NAME,
-        value=new_refresh,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
-        path="/",
-    )
-
-    csrf_token = generate_csrf_token()
-    response.set_cookie(
-        key=settings.CSRF_COOKIE_NAME,
-        value=csrf_token,
-        httponly=False,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
-        path="/",
-    )
+    _set_session_cookies(response, new_refresh)
 
     return result
 
@@ -223,23 +211,13 @@ async def logout_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     await logout(body.refresh_token, user.id, body.all_devices, db)
-    response.delete_cookie(settings.REFRESH_COOKIE_NAME, path="/")
-    response.delete_cookie(settings.CSRF_COOKIE_NAME, path="/")
+    _clear_session_cookies(response)
     return {"message": "Logged out"}
 
 
 @router.post("/csrf-token")
 async def csrf_token_endpoint(response: Response):
-    csrf_token = generate_csrf_token()
-    response.set_cookie(
-        key=settings.CSRF_COOKIE_NAME,
-        value=csrf_token,
-        httponly=False,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
-        path="/",
-    )
+    csrf_token = _set_csrf_cookie(response)
     return {"csrf_token": csrf_token}
 
 
@@ -305,25 +283,7 @@ async def verify_otp_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
     refresh_token = result.pop("refresh_token")
-    response.set_cookie(
-        key=settings.REFRESH_COOKIE_NAME,
-        value=refresh_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
-        path="/",
-    )
-    csrf_token = generate_csrf_token()
-    response.set_cookie(
-        key=settings.CSRF_COOKIE_NAME,
-        value=csrf_token,
-        httponly=False,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_COOKIE_MAX_AGE,
-        path="/",
-    )
+    _set_session_cookies(response, refresh_token)
     return result
 
 
