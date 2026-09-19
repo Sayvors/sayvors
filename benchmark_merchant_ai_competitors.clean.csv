@@ -1,0 +1,248 @@
+﻿"Competitor","Region/Positioning","Product Focus","Key Features (Researched)","Verified Capabilities","Pricing (raw)","Currency","Pricing Model","KSA Relevance","Strategic Gap","Source URLs","Error"
+"Unifonic","Saudi Arabia / MENA CPaaS and conversational customer engagement","Unifonic provides an AI-native, omnichannel customer-experience platform for enterprises and public-sector organizations, spanning customer acquisition, support, onboarding, retention, and lifecycle engagement. Its product portfolio includes unified agent-console, campaigns, AI chatbot, journey orchestration, audience segmentation, integrations, and programmable communications. [1] [2]","• Omnichannel messaging: WhatsApp, SMS, Voice, web/in-app chat, push, email, Instagram, FB Messenger, Apple Business Messaging
+• Autonomous AI agents for marketing, onboarding, service, lifecycle
+• Flow Studio drag-and-drop journey orchestration (100+ integrations: Salesforce, HubSpot, Shopify)
+• Voice API: IVR, text-to-speech, call recording, masked calling, auto-dialer, SIP/BYOC
+• Arabic-first conversational AI with GCC dialect processing
+• Agentic Studio: AI guardrails, knowledge sources, co-pilot, content creator
+• SMS OTP/verification, bulk campaigns, Unicode & branded sender IDs
+• KSA data residency, CST alignment, in-KSA disaster recovery","• WhatsApp API and conversational commerce/support/notifications
+• SMS for authentication, reminders, alerts, and high-volume messaging
+• enterprise inbound/outbound voice, routing, and customer conversations
+• Facebook Messenger automation for support and lead generation
+• Instagram messaging across stories, comments, and DMs
+• web and in-app chat
+• push notifications
+• unified cross-channel agent inbox
+• omnichannel campaigns
+• chatbot flows and AI agents
+• Flow Studio journey orchestration
+• Audience profile unification and segmentation
+• AI-to-human handoff
+• regional Arabic-dialect processing and stated 95% Arabic dialect recognition
+• integrations/API infrastructure
+• local data residency and GCC enterprise controls stated on the homepage. [1] [2] [3]","USD 499/month for Connect; USD 999/month for Engagement; Intelligence is custom pricing; listed prices exclude applicable taxes and usage beyond plan limits is billed as additional consumption. [3]","USD","Subscription","Unifonic states it was established in Saudi Arabia in 2006, began GCC operations in 2008, and maintains a Riyadh office. It reports 5,000+ enterprise/public-sector customers in MENA, 10B+ annual transactions reaching the GCC, and customer logos including Salla, HungerStation, Panda, Tabby, Tamara, STC-related entities, and TikTok; its homepage also positions the AI platform for regulated GCC industries with local data residency. [1] [2]","The reviewed public channel and pricing pages verify WhatsApp, SMS, voice, Facebook Messenger, Instagram, web/in-app chat, push, and enterprise AI/CX workflows, but do not verify TikTok messaging, Google review management, or social-post publishing/ads as native merchant workflows. A Saudi-focused entrant could therefore differentiate with Arabic-first, self-serve tooling for SMB merchants that unifies those surfaces with local commerce integrations, transparent lower-volume pricing, and practical Saudi Arabic voice/review automation; this is a product-positioning inference based on the publicly documented scope, not a claim that Unifonic cannot support them through custom integrations.","https://www.unifonic.com/en/ https://www.unifonic.com/en/about https://www.unifonic.com/en/pricing?hsLang=en",""
+"Lucidya","Saudi Arabia customer experience and social listening platform","Lucidya is a Riyadh-founded, AI-native CX platform combining social listening, media monitoring, unified omnichannel service, customer profiles, surveys, ticketing and an AI Agent for enterprise and government organizations. Its public materials position it for large brands and regulated sectors across Saudi Arabia, MENA and international markets.[1] [2]","• Social Listening: real-time monitoring across social, news, blogs, forums
+• Native Arabic sentiment across 17 dialects (92% accuracy)
+• OmniServe unified inbox (X, IG, FB, LinkedIn, WhatsApp, email, voice)
+• AI Agent autonomous case resolution with escalation & governance
+• Media Monitoring: TV, radio, print tracking
+• Public Reviews monitoring across 20+ platforms
+• Surveys with AI sentiment (NPS, CSAT)
+• Real-time alerts, competitive benchmarking, influencer detection, auto-translation
+• Luci AI copilot, APIs/webhooks","• Social Listening monitors social media, news, blogs, forums and public reviews with native per-language sentiment, trend/share-of-voice analysis, competitor benchmarking and alerts
+• OmniServe centralizes X, Instagram, Facebook, WhatsApp, email, live chat and voice in one inbox with routing, assignment, SLA and escalation controls
+• public monitoring covers Google Maps, Google Play, Apple App Store, Facebook Page Reviews, TripAdvisor and regional platforms, while managed-account coverage includes TikTok
+• AI Agent is described as autonomously resolving cases across WhatsApp, social media and other channels, using customer history and taking actions such as order tracking, account changes, subscription management and refunds
+• governance includes role-based access, approval workflows, audit trails, policy controls, PII masking and a kill switch
+• APIs/webhooks and direct AI-model access are documented for sentiment analysis, dialect recognition and attribute identification
+• Luci is an AI copilot for contextual analysis, and Call Analytics is an add-on.[2] [3] [4]","Contact sales: the public Social Listening pricing page shows Basic, Professional and Enterprise tiers, but each is presented as “Talk to sales” rather than a published currency amount or cadence.[3]","Custom","Custom","Lucidya states that it was founded in Jeddah, Saudi Arabia in 2016 and reports serving 75m+ customers through clients in 13 countries, with 120+ large enterprise and government clients and 92% Arabic sentiment accuracy across 15 dialects.[1] Its pricing FAQ explicitly claims full Arabic support, native sentiment analysis and Enterprise coverage of regional platforms including HungerStation, Talabat, Careem, Jahez and Mrsool; its Saudi banking page also markets Arabic-native AI, PDPL-oriented compliance and local-hosting options for regulated financial institutions.[3] [5]","Lucidya is a strong adjacent competitor but its public positioning is enterprise- and government-oriented, demo-led and built around broad CX intelligence rather than a clearly self-serve workflow for Saudi SMB merchants. A focused entrant could exploit a simpler Arabic-first merchant product with transparent pricing, rapid setup, native WhatsApp/Instagram/TikTok operations, Google-review workflows, social publishing and ads in one practical console, while preserving Lucidya-like dialect-aware automation and escalation.","https://www.lucidya.com/ https://www.lucidya.com/help/products-and-solutions-overview https://www.lucidya.com/pricing/social-listening",""
+"Salla","Saudi Arabian e-commerce merchant platform","Salla is a hosted, no-code commerce platform that lets entrepreneurs, retailers, SMBs, and enterprises create and operate online stores, with products, inventory, orders, payments, shipping, marketing, analytics, and branch management in one dashboard. Its official materials position it as founded in Makkah in 2016 and serving merchants from first-time sellers through large regional brands.[1] [2]","• Online store builder, Arabic/English RTL, 40+ languages
+• Payments: mada, STC Pay, Apple Pay, cards, Tabby/Tamara BNPL
+• ZATCA e-invoicing
+• 200+ shipping partners across GCC/global
+• Salla Ads + Meta/Snapchat/TikTok/Google integrations
+• App Store with 900+ integrations
+• Multi-branch/warehouse & inventory management
+• WhatsApp notifications, loyalty, customer chat
+• Open API
+• Salla App Maker mobile app (~72h)
+• Mahally marketplace & Salla Special enterprise","• No-code store builder with Arabic/English and RTL support
+• integrated payments including mada, STC Pay, Apple Pay, cards, Tabby and Tamara, plus ZATCA e-invoicing support
+• 200+ stated local/global shipping partners and shipment tracking
+• 900+ stated apps/integrations, including marketing automation and connections for Mailchimp, Meta, Snapchat, TikTok and Google Ads
+• native discounts, bundles, loyalty, gift cards, SEO, analytics and Salla Ads
+• Salla Chat unified customer-service workspace with live chat, ready-made responses, employee roles, conversation assignment automation, reports and automated marketing messages
+• official materials mention AI fraud detection and free AI prompt/store-analysis tools, but do not substantiate a native, general-purpose Arabic AI agent for WhatsApp, Instagram/TikTok conversations, reviews, or voice.","Public annual pricing: Basic free; Plus SAR 990/year; Pro SAR 2,990/year. Salla Chat is separately listed at SAR 149/month for 1 employee, SAR 499/month for 7 employees, or SAR 999/month for 15 employees; enterprise/Salla Special uses custom pricing and contact sales.[1] [3]","SAR","Freemium","Salla is headquartered in Makkah and explicitly built for Saudi and GCC commerce, with Arabic-first/RTL experience, Saudi payment methods, ZATCA compliance, and local logistics coverage. Its official pages state 68,000+ active stores/merchants, more than SAR 50 billion in processed sales, availability across Saudi Arabia, the UAE and the Gulf, and use by regional brands such as Arabian Oud and Abdul Samad Al Qurashi.[1] [2]","Salla is a strong adjacent platform and distribution surface rather than a direct omnichannel AI-communications specialist: its public pages verify store operations, marketing integrations and rule-based chat/team automation, but do not verify one native Arabic AI layer spanning WhatsApp, Instagram/TikTok DMs, Google reviews, social content, paid-ad execution and voice. A Saudi-focused entrant could exploit this gap with Arabic dialect-aware, merchant-specific AI agents and a unified cross-channel inbox/workflow that works with Salla stores and local compliance expectations.","https://salla.com/en/ https://salla.com/en/plans https://salla.com/en/salla-chat",""
+"Zid","Saudi Arabian omnichannel commerce platform","Zid is an all-in-one commerce platform for merchants to launch and operate online stores, with e-store, POS, payments, shipping, inventory, marketplace, financing, marketing and app-ecosystem products. It targets businesses from new/local sellers through scaling and enterprise merchants, including physical retailers connecting branches with online sales.","• Online store builder + free POS + WhatsApp integration
+• Zid Cashier POS: ZATCA e-invoices, multi-branch sync, SoftPOS
+• Zid Pay: instant payments, fraud shield, installments (Tamara, Tabby, etc.)
+• Zid WhatsApp: verified-number campaigns, order/cart/stock automations
+• Zid Shipping: COD collection, label printing, delivery reports
+• Multi-channel marketplace (Amazon, Trendyol, TikTok)
+• Abandoned cart recovery via WhatsApp/SMS/Email + analytics
+• Theme SDK, Zid Wallet, custom domain, live chat
+• Dedicated account manager & insights","• Online store builder and customizable themes
+• POS with unified branch and online-sales management
+• payment and shipping integrations, including more than 100 local and international shipping companies
+• inventory, order and operational reporting
+• marketplace connections explicitly listed for Amazon, Trendyol and Jahez
+• Zid WhatsApp embedded in the store dashboard with verified-number setup, two-way inbox, abandoned-cart reminders, marketing campaigns, order-status updates, back-in-stock alerts, review requests and configurable auto-replies
+• no AI-specific capability, Instagram/TikTok messaging, Google Reviews management or voice AI was verified in the reviewed primary sources","Starter: free forever; Rise: SAR 99/month; Growth: SAR 299/month; Professional/Pro: contact sales. Zid WhatsApp is stated as included in the Professional plan and SAR 109/month on other plans after a free trial month; fees and plan prices may exclude VAT where applicable.","SAR","Freemium","Zid states that it was built from the ground up to serve Saudi merchants and publicly lists Saudi Arabia as an available market. Its official site displays a Saudi commercial registration and reports more than 13,500 merchants and more than SAR 10 billion in sales through Zid stores; it also lists availability across UAE, Kuwait, Oman, Bahrain, Egypt and Syria, supporting regional relevance.","Zid is a strong commerce-system and WhatsApp-automation adjacent competitor, but the reviewed public sources do not verify an Arabic-first AI communications layer spanning WhatsApp, Instagram/TikTok messages, Google reviews, social publishing, ads and voice. A Saudi entrant could differentiate with unified cross-channel Arabic conversation intelligence, Saudi dialect-aware AI, review/reputation workflows and voice-to-commerce automation rather than competing directly on storefront, payments or logistics.","https://zid.sa/en/ https://zid.sa/en/pricing/ https://zid.sa/en/solutions/zid-whatsapp/",""
+"CEQUENS","MENA CPaaS and business messaging provider","CEQUENS provides programmable communications APIs and no-code applications for enterprises, including SMS, WhatsApp, email, voice, push notifications and unified customer-conversation tools. Its public product pages target organizations such as e-commerce, retail, finance, healthcare, travel, education, logistics and technology businesses, from startups to enterprises.","• SMS API: two-way, OTP, bulk, global, analytics, AIT protection
+• WhatsApp Business API: templates, sessions, rich media
+• Omnichannel API: SMS, WhatsApp, Voice, Email, Push, RCS
+• AI-assisted unified inbox with translation & sentiment
+• No-code chatbot builder for WhatsApp/SMS, Arabic/English NLP
+• Voice API for conversational/automated service
+• Cross-channel journey orchestration with real-time decisioning
+• RESTful APIs, SDKs, sandbox, ~15-min onboarding
+• Unified customer profiles & consolidated analytics","• SMS, WhatsApp, email, voice and push-notification APIs
+• omnichannel inbox/chat with unified conversations, real-time analytics, SLA management, internal notes, mentions, chat queuing and smart routing
+• supported conversational channels visibly include WhatsApp, Facebook Messenger, Instagram, Google, Microsoft Teams, X, Apple and SMS
+• chatbot NLP, knowledge-base, custom-response, analytics and multichannel support
+• AI Agent with multilingual support, contextual and multi-turn responses, continuous context preservation and sentiment analysis
+• CRM/helpdesk integrations, broadcast, bots and workflow automations","Usage-based billing: pay per message, voice minute or API call; no monthly subscription fee, minimum spend or long-term commitment; volume discounts apply across SMS, WhatsApp, Voice and Email; free trial credits are stated, while exact unit rates require a custom quote","Custom","Custom","CEQUENS positions itself as serving 2,000+ enterprises across MENA and beyond and states coverage of 190+ countries. Its current public site also features a Saudi case reference involving Princess Nourah University using AI-powered automation, SMS, WhatsApp and enterprise messaging infrastructure, providing direct evidence of Saudi-market activity.","The public positioning is broad, enterprise-oriented and channel/API-led rather than explicitly tailored to the day-to-day operating workflows of Saudi SMB and mid-market merchants. A Saudi entrant could differentiate with Arabic-first Saudi dialect quality, localized merchant playbooks, native Google Reviews and social-posting/ad workflows, and a single outcome-oriented console spanning WhatsApp, Instagram/TikTok, reputation and voice AI; these specific combinations were not verified on the cited CEQUENS pages.","https://www.cequens.com/ https://www.cequens.com/products/omnichannel-chat https://www.cequens.com/pricing",""
+"Infobip","global omnichannel customer-engagement platform with MENA operations","Infobip’s AgentOS is an enterprise customer-engagement suite combining a native customer data platform, journey orchestration, AI chatbots and agents, analytics, and cloud contact-center capabilities across marketing, sales, and support. It targets enterprise and multi-brand organizations, with documented retail/e-commerce, financial-services, telecom, healthcare, and other vertical use cases.","• WhatsApp Business API (chat + Business Calling voice)
+• SMS, RCS, Viber, MMS messaging
+• Voice, email, live chat, web push, in-app messaging
+• AI Agents (AgentOS) omnichannel + voice
+• Moments journey/campaign orchestration
+• Conversations contact center
+• Answers AI chatbots
+• Mobile identity: number lookup & verification
+• Vocalize AI voice
+• Integrations: Salesforce, HubSpot, Oracle, MS Dynamics 365","• 15+ native channels including WhatsApp, SMS, RCS, email, push, Apple Messages for Business, Viber, Facebook Messenger, Instagram, Telegram, LINE, voice, and live chat
+• Instagram support for direct messages, comments, story replies and mentions with rich media, quick replies, cards and carousels
+• AI chatbot builder with no-code/low-code flows, GenAI, intent detection, RAG, conversation memory, multilingual deployment, API/webhook actions, and escalation to human agents or AI agents
+• AI-powered journey orchestration using behavioral/CDP data, predictive scores, A/B testing, send-time optimization, segmentation and automatic channel failover
+• WhatsApp voice-message chatbot responses and documented Voice AI Agents/voice API offerings
+• official pages reviewed do not substantiate TikTok messaging, Google Reviews management, or native organic social-post publishing as core capabilities","AgentOS: platform fee starting at USD 530/month plus processing fee starting at USD 0.07456 per outbound interaction; inbound messages are free, while CPaaS delivery charges for WhatsApp, SMS, RCS and other channels vary by region and volume; additional seats and AI credits are Contact sales. WhatsApp Business Platform is pay-as-you-go per delivered message/conversation category, with the first 1,000 user-initiated service conversations per WhatsApp Business Account free each month; customized plans are Contact sales.","USD","Usage-based","Infobip has a Riyadh office and Saudi-specific sender-registration guidance requiring local agreements/payments in SAR for local senders. Its published Saudi customer cases include Nissan Saudi Arabia, where it delivered Arabic-and-English WhatsApp support and an AI-powered voice game, and Farm Superstores, where a WhatsApp chatbot and personalized messaging reduced reported operational costs by 60%.","Infobip is a credible enterprise-grade infrastructure and omnichannel competitor, but its public positioning is complex and sales-led relative to a lightweight Saudi-merchant product. A Saudi entrant could differentiate with Arabic-first merchant workflows, simple SAR pricing and onboarding, unified Google Reviews plus TikTok/Instagram inbox and publishing, Saudi-specific commerce integrations and compliance defaults, and packaged voice/reputation automation; these gaps are opportunities inferred from the reviewed public pages, not claims that Infobip lacks every capability internally.","https://www.infobip.com/agentos/customer-engagement-platform https://www.infobip.com/agentos/pricing https://www.infobip.com/customer/nissan-saudi-arabia",""
+"respond.io","global multichannel messaging and WhatsApp CRM platform","Respond.io is an AI-powered customer conversation management platform for B2C businesses, particularly teams handling high-volume sales, marketing and support conversations across multiple channels. Its product combines a shared team inbox, contact and lifecycle management, CRM connectivity, broadcasts, analytics, workflows and AI Agents for revenue-oriented conversations.","• WhatsApp Business Platform (Coexistence & Calling API)
+• Multichannel inbox: IG, Messenger, TikTok, Telegram, Viber, SMS, email, web chat
+• AI Agents for lead qualification, routing, FAQs
+• Workflow automation (Zapier, Make, custom API/HTTP)
+• Shared team inbox with assignment/routing
+• WhatsApp bulk broadcasts & click-to-WhatsApp ads
+• CRM integrations: HubSpot, Salesforce, Zoho, Pipedrive, Shopify
+• Conversation analytics
+• Meta Conversions API (CAPI)
+• Lifecycle/lead management","• WhatsApp Business Platform, Instagram, TikTok Business Messaging (Beta), Facebook Messenger, Telegram, LINE, Viber, WeChat, SMS, email, website chat and custom channels
+• WhatsApp Business Calling API, VoIP and unified call/chat/email threads
+• AI Agents that answer enquiries, qualify leads, recommend products, manage bookings, route or assign conversations and take configured actions
+• AI Prompt, AI Assist, conversation summaries, AI call recording/transcription and workflow automation
+• Meta and TikTok Ads, HubSpot, Salesforce, Shopify, Calendly/Cal.com, Zapier, Make, n8n, developer API, webhooks and HTTP requests","Public USD monthly pricing: Starter $79/month, Growth $159/month and Advanced $279/month; yearly billing is shown as $948/year, $1,908/year and $3,348/year respectively, with Enterprise priced custom. A 7-day free trial is stated; WhatsApp/Meta usage fees are not included and are charged according to Meta rates, while AI usage is included within plan allowances and may incur stated overage charges.","USD","Subscription","Respond.io states that it serves businesses worldwide and identifies its company address in Kuala Lumpur, Malaysia; its official materials document Middle East traction, including recognition as Best Business Messaging Platform Vendor at Expand North Star in Dubai and participation at GITEX Global. Its channel mix directly overlaps Saudi merchant demand for WhatsApp, Instagram, TikTok messaging and click-to-message advertising, while the platform’s AI-agent materials list Arabic among supported site languages/documentation languages.","The public product pages present a broad, globally configurable platform rather than a Saudi merchant operating system: they do not substantiate Arabic-first workflows, Saudi-specific commerce/payments, local review management, or a unified Google Business Profile/reviews and social-posting workflow. A Saudi-focused entrant could differentiate with deeply localized Arabic dialect and bilingual AI, Saudi channel/compliance and commerce integrations, local onboarding, and one merchant workflow spanning conversations, reviews, organic posting, ads and voice.","https://respond.io/ https://respond.io/pricing https://respond.io/integrations",""
+"Wati","global WhatsApp Business platform for SMEs","Wati is an AI-powered customer-engagement and WhatsApp Business API platform for growth teams, SMEs, and medium-to-large brands using messaging for marketing, sales, and support. Its public site positions WhatsApp as the core channel and says it serves 16,000+ businesses across 190+ countries.[1]","• Official WhatsApp Business API (Meta BSP)
+• Shared team inbox, multi-agent routing
+• No-code chatbot / flow builder
+• Broadcast & template management
+• Astra AI Support Agent + AI features
+• E-commerce: catalogs, abandoned-cart recovery
+• Integrations: Shopify, WooCommerce, HubSpot, Zoho, Sheets, Zapier/Make
+• Contact management w/ custom attributes
+• Analytics & reporting
+• Webhooks & API","• WhatsApp Business API with team inbox and unlimited agents
+• website chat, Instagram, Facebook, SMS, calls, QR code, widget and wa.me inbox options
+• WhatsApp broadcasts/campaigns, click-to-WhatsApp ads, catalogs, WhatsApp Flows and Shopify commerce
+• no-code chatbots, keyword rules, workflow automation, lead qualification, routing, follow-ups and analytics
+• Wati AI inbound lead-qualification agents and AI support agents grounded in a knowledge base
+• Astra AI Agents for web, WhatsApp and voice as a separately priced add-on
+• CRM, commerce, analytics, payment-link, ticketing and other integrations, with plan-dependent APIs/webhooks","Public subscription pricing plus Meta/Wati message charges. The pricing page publicly lists Growth at $59/month billed annually, Pro at $119/month billed annually, and Business at $279/month billed annually; monthly billing is also offered, with additional operator-seat charges on Pro and Business, and message fees varying by marketing, utility and authentication category. A separate India-only PAYG plan is ?999 one time, with ?999 in message credits and 90-day validity.[2] [3]","USD","Subscription","Wati’s official pricing/help documentation explicitly includes Saudi Arabia in Meta WhatsApp message-rate updates and lists Saudi Arabia among markets with a 100,000-message monthly volume threshold for utility/authentication pricing tiers.[4] Its public pricing experience includes Arabic localization, while the product advertises global reach, Meta Business Partner status, and multi-country operation.[1] [2]","The public product pages verify WhatsApp, Instagram, Facebook, website chat, SMS and calls, but do not verify TikTok messaging or Google-review management; voice AI is presented as a separately priced Astra add-on rather than an integrated merchant suite.[1] [2] A Saudi entrant could differentiate with Arabic-first, Saudi-dialect-aware AI and one workflow spanning WhatsApp, Instagram/TikTok DMs, Google reviews, social publishing and local merchant operations, subject to validating those capabilities in-market.","https://www.wati.io/ https://www.wati.io/pricing/ https://support.wati.io/en/articles/11561662-message-based-pricing-all-you-need-to-know",""
+"SleekFlow","multichannel messaging and social commerce platform","SleekFlow provides a shared inbox and AI suite for marketing, sales, and customer-support teams to centralize customer conversations, automate workflows, run broadcasts, and support chat-led commerce. Its stated customer base spans B2C brands and businesses in retail, ecommerce, beauty, financial services, real estate, education, and other sectors, including small teams through enterprise accounts.[1] [2]","• Unified omnichannel inbox: WhatsApp, IG, Messenger, Telegram, WeChat, SMS, email, web chat
+• Agentic AI / Gen-AI chatbots w/ product recommendations
+• Visual automation/flow builder
+• WhatsApp commerce (in-chat browse, payment links)
+• Shopify, Salesforce, HubSpot, Stripe integrations
+• POS/ERP/e-commerce integrations
+• Voice assistant support (Alexa, Google Assistant, Siri)
+• Broadcast & campaign messaging w/ smart routing
+• Reports & analytics, surveys, customer profiles
+• Ticketing & knowledge base","• Unified inbox for WhatsApp Business Platform, Instagram DMs, Facebook Messenger, TikTok Business Messaging, SMS, Telegram, Viber, live chat, Outlook and VoIP/Twilio calls
+• integrations with Shopify, HubSpot, Salesforce, Zoho CRM, Google Sheets, VTEX, Zapier, Make, Facebook Lead Ads, TikTok Instant Forms, Stripe payment links and API/webhooks
+• AI agents trained on files, websites and custom knowledge to answer customers, recommend products, schedule appointments, score and route leads, send messages, trigger Shopify/custom-API actions, and hand off priority cases
+• Flow Builder no-code automations, broadcasts, CRM/contact segmentation, ticketing and analytics
+• official FAQ states WhatsApp voice calls are not supported, while the current product page labels AI voice-call handling as “Coming Soon”
+• no primary-source evidence found in the reviewed pages for Google Reviews management or organic social-post publishing","Public subscription pricing: Pro AI starts at US$149/month on annual billing or US$199/month monthly; Premium AI starts at US$349/month annually or US$399/month monthly; Enterprise AI is custom/contact sales. Plans include stated monthly active-contact allowances of 500 and 1,000 respectively; WhatsApp Business Platform and SMS hosting, template and per-message charges are additional, and a 60-day dedicated onboarding add-on is listed at US$499 one-off.[1]","USD","Subscription","SleekFlow publishes UAE-specific guidance describing a unified Instagram, Facebook, TikTok and WhatsApp inbox, multilingual routing, CRM sync, AI-assisted replies and local platform-policy considerations, making it a directly relevant regional adjacent competitor for Gulf merchants.[3] Its channel catalog includes WhatsApp Business Platform, Instagram, TikTok, SMS and social-ad/form entry points, but the reviewed primary pages do not establish Saudi-specific operations, Arabic-first positioning, Saudi payment/local-commerce integrations, or Google Reviews coverage.","A Saudi-focused entrant could differentiate with Arabic-first, Saudi-dialect-aware AI and workflows designed around local merchant operations, including stronger Saudi CRM/commerce/payment integrations, Arabic quality controls and reporting, and native Google Reviews/reputation management plus unified social publishing. SleekFlow’s public positioning is broad and global/UAE-oriented; its reviewed pages also show voice as forthcoming and do not substantiate Google Reviews management or organic social-post publishing, leaving room for a more complete Saudi merchant operating layer.","https://sleekflow.io/en-us https://sleekflow.io/en-us/pricing https://sleekflow.io/blog/social-media-api-uae",""
+"Manychat","Instagram, WhatsApp and social automation platform","Manychat is a no-code chat-marketing platform for creators, e-commerce businesses, brands, agencies, and growing businesses. It automates audience engagement, lead capture, FAQs, promotions, and sales conversations across social and messaging channels.[1]","• Instagram DM automation (comment-to-DM, Story/reel/Live triggers)
+• Facebook Messenger bot builder
+• WhatsApp automation (official Business API)
+• TikTok, Telegram, SMS, email channels
+• Visual Flow Builder + Quick Automations
+• AI-powered replies/comments/knowledge (beta, IG)
+• Broadcast & campaigns
+• Shopify integration
+• Lead capture (email/phone) & unified inbox
+• Growth tools: ref links, QR codes, templates","• Instagram, TikTok, WhatsApp, Facebook Messenger, Telegram, SMS and Email channel connections, with plan-dependent limits
+• comment-triggered and follower-triggered DMs, welcome messages, FAQ automation, broadcasts, lead/contact capture, tags and unified inbox
+• integrations including Klaviyo, Mailchimp, ActiveCampaign, Kit, Google Sheets, HubSpot, Zapier, Make and a public API
+• Manychat AI provides AI Replies, AI Comments, AI Goals, AI Step, intention recognition, a Flow Builder Assistant and Text Improver
+• official help documentation says AI can detect a contact's language and respond in a wide range of languages, while the newer AI Replies/Comments/Goals automation is currently Instagram-only and beta.[1] [2] [3]","Public USD monthly pricing: Free at $0 with 25 active contacts/month; Essential at $14/month billed annually ($168/year) with 250 active contacts/month; Pro at $29/month billed annually ($348/year) with 2,500 active contacts/month; Business at $69/month billed annually ($828/year) with 7,500 active contacts/month. Pricing is plan-, channel-, contact-volume- and feature-dependent; Manychat AI is described as a $29/month add-on to Pro on the AI product page, while the pricing page presents AI within Pro/Business packaging, so the exact AI charge should be confirmed at purchase. WhatsApp template-message charges are separate usage costs set by Meta and passed through by Manychat.[1] [2]","USD","Freemium","Manychat is relevant to Saudi merchants because its public product and pricing pages explicitly include WhatsApp, Instagram and TikTok—high-value customer-acquisition and messaging surfaces for the target use case—and its AI page says it supports a wide range of languages.[1] [2] The reviewed public materials do not identify Saudi Arabia, GCC localization, Arabic RTL support, Saudi commerce integrations, local payments, or local voice-AI capability; its public site navigation exposes English, Spanish and Portuguese rather than Arabic.[1]","A Saudi-focused entrant could differentiate with Arabic-first conversational quality across Modern Standard Arabic and Saudi dialects, native RTL UX, Arabic-safe templates and analytics, and merchant workflows spanning WhatsApp, Instagram/TikTok, Google reviews, social publishing, ads and voice. It could also localize onboarding, compliance, support, pricing and integrations for Saudi commerce platforms and payment/customer-service practices, areas not evidenced in Manychat's reviewed public product materials.","https://manychat.com/ https://manychat.com/pricing https://manychat.com/product/ai",""
+"Birdeye","multi-location reputation and customer experience platform","Birdeye positions itself as an AI-agent platform for multi-location brands, combining reputation management, listings, social, search visibility, marketing automation, messaging, surveys, insights, reporting, and ticketing. Its stated industry focus includes automotive, dental, finance, healthcare, home services, legal, property management, real estate, restaurants, retail, self-storage, and wellness.","• Review management across 200+ sites
+• AI review generation, response, reporting (BirdAI)
+• Listings sync across 100+ directories w/ NAP consistency
+• Social publishing & engagement AI per location
+• Search AI visibility on ChatGPT, Gemini, Perplexity, Grok
+• Unified messaging inbox (SMS, webchat, email, social DMs)
+• Surveys (NPS/pulse), referrals, text-to-pay
+• Multi-location dashboards & benchmarking
+• 3,000+ integrations
+• HIPAA-compliant workflows","• Reviews AI generates, monitors, manages, and shares reviews across 200+ sites
+• Listings AI optimizes location visibility
+• Social AI creates, schedules, and monitors social posts across locations
+• Search AI targets visibility on Google, ChatGPT, Perplexity, and other AI-search surfaces
+• Marketing Automation AI builds email and SMS campaigns
+• unified Inbox supports webchat, SMS/MMS, email, voicemails, Google Business Profile messaging, Instagram DMs, and Facebook Messenger
+• Chatbot AI and live chat support website lead capture
+• Messaging AI/Lead Generation Agent qualifies leads across web, text, email, and social
+• integrations with 3,000+ software systems
+• no cited primary source verified WhatsApp, TikTok messaging, or autonomous voice calling, although voicemail transcription/listening is documented","Contact sales; Birdeye's public pricing page says pricing is built around outcomes, locations, and deployed products rather than seat counts, with a location-count selector from 1–3 through 1,000+ and a Get Pricing form; no public standard currency price was displayed","Custom","Custom","Birdeye is a global platform that explicitly markets to multi-location brands and lists broad vertical coverage relevant to Saudi chains, including restaurants, retail, healthcare, dental, automotive, and real estate. Its public pages document global customers and 3,000+ integrations, but the reviewed primary sources did not substantiate a Saudi/MENA-specific customer, Arabic-first product positioning, or local channel coverage.","A Saudi entrant could differentiate with Arabic-first conversational AI tuned to Saudi dialects and merchant workflows, plus native WhatsApp and TikTok support if commercially/API-available, Saudi-specific integrations and compliance, Arabic review-response quality, and transparent SME pricing. Birdeye's sales-led, location-based pricing and the absence of verified WhatsApp/TikTok/voice-AI claims in the reviewed sources leave room for a simpler local product focused on day-to-day Saudi merchant conversations rather than broad enterprise reputation orchestration.","https://birdeye.com/ https://birdeye.com/pricing/ https://support.birdeye.com/en/articles/12653044-types-of-messages-within-birdeye-inbox",""
+"Sprout Social","social media management and engagement platform","Sprout Social is a unified platform for managing conversations, planning and publishing content, analytics, social listening, reviews and customer-care workflows across connected social profiles. Its pricing and feature pages position it for small teams through enterprise organizations, with collaboration, reporting, approvals and add-ons for advanced social intelligence and influencer marketing.","• Publishing & scheduling across IG, FB, LinkedIn, TikTok, Threads, X
+• Smart Inbox unifying messages, mentions, comments
+• Social listening w/ AI Trellis agent
+• Cross-network analytics & reporting
+• Competitor benchmarking & hashtag tracking
+• Bot Builder for automated responses
+• Employee advocacy & social commerce
+• Influencer/creator marketing
+• CRM integrations (Salesforce Service Cloud, GA, Tableau)
+• Custom dashboards & My Reports","• Connects X, Facebook, TikTok, LinkedIn, Instagram Business profiles, Pinterest, YouTube brand accounts, Bluesky, Threads and WhatsApp
+• manages reviews from Google My Business, TripAdvisor, Glassdoor, Yelp, Facebook, Google Play Store and Apple App Store
+• unified Smart Inbox, comment moderation, paid-ad comment moderation, case management and chatbots for X DMs and Facebook Messenger
+• multi-profile scheduling, queueing, bulk scheduling, approval workflows, Facebook paid promotion and Google Business Profile publishing
+• AI Assist for post/reply enhancement, conversation and listening summaries, listening-query recommendations, translations, subtitles, alt text and chart analysis
+• Trellis AI agent for conversational social-listening exploration and actionable insights
+• first-party AI/ML for Smart Categories, Optimal Send Times and ViralPost","USD 79 per seat/month billed annually for Essentials (USD 99 monthly); USD 199 per seat/month billed annually for Standard, USD 299 per seat/month billed annually for Professional, USD 399 per seat/month billed annually for Advanced; Enterprise is Custom; 30-day free trial, no credit card required; Listening and Premium Analytics are add-ons","USD","Subscription","Sprout is functionally relevant to Saudi merchants because its documented integrations cover WhatsApp, Instagram Business, TikTok and Google My Business reviews—the core channels named in the target use case—and it supports Arabic-capable translation as a general AI feature. The reviewed primary pages provide no explicit Saudi, GCC or MENA localization, customer case study, SAR pricing or Arabic-first positioning, so regional relevance is channel fit rather than verified local traction.","A Saudi entrant could differentiate with Arabic-first conversational AI tuned to Saudi dialects, Arabic sentiment and local merchant intents, plus one workflow spanning WhatsApp customer conversations, Instagram/TikTok messages, Google reviews, social publishing, ads and potentially voice; Sprout’s public documentation verifies social management, listening, reviews and limited chatbot coverage, but does not verify Arabic-first localization, Saudi-specific workflows or voice AI. A lower-cost merchant-oriented product could also undercut Sprout’s per-seat pricing and sales/add-on complexity.","https://sproutsocial.com/pricing/ https://support.sproutsocial.com/hc/en-us/articles/115005707863-What-social-profiles-can-I-connect-to-Sprout https://support.sproutsocial.com/hc/en-us/articles/20105027830669-What-AI-and-automation-features-are-available-in-Sprout-and-Influencer-Marketing",""
+"Yext","listings, reviews and location experience platform","Yext provides enterprise brands and partners with a verified Knowledge Graph, local listings distribution, review/reputation management, pages, and visibility intelligence across AI and traditional search. Its public positioning is oriented to large multi-location organizations; Yext states that brands manage 4M+ locations worldwide and that smaller businesses are generally served through reseller partners.[1] [5]","• Knowledge Graph single source of truth
+• Listings distribution to 200+ publishers (no aggregator)
+• Listings Verifier auto-fixing errors/duplicates
+• Reviews monitoring & AI responses across 80+ platforms
+• AI site, locator, help-center Search
+• Yext Pages for AI-optimized local landing pages
+• Content generation agents for pages, social, email
+• Visibility insights vs competitors
+• MCP server & API access
+• Enterprise RBAC, audit trails, HIPAA/PHI","• Direct distribution of verified business data to 200+ publishers and LLMs, including Google, Apple Maps, Yelp, ChatGPT, and Gemini
+• listings verification and automated correction of errors, duplicates, and publisher overwrites
+• review monitoring across Google, Facebook, Yelp, and 80+ platforms
+• review-request triggers via email, text, or QR code
+• AI-drafted and optionally automatic review responses plus AI sentiment analysis
+• Knowledge Graph connectors, APIs, MCP connectivity, scheduled updates, role-based approvals, audit trails, localized/multilingual entity profiles including Arabic (Saudi Arabia) locale support
+• AI-generated FAQs, bios, descriptions, and responses subject to review/approval.[1] [2] [3] [4] [5]","Contact sales; Yext states pricing is custom and solution-bundled, driven mainly by location/provider count, selected capabilities, and contract term. Billing is typically annual, with better rates for multi-year commitments; there is no fixed public tier menu, free tier, or standard free trial.[5]","Custom","Custom","Yext’s help documentation explicitly lists Arabic (Saudi Arabia) as a supported entity-profile locale and says multi-language profiles apply to accounts in all regions, with downstream Search, Pages, and Listings using locale data.[4] Its global, multi-location distribution model and support for Arabic/Saudi locale data make it a relevant adjacent competitor for Saudi chains and regional enterprises, although the cited public pages do not establish Saudi-specific publisher coverage, offices, or customer references.","The public product pages emphasize enterprise-scale listings, reviews, structured data, and AI-search visibility rather than an Arabic-first merchant inbox spanning WhatsApp and Instagram/TikTok conversations, paid-ad operations, and voice AI. A Saudi entrant could differentiate with native Arabic dialect handling, Saudi merchant workflows and integrations, local channel coverage, transparent SMB pricing, and unified conversational commerce rather than primarily discovery-data governance.","https://www.yext.com/ https://www.yext.com/platform/listings https://www.yext.com/platform/reviews",""
+"Vapi","developer platform for voice AI agents","Vapi is an API-first developer platform for building and deploying voice AI agents that make and receive phone calls or run in web applications. Its documented use cases include customer support, sales and lead qualification, appointment scheduling, medical triage, and e-commerce order management, serving developers and enterprise product or operations teams.","• Voice agents inbound/outbound calls
+• Sub-500ms latency, natural turn-taking
+• Squads multi-agent orchestration w/ handoffs
+• Web/embeddable voice integration
+• 200+ model/provider integrations (OpenAI, Anthropic, ElevenLabs)
+• Telephony: SIP, warm transfers, voicemail detection, DTMF
+• Tool/API integration & MCP for live data
+• Workflows builder, per-node config
+• Automated testing, simulations, monitoring
+• SOC 2, HIPAA, PCI
+• SSO/RBAC","• Inbound and outbound phone calls
+• web-embedded voice calls
+• SMS/chat and web-widget primitives documented in the platform
+• configurable speech-to-text, LLM, and text-to-speech providers including OpenAI, Anthropic, Google, Deepgram, ElevenLabs, and others
+• API/database/tool integrations and webhooks
+• multi-assistant orchestration through Squads with context-preserving handoffs
+• outbound campaigns
+• call recording, analysis, monitoring, evaluations, structured outputs, and scorecards
+• multilingual voice configuration with automatic language detection options
+• Arabic listed among supported Vapi Voices V1 languages
+• integrations listed by Vapi include Twilio, Telnyx, Google Calendar, Zendesk, Salesforce, HubSpot, Genesys, Avaya, Zapier, Make, Slack, and GoHighLevel","Build: USD $0.05 per call minute plus model-provider costs at cost; SMS/chat USD $0.005 per message plus provider costs at cost; 10 call-concurrency lines included, then USD $10 per line per month; HIPAA add-on USD $2,000/month and Zero Data Retention add-on USD $1,000/month. Scale: annual contract with fixed platform fee, committed volume, and volume-based per-minute pricing; enterprise support and compliance are contact-sales/custom.","USD","Usage-based","Vapi documents multilingual voice operation and lists Arabic support for Vapi Voices V1, which makes Arabic voice use technically relevant to Saudi and wider MENA deployments. However, its official phone documentation says free numbers are US-only and international/custom numbers require importing a number through Twilio; the reviewed official pages provide no Saudi-specific deployment, local carrier, or MENA case evidence.","A Saudi-focused entrant could package Arabic-first merchant operations rather than requiring developers to assemble a voice stack: WhatsApp, Instagram/TikTok messaging, Google reviews, social publishing, ads, and voice in one workflow, with Saudi phone/channel provisioning and local merchant integrations. The reviewed Vapi pages emphasize developer-configurable voice infrastructure and do not list native WhatsApp, Instagram, TikTok, Google Business Profile/reviews, or social-ad workflows, leaving room for a localized turnkey product.","https://vapi.ai/ https://docs.vapi.ai/quickstart/introduction https://vapi.ai/pricing",""
+"Retell AI","voice AI agent platform","Retell is a platform for building, testing, deploying, and monitoring AI voice and chat agents, with telephony, prompts, tools, knowledge bases, and analytics. Its public positioning centers on businesses and enterprise teams automating inbound and outbound phone operations such as reception, appointment setting, lead qualification, customer service, debt collection, surveys, and call-center workflows.","• Voice, chat, SMS omni-channel AI agents
+• ~600ms latency, proprietary turn-taking
+• Drag-and-drop agentic flow builder
+• Real-time function calling & streaming RAG
+• SIP trunking & branded outbound calling
+• Warm transfers w/ full context to live agents
+• Built-in CRM (Salesforce, HubSpot) two-way sync
+• Live call monitoring & dashboards
+• Conductor copilot w/ simulation testing
+• SOC 2, HIPAA, GDPR
+• PII redaction","• Voice calls, web/in-app chat, SMS, API, SIP trunking and custom telephony
+• node-based conversation flows and single-prompt agents
+• inbound and outbound calling, call transfer, IVR navigation, DTMF capture, real-time function calling, appointment booking, payment processing and record updates
+• website/document knowledge bases with retrieval and website sync
+• CRM integrations documented for Cal.com, HubSpot and Salesforce, plus listed integrations/connectors including Twilio, Vonage, Telnyx, GoHighLevel, n8n, Zapier, Avaya, Genesys, Five9, Amazon Connect, Make and an unofficial WhatsApp connector
+• simulation testing, A/B testing, transcripts, sentiment/success scoring, custom analytics, live monitoring and AI quality assurance
+• configurable language and multilingual-agent support, subject to voice and speech-recognition provider coverage","Pay as you go: $0.07–$0.31 per AI voice-agent minute and from $0.002 per AI chat-agent message, with $10 in free credits; enterprise voice and chat pricing is custom/contact sales. Public detailed pricing also lists Retell voice infrastructure at $0.055/minute, platform voices at $0.015/minute, SMS at $0.01/message, and Retell phone numbers at $2/month, with model, telephony and add-on charges varying by selection.","USD","Usage-based","Retell’s language controls can support multilingual agents when the selected voice and speech-recognition providers cover the language, and its SIP/custom-telephony model can connect to an existing phone system. The reviewed primary pages do not provide specific Saudi customer references, Saudi phone-number availability, Arabic dialect/voice quality claims, local hosting, or Saudi/MENA market positioning.","A Saudi-focused entrant could differentiate with Arabic-first, Saudi-dialect voice and text quality; verified local telephony and WhatsApp Business, Instagram/TikTok messaging, Google Business Profile/reviews, social publishing and ads workflows; Saudi data-residency and compliance options; and merchant-native integrations for local commerce, payments, delivery and CRM operations. Retell is a strong voice-agent infrastructure competitor, but its public product surface is not positioned as an all-in-one Saudi merchant communications and growth platform.","https://www.retellai.com/ https://www.retellai.com/pricing https://docs.retellai.com/general/introduction https://docs.retellai.com/agent/language",""

@@ -1,0 +1,111 @@
+import Image from "next/image";
+import Link from "next/link";
+import Typewriter from "@/components/Typewriter";
+
+export default function AuthLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-screen bg-white font-sans text-ink">
+      {/* Left brand panel */}
+      <aside className="relative hidden w-[42%] overflow-hidden bg-ink lg:flex">
+        {/* Gradient orbs — softer */}
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute -left-32 -top-32 h-[500px] w-[500px] rounded-full bg-deep-violet/40 blur-[140px]" />
+          <div className="absolute -bottom-40 right-0 h-[450px] w-[450px] rounded-full bg-magenta/25 blur-[120px]" />
+          <div className="absolute bottom-1/3 left-1/3 h-[300px] w-[300px] rounded-full bg-coral/15 blur-[100px]" />
+        </div>
+
+        <div className="relative z-10 flex flex-1 flex-col p-10 xl:p-12">
+          {/* Logo */}
+          <Link href="https://sayvors.com" className="mb-12 inline-flex w-fit items-center gap-2.5 opacity-90 transition-opacity hover:opacity-100">
+            <Image src="/Sayvors_Icon.png" alt="" width={36} height={26} className="h-6 w-auto" />
+            <Image src="/Sayvors_Wordmark_Dark.png" alt="Sayvors" width={130} height={22} className="h-5 w-auto" />
+          </Link>
+
+          {/* Illustration */}
+          <div className="mb-auto flex justify-center">
+            <div className="relative w-full max-w-sm">
+              <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-white/8 to-transparent blur-xl" />
+              <div className="relative rounded-3xl border border-white/10 bg-white/[0.04] p-4 shadow-2xl backdrop-blur-sm">
+                <Image
+                  src="/undraw-chatting.svg"
+                  alt=""
+                  width={800}
+                  height={670}
+                  loading="eager"
+                  priority
+                  sizes="(max-width: 1024px) 0px, 42vw"
+                  className="relative h-auto w-full drop-shadow-2xl"
+                />
+                {/* Floating product chips */}
+                <div className="animate-float absolute -right-3 top-6 flex items-center gap-1.5 rounded-full border border-white/10 bg-[#221b4d]/90 py-1.5 pl-2.5 pr-3 shadow-lg backdrop-blur">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden />
+                  <span className="text-[10px] font-semibold text-white/85">Auto-reply ON</span>
+                </div>
+                <div className="animate-float-delay absolute -left-3 bottom-6 flex items-center gap-1.5 rounded-full border border-white/10 bg-[#221b4d]/90 py-1.5 pl-2 pr-3 shadow-lg backdrop-blur">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3" aria-hidden>
+                    <path d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                  <span className="text-[10px] font-semibold text-white/85">Review answered</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Tagline */}
+          <div className="mt-8">
+            <p className="mb-3 inline-flex items-center gap-1.5 rounded-none border border-white/10 bg-white/[0.05] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/60">
+              <span className="h-1.5 w-1.5 rounded-full bg-gradient-to-r from-violet-light to-coral" aria-hidden />
+              AI customer platform
+            </p>
+            <h1 className="min-h-[4.6rem] text-[2rem] font-bold leading-[1.15] tracking-tight text-white">
+              <Typewriter phrases={["EVERY LINE.\nONE VOICE."]} label="EVERY LINE. ONE VOICE" />
+            </h1>
+            <p className="mt-3 max-w-xs text-[14px] leading-relaxed text-white/50">
+              The customer platform built for modern teams.
+            </p>
+            <ul className="mt-5 space-y-2.5">
+              {[
+                "Every channel in one inbox",
+                "Answers from your own docs",
+                "Humans approve when it matters",
+              ].map((point) => (
+                <li key={point} className="flex items-center gap-2.5 text-[13px] font-medium text-white/70">
+                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-light/30 to-coral/30 ring-1 ring-white/15" aria-hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#e9e4ff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
+                      <path d="M4.5 12.75l6 6 9-13.5" />
+                    </svg>
+                  </span>
+                  {point}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </aside>
+
+      {/* Right form area */}
+      <main className="relative flex flex-1 items-center justify-center px-6 py-10">
+        {/* Back link */}
+        <Link
+          href="https://sayvors.com"
+          className="absolute left-6 top-6 z-10 inline-flex items-center gap-1.5 text-[13px] font-medium text-ink/30 transition-colors duration-200 hover:text-ink/60"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 transition-transform duration-200 group-hover:-translate-x-0.5">
+            <path fillRule="evenodd" d="M12 8a.75.75 0 01-.75.75H5.56l2.22 2.22a.75.75 0 11-1.06 1.06l-3.5-3.5a.75.75 0 010-1.06l3.5-3.5a.75.75 0 011.06 1.06L5.56 7.25h5.69A.75.75 0 0112 8z" clipRule="evenodd" />
+          </svg>
+          Home
+        </Link>
+
+        {/* Mobile logo */}
+        <div className="absolute left-6 top-6 flex items-center gap-2 lg:hidden">
+          <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-5 w-auto" />
+          <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={100} height={17} className="h-4 w-auto" />
+        </div>
+
+        <div className="w-full max-w-[380px]">
+          {children}
+        </div>
+      </main>
+    </div>
+  );
+}
