@@ -75,7 +75,9 @@ async def update_post(
     try:
         result = await service.update_post(
             db, user.id, post_id,
-            {k: v for k, v in body.model_dump().items()},
+            # exclude_unset: explicit null cancels (delete_at), absent
+            # keys stay untouched.
+            {k: v for k, v in body.model_dump(exclude_unset=True).items()},
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -126,8 +128,11 @@ async def sync_due_posts(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Publish due scheduled posts (all users' rows this pass touches only
-    due ones; per-post failures are isolated and reported)."""
+    """Run one worker pass on demand: publish due scheduled posts and
+    delete rows whose delete_at has passed. Per-post failures are
+    isolated and reported."""
     _ = user
     result = await service.publish_due(db)
+    gone = await service.delete_due(db)
+    result["deleted"] = gone["deleted"]
     return SyncResult(**result)

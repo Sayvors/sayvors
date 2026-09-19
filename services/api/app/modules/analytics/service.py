@@ -229,6 +229,7 @@ async def list_insights(
     sentiment: str | None = None,
     rating: int | None = None,
     status: str | None = None,
+    edited: bool | None = None,
     search: str | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -241,6 +242,8 @@ async def list_insights(
         filters.append(ReviewInsight.sentiment == sentiment)
     if rating is not None and 1 <= rating <= 5:
         filters.append(ReviewInsight.rating == rating)
+    if edited is not None:
+        filters.append(ReviewInsight.edited == edited)
     if status == "replied":
         filters.append(ReviewInsight.replied == True)  # noqa: E712
         filters.append(ReviewInsight.skipped == False)  # noqa: E722
@@ -269,4 +272,40 @@ async def list_insights(
             .offset(offset)
         )
     ).scalars().all()
+    await _attach_latest_replies(db, rows)
     return list(rows), total
+
+
+async def _attach_latest_replies(db: AsyncSession, rows: list[ReviewInsight]) -> None:
+    """Attach each insight's latest live response row (reply_id / reply_text
+    / reply_status) in one batched query. Newest row wins per review;
+    discarded (rejected) rows never surface as the response."""
+    from ..channels.models import ReviewReply
+
+    if not rows:
+        return
+    pairs = {(r.channel_id, r.review_id) for r in rows}
+    channel_ids = {c for c, _ in pairs}
+    review_ids = {r for _, r in pairs}
+    replies = (
+        await db.execute(
+            select(ReviewReply)
+            .where(
+                ReviewReply.channel_id.in_(channel_ids),
+                ReviewReply.review_id.in_(review_ids),
+                ReviewReply.status.in_(
+                    ["pending_approval", "posted", "failed", "approved"]
+                ),
+            )
+            .order_by(ReviewReply.created_at.desc())
+            .limit(2000)
+        )
+    ).scalars().all()
+    latest: dict[tuple[str, str], ReviewReply] = {}
+    for rep in replies:
+        latest.setdefault((rep.channel_id, rep.review_id), rep)
+    for insight in rows:
+        rep = latest.get((insight.channel_id, insight.review_id))
+        insight.reply_id = rep.id if rep else None  # type: ignore[attr-defined]
+        insight.reply_text = rep.reply_text if rep else None  # type: ignore[attr-defined]
+        insight.reply_status = rep.status if rep else None  # type: ignore[attr-defined]

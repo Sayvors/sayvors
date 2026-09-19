@@ -79,9 +79,19 @@ class ReviewInsightItem(BaseModel):
     replied: bool
     replied_at: datetime | None = None
     skipped: bool = False
+    edited: bool = False
+    edited_at: datetime | None = None
+    previous_rating: int | None = None
+    previous_review_text: str | None = None
     review_url: str | None = None
     review_updated_at: datetime | None = None
     created_at: datetime
+    # Latest response row for this review, if any (pending / posted /
+    # failed / approved). Lets the review page show and edit every
+    # response inline.
+    reply_id: str | None = None
+    reply_text: str | None = None
+    reply_status: str | None = None
 
     class Config:
         from_attributes = True
@@ -257,11 +267,18 @@ class BranchBenchmark(BaseModel):
     positive_pct: float
     response_rate: float
     reputation_score: int
+    health_score: int | None = None
     rating_delta: float | None = None
     reviews_delta_pct: float | None = None
+    velocity_ratio: float | None = None
+    reviews_last_period: int = 0
+    velocity_per_month: float | None = None
+    impressions_maps: int = 0
+    customer_actions: int = 0
+    action_rate: float | None = None
+    gap_vs_leader_per_year: int | None = None
     top_problem: str | None = None
     top_problem_mentions: int = 0
-    customer_actions: int = 0
     rank: int
 
 
@@ -313,6 +330,14 @@ class BenchmarkResponse(BaseModel):
     top_services: list[ServiceHighlight] = []
     needs_fix_services: list[ServiceHighlight] = []
     top_topics: list[dict] = []
+    # Owner-centric additions
+    distribution: dict[str, dict] | None = None
+    portfolio_health_score: int | None = None
+    portfolio_action_rate: float | None = None
+    portfolio_velocity_per_month: float | None = None
+    portfolio_impressions: int | None = None
+    portfolio_actions: int | None = None
+    plain_summary: str | None = None
 
 
 class ExecutiveSummaryResponse(BaseModel):

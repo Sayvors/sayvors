@@ -67,6 +67,11 @@ function PostsInner() {
 
   const [title, setTitle] = useState("");
   const [postLocationId, setPostLocationId] = useState("");
+  // Create-mode only: every checked location gets its own copy of the post
+  // (one POST per branch — works against today's single-listing endpoint;
+  // a native bulk endpoint can replace the fan-out later). Always visible,
+  // even with a single branch.
+  const [selectedLocIds, setSelectedLocIds] = useState<string[]>([]);
   const [businessName, setBusinessName] = useState("");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -161,7 +166,9 @@ function PostsInner() {
 
   const resetForm = (locId?: string) => {
     setTitle("");
-    setPostLocationId(locId ?? selectedId ?? locations[0]?.id ?? "");
+    const first = locId ?? selectedId ?? locations[0]?.id ?? "";
+    setPostLocationId(first);
+    setSelectedLocIds(first ? [first] : []);
     setBusinessName("Sayvors");
     setDescription("");
     setTags([]);
@@ -180,11 +187,20 @@ function PostsInner() {
     setView({ kind: "create" });
   };
 
+  const toggleCreateLoc = (id: string) => {
+    setSelectedLocIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  };
+
+  const selectAllCreateLocs = () => {
+    setSelectedLocIds((prev) => prev.length === locations.length && locations.length > 0 ? [] : locations.map((l) => l.id));
+  };
+
   const openDetail = (id: string, editing = false) => {
     const p = posts.find((x) => x.id === id);
     if (!p) return;
     setTitle(p.title);
     setPostLocationId(p.locationId);
+    setSelectedLocIds(p.locationId ? [p.locationId] : []);
     setBusinessName(p.businessName);
     setDescription(p.description);
     setTags(p.tags);
@@ -225,7 +241,10 @@ function PostsInner() {
     return null;
   })();
 
-  const valid = title.trim() && businessName.trim() && description.trim() && postLocationId && (!scheduleEnabled || scheduledAt) && !deleteErr;
+  const targetIds = view.kind === "create"
+    ? selectedLocIds.filter(Boolean)
+    : [postLocationId];
+  const valid = title.trim() && businessName.trim() && description.trim() && targetIds.length > 0 && targetIds.every(Boolean) && (!scheduleEnabled || scheduledAt) && !deleteErr;
 
   const showBannerTimed = (kind: "ok" | "err", text: string) => {
     setBanner({ kind, text });
@@ -244,36 +263,59 @@ function PostsInner() {
     if (!valid) return;
     setSubmitting(true);
     try {
-      const res = await apiFetch("/api/v1/posts/", {
-        method: "POST",
-        body: JSON.stringify({
-          listing_id: postLocationId,
-          location_name: locations.find((l) => l.id === postLocationId)?.name ?? "",
-          business_name: businessName.trim(),
-          title: title.trim(),
-          description: description.trim(),
-          tags,
-          keywords,
-          image_urls: images,
-          action: scheduleEnabled ? "schedule" : "publish",
-          scheduled_on: scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : null,
-          // Future contract (ignored by the backend until scheduled
-          // deletion lands — see note at top).
-          delete_at: deleteEnabled && deleteAt ? new Date(deleteAt).toISOString() : null,
-        }),
-      });
-      const newId = res?.post?.id ?? res?.id;
+      const ids = selectedLocIds.filter(Boolean);
+      const list = ids.length > 0 ? ids : [postLocationId].filter(Boolean);
+      const deleteIso = deleteEnabled && deleteAt ? new Date(deleteAt).toISOString() : null;
+      const scheduleIso = scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : null;
+      let ok = 0;
+      let failed = 0;
+      let firstErr = "";
+      let skipped = 0;
       let nextOverlay = deleteOverlay;
-      if (deleteEnabled && deleteAt && newId) {
-        nextOverlay = { ...deleteOverlay, [String(newId)]: new Date(deleteAt).toISOString() };
-        setDeleteOverlay(nextOverlay);
+      for (const lid of list) {
+        try {
+          const res = await apiFetch("/api/v1/posts/", {
+            method: "POST",
+            body: JSON.stringify({
+              listing_id: lid,
+              location_name: locations.find((l) => l.id === lid)?.name ?? "",
+              business_name: businessName.trim(),
+              title: title.trim(),
+              description: description.trim(),
+              tags,
+              keywords,
+              image_urls: images,
+              action: scheduleEnabled ? "schedule" : "publish",
+              scheduled_on: scheduleIso,
+              // Future contract (ignored by the backend until scheduled
+              // deletion lands — see note at top).
+              delete_at: deleteIso,
+            }),
+          });
+          ok += 1;
+          skipped = Math.max(skipped, res?.images_skipped ?? 0);
+          const newId = res?.post?.id ?? res?.id;
+          if (deleteIso && newId) {
+            nextOverlay = { ...nextOverlay, [String(newId)]: deleteIso };
+          }
+        } catch (e) {
+          failed += 1;
+          if (!firstErr) firstErr = e instanceof Error ? e.message.slice(0, 160) : "Request failed.";
+        }
       }
+      if (nextOverlay !== deleteOverlay) setDeleteOverlay(nextOverlay);
       await refreshPosts(nextOverlay);
       setView({ kind: "list" });
-      const skipped = res?.images_skipped ?? 0;
-      showBannerTimed("ok", scheduleEnabled
-        ? "Post scheduled — our worker will publish it to Google at that time."
-        : `Published to Google.${skipped ? ` ${skipped} local image(s) not sent — attach hosted URLs to include images.` : ""}`);
+      if (list.length > 1) {
+        showBannerTimed(failed === 0 ? "ok" : "err",
+          failed === 0
+            ? `${scheduleEnabled ? "Scheduled" : "Published"} in all ${list.length} locations.`
+            : `Done in ${ok} of ${list.length} locations, ${failed} failed — ${firstErr}`);
+      } else {
+        showBannerTimed("ok", scheduleEnabled
+          ? "Post scheduled — our worker will publish it to Google at that time."
+          : `Published to Google.${skipped ? ` ${skipped} local image(s) not sent — attach hosted URLs to include images.` : ""}`);
+      }
     } catch (e) {
       showBannerTimed("err", e instanceof Error ? e.message.slice(0, 200) : "Could not save post.");
     } finally {
@@ -511,6 +553,7 @@ function PostsInner() {
             <PostForm
               title={title} setTitle={setTitle}
               postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
+              multi selectedIds={selectedLocIds} onToggleLoc={toggleCreateLoc} onSelectAll={selectAllCreateLocs}
               businessName={businessName} setBusinessName={setBusinessName}
               description={description} setDescription={setDescription}
               tags={tags} tagInput={tagInput} setTagInput={setTagInput}
@@ -525,8 +568,15 @@ function PostsInner() {
               deleteEnabled={deleteEnabled} setDeleteEnabled={setDeleteEnabled}
               deleteAt={deleteAt} setDeleteAt={setDeleteAt}
               deleteErr={deleteErr}
+              valid={!!valid}
               onBack={backToList} onSubmit={handleCreate} submitting={submitting}
-              submitLabel={scheduleEnabled ? "Schedule Post" : "Publish Post"}
+              submitLabel={
+                selectedLocIds.length > 1
+                  ? scheduleEnabled
+                    ? `Schedule for ${selectedLocIds.length} locations`
+                    : `Publish to ${selectedLocIds.length} locations`
+                  : scheduleEnabled ? "Schedule Post" : "Publish Post"
+              }
               heading="New post" subheading="Title, location, description, tags, keywords and images."
             />
           )}
@@ -537,6 +587,7 @@ function PostsInner() {
                 <PostForm
                   title={title} setTitle={setTitle}
                   postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
+                  multi={false} selectedIds={[]} onToggleLoc={() => {}} onSelectAll={() => {}}
                   businessName={businessName} setBusinessName={setBusinessName}
                   description={description} setDescription={setDescription}
                   tags={tags} tagInput={tagInput} setTagInput={setTagInput}
@@ -551,6 +602,7 @@ function PostsInner() {
                   deleteEnabled={deleteEnabled} setDeleteEnabled={setDeleteEnabled}
                   deleteAt={deleteAt} setDeleteAt={setDeleteAt}
                   deleteErr={deleteErr}
+                  valid={!!valid}
                   onBack={() => openDetail(activePost.id, false)} onSubmit={handleUpdate} submitting={submitting}
                   submitLabel="Save Changes" heading="Edit post" subheading="Update every field, then save."
                 />
@@ -668,9 +720,76 @@ function normalizePosts(raw: unknown, deleteOverlay?: Record<string, string | nu
   });
 }
 
+function LocationMultiSelect({ locations, selectedIds, onToggle, onSelectAll }: {
+  locations: LocationOption[];
+  selectedIds: string[];
+  onToggle: (id: string) => void;
+  onSelectAll: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const all = locations.length > 0 && selectedIds.length === locations.length;
+  const label = all
+    ? `All ${locations.length} location${locations.length === 1 ? "" : "s"}`
+    : selectedIds.length === 0
+      ? "Select locations…"
+      : selectedIds.length === 1
+        ? locations.find((l) => l.id === selectedIds[0])?.name ?? "1 location"
+        : `${selectedIds.length} locations`;
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label="Choose locations"
+        className="input-field flex w-full items-center justify-between gap-2 text-left"
+      >
+        <span className={`truncate ${selectedIds.length === 0 ? "text-ink/30" : ""}`}>{label}</span>
+        <svg className={`h-4 w-4 shrink-0 text-ink/40 transition ${open ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden />
+          <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-ink/[0.08] bg-white p-1 shadow-xl dark:border-fog/[0.12] dark:bg-ink">
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
+              <input
+                type="checkbox"
+                checked={all}
+                onChange={onSelectAll}
+                className="h-4 w-4 shrink-0 accent-deep-violet"
+              />
+              <span className="text-[13px] font-semibold text-ink dark:text-fog">
+                All locations{locations.length > 0 ? ` (${locations.length})` : ""}
+              </span>
+            </label>
+            <div className="mx-2 my-1 border-t border-ink/[0.06] dark:border-fog/[0.08]" aria-hidden />
+            {locations.map((l) => (
+              <label key={l.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(l.id)}
+                  onChange={() => onToggle(l.id)}
+                  className="h-4 w-4 shrink-0 accent-deep-violet"
+                />
+                <span className="truncate text-[13px] text-ink/80 dark:text-fog/80">{l.name}</span>
+              </label>
+            ))}
+            {locations.length === 0 && (
+              <p className="px-2.5 py-2 text-[12px] text-ink/40">No locations connected yet.</p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PostForm(props: {
   title: string; setTitle: (v: string) => void;
   postLocationId: string; setPostLocationId: (v: string) => void; locations: LocationOption[];
+  multi: boolean; selectedIds: string[]; onToggleLoc: (id: string) => void; onSelectAll: () => void;
   businessName: string; setBusinessName: (v: string) => void;
   description: string; setDescription: (v: string) => void;
   tags: string[]; tagInput: string; setTagInput: (v: string) => void; onAddTag: () => void; onRemoveTag: (t: string) => void;
@@ -681,6 +800,7 @@ function PostForm(props: {
   deleteEnabled: boolean; setDeleteEnabled: (v: boolean) => void;
   deleteAt: string; setDeleteAt: (v: string) => void;
   deleteErr: string | null;
+  valid: boolean;
   onBack: () => void; onSubmit: () => void; submitting: boolean;
   submitLabel: string; heading: string; subheading: string;
 }) {
@@ -696,10 +816,19 @@ function PostForm(props: {
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-[12px] font-medium text-ink/50">Location *</label>
-            <select value={p.postLocationId} onChange={(e) => p.setPostLocationId(e.target.value)} className="input-field">
-              {p.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
+            <label className="mb-1 block text-[12px] font-medium text-ink/50">Location{p.multi && p.selectedIds.length > 1 ? "s" : ""} *</label>
+            {p.multi ? (
+              <LocationMultiSelect
+                locations={p.locations}
+                selectedIds={p.selectedIds}
+                onToggle={p.onToggleLoc}
+                onSelectAll={p.onSelectAll}
+              />
+            ) : (
+              <select value={p.postLocationId} onChange={(e) => p.setPostLocationId(e.target.value)} className="input-field">
+                {p.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-[12px] font-medium text-ink/50">Business name *</label>
@@ -788,7 +917,7 @@ function PostForm(props: {
         )}
         <div className="flex items-center justify-between pt-1">
           <button onClick={p.onBack} className="text-[12px] font-medium text-ink/40 hover:text-ink">Back</button>
-          <button onClick={p.onSubmit} disabled={p.submitting} className="btn-primary disabled:opacity-50">
+          <button onClick={p.onSubmit} disabled={p.submitting || !p.valid} title={p.valid ? undefined : "Fill the required fields first"} className="btn-primary disabled:opacity-50">
             {p.submitting ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : p.submitLabel}
           </button>
         </div>

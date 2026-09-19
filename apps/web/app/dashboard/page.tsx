@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, editReply, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
 import { dedupeBusinesses } from "@/lib/channel-identity";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
@@ -74,6 +74,10 @@ function AttentionQueue() {
   const [approvingAll, setApprovingAll] = useState(false);
   const [approveProgress, setApproveProgress] = useState({ done: 0, total: 0 });
   const [draftError, setDraftError] = useState<string | null>(null);
+  // Inline editing of a draft right on its dashboard card.
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [editingDraftText, setEditingDraftText] = useState("");
+  const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
   const [failed, setFailed] = useState<ReviewReplyDTO[]>([]);
   const [failedTotal, setFailedTotal] = useState(0);
   const [failedOpen, setFailedOpen] = useState(false);
@@ -250,8 +254,7 @@ function AttentionQueue() {
     };
   }, []);
 
-  async function approveDraft(channelId: string, replyId: string) {
-    setApprovingId(replyId);
+  async function approveDraft(channelId: string, replyId: string) {    setApprovingId(replyId);
     setDraftError(null);
     try {
       await approveReply(channelId, replyId);
@@ -272,6 +275,22 @@ function AttentionQueue() {
       setDraftError(msg);
     } finally {
       setApprovingId(null);
+    }
+  }
+
+  async function saveDraftText(d: ReviewReplyDTO) {
+    const text = editingDraftText.trim();
+    if (!text) return;
+    setSavingDraftId(d.id);
+    setDraftError(null);
+    try {
+      const saved = await editReply(d.channel_id, d.id, text);
+      setDrafts((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: saved.reply_text } : x)));
+      setEditingDraftId(null);
+    } catch (e) {
+      setDraftError(detailFromError(e, "Could not save your edit. Try again."));
+    } finally {
+      setSavingDraftId(null);
     }
   }
 
@@ -548,12 +567,50 @@ function AttentionQueue() {
                           <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60">
                             AI draft{(d.generation_attempt ?? 1) > 1 ? ` · try #${d.generation_attempt}` : ""}
                           </p>
-                          <p className="mt-0.5 line-clamp-3 text-[12px] leading-relaxed text-ink/80">{d.reply_text}</p>
+                          {editingDraftId === d.id ? (
+                            <>
+                              <textarea
+                                value={editingDraftText}
+                                onChange={(e) => setEditingDraftText(e.target.value)}
+                                rows={4}
+                                maxLength={1000}
+                                autoFocus
+                                className="mt-1.5 min-h-[80px] w-full resize-y rounded-lg border border-deep-violet/25 bg-white px-2.5 py-2 text-[12px] leading-relaxed text-ink outline-none focus:border-deep-violet/50"
+                              />
+                              <div className="mt-1.5 flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => setEditingDraftId(null)}
+                                  disabled={savingDraftId !== null}
+                                  className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-ink/50 hover:bg-ink/[0.04] disabled:opacity-40"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => void saveDraftText(d)}
+                                  disabled={!editingDraftText.trim() || savingDraftId !== null}
+                                  className="rounded-lg bg-deep-violet px-3 py-1 text-[11px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
+                                >
+                                  {savingDraftId === d.id ? "Saving…" : "Save"}
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <p className="mt-0.5 line-clamp-3 text-[12px] leading-relaxed text-ink/80">{d.reply_text}</p>
+                          )}
                         </div>
                         <div className="mt-2 flex items-center justify-end gap-2">
+                          {editingDraftId !== d.id && (
+                            <button
+                              onClick={() => { setEditingDraftId(d.id); setEditingDraftText(d.reply_text ?? ""); setDraftError(null); }}
+                              disabled={enginingId !== null || approvingId !== null || approvingAll}
+                              className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                            >
+                              Edit
+                            </button>
+                          )}
                           <button
                             onClick={() => void engineRedraft(d)}
-                            disabled={enginingId !== null || approvingId !== null || approvingAll}
+                            disabled={enginingId !== null || approvingId !== null || approvingAll || editingDraftId !== null}
                             title="Re-run the full AI pipeline: analysis, strategies, databank tools, validation"
                             className="inline-flex items-center gap-1 rounded-lg bg-deep-violet/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
                           >
@@ -570,7 +627,7 @@ function AttentionQueue() {
                           </button>
                           <button
                             onClick={() => void approveDraft(d.channel_id, d.id)}
-                            disabled={approvingId !== null || approvingAll || enginingId !== null}
+                            disabled={approvingId !== null || approvingAll || enginingId !== null || editingDraftId !== null}
                             className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
                           >
                             {busy ? "Publishing…" : "Approve & publish"}
@@ -591,7 +648,7 @@ function AttentionQueue() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => void approveAll()}
-                      disabled={approvingAll || approvingId !== null || enginingId !== null || draftTotal === 0}
+                      disabled={approvingAll || approvingId !== null || enginingId !== null || draftTotal === 0 || editingDraftId !== null}
                       className="flex-1 rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
                     >
                        {approvingAll

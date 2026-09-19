@@ -71,6 +71,11 @@ export interface ReviewInsight {
   problems: { name: string; severity: string }[];
   replied: boolean;
   replied_at: string | null;
+  skipped?: boolean;
+  edited: boolean;
+  edited_at: string | null;
+  previous_rating: number | null;
+  previous_review_text: string | null;
   review_updated_at: string | null;
   created_at: string;
 }
@@ -123,6 +128,12 @@ export async function fetchInsights(opts: {
   params.set("limit", String(opts.limit ?? 50));
   params.set("offset", String(opts.offset ?? 0));
   return apiFetch(`/api/v1/analytics/reviews/insights?${params.toString()}`);
+}
+
+export function dismissReviewEdit(insightId: string): Promise<ReviewInsight> {
+  return apiFetch(`/api/v1/analytics/reviews/insights/${insightId}/dismiss-edit`, {
+    method: "POST",
+  });
 }
 
 /* ── Understand pillar ─────────────────────────────────────────── */
@@ -267,6 +278,13 @@ export interface BenchmarkResponse {
   top_services: ServiceHighlight[];
   needs_fix_services: ServiceHighlight[];
   top_topics: { name: string; mentions: number }[];
+  distribution?: Record<string, { best: number; median: number; worst: number; gap: number }> | null;
+  portfolio_health_score?: number | null;
+  portfolio_action_rate?: number | null;
+  portfolio_velocity_per_month?: number | null;
+  portfolio_impressions?: number | null;
+  portfolio_actions?: number | null;
+  plain_summary?: string | null;
 }
 
 export interface ServiceHighlight {
@@ -285,11 +303,18 @@ export interface BranchBenchmark {
   positive_pct: number;
   response_rate: number;
   reputation_score: number;
+  health_score?: number | null;
   rating_delta: number | null;
   reviews_delta_pct: number | null;
+  velocity_ratio?: number | null;
+  reviews_last_period?: number;
+  velocity_per_month?: number | null;
+  impressions_maps?: number;
+  customer_actions: number;
+  action_rate?: number | null;
+  gap_vs_leader_per_year?: number | null;
   top_problem: string | null;
   top_problem_mentions: number;
-  customer_actions: number;
   rank: number;
 }
 
