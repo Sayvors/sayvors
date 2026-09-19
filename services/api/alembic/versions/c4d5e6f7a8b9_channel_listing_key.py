@@ -41,23 +41,107 @@ def _listing_key(platform: str | None, metadata_json: str | None) -> str | None:
     return str(key) if key else None
 
 
-# (child_table, unique_per_channel): unique tables keep the survivor's own
-# row when it has one, otherwise the dupe's row moves over.
-_CHILD_TABLES: tuple[tuple[str, bool], ...] = (
-    ("channel_messages", False),
-    ("review_replies", False),
-    ("review_insights", False),
-    ("channel_services", False),
-    ("auto_reply_configs", True),
-    ("channel_verifications", True),
+# Child tables holding channel_id. Plain tables re-point blindly; the three
+# tables below carry their own unique constraints, so colliding rows are
+# resolved first (survivor wins, dupe fills its gaps, dupe rows go).
+_PLAIN_CHILD_TABLES: tuple[str, ...] = (
+    "channel_messages",
+    "review_replies",
+    "channel_services",
+    "llm_usage_events",
+    "review_response_logs",
 )
+
+# Single-row-per-channel tables: keep the survivor's row when it has one,
+# otherwise the dupe's row moves over.
+_UNIQUE_CHILD_TABLES: tuple[str, ...] = (
+    "auto_reply_configs",
+    "channel_verifications",
+)
+
+
+def _tables_present(bind) -> set[str]:
+    from sqlalchemy import inspect as _inspect
+
+    try:
+        return set(_inspect(bind).get_table_names())
+    except Exception:
+        return set()
+
+
+def _merge_insights(bind, survivor: str, dupe: str) -> None:
+    """Fold the dupe's reviews into the survivor's.
+
+    Both twins synced the same reviews, so most review_ids collide under
+    uq_review_insights_channel_review. The survivor keeps its row; gaps
+    (unfetched text, missing reply flags, pending enrichment) are filled
+    from the dupe before its colliding rows are dropped.
+    """
+    bind.execute(
+        sa.text(
+            # NOTE: target table written WITHOUT alias — SQLite (tests)
+            # rejects aliased UPDATE targets; Postgres accepts both.
+            """
+            UPDATE review_insights SET
+              review_text = COALESCE(NULLIF(review_insights.review_text, ''), d.review_text),
+              reviewer_name = COALESCE(NULLIF(review_insights.reviewer_name, ''), d.reviewer_name),
+              review_url = COALESCE(NULLIF(review_insights.review_url, ''), d.review_url),
+              replied = review_insights.replied OR d.replied,
+              replied_at = COALESCE(review_insights.replied_at, d.replied_at),
+              skipped = review_insights.skipped OR d.skipped,
+              edited = review_insights.edited OR d.edited,
+              edited_at = COALESCE(review_insights.edited_at, d.edited_at),
+              previous_review_text = COALESCE(review_insights.previous_review_text, d.previous_review_text),
+              previous_rating = COALESCE(review_insights.previous_rating, d.previous_rating),
+              sentiment = CASE WHEN review_insights.enrichment_status = 'pending'
+                                 AND d.enrichment_status = 'done'
+                               THEN d.sentiment ELSE review_insights.sentiment END,
+              sentiment_score = CASE WHEN review_insights.enrichment_status = 'pending'
+                                       AND d.enrichment_status = 'done'
+                                     THEN d.sentiment_score ELSE review_insights.sentiment_score END,
+              topics = CASE WHEN review_insights.enrichment_status = 'pending'
+                              AND d.enrichment_status = 'done'
+                            THEN d.topics ELSE review_insights.topics END,
+              products = CASE WHEN review_insights.enrichment_status = 'pending'
+                                AND d.enrichment_status = 'done'
+                              THEN d.products ELSE review_insights.products END,
+              problems = CASE WHEN review_insights.enrichment_status = 'pending'
+                                AND d.enrichment_status = 'done'
+                              THEN d.problems ELSE review_insights.problems END,
+              enrichment_status = CASE WHEN review_insights.enrichment_status = 'pending'
+                                         AND d.enrichment_status = 'done'
+                                       THEN d.enrichment_status ELSE review_insights.enrichment_status END
+            FROM review_insights d
+            WHERE d.channel_id = :dupe
+              AND review_insights.channel_id = :surv
+              AND review_insights.review_id = d.review_id
+            """
+        ),
+        {"dupe": dupe, "surv": survivor},
+    )
+    bind.execute(
+        sa.text(
+            "DELETE FROM review_insights WHERE channel_id = :dupe "
+            "AND review_id IN "
+            "(SELECT review_id FROM review_insights WHERE channel_id = :surv)"
+        ),
+        {"dupe": dupe, "surv": survivor},
+    )
+    bind.execute(
+        sa.text("UPDATE review_insights SET channel_id = :surv WHERE channel_id = :dupe"),
+        {"dupe": dupe, "surv": survivor},
+    )
 
 
 def _merge_duplicate_channels(bind) -> int:
     """Merge twin channels per (user_id, platform, listing_key).
 
     Returns the number of deleted rows. Keeps the oldest row per key.
+    Collision-safe on every unique constraint in the schema that references
+    channel_id (insights, daily metrics, intel reports, per-channel single
+    rows) — the merge, not the constraint creation, is where twins die.
     """
+    present = _tables_present(bind)
     rows = bind.execute(
         sa.text(
             "SELECT id, user_id, platform, listing_key FROM channels "
@@ -74,18 +158,64 @@ def _merge_duplicate_channels(bind) -> int:
             continue
         survivor, dupes = ids[0], ids[1:]
         for dupe in dupes:
-            for table, unique_per_channel in _CHILD_TABLES:
-                if unique_per_channel:
-                    has_own = bind.execute(
-                        sa.text(f"SELECT 1 FROM {table} WHERE channel_id = :s LIMIT 1"),
-                        {"s": survivor},
-                    ).first()
-                    if has_own:
-                        bind.execute(
-                            sa.text(f"DELETE FROM {table} WHERE channel_id = :d"),
-                            {"d": dupe},
-                        )
-                        continue
+            if "review_insights" in present:
+                _merge_insights(bind, survivor, dupe)
+            if "location_daily_metrics" in present:
+                # Same day synced into both twins: survivor's day wins
+                # (metrics rebuild from insights anyway).
+                bind.execute(
+                    sa.text(
+                        "DELETE FROM location_daily_metrics WHERE channel_id = :dupe "
+                        "AND date IN "
+                        "(SELECT date FROM location_daily_metrics WHERE channel_id = :surv)"
+                    ),
+                    {"dupe": dupe, "surv": survivor},
+                )
+                bind.execute(
+                    sa.text(
+                        "UPDATE location_daily_metrics SET channel_id = :surv "
+                        "WHERE channel_id = :dupe"
+                    ),
+                    {"dupe": dupe, "surv": survivor},
+                )
+            if "review_intelligence_reports" in present:
+                # Regenerable reports: survivor's scope wins on conflict.
+                bind.execute(
+                    sa.text(
+                        "DELETE FROM review_intelligence_reports WHERE channel_id = :dupe "
+                        "AND (user_id, days) IN "
+                        "(SELECT user_id, days FROM review_intelligence_reports "
+                        "WHERE channel_id = :surv)"
+                    ),
+                    {"dupe": dupe, "surv": survivor},
+                )
+                bind.execute(
+                    sa.text(
+                        "UPDATE review_intelligence_reports SET channel_id = :surv "
+                        "WHERE channel_id = :dupe"
+                    ),
+                    {"dupe": dupe, "surv": survivor},
+                )
+            for table in _PLAIN_CHILD_TABLES:
+                if table not in present:
+                    continue
+                bind.execute(
+                    sa.text(f"UPDATE {table} SET channel_id = :s WHERE channel_id = :d"),
+                    {"s": survivor, "d": dupe},
+                )
+            for table in _UNIQUE_CHILD_TABLES:
+                if table not in present:
+                    continue
+                has_own = bind.execute(
+                    sa.text(f"SELECT 1 FROM {table} WHERE channel_id = :s LIMIT 1"),
+                    {"s": survivor},
+                ).first()
+                if has_own:
+                    bind.execute(
+                        sa.text(f"DELETE FROM {table} WHERE channel_id = :d"),
+                        {"d": dupe},
+                    )
+                    continue
                 bind.execute(
                     sa.text(f"UPDATE {table} SET channel_id = :s WHERE channel_id = :d"),
                     {"s": survivor, "d": dupe},
