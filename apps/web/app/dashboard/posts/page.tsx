@@ -67,11 +67,11 @@ function PostsInner() {
 
   const [title, setTitle] = useState("");
   const [postLocationId, setPostLocationId] = useState("");
-  // Create-mode only: one tap posts the same content to every connected
-  // branch. Implemented as one POST per location (works against today's
-  // single-listing endpoint; a native bulk endpoint can replace the fan-out
-  // later without touching this UI).
-  const [bulkAll, setBulkAll] = useState(false);
+  // Create-mode only: every checked location gets its own copy of the post
+  // (one POST per branch — works against today's single-listing endpoint;
+  // a native bulk endpoint can replace the fan-out later). Always visible,
+  // even with a single branch.
+  const [selectedLocIds, setSelectedLocIds] = useState<string[]>([]);
   const [businessName, setBusinessName] = useState("");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -166,8 +166,9 @@ function PostsInner() {
 
   const resetForm = (locId?: string) => {
     setTitle("");
-    setPostLocationId(locId ?? selectedId ?? locations[0]?.id ?? "");
-    setBulkAll(false);
+    const first = locId ?? selectedId ?? locations[0]?.id ?? "";
+    setPostLocationId(first);
+    setSelectedLocIds(first ? [first] : []);
     setBusinessName("Sayvors");
     setDescription("");
     setTags([]);
@@ -186,12 +187,20 @@ function PostsInner() {
     setView({ kind: "create" });
   };
 
+  const toggleCreateLoc = (id: string) => {
+    setSelectedLocIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  };
+
+  const selectAllCreateLocs = () => {
+    setSelectedLocIds((prev) => prev.length === locations.length && locations.length > 0 ? [] : locations.map((l) => l.id));
+  };
+
   const openDetail = (id: string, editing = false) => {
     const p = posts.find((x) => x.id === id);
     if (!p) return;
     setTitle(p.title);
     setPostLocationId(p.locationId);
-    setBulkAll(false);
+    setSelectedLocIds(p.locationId ? [p.locationId] : []);
     setBusinessName(p.businessName);
     setDescription(p.description);
     setTags(p.tags);
@@ -232,7 +241,9 @@ function PostsInner() {
     return null;
   })();
 
-  const targetIds = bulkAll ? locations.map((l) => l.id) : [postLocationId];
+  const targetIds = view.kind === "create"
+    ? selectedLocIds.filter(Boolean)
+    : [postLocationId];
   const valid = title.trim() && businessName.trim() && description.trim() && targetIds.length > 0 && targetIds.every(Boolean) && (!scheduleEnabled || scheduledAt) && !deleteErr;
 
   const showBannerTimed = (kind: "ok" | "err", text: string) => {
@@ -252,7 +263,8 @@ function PostsInner() {
     if (!valid) return;
     setSubmitting(true);
     try {
-      const ids = bulkAll ? locations.map((l) => l.id) : [postLocationId];
+      const ids = selectedLocIds.filter(Boolean);
+      const list = ids.length > 0 ? ids : [postLocationId].filter(Boolean);
       const deleteIso = deleteEnabled && deleteAt ? new Date(deleteAt).toISOString() : null;
       const scheduleIso = scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : null;
       let ok = 0;
@@ -260,7 +272,7 @@ function PostsInner() {
       let firstErr = "";
       let skipped = 0;
       let nextOverlay = deleteOverlay;
-      for (const lid of ids) {
+      for (const lid of list) {
         try {
           const res = await apiFetch("/api/v1/posts/", {
             method: "POST",
@@ -294,11 +306,11 @@ function PostsInner() {
       if (nextOverlay !== deleteOverlay) setDeleteOverlay(nextOverlay);
       await refreshPosts(nextOverlay);
       setView({ kind: "list" });
-      if (ids.length > 1) {
+      if (list.length > 1) {
         showBannerTimed(failed === 0 ? "ok" : "err",
           failed === 0
-            ? `${scheduleEnabled ? "Scheduled" : "Published"} in all ${ids.length} locations.`
-            : `Done in ${ok} of ${ids.length} locations, ${failed} failed — ${firstErr}`);
+            ? `${scheduleEnabled ? "Scheduled" : "Published"} in all ${list.length} locations.`
+            : `Done in ${ok} of ${list.length} locations, ${failed} failed — ${firstErr}`);
       } else {
         showBannerTimed("ok", scheduleEnabled
           ? "Post scheduled — our worker will publish it to Google at that time."
@@ -541,7 +553,7 @@ function PostsInner() {
             <PostForm
               title={title} setTitle={setTitle}
               postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
-              allowBulk bulkAll={bulkAll} setBulkAll={setBulkAll}
+              multi selectedIds={selectedLocIds} onToggleLoc={toggleCreateLoc} onSelectAll={selectAllCreateLocs}
               businessName={businessName} setBusinessName={setBusinessName}
               description={description} setDescription={setDescription}
               tags={tags} tagInput={tagInput} setTagInput={setTagInput}
@@ -569,7 +581,7 @@ function PostsInner() {
                 <PostForm
                   title={title} setTitle={setTitle}
                   postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
-                  allowBulk={false} bulkAll={false} setBulkAll={() => {}}
+                  multi={false} selectedIds={[]} onToggleLoc={() => {}} onSelectAll={() => {}}
                   businessName={businessName} setBusinessName={setBusinessName}
                   description={description} setDescription={setDescription}
                   tags={tags} tagInput={tagInput} setTagInput={setTagInput}
@@ -702,10 +714,76 @@ function normalizePosts(raw: unknown, deleteOverlay?: Record<string, string | nu
   });
 }
 
+function LocationMultiSelect({ locations, selectedIds, onToggle, onSelectAll }: {
+  locations: LocationOption[];
+  selectedIds: string[];
+  onToggle: (id: string) => void;
+  onSelectAll: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const all = locations.length > 0 && selectedIds.length === locations.length;
+  const label = all
+    ? `All ${locations.length} location${locations.length === 1 ? "" : "s"}`
+    : selectedIds.length === 0
+      ? "Select locations…"
+      : selectedIds.length === 1
+        ? locations.find((l) => l.id === selectedIds[0])?.name ?? "1 location"
+        : `${selectedIds.length} locations`;
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label="Choose locations"
+        className="input-field flex w-full items-center justify-between gap-2 text-left"
+      >
+        <span className={`truncate ${selectedIds.length === 0 ? "text-ink/30" : ""}`}>{label}</span>
+        <svg className={`h-4 w-4 shrink-0 text-ink/40 transition ${open ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden />
+          <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-ink/[0.08] bg-white p-1 shadow-xl dark:border-fog/[0.12] dark:bg-ink">
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
+              <input
+                type="checkbox"
+                checked={all}
+                onChange={onSelectAll}
+                className="h-4 w-4 shrink-0 accent-deep-violet"
+              />
+              <span className="text-[13px] font-semibold text-ink dark:text-fog">
+                All locations{locations.length > 0 ? ` (${locations.length})` : ""}
+              </span>
+            </label>
+            <div className="mx-2 my-1 border-t border-ink/[0.06] dark:border-fog/[0.08]" aria-hidden />
+            {locations.map((l) => (
+              <label key={l.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(l.id)}
+                  onChange={() => onToggle(l.id)}
+                  className="h-4 w-4 shrink-0 accent-deep-violet"
+                />
+                <span className="truncate text-[13px] text-ink/80 dark:text-fog/80">{l.name}</span>
+              </label>
+            ))}
+            {locations.length === 0 && (
+              <p className="px-2.5 py-2 text-[12px] text-ink/40">No locations connected yet.</p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PostForm(props: {
   title: string; setTitle: (v: string) => void;
   postLocationId: string; setPostLocationId: (v: string) => void; locations: LocationOption[];
-  allowBulk: boolean; bulkAll: boolean; setBulkAll: (v: boolean) => void;
+  multi: boolean; selectedIds: string[]; onToggleLoc: (id: string) => void; onSelectAll: () => void;
   businessName: string; setBusinessName: (v: string) => void;
   description: string; setDescription: (v: string) => void;
   tags: string[]; tagInput: string; setTagInput: (v: string) => void; onAddTag: () => void; onRemoveTag: (t: string) => void;
@@ -732,21 +810,18 @@ function PostForm(props: {
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-[12px] font-medium text-ink/50">Location *</label>
-            <select value={p.postLocationId} onChange={(e) => p.setPostLocationId(e.target.value)} disabled={p.bulkAll} className="input-field disabled:opacity-50">
-              {p.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
-            {p.allowBulk && p.locations.length > 1 && (
-              <label className="mt-2 flex cursor-pointer items-center justify-between rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
-                <span>
-                  <span className="block text-[12px] font-semibold text-ink dark:text-fog">All {p.locations.length} locations at once</span>
-                  <span className="block text-[11px] text-ink/40">Same content posted to every branch.</span>
-                </span>
-                <span onClick={() => p.setBulkAll(!p.bulkAll)}
-                  className={`h-5 w-9 shrink-0 rounded-full transition ${p.bulkAll ? "bg-deep-violet" : "bg-ink/15 dark:bg-fog/15"}`}>
-                  <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${p.bulkAll ? "translate-x-[18px]" : "translate-x-0.5"}`} />
-                </span>
-              </label>
+            <label className="mb-1 block text-[12px] font-medium text-ink/50">Location{p.multi && p.selectedIds.length > 1 ? "s" : ""} *</label>
+            {p.multi ? (
+              <LocationMultiSelect
+                locations={p.locations}
+                selectedIds={p.selectedIds}
+                onToggle={p.onToggleLoc}
+                onSelectAll={p.onSelectAll}
+              />
+            ) : (
+              <select value={p.postLocationId} onChange={(e) => p.setPostLocationId(e.target.value)} className="input-field">
+                {p.locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
             )}
           </div>
           <div>
