@@ -140,7 +140,8 @@ async def test_publish_due_only_publishes_due(monkeypatch, db, user_id):
     await posts.update_post(db, user_id, later["post"]["id"],
                             {"status": "scheduled", "scheduled_on": future})
     totals = await posts.publish_due(db)
-    assert totals == {"checked": 1, "published": 1, "failed": 0, "errors": []}
+    assert totals == {"checked": 1, "published": 1, "failed": 0,
+                      "retried": 0, "skipped": 0, "errors": []}
     assert calls == ["loc-1"]
 
 
@@ -151,3 +152,121 @@ async def test_cannot_publish_published_or_archived(db, user_id):
     await posts.update_post(db, user_id, pid, {"status": "archived"})
     with pytest.raises(ValueError):
         await posts.publish_post(db, user_id, pid)
+
+
+def _future(hours=2):
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_delete_at_validation(db, user_id):
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    with pytest.raises(ValueError):
+        await posts.create_post(db, user_id, _draft(delete_at=past))
+    publish_at = _future(3)
+    delete_at = _future(1)
+    with pytest.raises(ValueError):
+        await posts.create_post(
+            db, user_id,
+            _draft(action="schedule", scheduled_on=publish_at, delete_at=delete_at),
+        )
+    res = await posts.create_post(
+        db, user_id,
+        _draft(action="schedule", scheduled_on=delete_at, delete_at=publish_at,
+               end_date=_future(4)),
+    )
+    assert res["post"]["delete_at"]
+    assert res["post"]["end_date"]
+    assert res["post"]["status"] == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_update_delete_at_set_and_cancel(db, user_id):
+    created = await posts.create_post(db, user_id, _draft())
+    pid = created["post"]["id"]
+    out = await posts.update_post(db, user_id, pid, {"delete_at": _future()})
+    assert out["post"]["delete_at"]
+    # Absent key leaves it untouched.
+    out = await posts.update_post(db, user_id, pid, {"title": "T2"})
+    assert out["post"]["delete_at"]
+    # Explicit null cancels.
+    out = await posts.update_post(db, user_id, pid, {"delete_at": None})
+    assert out["post"]["delete_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_publish_stores_google_id_and_end_date(monkeypatch, db, user_id):
+    await _connection(db, user_id)
+    calls = []
+
+    def _fake_publish(listing_id, **kw):
+        calls.append(kw)
+        return {"id": "pub-9"}
+
+    monkeypatch.setattr(
+        "integrations.channels.embedsocial.publish_media_post", _fake_publish
+    )
+    created = await posts.create_post(db, user_id, _draft(end_date=_future(48)))
+    res = await posts.publish_post(db, user_id, created["post"]["id"])
+    assert res["post"]["google_post_id"] == "pub-9"
+    assert calls[0]["end_date"]
+
+
+@pytest.mark.asyncio
+async def test_retry_then_park(monkeypatch, db, user_id):
+    await _connection(db, user_id)
+
+    def _fail(*a, **k):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(
+        "integrations.channels.embedsocial.publish_media_post", _fail
+    )
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    created = await posts.create_post(db, user_id, _draft())
+    pid = created["post"]["id"]
+    await posts.update_post(db, user_id, pid, {"status": "scheduled", "scheduled_on": past})
+    with pytest.raises(RuntimeError):
+        await posts.publish_post(db, user_id, pid)
+    rows = await posts.list_posts(db, user_id, "loc-1")
+    assert rows[0]["status"] == "scheduled"  # kept for retry, not parked
+    totals = await posts.publish_due(db)
+    assert totals["checked"] == 0  # backoff not elapsed: skipped silently
+    # Exhaust attempts -> parked as failed for the manual Retry button.
+    from app.modules.posts.models import LocationPost
+    from sqlalchemy import select as _select
+    for _ in range(posts.MAX_PUBLISH_ATTEMPTS):
+        try:
+            await posts.publish_post(db, user_id, pid)
+        except RuntimeError:
+            pass
+    row = (await db.execute(
+        _select(LocationPost).where(LocationPost.id == pid)
+    )).scalar_one()
+    assert row.status == "failed"
+    assert row.next_retry_at is None
+    totals = await posts.publish_due(db)
+    assert totals["checked"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_due_removes_only_due(db, user_id):
+    from datetime import datetime as _dt
+    from app.modules.posts.models import LocationPost
+
+    async def _row(delete_at):
+        p = LocationPost(id=f"p-{delete_at is not None}-{len(await posts.list_posts(db, user_id))}",
+                         user_id=user_id, listing_id="loc-1", status="scheduled",
+                         delete_at=delete_at)
+        db.add(p)
+        await db.commit()
+        return p.id
+
+    now = _dt.now(timezone.utc)
+    due_id = await _row(now - timedelta(minutes=1))
+    future_id = await _row(now + timedelta(days=1))
+    totals = await posts.delete_due(db)
+    assert totals == {"checked": 1, "deleted": 1}
+    remaining = await posts.list_posts(db, user_id, "loc-1")
+    assert [r["id"] for r in remaining] == [future_id]
+    assert due_id not in [r["id"] for r in remaining]

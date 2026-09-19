@@ -220,6 +220,8 @@ def publish_media_post(
     cta_type: str | None = None,
     cta_url: str | None = None,
     scheduled_on: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
     extra: dict | None = None,
 ) -> dict:
     """Publish (or schedule) a Google post through Localith.
@@ -228,6 +230,9 @@ def publish_media_post(
     sourceIds, captionText, title, imageUrls, ctaType, ctaUrl,
     scheduledOn, startDate/endDate, voucherCode. Only http(s) image URLs
     are accepted — local filenames must be filtered by the caller.
+    start_date/end_date drive the event/offer lifecycle on Google: Google
+    takes ended posts down by itself, which is the only Google-side
+    removal lever available (Localith exposes no post delete).
     """
     if post_type not in ("update", "event", "offer"):
         raise ValueError(f"Unsupported post type: {post_type}")
@@ -247,6 +252,10 @@ def publish_media_post(
         body["ctaUrl"] = cta_url
     if scheduled_on:
         body["scheduledOn"] = scheduled_on
+    if start_date:
+        body["startDate"] = start_date
+    if end_date:
+        body["endDate"] = end_date
     if extra:
         body.update(extra)
     payload = _post("rest/v1/content_publishing_media", body)

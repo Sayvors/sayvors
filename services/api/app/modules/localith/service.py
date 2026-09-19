@@ -236,6 +236,17 @@ _SYNC_ADVISORY_LOCK_KEY = 64821410933
 _SYNC_LOCK_PREFIX = "sayvors:localith-sync:"
 
 
+def _is_postgres(db: AsyncSession) -> bool:
+    """Advisory locks exist only on Postgres. Anywhere else (sqlite tests,
+    single-process dev) there is nothing to coordinate with: take the lock
+    as trivially held (NOT as held-by-other, which would skip all work)."""
+    try:
+        bind = db.get_bind() if hasattr(db, "get_bind") else db.bind  # type: ignore[union-attr]
+        return bind is not None and bind.dialect.name == "postgresql"
+    except Exception:
+        return False
+
+
 def _lock_stmt(blocking: bool, listing_id: str | None):
     """pg_advisory_lock (blocking) or pg_try_advisory_lock (non-blocking)."""
     if listing_id is None:
@@ -251,10 +262,12 @@ async def _acquire_sync_lock(db: AsyncSession, listing_id: str | None = None) ->
     """Hold the sync lock for the whole connection sync (multi-commit body).
 
     Session-level lock: auto-released on disconnect, explicitly released in
-    `sync_connection`'s finally. Returns False on non-Postgres sessions
-    (sqlite test DBs have no advisory locks) — callers then proceed
-    unlocked; correctness there rests on the unique index.
+    `sync_connection`'s finally. Where Postgres locks don't exist (sqlite
+    tests, single-process dev) the lock is trivially held; correctness
+    there rests on the unique index.
     """
+    if not _is_postgres(db):
+        return True
     try:
         await db.execute(_lock_stmt(True, listing_id))
         return True
@@ -272,6 +285,8 @@ async def _try_acquire_sync_lock(db: AsyncSession, listing_id: str | None = None
     worker/pass already holds it (caller should SKIP, not wait — this is how
     the two auto-sync loops stop racing each other). Only call on a clean
     session (nothing pending): a miss ends with a rollback."""
+    if not _is_postgres(db):
+        return True
     try:
         row = (await db.execute(_lock_stmt(False, listing_id))).scalar()
         if row:

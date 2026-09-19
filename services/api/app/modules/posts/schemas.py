@@ -16,6 +16,10 @@ class PostCreate(BaseModel):
     # "publish" -> publish to Google immediately; "schedule" -> queue for later.
     action: str = Field("publish", pattern="^(publish|schedule|draft)$")
     scheduled_on: str | None = None  # ISO datetime, required for schedule
+    # ISO datetime: auto-delete our copy (Google follows its own lifecycle).
+    delete_at: str | None = None
+    # ISO datetime: event/offer end — Google takes ended posts down itself.
+    end_date: str | None = None
 
 
 class PostUpdate(BaseModel):
@@ -31,6 +35,10 @@ class PostUpdate(BaseModel):
     cta_url: str | None = Field(None, max_length=1000)
     status: str | None = Field(None, pattern="^(draft|scheduled|published|archived)$")
     scheduled_on: str | None = None
+    # ISO datetime to (re)schedule auto-deletion; explicit null cancels it.
+    # Absent key = untouched (router passes exclude_unset).
+    delete_at: str | None = None
+    end_date: str | None = None
 
 
 class PostOut(BaseModel):
@@ -49,6 +57,9 @@ class PostOut(BaseModel):
     status: str
     scheduled_on: str | None = None
     published_at: str | None = None
+    delete_at: str | None = None
+    end_date: str | None = None
+    google_post_id: str | None = None
     error: str | None = None
     created_at: str
 
@@ -65,3 +76,6 @@ class SyncResult(BaseModel):
     published: int
     failed: int
     errors: list[str] = []
+    skipped: int = 0
+    retried: int = 0
+    deleted: int = 0
