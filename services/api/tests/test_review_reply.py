@@ -21,6 +21,13 @@ def _resp(text):
     )
 
 
+class _FakeDB:
+    """The generator closes the session before the LLM call."""
+
+    async def close(self):
+        return None
+
+
 class _DeadProvider:
     async def complete(self, req):
         raise ProviderError("openai", "API key not configured", 503)
@@ -49,7 +56,7 @@ async def test_falls_back_to_groq_when_configured_model_dead(monkeypatch):
     config = SimpleNamespace(model="openai:gpt-4o-mini", tone="friendly",
                              databank_id=None, custom_instructions=None)
     text = await review_reply.generate_review_reply(
-        config, 5, "Loved it", "Sara", object()
+        config, 5, "Loved it", "Sara", _FakeDB()
     )
     assert text == "Thank you for the great review!"
     assert groq.models_seen == ["openai/gpt-oss-120b"]
@@ -73,7 +80,7 @@ async def test_no_retry_when_groq_itself_fails(monkeypatch):
     config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
                              databank_id=None, custom_instructions=None)
     with pytest.raises(ProviderError):
-        await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", object())
+        await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", _FakeDB())
     assert calls == ["groq:openai/gpt-oss-120b"]
 
 
@@ -110,7 +117,7 @@ async def test_arabic_review_gets_arabic_language_instruction(monkeypatch):
     config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
                              databank_id=None, custom_instructions=None)
     text = await review_reply.generate_review_reply(
-        config, 5, "الطعام رائع والخدمة ممتازة", "أحمد", object()
+        config, 5, "الطعام رائع والخدمة ممتازة", "أحمد", _FakeDB()
     )
     assert text == "شكراً جزيلاً على تقييمك!"
     assert "in Arabic" in captured["system"]
@@ -130,7 +137,7 @@ async def test_english_review_gets_language_match_rule(monkeypatch):
     monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
     config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
                              databank_id=None, custom_instructions=None)
-    await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", object())
+    await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", _FakeDB())
     assert "SAME language as the review" in captured["system"]
 
 
@@ -140,11 +147,70 @@ async def test_mock_mode_arabic_review_returns_arabic_reply(monkeypatch):
     config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
                              databank_id=None, custom_instructions=None)
     text = await review_reply.generate_review_reply(
-        config, 5, "مطعم رائع جداً", "أحمد", object()
+        config, 5, "مطعم رائع جداً", "أحمد", _FakeDB()
     )
     # Arabic script present, no English canned text
     assert any("؀" <= ch <= "ۿ" for ch in text)
     assert "Thank you" not in text
+
+
+# ── question-type reviews: inquiries, not feedback ─────────
+
+@pytest.mark.asyncio
+async def test_question_review_prompt_never_thanks(monkeypatch):
+    """"هل تبيعون شاورما؟" is an inquiry — the prompt must not instruct the
+    model to thank the reviewer for a "wonderful review"."""
+    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
+    captured = {}
+
+    class _Capture:
+        async def complete(self, req):
+            captured["system"] = req.system_prompt
+            return _resp("سؤالك في محل!")
+
+    monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
+    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
+                             databank_id=None, custom_instructions=None)
+    await review_reply.generate_review_reply(
+        config, 5, "هل تبيعون شاورما؟", "سعيد", _FakeDB()
+    )
+    assert "QUESTION" in captured["system"]
+    assert "do NOT thank them" in captured["system"]
+    assert "thank the reviewer warmly" not in captured["system"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_bans_invented_business_facts(monkeypatch):
+    """No databank context = no facts — the model may not invent a menu."""
+    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
+    captured = {}
+
+    class _Capture:
+        async def complete(self, req):
+            captured["system"] = req.system_prompt
+            return _resp("ok")
+
+    monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
+    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
+                             databank_id=None, custom_instructions=None)
+    await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", _FakeDB())
+    assert "NEVER invent products" in captured["system"]
+    assert "follow up with accurate details" in captured["system"]
+
+
+@pytest.mark.asyncio
+async def test_mock_mode_question_gets_answer_not_thanks(monkeypatch):
+    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", True)
+    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
+                             databank_id=None, custom_instructions=None)
+    ar = await review_reply.generate_review_reply(
+        config, 5, "هل تبيعون شاورما؟", "سعيد", _FakeDB()
+    )
+    assert "سؤالك" in ar
+    en = await review_reply.generate_review_reply(
+        config, 5, "Do you sell shawarma?", "Saeed", _FakeDB()
+    )
+    assert "question" in en.lower()
 
 
 # ── outbox retry endpoint ─────────────────────────────────
@@ -211,3 +277,93 @@ async def test_retry_rejects_non_failed(db, user_id, channel_id, client):
         headers={"host": "localhost"},
     )
     assert r.status_code == 400
+
+
+# ── edit any response ───────────────────────────────────────
+
+def _reply(row_id, channel_id, status, **over):
+    from app.modules.channels.models import ReviewReply
+
+    base = dict(
+        id=row_id, channel_id=channel_id, review_id="localith:edit-1",
+        rating=5, review_text="Great", reviewer_name="Ali",
+        reply_text="Thanks!", status=status,
+    )
+    base.update(over)
+    return ReviewReply(**base)
+
+
+@pytest.mark.asyncio
+async def test_edit_posted_sends_back_for_approval(db, user_id, channel_id, client):
+    """Editing a posted reply updates the text and re-queues it — the
+    update only goes live after a fresh approval."""
+    db.add(_reply("rr-edit-1", channel_id, "posted", generation_attempt=1))
+    await db.commit()
+
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/reviews/rr-edit-1",
+        json={"reply_text": "Thanks, updated!"},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reply_text"] == "Thanks, updated!"
+    assert body["status"] == "pending_approval"
+    assert body["generation_attempt"] == 2
+
+
+@pytest.mark.asyncio
+async def test_edit_failed_requeues(db, user_id, channel_id, client):
+    db.add(_reply("rr-edit-2", channel_id, "failed", error="boom"))
+    await db.commit()
+
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/reviews/rr-edit-2",
+        json={"reply_text": "Retry text"},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "pending_approval"
+    assert body["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_edit_rejected_still_refused(db, user_id, channel_id, client):
+    db.add(_reply("rr-edit-3", channel_id, "rejected"))
+    await db.commit()
+
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/reviews/rr-edit-3",
+        json={"reply_text": "Nope"},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_insights_carry_latest_response(db, user_id, channel_id, client):
+    """The review list carries each review's response for inline editing."""
+    from datetime import datetime, timezone
+
+    from app.modules.analytics.models import ReviewInsight
+
+    db.add(ReviewInsight(
+        id="ins-resp-1", user_id=user_id, channel_id=channel_id,
+        review_id="localith:edit-1", rating=5, review_text="Great",
+        reviewer_name="Ali", sentiment="positive", sentiment_score=0.9,
+        topics=[], products=[], problems=[], enrichment_status="done",
+        replied=True, review_updated_at=datetime.now(timezone.utc),
+    ))
+    db.add(_reply("rr-edit-4", channel_id, "posted", reply_text="Live text"))
+    await db.commit()
+
+    r = client.get("/api/v1/analytics/reviews/insights", headers={"host": "localhost"})
+    assert r.status_code == 200
+    item = [i for i in r.json()["items"] if i["id"] == "ins-resp-1"][0]
+    assert item["reply_id"] == "rr-edit-4"
+    assert item["reply_text"] == "Live text"
+    assert item["reply_status"] == "posted"
+
+
+

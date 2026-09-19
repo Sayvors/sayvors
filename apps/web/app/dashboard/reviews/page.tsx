@@ -6,9 +6,9 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
-import { approveReply, editReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { approveReply, dismissReviewEdit, editReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
 
-type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged";
+type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
 
 interface ReviewItem {
@@ -22,10 +22,15 @@ interface ReviewItem {
   createdAt: string;
   replied: boolean;
   skipped: boolean;
+  edited: boolean;
+  editedAt: string | null;
+  previousRating: number | null;
+  previousText: string | null;
   sentiment?: string;
   reviewUrl?: string;
   reply_text?: string;
   status?: string;
+  replyId?: string;
 }
 
 interface LocationOption {
@@ -35,6 +40,19 @@ interface LocationOption {
 }
 
 const PAGE_SIZE = 4;
+
+const TAB_LABELS: Record<ReviewTab, string> = {
+  all: "All",
+  unanswered: "Unanswered",
+  need_approval: "Need Approval",
+  flagged: "Flagged",
+  edited: "Edited",
+  replied: "Replied",
+  positive: "Positive",
+  negative: "Negative",
+};
+const PRIMARY_TABS: ReviewTab[] = ["all", "need_approval", "edited"];
+const MORE_TABS: ReviewTab[] = ["unanswered", "flagged", "replied", "positive", "negative"];
 
 export default function ReviewsPage() {
   return (
@@ -54,12 +72,13 @@ function ReviewsInner() {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [tab, setTab] = useState<ReviewTab>("all");
   const [initialTabSet, setInitialTabSet] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // Read tab from URL after hydration to avoid SSR mismatch
   useEffect(() => {
     if (!initialTabSet) {
       const t = searchParams.get("tab");
-      if (t === "need_approval" || t === "unanswered" || t === "replied" || t === "positive" || t === "negative" || t === "all") {
+      if (t === "need_approval" || t === "unanswered" || t === "replied" || t === "positive" || t === "negative" || t === "all" || t === "edited") {
         setTab(t as ReviewTab);
       }
       setInitialTabSet(true);
@@ -77,6 +96,10 @@ function ReviewsInner() {
    const [pendingReplies, setPendingReplies] = useState<ReviewReplyDTO[]>([]);
    const [skippingId, setSkippingId] = useState<string | null>(null);
   const [draftTexts, setDraftTexts] = useState<Record<string, string>>({});
+  // Inline editing of the shown response (any status) in review detail.
+  const [editingResponse, setEditingResponse] = useState<string | null>(null);
+  const [responseText, setResponseText] = useState("");
+  const [savingResponse, setSavingResponse] = useState(false);
   const [regenId, setRegenId] = useState<string | null>(null);
   const [replyMode, setReplyMode] = useState<"manual" | "ai">("manual");
   const [aiLoading, setAiLoading] = useState(false);
@@ -230,6 +253,7 @@ function ReviewsInner() {
     // The approval queue is the source of truth for this count.
     need_approval: pendingReplies.length,
     flagged: reviews.filter((r) => r.skipped).length,
+    edited: reviews.filter((r) => r.edited).length,
   }), [reviews, pendingReplies]);
 
   const filtered = reviews.filter((r) => {
@@ -239,6 +263,7 @@ function ReviewsInner() {
     if (tab === "positive") return r.rating >= 4;
     if (tab === "negative") return r.rating <= 2;
     if (tab === "flagged") return r.skipped;
+    if (tab === "edited") return r.edited;
     return true;
   });
 
@@ -299,6 +324,8 @@ function ReviewsInner() {
     setReplyMode("manual");
     setAiTrace(null);
     setAiError(null);
+    setEditingResponse(null);
+    setResponseText("");
     abortRef.current?.abort();
     setView({ kind: "detail", id });
   };
@@ -350,6 +377,42 @@ function ReviewsInner() {
       setBanner({ kind: "err", text: detailMsg(e, "Could not save edits.") });
       setTimeout(() => setBanner(null), 5000);
     }
+  }
+
+  // Every response is editable: pending edits in place, failed re-queues,
+  // posted goes back to Need Approval (backend) so the update only goes
+  // live after a fresh approval.
+  async function saveResponse(item: ReviewItem) {
+    if (!item.replyId || !responseText.trim()) return;
+    setSavingResponse(true);
+    try {
+      const wasPosted = item.status === "posted";
+      const saved = await editReply(item.locationId, item.replyId, responseText.trim());
+      setReviews((prev) => prev.map((r) => r.id === item.id ? { ...r, reply_text: saved.reply_text, status: saved.status } : r));
+      setEditingResponse(null);
+      await loadPendingReplies();
+      setBanner({
+        kind: "ok",
+        text: wasPosted
+          ? "Response updated — sent back for approval; approving publishes the update to Google."
+          : "Response updated.",
+      });
+      setTimeout(() => setBanner(null), 4000);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not save response.") });
+      setTimeout(() => setBanner(null), 5000);
+    } finally {
+      setSavingResponse(false);
+    }
+  }
+
+  function responseBadge(status?: string) {
+    const base = "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide";
+    if (status === "posted") return <span className={`${base} bg-emerald-100 text-emerald-700`}>Published</span>;
+    if (status === "pending_approval") return <span className={`${base} bg-amber-100 text-amber-700`}>Pending approval</span>;
+    if (status === "failed") return <span className={`${base} bg-red-100 text-red-700`}>Failed</span>;
+    if (status === "approved") return <span className={`${base} bg-sky-100 text-sky-700`}>Approved</span>;
+    return <span className={`${base} bg-ink/[0.05] text-ink/40`}>Response</span>;
   }
 
   async function approveDraft(d: ReviewReplyDTO) {
@@ -417,6 +480,25 @@ function ReviewsInner() {
     } catch {
       setBanner({ kind: "err", text: "Could not flag — try again." });
       setTimeout(() => setBanner(null), 3000);
+    }
+  };
+
+  const [dismissingEdit, setDismissingEdit] = useState(false);
+  const handleDismissEdit = async () => {
+    if (view.kind !== "detail") return;
+    setDismissingEdit(true);
+    try {
+      await dismissReviewEdit(active!.id);
+      setReviews((rs) => rs.map((r) =>
+        r.id === active!.id
+          ? { ...r, edited: false, editedAt: null, previousRating: null, previousText: null }
+          : r
+      ));
+    } catch {
+      setBanner({ kind: "err", text: "Could not dismiss the edit — try again." });
+      setTimeout(() => setBanner(null), 3000);
+    } finally {
+      setDismissingEdit(false);
     }
   };
 
@@ -618,34 +700,67 @@ function ReviewsInner() {
                 <div className="grid grid-cols-12 gap-4">
                   {/* Left column: 3/4 - Reviews list */}
                   <div className="col-span-12 lg:col-span-8 space-y-4">
-<div className="relative">
-                        <select value={tab} onChange={(e) => { pickTab(e.target.value as ReviewTab); }}
-                          className={`appearance-none rounded-xl border bg-white py-2 pl-3 pr-9 text-[12px] font-semibold outline-none dark:bg-ink cursor-pointer transition ${
-                            tab === "need_approval" && counts.need_approval > 0
-                              ? "border-coral/40 text-coral focus:ring-2 focus:ring-coral/20"
-                              : "border-ink/[0.08] text-ink dark:border-fog/[0.1] dark:text-fog"
-                          }`}>
-                           {([
-                             { key: "all", label: `All (${counts.all})` },
-                             { key: "unanswered", label: `Unanswered (${counts.unanswered})` },
-                             { key: "need_approval", label: `Need Approval (${counts.need_approval})` },
-                             { key: "flagged", label: `Flagged (${counts.flagged})` },
-                             { key: "replied", label: `Replied (${counts.replied})` },
-                             { key: "positive", label: `Positive (${counts.positive})` },
-                             { key: "negative", label: `Negative (${counts.negative})` },
-                           ] as const).map((t) => (
-                             <option key={t.key} value={t.key}>{t.label}</option>
-                           ))}
-                        </select>
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40 pointer-events-none">
-                          <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        {counts.need_approval > 0 && (
-                          <span aria-hidden className="absolute -right-1 -top-1 flex h-3 w-3">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-coral opacity-60" />
-                            <span className="relative inline-flex h-3 w-3 rounded-full bg-coral ring-2 ring-white dark:ring-ink" />
-                          </span>
-                        )}
+<div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Review filters">
+                        {PRIMARY_TABS.map((t) => (
+                          <button
+                            key={t}
+                            role="tab"
+                            aria-selected={tab === t}
+                            onClick={() => pickTab(t)}
+                            className={`relative inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                              tab === t
+                                ? t === "need_approval" && counts.need_approval > 0
+                                  ? "border-coral/40 bg-coral/[0.06] text-coral"
+                                  : "border-deep-violet/30 bg-deep-violet/[0.06] text-deep-violet"
+                                : "border-ink/[0.08] bg-white text-ink/60 hover:border-ink/[0.16] hover:text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60 dark:hover:text-fog"
+                            }`}
+                          >
+                            {TAB_LABELS[t]} ({counts[t]})
+                            {t === "need_approval" && counts.need_approval > 0 && (
+                              <span aria-hidden className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-coral opacity-60" />
+                                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-coral ring-2 ring-white dark:ring-ink" />
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                        <div className="relative">
+                          <button
+                            aria-haspopup="menu"
+                            aria-expanded={moreOpen}
+                            onClick={() => setMoreOpen((o) => !o)}
+                            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                              MORE_TABS.includes(tab)
+                                ? "border-deep-violet/30 bg-deep-violet/[0.06] text-deep-violet"
+                                : "border-ink/[0.08] bg-white text-ink/60 hover:border-ink/[0.16] hover:text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60 dark:hover:text-fog"
+                            }`}
+                          >
+                            {MORE_TABS.includes(tab) ? `${TAB_LABELS[tab]} (${counts[tab]})` : "More+"}
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3 w-3 transition ${moreOpen ? "rotate-180" : ""}`}>
+                              <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </button>
+                          {moreOpen && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setMoreOpen(false)} />
+                              <div role="menu" className="absolute left-0 top-full z-20 mt-1 w-44 rounded-xl border border-ink/[0.08] bg-white py-1 shadow-lg dark:border-fog/[0.1] dark:bg-ink">
+                                {MORE_TABS.map((t) => (
+                                  <button
+                                    key={t}
+                                    role="menuitem"
+                                    onClick={() => { pickTab(t); setMoreOpen(false); }}
+                                    className={`flex w-full items-center justify-between px-3 py-2 text-left text-[12px] font-medium outline-none transition hover:bg-ink/[0.03] focus-visible:bg-ink/[0.03] dark:hover:bg-fog/[0.05] ${
+                                      tab === t ? "font-bold text-deep-violet" : "text-ink/70 dark:text-fog/70"
+                                    }`}
+                                  >
+                                    {TAB_LABELS[t]}
+                                    <span className="text-[11px] tabular-nums opacity-60">{counts[t]}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
                       </div>
 
                     {tab === "need_approval" ? (
@@ -869,13 +984,15 @@ function ReviewsInner() {
                       )
                     ) : filtered.length === 0 ? (
                       <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
-                         <p className="text-[14px] font-medium text-ink/40">
-                           {reviews.length === 0 && tab === "all"
-                             ? "No reviews yet — press Reconcile after syncing your listing."
-                             : tab === "flagged"
-                               ? "No reviews flagged yet — use the flag button on any review."
-                               : "No reviews in this view"}
-                         </p>
+                          <p className="text-[14px] font-medium text-ink/40">
+                            {reviews.length === 0 && tab === "all"
+                              ? "No reviews yet — press Reconcile after syncing your listing."
+                              : tab === "flagged"
+                                ? "No reviews flagged yet — use the flag button on any review."
+                                : tab === "edited"
+                                  ? "No edited reviews — review content is compared on every sync."
+                                  : "No reviews in this view"}
+                          </p>
                       </div>
                     ) : (
                       <>
@@ -892,6 +1009,9 @@ function ReviewsInner() {
                                 locationName: r.locationName,
                                 replied: r.replied,
                                  skipped: r.skipped,
+                                 edited: r.edited,
+                                 previousText: r.previousText,
+                                 previousRating: r.previousRating,
                                  sentiment: r.sentiment,
                                  reviewUrl: r.reviewUrl,
                                }}
@@ -1042,6 +1162,57 @@ function ReviewsInner() {
                   )}
                 </div>
 
+                {/* Reviewer edited this review — before/after comparison */}
+                {active.edited && (
+                  <div className="mx-4 mt-3 rounded-lg border border-[#FDE293] bg-[#FEF7E0]/50 px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#B45309]">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden className="h-3.5 w-3.5">
+                          <path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round" />
+                        </svg>
+                        Review edited by the customer
+                      </p>
+                      <button
+                        onClick={() => void handleDismissEdit()}
+                        disabled={dismissingEdit}
+                        className="shrink-0 rounded-full border border-[#FDE293] px-3 py-1 text-[12px] font-medium text-[#B45309] transition hover:bg-[#FEF7E0]/60 disabled:opacity-40"
+                      >
+                        {dismissingEdit ? "Dismissing…" : "Dismiss"}
+                      </button>
+                    </div>
+                    <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
+                      {/* Before */}
+                      <div className="rounded-lg border border-[#F0DCA8] bg-white/70 px-3 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-[#B45309]">Before</span>
+                          {active.previousRating != null && (
+                            <span className="ml-auto inline-flex items-center gap-1.5">
+                              <GoogleStars rating={active.previousRating} size="h-3 w-3" />
+                              <span className="text-[11px] font-medium text-[#B45309]">{active.previousRating.toFixed(1)}</span>
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1.5 line-clamp-5 text-[12.5px] italic leading-[18px] text-[#8A6A3B] line-through decoration-[#D9B98C]/70 decoration-1">
+                          {active.previousText || "No written comment — star rating only."}
+                        </p>
+                      </div>
+                      {/* After */}
+                      <div className="rounded-lg border border-[#DADCE0] bg-white px-3 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-[#5F6368]">After</span>
+                          <span className="ml-auto inline-flex items-center gap-1.5">
+                            <GoogleStars rating={active.rating} size="h-3 w-3" />
+                            <span className="text-[11px] font-medium text-[#202124]">{active.rating.toFixed(1)}</span>
+                          </span>
+                        </div>
+                        <p className="mt-1.5 line-clamp-5 text-[12.5px] leading-[18px] text-[#202124]">
+                          {active.comment || "No written comment — star rating only."}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Comment — clean quote, no purple */}
                 <div className="px-4 py-3">
                   <p className="whitespace-pre-wrap break-words text-[13px] leading-6 text-[#202124]">{active.comment ? `“${active.comment}”` : <span className="italic text-[#5F6368]">No written comment — star rating only.</span>}</p>
@@ -1050,6 +1221,58 @@ function ReviewsInner() {
                 {/* Reply composer — Material, not violet */}
                 <div className="mx-4 mb-4 rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-4">
                   <h3 className="text-[13px] font-medium text-[#202124]">Your reply</h3>
+                  {active.reply_text && (
+                    <div className="mt-3 rounded-md border border-[#DADCE0] bg-white px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <p className="text-[12px] font-medium text-[#202124]">Your response</p>
+                        {responseBadge(active.status)}
+                        <span className="flex-1" />
+                        {editingResponse === active.id ? null : active.replyId ? (
+                          <button
+                            onClick={() => { setEditingResponse(active.id); setResponseText(active.reply_text ?? ""); }}
+                            className="text-[12px] font-medium text-[#1A73E8] hover:underline"
+                          >
+                            Edit
+                          </button>
+                        ) : null}
+                      </div>
+                      {editingResponse === active.id ? (
+                        <>
+                          <textarea
+                            value={responseText}
+                            onChange={(e) => setResponseText(e.target.value)}
+                            rows={4}
+                            maxLength={1000}
+                            autoFocus
+                            className="mt-2 min-h-[96px] w-full resize-y rounded-md border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] outline-none focus:border-[#1A73E8] focus:ring-1 focus:ring-[#1A73E8]"
+                          />
+                          {active.status === "posted" && (
+                            <p className="mt-1.5 text-[11px] leading-4 text-[#5F6368]">
+                              Saving sends this back for approval — approving publishes the update to Google.
+                            </p>
+                          )}
+                          <div className="mt-2 flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => setEditingResponse(null)}
+                              disabled={savingResponse}
+                              className="rounded-md px-3 py-1.5 text-[12px] font-medium text-[#5F6368] hover:bg-ink/[0.04] disabled:opacity-40"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => void saveResponse(active)}
+                              disabled={!responseText.trim() || savingResponse}
+                              className="rounded-md bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
+                            >
+                              {savingResponse ? "Saving…" : "Save response"}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-5 text-[#202124]">{active.reply_text}</p>
+                      )}
+                    </div>
+                  )}
                   {active.replied ? (
                      <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
                        <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
@@ -1299,10 +1522,15 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       createdAt: String(r.review_updated_at ?? r.created_at ?? "").slice(0, 10),
       replied: r.replied === true,
       skipped: r.skipped === true,
+      edited: r.edited === true,
+      editedAt: typeof r.edited_at === "string" ? r.edited_at : null,
+      previousRating: typeof r.previous_rating === "number" ? r.previous_rating : null,
+      previousText: typeof r.previous_review_text === "string" ? r.previous_review_text : null,
       sentiment: typeof r.sentiment === "string" ? r.sentiment : undefined,
       reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
       status: typeof r.status === "string" ? r.status : undefined,
+      replyId: typeof r.reply_id === "string" ? r.reply_id : undefined,
     };
   });
 }

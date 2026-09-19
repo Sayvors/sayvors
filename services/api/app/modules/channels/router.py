@@ -1214,11 +1214,27 @@ async def edit_pending_reply(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Edit a reply draft before publishing."""
+    """Edit any live response to a review.
+
+    Pending drafts are edited in place. Failed drafts are edited and
+    re-queued for approval. Posted replies can be corrected too: the edit
+    sends them back to pending_approval (generation_attempt+1), so the
+    update only goes live after a fresh approval — nothing edits Google
+    behind the merchant's back.
+    """
     reply = await _get_owned_reply(channel_id, reply_id, user, db)
-    if reply.status != "pending_approval":
-        raise HTTPException(status_code=400, detail="Only pending replies can be edited")
+    if reply.status not in ("pending_approval", "failed", "posted"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only pending, failed or posted replies can be edited",
+        )
     reply.reply_text = body.reply_text.strip()
+    if reply.status == "failed":
+        reply.status = "pending_approval"
+        reply.error = None
+    elif reply.status == "posted":
+        reply.status = "pending_approval"
+        reply.generation_attempt = (reply.generation_attempt or 1) + 1
     await db.commit()
     await db.refresh(reply)
     return _reply_response(reply)
