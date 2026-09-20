@@ -219,8 +219,8 @@ function AddServiceForm({ name, category, description, onName, onCategory, onDes
           : "Saves to the selected location. Switch to All branches to add it everywhere at once."}
       </p>
       {isAll && channels.length > 0 && (
-        <label className="mt-3 block text-[11px] font-bold text-ink/55">
-          Add to branches
+        <div className="mt-3">
+          <p className="text-[11px] font-bold text-ink/55">Add to branches</p>
           <span className="mt-2 block">
             <LocationMultiSelect
               locations={channels.map((c) => ({ id: c.id, name: c.display_name || "Unnamed location" }))}
@@ -229,7 +229,7 @@ function AddServiceForm({ name, category, description, onName, onCategory, onDes
               onSelectAll={onSelectAll}
             />
           </span>
-        </label>
+        </div>
       )}
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <input value={name} onChange={(event) => onName(event.target.value)} placeholder="Service name" className="input-field" />

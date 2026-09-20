@@ -39,7 +39,16 @@ export default function LocationMultiSelect({ locations, selectedIds, onToggle, 
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden />
+          <div
+            className="fixed inset-0 z-10"
+            onClick={(e) => {
+              // preventDefault stops any ancestor <label> from forwarding
+              // this click to the first checkbox (services page had that bug).
+              e.preventDefault();
+              setOpen(false);
+            }}
+            aria-hidden
+          />
           <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-ink/[0.08] bg-white p-1 shadow-xl dark:border-fog/[0.12] dark:bg-ink">
             <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
               <input
