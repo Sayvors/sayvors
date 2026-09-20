@@ -21,6 +21,7 @@ from .modules.profile.router import router as profile_router
 from .modules.localith.router import router as localith_router
 from .modules.locations.router import router as locations_router
 from .modules.posts.router import router as posts_router
+from .modules.media.router import router as media_router
 from .modules.admin.router import router as admin_router
 from .modules.email.router import router as email_router
 from .modules.review_engine.router import router as review_engine_router
@@ -140,6 +141,10 @@ async def lifespan(app: FastAPI):
     from .modules.posts.worker import run_post_publish_worker
     posts_publish_task = asyncio.create_task(run_post_publish_worker())
 
+    # Start the scheduled-media publisher (due photos -> Google posts)
+    from .modules.media.worker import run_media_publish_worker
+    media_publish_task = asyncio.create_task(run_media_publish_worker())
+
     # Start the analytics pipeline: Kafka consumer (review enrichment +
     # daily rollups) and Google performance metrics sync worker
     from .modules.analytics.consumer import run_analytics_consumer
@@ -159,6 +164,7 @@ async def lifespan(app: FastAPI):
     reviews_task.cancel()
     localith_sync_task.cancel()
     posts_publish_task.cancel()
+    media_publish_task.cancel()
     analytics_consumer_task.cancel()
     performance_sync_task.cancel()
     await outbox_worker.stop()
@@ -202,6 +208,7 @@ app.include_router(profile_router)
 app.include_router(localith_router)
 app.include_router(locations_router)
 app.include_router(posts_router)
+app.include_router(media_router)
 app.include_router(admin_router)
 app.include_router(email_router)
 app.include_router(review_engine_router)
