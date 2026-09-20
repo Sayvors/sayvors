@@ -342,6 +342,38 @@ async def test_parked_failure_notifies_but_retry_does_not(monkeypatch, db, user_
 
 
 @pytest.mark.asyncio
+async def test_localith_error_body_reaches_post_error(monkeypatch, db, user_id):
+    """A 400 from Localith must surface its body (which field, what limit)
+    on the row — previously only a bare status code survived."""
+    import httpx
+
+    from integrations.channels import embedsocial
+
+    await _connection(db, user_id)
+
+    def _fake_post(url, **kw):
+        req = httpx.Request("POST", url)
+        return httpx.Response(400, text='{"errors":{"caption":"too long"}}', request=req)
+
+    monkeypatch.setattr(embedsocial.httpx, "post", _fake_post)
+    monkeypatch.setenv("LOCALITH_API_KEY", "test-key")
+    created = await posts.create_post(db, user_id, _draft())
+    pid = created["post"]["id"]
+    await posts.update_post(db, user_id, pid,
+                            {"status": "scheduled", "scheduled_on": _future()})
+    with pytest.raises(RuntimeError, match="caption"):
+        await posts.publish_post(db, user_id, pid)
+    from sqlalchemy import select as _select
+
+    from app.modules.posts.models import LocationPost
+
+    row = (await db.execute(
+        _select(LocationPost).where(LocationPost.id == pid)
+    )).scalar_one()
+    assert "too long" in (row.error or "")
+
+
+@pytest.mark.asyncio
 async def test_worker_summary_one_row_per_user(monkeypatch, db, user_id):
     from app.modules.users.models import User
 

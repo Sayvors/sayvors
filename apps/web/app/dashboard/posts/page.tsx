@@ -33,6 +33,8 @@ interface PostItem {
   scheduledAt?: string;
   // Auto-deletion time (ISO). Absent = no scheduled deletion.
   deleteAt?: string;
+  // Why the last publish attempt failed (backend stores it on failure).
+  error?: string;
 }
 
 interface LocationOption {
@@ -648,6 +650,12 @@ function PostsInner() {
                         </button>
                       </p>
                     )}
+                    {activePost.status === "FAILED" && activePost.error && (
+                      <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 dark:border-red-500/20 dark:bg-red-500/10">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-red-600 dark:text-red-300">Why publishing failed</p>
+                        <p className="mt-1 break-words text-[12px] leading-relaxed text-red-700 dark:text-red-200">{activePost.error}</p>
+                      </div>
+                    )}
                     <div className="mt-4 flex flex-wrap gap-2 border-t border-ink/[0.05] pt-4">
                       {activePost.status !== "ARCHIVED" && (
                         <button onClick={() => openDetail(activePost.id, true)} className="btn-secondary">Edit</button>
@@ -716,6 +724,7 @@ function normalizePosts(raw: unknown, deleteOverlay?: Record<string, string | nu
       createdAt: String(p.created_at ?? p.createdAt ?? new Date().toISOString().slice(0, 10)).slice(0, 10),
       scheduledAt: p.scheduled_on ? String(p.scheduled_on) : p.scheduledAt ? String(p.scheduledAt) : undefined,
       deleteAt: backendDelete ?? overlayDelete ?? undefined,
+      error: typeof p.error === "string" && p.error ? p.error : undefined,
     };
   });
 }

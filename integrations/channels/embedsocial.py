@@ -206,7 +206,17 @@ def _post(path: str, body: dict, timeout: int = 60) -> dict | list:
         headers={**_HEADERS, "Authorization": f"Bearer {key}"},
         timeout=timeout,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        # Localith returns the useful part (which field, what limit) in
+        # the body — never swallow it into a bare status code, or every
+        # publish failure becomes undebuggable.
+        detail = (resp.text or "").strip().replace("\n", " ")[:500]
+        raise RuntimeError(
+            f"Localith rejected {path} (HTTP {resp.status_code})"
+            + (f": {detail}" if detail else "")
+        ) from e
     return resp.json()
 
 
