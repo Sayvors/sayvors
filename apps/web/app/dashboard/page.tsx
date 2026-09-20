@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, editReply, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, editReply, fetchBenchmark, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
 import { dedupeBusinesses } from "@/lib/channel-identity";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
@@ -932,6 +932,7 @@ function BusinessPulse() {
   const [hoursStatus, setHoursStatus] = useState<{ open: boolean | null; label: string; detail: string }>({
     open: null, label: "--", detail: "Not configured yet",
   });
+  const [marketRank, setMarketRank] = useState<{ rank: number; total: number; label: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -943,10 +944,11 @@ function BusinessPulse() {
           (channel: DashboardChannel) => channel.platform === "google_reviews"
         );
         const googleChannels = dedupeBusinesses(rawChannels);
-        const [nextOverview, nextPoints, serviceResults] = await Promise.all([
+        const [nextOverview, nextPoints, serviceResults, bench] = await Promise.all([
           fetchOverview(30, channelId || null),
           fetchTimeseries(30, channelId || null),
           Promise.all((channelId ? googleChannels.filter((channel: DashboardChannel) => channel.id === channelId) : googleChannels).map((channel: DashboardChannel) => apiFetch(`/api/v1/channels/${channel.id}/services`))),
+          fetchBenchmark(30, null).catch(() => null),
         ]);
         if (cancelled) return;
         const allServices = serviceResults.flatMap((result) => (result.services ?? []) as DashboardService[]);
@@ -955,6 +957,11 @@ function BusinessPulse() {
         setPoints(nextPoints);
         setServiceCount(allServices.length);
         setOfferedCount(allServices.filter((service) => service.is_offered).length);
+        if (bench?.my_rank && (bench.market ?? []).length > 0 && bench.cohort) {
+          setMarketRank({ rank: bench.my_rank, total: (bench.market ?? []).length, label: bench.cohort.label });
+        } else {
+          setMarketRank(null);
+        }
       } catch {
         if (!cancelled) {
           setOverview(null);
@@ -962,6 +969,7 @@ function BusinessPulse() {
           setChannels([]);
           setServiceCount(0);
           setOfferedCount(0);
+          setMarketRank(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -1034,7 +1042,7 @@ function BusinessPulse() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <PulseStat label="Total reviews" value={totalReviews} detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"} color="text-amber-600" href="/dashboard/reviews" delta={overview?.period.reviews_delta_pct} deltaSuffix="%" spark={points.map((p) => p.reviews_count)} sparkColor="#d97706" />
-        <PulseStat label="Connected businesses" value={channels.length} detail={channels.length ? "Google Business channels" : "No Google channel yet"} color="text-deep-violet" href="/dashboard/locations" />
+        <PulseStat label="Connected businesses" value={channels.length} detail={channels.length ? `Google Business channels${marketRank ? ` · #${marketRank.rank} of ${marketRank.total} ${marketRank.label}` : ""}` : "No Google channel yet"} color="text-deep-violet" href="/dashboard/locations" />
         <PulseStat label="Services offered" value={offeredCount} detail={serviceCount ? `${serviceCount} services configured` : "No service data yet"} color="text-emerald-600" href="/dashboard/services" />
         <PulseStat
           label="Working hours"

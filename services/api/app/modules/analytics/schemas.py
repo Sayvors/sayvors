@@ -338,6 +338,12 @@ class BenchmarkResponse(BaseModel):
     portfolio_impressions: int | None = None
     portfolio_actions: int | None = None
     plain_summary: str | None = None
+    # Tenant-cohort market view: your branches ranked against every other
+    # Sayvors business in your city + category. No manual entry, no
+    # synthetic aggregates.
+    cohort: dict | None = None
+    market: list[dict] = []
+    my_rank: int | None = None
 
 
 class ExecutiveSummaryResponse(BaseModel):

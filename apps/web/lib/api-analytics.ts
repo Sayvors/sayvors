@@ -285,6 +285,36 @@ export interface BenchmarkResponse {
   portfolio_impressions?: number | null;
   portfolio_actions?: number | null;
   plain_summary?: string | null;
+  // Tenant-cohort market view: your branches ranked against every other
+  // Sayvors business in your city + category. Tenants ARE the competitors.
+  cohort?: {
+    scope: string;
+    label: string;
+    city: string | null;
+    category: string | null;
+    count: number;
+    competitors: MarketEntry[];
+    median_rating: number | null;
+    median_reviews: number | null;
+    top3_median_rating: number | null;
+    median_response_rate: number | null;
+  } | null;
+  market?: MarketEntry[];
+  my_rank?: number | null;
+}
+
+export interface MarketEntry {
+  name: string;
+  city?: string | null;
+  avg_rating: number;
+  reviews_total: number;
+  response_rate: number | null;
+  velocity_per_month?: number | null;
+  reputation_score: number;
+  is_you: boolean;
+  rank: number;
+  channel_id?: string;
+  listing_id?: string;
 }
 
 export interface ServiceHighlight {
