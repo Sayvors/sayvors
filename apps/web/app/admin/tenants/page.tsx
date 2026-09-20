@@ -20,7 +20,7 @@ interface Tenant {
 }
 
 interface TenantDetail extends Tenant {
-  recent_reviews: { rating?: number; review_text?: string | null; reviewer_name?: string | null }[];
+  recent_reviews: { rating?: number; text?: string | null; reviewer?: string | null }[];
   recent_posts: { title?: string; status?: string }[];
 }
 
@@ -129,7 +129,7 @@ export default function AdminTenantsPage() {
                               <ul className="mt-1 space-y-1">
                                 {detail.recent_reviews.slice(0, 5).map((r, i) => (
                                   <li key={i} className="text-[12px] text-ink/70">
-                                    {"★".repeat(r.rating ?? 0)} {r.reviewer_name ?? "—"}: {(r.review_text ?? "").slice(0, 60) || "(no text)"}
+                                    {"★".repeat(r.rating ?? 0)} {r.reviewer ?? "—"}: {(r.text ?? "").slice(0, 60) || "(no text)"}
                                   </li>
                                 ))}
                               </ul>

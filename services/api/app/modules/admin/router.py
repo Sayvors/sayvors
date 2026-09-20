@@ -103,7 +103,8 @@ async def admin_tenants(
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
-    return AdminTenantList(**await admin_service.list_tenants(db, search, limit, offset))
+    items, total = await admin_service.list_tenants(db, search, limit, offset)
+    return AdminTenantList(items=items, total=total)
 
 
 @router.get("/tenants/{user_id}/usage")
