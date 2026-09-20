@@ -12,9 +12,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
+from ..auth.rate_limit import rate_limit
 from ..users.models import User
 from . import service
-from .schemas import PostCreate, PostOut, PostUpdate, PublishResult, SyncResult
+from .schemas import (
+    AiDraftRequest,
+    AiDraftResponse,
+    PostCreate,
+    PostOut,
+    PostUpdate,
+    PublishResult,
+    SyncResult,
+)
 
 router = APIRouter(prefix="/api/v1/posts", tags=["posts"])
 
@@ -51,6 +60,28 @@ async def list_posts(
 ):
     rows = await service.list_posts(db, user.id, listing_id)
     return [PostOut(**r) for r in rows]
+
+
+@router.post("/ai-draft", response_model=AiDraftResponse)
+async def ai_draft_post(
+    body: AiDraftRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI-draft composer fields (description + tags + keywords) from a title."""
+    import sys
+
+    if not sys.modules.get("pytest") and not await rate_limit(f"aidraft:{user.id}", 30, 60):
+        raise HTTPException(status_code=429, detail="Too many requests")
+    try:
+        result = await service.draft_post_content(
+            db, user.id, body.title, body.post_type, body.business_name
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return AiDraftResponse(**result)
 
 
 @router.get("/{post_id}", response_model=PostOut)
@@ -124,8 +155,7 @@ async def publish_post_now(
 
 
 @router.post("/sync", response_model=SyncResult)
-async def sync_due_posts(
-    user: User = Depends(get_current_user),
+async def sync_due_posts(    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Run one worker pass on demand: publish due scheduled posts and

@@ -520,3 +520,113 @@ def test_adapter_body_uses_localith_field_names(monkeypatch):
     assert seen["voucherCode"] == "SAVE20"
     assert seen["startDate"] == "2026-10-01T10:00:00Z"
     assert seen["endDate"] == "2026-10-31T10:00:00Z"
+
+
+def _fake_llm_provider(content: str, fail_first: bool = False):
+    calls = {"n": 0}
+
+    class _Resp:
+        def __init__(self, text):
+            self.content = text
+
+    class _Provider:
+        async def complete(self, req):
+            calls["n"] += 1
+            if fail_first and calls["n"] == 1:
+                raise RuntimeError("primary down")
+            return _Resp(content)
+
+    return _Provider(), calls
+
+
+async def _no_tenant_models(db):
+    return []
+
+
+async def _custom_tenant_model(db):
+    from types import SimpleNamespace
+
+    return [(SimpleNamespace(id="custom:model"), None)]
+
+
+@pytest.mark.asyncio
+async def test_ai_draft_parses_and_caps(monkeypatch, db, user_id):
+    import json as _json
+
+    from app.modules.posts import service as _svc
+
+    provider, calls = _fake_llm_provider(_json.dumps({
+        "description": "Weekend deal! " * 200,
+        "tags": ["Offer", "offer", "weekend sale", "x"],
+        "keywords": "pizza, Pizza, deals, ",
+    }))
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.get_provider_for_model",
+        lambda mid: provider,
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model",
+        lambda mid: ("api-x", "groq"),
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.list_tenant_models",
+        _no_tenant_models,
+    )
+    out = await _svc.draft_post_content(db, user_id, "Weekend Deal", "offer", "Sayvors")
+    assert len(out["description"]) <= 1500
+    assert out["tags"] == ["offer", "weekend sale", "x"]
+    assert out["keywords"] == ["pizza", "deals"]
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ai_draft_falls_back_to_groq(monkeypatch, db, user_id):
+    import json as _json
+
+    from app.modules.posts import service as _svc
+
+    provider, calls = _fake_llm_provider(_json.dumps({"description": "Hi"}), fail_first=True)
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.get_provider_for_model",
+        lambda mid: provider,
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model",
+        lambda mid: ("api-x", "groq"),
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.list_tenant_models",
+        _custom_tenant_model,
+    )
+    out = await _svc.draft_post_content(db, user_id, "Hi", "update", None)
+    assert out["description"] == "Hi"
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_ai_draft_rejects_empty_title(db, user_id):
+    from app.modules.posts import service as _svc
+
+    with pytest.raises(ValueError):
+        await _svc.draft_post_content(db, user_id, "   ", "update", None)
+
+
+@pytest.mark.asyncio
+async def test_ai_draft_garbage_returns_empty_fields(monkeypatch, db, user_id):
+    from app.modules.posts import service as _svc
+
+    provider, _ = _fake_llm_provider("not json at all {{{")
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.get_provider_for_model",
+        lambda mid: provider,
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model",
+        lambda mid: ("api-x", "groq"),
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.list_tenant_models",
+        _no_tenant_models,
+    )
+    out = await _svc.draft_post_content(db, user_id, "T", "update", None)
+    assert out == {"description": "", "tags": [], "keywords": []}

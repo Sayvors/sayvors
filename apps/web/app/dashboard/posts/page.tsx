@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
@@ -108,6 +109,38 @@ function PostsInner() {
   // ISO string = pending schedule, null = pending cancel.
   const [deleteOverlay, setDeleteOverlay] = useState<Record<string, string | null>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [aiDrafting, setAiDrafting] = useState(false);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+
+  const handleAiDraft = async () => {
+    if (!title.trim()) {
+      showBannerTimed("err", "Add a title first — the AI writes from it.");
+      return;
+    }
+    setAiDrafting(true);
+    try {
+      const r = await apiFetch("/api/v1/posts/ai-draft", {
+        method: "POST",
+        body: JSON.stringify({
+          title: title.trim(),
+          post_type: postType,
+          business_name: businessName.trim() || undefined,
+        }),
+      });
+      if (typeof r.description === "string" && r.description) setDescription(r.description);
+      if (Array.isArray(r.tags) && r.tags.length > 0) {
+        setTags((prev) => [...prev, ...r.tags.filter((t: unknown) => typeof t === "string" && !(prev as string[]).includes(t as string))].slice(0, 20));
+      }
+      if (Array.isArray(r.keywords) && r.keywords.length > 0) {
+        setKeywords((prev) => [...prev, ...r.keywords.filter((k: unknown) => typeof k === "string" && !(prev as string[]).includes(k as string))].slice(0, 20));
+      }
+      showBannerTimed("ok", "AI draft ready — edit anything you like.");
+    } catch (e) {
+      showBannerTimed("err", e instanceof Error ? e.message.slice(0, 200) : "AI drafting failed.");
+    } finally {
+      setAiDrafting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -177,6 +210,7 @@ function PostsInner() {
   }), [posts]);
 
   const filtered = posts.filter((p) => {
+    if (tagFilter && !p.tags.includes(tagFilter)) return false;
     if (tab === "scheduled") return p.status === "SCHEDULED";
     if (tab === "archived") return p.status === "ARCHIVED";
     return p.status === "LIVE" || p.status === "FAILED" || p.status === "DRAFT";
@@ -561,6 +595,12 @@ function PostsInner() {
                 ))}
               </div>
 
+              {tagFilter && (
+                <div className="flex items-center gap-2 rounded-xl bg-deep-violet/[0.06] px-3 py-2 text-[12px]">
+                  <span className="text-ink/50">Filtered by <strong className="font-semibold text-deep-violet">#{tagFilter}</strong></span>
+                  <button onClick={() => setTagFilter(null)} className="ml-auto font-semibold text-deep-violet hover:underline">Clear ✕</button>
+                </div>
+              )}
               {filtered.length === 0 ? (
                 <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
                   <p className="text-[14px] font-medium text-ink/40 dark:text-fog/40">
@@ -576,18 +616,41 @@ function PostsInner() {
               ) : (
                 <div className="space-y-2">
                   {filtered.map((p) => (
-                    <button key={p.id} onClick={() => openDetail(p.id, false)} className="block w-full rounded-2xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/25 hover:shadow-sm dark:border-fog/[0.06] dark:bg-ink">
+                    <div
+                      key={p.id}
+                      role="link"
+                      tabIndex={0}
+                      aria-label={`Open post ${p.title}`}
+                      onClick={() => openDetail(p.id, false)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(p.id, false); } }}
+                      className="block w-full cursor-pointer rounded-2xl border border-ink/[0.06] bg-white p-4 text-left outline-none transition hover:border-deep-violet/25 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-fog/[0.06] dark:bg-ink"
+                    >
                       <span className="flex items-start justify-between gap-3">
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[14px] font-bold text-ink dark:text-fog">{p.title}</span>
                           <span className="mt-0.5 block text-[11px] text-ink/40 dark:text-fog/40">{p.businessName} · {p.locationName}</span>
                         </span>
-                        <StatusBadge status={p.status} />
+                        <span className="flex shrink-0 flex-col items-end gap-1">
+                          <StatusBadge status={p.status} />
+                          {(p.post_type === "offer" || p.post_type === "event") && (
+                            <span className="rounded-full bg-sky-100 px-2 py-px text-[9px] font-bold uppercase tracking-wide text-sky-700">
+                              {p.post_type}
+                            </span>
+                          )}
+                        </span>
                       </span>
                       <span className="mt-2 line-clamp-2 block text-[13px] leading-relaxed text-ink/70 dark:text-fog/70">{p.description}</span>
                       <span className="mt-2 flex flex-wrap items-center gap-1.5">
                         {p.tags.slice(0, 3).map((t) => (
-                          <span key={t} className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet">#{t}</span>
+                          <button
+                            key={t}
+                            type="button"
+                            title={`Filter by #${t}`}
+                            onClick={(e) => { e.stopPropagation(); setTagFilter(t); }}
+                            className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/20 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                          >
+                            #{t}
+                          </button>
                         ))}
                         {p.images.length > 0 && (
                           <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06]">📷 {p.images.length}</span>
@@ -601,7 +664,7 @@ function PostsInner() {
                           </span>
                         )}
                       </span>
-                    </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -636,6 +699,7 @@ function PostsInner() {
               deleteAt={deleteAt} setDeleteAt={setDeleteAt}
               deleteErr={deleteErr}
               valid={!!valid}
+              aiDrafting={aiDrafting} canAiDraft={!!title.trim()} onAiDraft={() => void handleAiDraft()}
               onBack={backToList} onSubmit={handleCreate} submitting={submitting}
               submitLabel={
                 selectedLocIds.length > 1
@@ -678,6 +742,7 @@ function PostsInner() {
                   deleteAt={deleteAt} setDeleteAt={setDeleteAt}
                   deleteErr={deleteErr}
                   valid={!!valid}
+                  aiDrafting={aiDrafting} canAiDraft={!!title.trim()} onAiDraft={() => void handleAiDraft()}
                   onBack={() => openDetail(activePost.id, false)} onSubmit={handleUpdate} submitting={submitting}
                   submitLabel="Save Changes" heading="Edit post" subheading="Update every field, then save."
                 />
@@ -924,6 +989,7 @@ function PostForm(props: {
   deleteAt: string; setDeleteAt: (v: string) => void;
   deleteErr: string | null;
   valid: boolean;
+  aiDrafting: boolean; canAiDraft: boolean; onAiDraft: () => void;
   onBack: () => void; onSubmit: () => void; submitting: boolean;
   submitLabel: string; heading: string; subheading: string;
 }) {
@@ -982,8 +1048,24 @@ function PostForm(props: {
           </div>
         </div>
         <div>
-          <label className="mb-1 block text-[12px] font-medium text-ink/50">Description *</label>
-          <textarea value={p.description} onChange={(e) => p.setDescription(e.target.value)} rows={4} maxLength={1500} placeholder="Full post text customers will see..." className="input-field resize-y" />
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label className="block text-[12px] font-medium text-ink/50">Description *</label>
+            <button
+              type="button"
+              onClick={() => p.onAiDraft()}
+              disabled={p.aiDrafting || !p.canAiDraft}
+              title="Sayvors AI writes the description, tags and keywords from your title"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-deep-violet/[0.08] px-2.5 py-1 text-[11px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+            >
+              {p.aiDrafting ? (
+                <LogoLoader size={14} />
+              ) : (
+                <Image src="/Sayvors_Icon.png" alt="" width={14} height={14} className="rounded-[4px]" />
+              )}
+              {p.aiDrafting ? "Writing…" : "Generate with AI"}
+            </button>
+          </div>
+          <textarea value={p.description} onChange={(e) => p.setDescription(e.target.value)} rows={4} maxLength={1500} placeholder="Full post text customers will see... — or generate it with AI" className="input-field resize-y" />
         </div>
         {p.postType === "event" && (
           <div className="grid gap-4 sm:grid-cols-2">
@@ -1042,8 +1124,8 @@ function PostForm(props: {
           </div>
         </div>
         <div className="rounded-xl border border-dashed border-ink/[0.1] p-3 dark:border-fog/[0.1]">
-          <p className="text-[12px] font-semibold text-ink dark:text-fog">Sayvors internal metadata</p>
-          <p className="text-[11px] text-ink/40">For your AI and organization only — never sent to Google.</p>
+          <p className="text-[12px] font-semibold text-ink dark:text-fog">🏷️ Organize</p>
+          <p className="text-[11px] text-ink/40">Private labels to find your posts — only you see them. Tap any tag to filter the list.</p>
           <div className="mt-3">
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Tags</label>
           <div className="flex flex-wrap gap-1.5">

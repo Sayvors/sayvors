@@ -512,3 +512,113 @@ async def delete_due(db: AsyncSession) -> dict:
     except Exception:
         pass
     return totals
+
+
+def _parse_ai_draft(text: str) -> dict:
+    """Parse the model reply into description/tags/keywords. Never raises:
+    garbage in gives empty fields out (the composer stays usable)."""
+    import json as _json
+    import re as _re
+
+    try:
+        data = _json.loads(text)
+    except Exception:
+        match = _re.search(r"\{.*\}", text, _re.S)
+        try:
+            data = _json.loads(match.group(0)) if match else {}
+        except Exception:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+
+    def _words(value: object) -> list[str]:
+        if isinstance(value, str):
+            parts = [p.strip().lower() for p in value.replace(",", " ").split()]
+        elif isinstance(value, list):
+            parts = [str(x).strip().lower() for x in value]
+        else:
+            parts = []
+        seen: list[str] = []
+        for part in parts:
+            part = part.strip("# ")[:40]
+            if part and part not in seen:
+                seen.append(part)
+        return seen[:5]
+
+    description = str(data.get("description") or "")[:1500]
+    return {
+        "description": description,
+        "tags": _words(data.get("tags")),
+        "keywords": _words(data.get("keywords")),
+    }
+
+
+async def draft_post_content(
+    db: AsyncSession,
+    user_id: str,
+    title: str,
+    post_type: str = "update",
+    business_name: str | None = None,
+) -> dict:
+    """AI-draft the composer fields (description + tags + keywords) from a
+    title. Uses the tenant's first enabled model, Groq default as fallback.
+    Raises ValueError for bad input, RuntimeError when no model answers."""
+    from ..llm.providers.base import LLMMessage, LLMRequest
+    from ..llm.providers.registry import get_provider_for_model, list_tenant_models
+    from ..llm.service import _resolve_model
+
+    title = (title or "").strip()
+    if not title:
+        raise ValueError("A title is required to draft content.")
+    if post_type not in ("update", "offer", "event"):
+        post_type = "update"
+    kind_line = {
+        "update": "a general news/announcement post",
+        "offer": "a promotional offer post",
+        "event": "an event announcement post",
+    }[post_type]
+    visible = [m.id for m, _ in await list_tenant_models(db)]
+    model_id = visible[0] if visible else "groq:openai/gpt-oss-120b"
+    system = (
+        "You write Google Business Profile posts for small businesses. "
+        "Reply with STRICT JSON only, no other text: "
+        '{"description": "<120-400 chars of post text>", '
+        '"tags": ["up to 5 short lowercase labels"], '
+        '"keywords": ["up to 5 search terms"]}. No em dashes."'
+    )
+    user_msg = (
+        f"Business: {(business_name or '').strip() or 'local business'}\n"
+        f"Post type: {kind_line}\nTitle: {title}\nWrite the post content."
+    )
+
+    def _build(mid: str):
+        provider = get_provider_for_model(mid)
+        api_model, _ = _resolve_model(mid)
+        return provider, LLMRequest(
+            model=api_model,
+            messages=[LLMMessage(role="user", content=user_msg)],
+            system_prompt=system,
+            temperature=0.7,
+            max_tokens=600,
+            stream=False,
+            tenant_id=user_id,
+            model_id=mid,
+            purpose="posts.ai_draft",
+        )
+
+    provider, req = _build(model_id)
+    try:
+        resp = await provider.complete(req)
+    except Exception:
+        if model_id == "groq:openai/gpt-oss-120b":
+            raise
+        logger.warning("Post draft model %s failed; retrying on groq default", model_id)
+        provider, req = _build("groq:openai/gpt-oss-120b")
+        try:
+            resp = await provider.complete(req)
+        except Exception as e:
+            raise RuntimeError(f"AI drafting failed: {e}")
+    content = (resp.content or "").strip()
+    if not content:
+        raise RuntimeError("AI drafting returned nothing.")
+    return _parse_ai_draft(content)

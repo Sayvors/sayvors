@@ -91,3 +91,15 @@ class SyncResult(BaseModel):
     skipped: int = 0
     retried: int = 0
     deleted: int = 0
+
+
+class AiDraftRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    post_type: str = Field("update", pattern="^(update|offer|event)$")
+    business_name: str | None = Field(None, max_length=255)
+
+
+class AiDraftResponse(BaseModel):
+    description: str = ""
+    tags: list[str] = []
+    keywords: list[str] = []
