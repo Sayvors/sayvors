@@ -13,6 +13,9 @@ class MediaCreate(BaseModel):
     scheduled_on: str | None = None  # ISO datetime, required for schedule
     # ISO datetime: auto-delete our copy (Google follows its own lifecycle).
     delete_at: str | None = None
+    # post = inside a Google post (wired via Localith). gallery / profile =
+    # stored intent only until per-tenant native Google lands.
+    publish_method: str = Field("post", pattern="^(post|gallery|profile)$")
 
 
 class MediaUpdate(BaseModel):
@@ -25,6 +28,7 @@ class MediaUpdate(BaseModel):
     # ISO datetime to (re)schedule auto-deletion; explicit null cancels it.
     # Absent key = untouched (router passes exclude_unset).
     delete_at: str | None = None
+    publish_method: str | None = Field(None, pattern="^(post|gallery|profile)$")
 
 
 class MediaOut(BaseModel):
@@ -38,6 +42,7 @@ class MediaOut(BaseModel):
     scheduled_on: str | None = None
     published_at: str | None = None
     delete_at: str | None = None
+    publish_method: str = "post"
     google_post_id: str | None = None
     is_profile: bool = False
     is_cover: bool = False

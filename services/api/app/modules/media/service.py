@@ -10,14 +10,16 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text as sa_text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..localith.models import LocalithConnection
-from ..posts.service import (
+from ..scheduling import (
     MAX_PUBLISH_ATTEMPTS,
-    _google_post_id,
-    _retry_delay,
+    provider_post_id as _google_post_id,
+    release_lock,
+    retry_delay as _retry_delay,
+    take_lock,
 )
 from .models import LocationMedia
 
@@ -28,69 +30,20 @@ MAX_PER_PASS = 50
 
 # Per-item advisory locks: publishing is NOT idempotent, so the same photo
 # never publishes twice at once. Different photos proceed in parallel.
+# Implementation lives in app.modules.scheduling (single copy).
 _MEDIA_LOCK_PREFIX = "sayvors:media-publish:"
 
 
-def _lock_stmt(blocking: bool, media_id: str):
-    fn = "pg_advisory_lock" if blocking else "pg_try_advisory_lock"
-    return sa_text(f"SELECT {fn}(hashtext('{_MEDIA_LOCK_PREFIX}' || :mid))").bindparams(
-        mid=str(media_id)
-    )
-
-
-def _is_postgres(db: AsyncSession) -> bool:
-    try:
-        bind = db.get_bind() if hasattr(db, "get_bind") else db.bind  # type: ignore[union-attr]
-        return bind is not None and bind.dialect.name == "postgresql"
-    except Exception:
-        return False
-
-
 async def _acquire_media_lock(db: AsyncSession, media_id: str) -> bool:
-    if not _is_postgres(db):
-        return True
-    try:
-        await db.execute(_lock_stmt(True, media_id))
-        return True
-    except Exception as e:
-        logger.debug("Media lock unavailable, proceeding unlocked: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+    return await take_lock(db, True, _MEDIA_LOCK_PREFIX, media_id)
 
 
 async def _try_media_lock(db: AsyncSession, media_id: str) -> bool:
-    if not _is_postgres(db):
-        return True
-    try:
-        row = (await db.execute(_lock_stmt(False, media_id))).scalar()
-        if row:
-            return True
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
-    except Exception as e:
-        logger.debug("Media try-lock unavailable, proceeding unlocked: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+    return await take_lock(db, False, _MEDIA_LOCK_PREFIX, media_id)
 
 
 async def _release_media_lock(db: AsyncSession, media_id: str) -> None:
-    try:
-        await db.execute(
-            sa_text(
-                f"SELECT pg_advisory_unlock(hashtext('{_MEDIA_LOCK_PREFIX}' || :mid))"
-            ).bindparams(mid=str(media_id))
-        )
-    except Exception:
-        pass
+    await release_lock(db, _MEDIA_LOCK_PREFIX, media_id)
 
 
 def _serialize(m: LocationMedia) -> dict:
@@ -105,6 +58,7 @@ def _serialize(m: LocationMedia) -> dict:
         "scheduled_on": m.scheduled_on.isoformat() if m.scheduled_on else None,
         "published_at": m.published_at.isoformat() if m.published_at else None,
         "delete_at": m.delete_at.isoformat() if m.delete_at else None,
+        "publish_method": m.publish_method or "post",
         "google_post_id": m.google_post_id,
         "is_profile": bool(m.is_profile),
         "is_cover": bool(m.is_cover),
@@ -151,6 +105,17 @@ def _require_http_url(url: str) -> str:
     return url
 
 
+def _check_method_publishable(method: str | None, action: str) -> None:
+    """Only the post path is wired (Localith). Gallery/profile are stored
+    intent until per-tenant native Google lands — fail loudly, never
+    silently pretend."""
+    if action in ("publish", "schedule") and (method or "post") != "post":
+        raise ValueError(
+            "Direct gallery/profile publishing needs the native Google "
+            "connection — coming soon. Publish inside a post for now."
+        )
+
+
 async def list_media(
     db: AsyncSession, user_id: str, listing_id: str | None = None
 ) -> list[dict]:
@@ -178,6 +143,10 @@ async def create_media(db: AsyncSession, user_id: str, data: dict) -> dict:
     media_type = data.get("type", "PHOTO")
     if media_type not in ("PHOTO", "VIDEO"):
         raise ValueError("type must be PHOTO or VIDEO.")
+    publish_method = data.get("publish_method") or "post"
+    if publish_method not in ("post", "gallery", "profile"):
+        raise ValueError("publish_method must be post, gallery or profile.")
+    _check_method_publishable(publish_method, action)
 
     item = LocationMedia(
         id=str(uuid.uuid4()),
@@ -190,6 +159,7 @@ async def create_media(db: AsyncSession, user_id: str, data: dict) -> dict:
         status="scheduled" if action == "schedule" else "draft",
         scheduled_on=scheduled_on,
         delete_at=delete_at,
+        publish_method=publish_method,
     )
     db.add(item)
     await db.flush()
@@ -274,6 +244,11 @@ async def _publish_media_inner(db: AsyncSession, user_id: str, media_id: str) ->
         raise ValueError("Media not found.")
     if item.status not in PUBLISHABLE_FROM:
         raise ValueError(f"Cannot publish {item.status} media.")
+    if (item.publish_method or "post") != "post":
+        raise ValueError(
+            "Direct gallery/profile publishing needs the native Google "
+            "connection — coming soon. Publish inside a post for now."
+        )
     if item.type != "PHOTO":
         raise ValueError("Video auto-publishing is not supported by the provider yet — photos only.")
     conn = (

@@ -38,6 +38,12 @@ class LocationMedia(Base):
         default="draft",
         index=True,
     )
+    # How this photo reaches Google. Only "post" is wired today (Localith
+    # publishes posts carrying image URLs; it offers no gallery upload and
+    # no profile/cover assignment). "gallery"/"profile" are stored intent
+    # for the day per-tenant native Google lands — the API rejects
+    # publishing anything but "post" until then.
+    publish_method: Mapped[str] = mapped_column(String(16), default="post")
     scheduled_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Scheduled local cleanup (Google follows its own lifecycle).

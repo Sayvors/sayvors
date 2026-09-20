@@ -141,10 +141,6 @@ async def lifespan(app: FastAPI):
     from .modules.posts.worker import run_post_publish_worker
     posts_publish_task = asyncio.create_task(run_post_publish_worker())
 
-    # Start the scheduled-media publisher (due photos -> Google posts)
-    from .modules.media.worker import run_media_publish_worker
-    media_publish_task = asyncio.create_task(run_media_publish_worker())
-
     # Start the analytics pipeline: Kafka consumer (review enrichment +
     # daily rollups) and Google performance metrics sync worker
     from .modules.analytics.consumer import run_analytics_consumer
@@ -164,7 +160,6 @@ async def lifespan(app: FastAPI):
     reviews_task.cancel()
     localith_sync_task.cancel()
     posts_publish_task.cancel()
-    media_publish_task.cancel()
     analytics_consumer_task.cancel()
     performance_sync_task.cancel()
     await outbox_worker.stop()

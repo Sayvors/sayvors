@@ -29,11 +29,18 @@ if str(_REPO_ROOT) not in sys.path:
 
 PUBLISHABLE_FROM = ("draft", "scheduled", "failed")
 
-# Retry-then-park: failed scheduled publishes retry with backoff this many
-# times, then park as failed for the manual Retry button.
-MAX_PUBLISH_ATTEMPTS = 5
-RETRY_BASE_SECONDS = 300
-RETRY_MAX_SECONDS = 7200
+# Scheduling primitives live in one place (app.modules.scheduling) and are
+# re-exported here under their historic names so callers and tests don't
+# churn. Same behavior, single implementation.
+from ..scheduling import (
+    MAX_PUBLISH_ATTEMPTS,
+    is_postgres as _is_postgres,
+    provider_post_id as _google_post_id,
+    release_lock,
+    retry_delay as _retry_delay,
+    take_lock,
+)
+
 # Safety cap per worker pass (API quotas + bounded pass duration).
 MAX_PER_PASS = 50
 
@@ -44,94 +51,18 @@ MAX_PER_PASS = 50
 _POST_LOCK_PREFIX = "sayvors:post-publish:"
 
 
-def _is_postgres(db: AsyncSession) -> bool:
-    """Advisory locks exist only on Postgres. Anywhere else (sqlite tests,
-    single-process dev) there is nothing to coordinate with: take the lock
-    as trivially held."""
-    try:
-        bind = db.get_bind() if hasattr(db, "get_bind") else db.bind  # type: ignore[union-attr]
-        return bind is not None and bind.dialect.name == "postgresql"
-    except Exception:
-        return False
-
-
-def _post_lock_stmt(blocking: bool, post_id: str):
-    fn = "pg_advisory_lock" if blocking else "pg_try_advisory_lock"
-    return sa_text(f"SELECT {fn}(hashtext('{_POST_LOCK_PREFIX}' || :pid))").bindparams(
-        pid=str(post_id)
-    )
-
-
 async def _acquire_post_lock(db: AsyncSession, post_id: str) -> bool:
     """Blocking take. Trivially held where Postgres locks don't exist."""
-    if not _is_postgres(db):
-        return True
-    try:
-        await db.execute(_post_lock_stmt(True, post_id))
-        return True
-    except Exception as e:
-        logger.debug("Post lock unavailable, proceeding unlocked: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+    return await take_lock(db, True, _POST_LOCK_PREFIX, post_id)
 
 
 async def _try_post_lock(db: AsyncSession, post_id: str) -> bool:
     """Non-blocking take for worker passes: miss means SKIP, not wait."""
-    if not _is_postgres(db):
-        return True
-    try:
-        row = (await db.execute(_post_lock_stmt(False, post_id))).scalar()
-        if row:
-            return True
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
-    except Exception as e:
-        logger.debug("Post try-lock unavailable, proceeding unlocked: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+    return await take_lock(db, False, _POST_LOCK_PREFIX, post_id)
 
 
 async def _release_post_lock(db: AsyncSession, post_id: str) -> None:
-    try:
-        await db.execute(
-            sa_text(
-                f"SELECT pg_advisory_unlock(hashtext('{_POST_LOCK_PREFIX}' || :pid))"
-            ).bindparams(pid=str(post_id))
-        )
-    except Exception:
-        pass
-
-
-def _retry_delay(attempts: int) -> timedelta:
-    """Backoff after N consecutive failures: 5m, 10m, 20m … capped at 2h."""
-    seconds = min(RETRY_BASE_SECONDS * (2 ** max(0, attempts - 1)), RETRY_MAX_SECONDS)
-    return timedelta(seconds=seconds)
-
-
-def _google_post_id(response: object) -> str | None:
-    """Provider's post id, when it returns one (reserved for future remote
-    deletion: per-tenant native Google or a Localith delete endpoint)."""
-    if not isinstance(response, dict):
-        return None
-    for key in ("id", "postId", "post_id", "mediaId", "media_id"):
-        value = response.get(key)
-        if value:
-            return str(value)
-    for value in response.values():
-        if isinstance(value, dict):
-            nested = _google_post_id(value)
-            if nested:
-                return nested
-    return None
+    await release_lock(db, _POST_LOCK_PREFIX, post_id)
 
 
 def _serialize(p: LocationPost) -> dict:

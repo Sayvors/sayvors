@@ -20,7 +20,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select, text as sa_text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -232,30 +232,16 @@ def _moved_parts(synced: int, old: dict[str, int], new: dict[str, int]) -> list[
 # Same branch => same lock (serial: twins impossible even before the unique
 # index is hit). Different branches => different locks (parallel: speed).
 # Whole-pass syncs (no listing) take the legacy global key.
+# Implementation lives in app.modules.scheduling (single copy); these are
+# thin wrappers keeping stable names for the worker and tests.
 _SYNC_ADVISORY_LOCK_KEY = 64821410933
 _SYNC_LOCK_PREFIX = "sayvors:localith-sync:"
 
 
-def _is_postgres(db: AsyncSession) -> bool:
-    """Advisory locks exist only on Postgres. Anywhere else (sqlite tests,
-    single-process dev) there is nothing to coordinate with: take the lock
-    as trivially held (NOT as held-by-other, which would skip all work)."""
-    try:
-        bind = db.get_bind() if hasattr(db, "get_bind") else db.bind  # type: ignore[union-attr]
-        return bind is not None and bind.dialect.name == "postgresql"
-    except Exception:
-        return False
-
-
-def _lock_stmt(blocking: bool, listing_id: str | None):
-    """pg_advisory_lock (blocking) or pg_try_advisory_lock (non-blocking)."""
+def _ns_key(listing_id: str | None) -> tuple[str, str | int]:
     if listing_id is None:
-        fn = "pg_advisory_lock" if blocking else "pg_try_advisory_lock"
-        return sa_text(f"SELECT {fn}({_SYNC_ADVISORY_LOCK_KEY})")
-    fn = "pg_advisory_lock" if blocking else "pg_try_advisory_lock"
-    return sa_text(
-        f"SELECT {fn}(hashtext('{_SYNC_LOCK_PREFIX}' || :lid))"
-    ).bindparams(lid=str(listing_id))
+        return "", _SYNC_ADVISORY_LOCK_KEY
+    return _SYNC_LOCK_PREFIX, str(listing_id)
 
 
 async def _acquire_sync_lock(db: AsyncSession, listing_id: str | None = None) -> bool:
@@ -266,18 +252,10 @@ async def _acquire_sync_lock(db: AsyncSession, listing_id: str | None = None) ->
     tests, single-process dev) the lock is trivially held; correctness
     there rests on the unique index.
     """
-    if not _is_postgres(db):
-        return True
-    try:
-        await db.execute(_lock_stmt(True, listing_id))
-        return True
-    except Exception as e:
-        logger.debug("Localith sync lock unavailable, proceeding unlocked: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+    from ..scheduling import take_lock
+
+    ns, key = _ns_key(listing_id)
+    return await take_lock(db, True, ns, key)
 
 
 async def _try_acquire_sync_lock(db: AsyncSession, listing_id: str | None = None) -> bool:
@@ -285,38 +263,17 @@ async def _try_acquire_sync_lock(db: AsyncSession, listing_id: str | None = None
     worker/pass already holds it (caller should SKIP, not wait — this is how
     the two auto-sync loops stop racing each other). Only call on a clean
     session (nothing pending): a miss ends with a rollback."""
-    if not _is_postgres(db):
-        return True
-    try:
-        row = (await db.execute(_lock_stmt(False, listing_id))).scalar()
-        if row:
-            return True
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
-    except Exception as e:
-        logger.debug("Localith try-lock unavailable, proceeding unlocked: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+    from ..scheduling import take_lock
+
+    ns, key = _ns_key(listing_id)
+    return await take_lock(db, False, ns, key)
 
 
 async def _release_sync_lock(db: AsyncSession, listing_id: str | None = None) -> None:
-    try:
-        if listing_id is None:
-            await db.execute(sa_text(f"SELECT pg_advisory_unlock({_SYNC_ADVISORY_LOCK_KEY})"))
-        else:
-            await db.execute(
-                sa_text(
-                    f"SELECT pg_advisory_unlock(hashtext('{_SYNC_LOCK_PREFIX}' || :lid))"
-                ).bindparams(lid=str(listing_id))
-            )
-    except Exception:
-        pass
+    from ..scheduling import release_lock
+
+    ns, key = _ns_key(listing_id)
+    await release_lock(db, ns, key)
 
 
 async def sync_connection(

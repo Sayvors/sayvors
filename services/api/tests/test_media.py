@@ -166,6 +166,24 @@ async def test_delete_and_update_flags(db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_gallery_method_blocked_until_native_google(db, user_id):
+    """Gallery/profile publishing is stored intent, never executed —
+    Localith offers no gallery upload."""
+    with pytest.raises(ValueError, match="native Google"):
+        await media.create_media(
+            db, user_id,
+            {**_photo(), "publish_method": "gallery", "action": "schedule",
+             "scheduled_on": _future()},
+        )
+    created = await media.create_media(
+        db, user_id, {**_photo(), "publish_method": "gallery"}
+    )
+    assert created["media"]["publish_method"] == "gallery"
+    with pytest.raises(ValueError, match="native Google"):
+        await media.publish_media(db, user_id, created["media"]["id"])
+
+
+@pytest.mark.asyncio
 async def test_delete_due(db, user_id):
     from app.modules.media.models import LocationMedia
     now = datetime.now(timezone.utc)

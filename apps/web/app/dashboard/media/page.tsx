@@ -24,6 +24,7 @@ interface MediaItem {
   status?: MediaStatus;
   scheduledAt?: string;
   error?: string;
+  method?: string;
 }
 
 interface LocationOption {
@@ -61,6 +62,7 @@ function normalizeMedia(raw: unknown): MediaItem[] {
       status: (typeof m.status === "string" ? BACKEND_STATUS[m.status] : undefined) ?? "DRAFT",
       scheduledAt: m.scheduled_on ? String(m.scheduled_on) : undefined,
       error: typeof m.error === "string" ? m.error : undefined,
+      method: typeof m.publish_method === "string" ? m.publish_method : undefined,
     };
   });
 }
@@ -90,6 +92,11 @@ function MediaInner() {
   const [uploadCategory, setUploadCategory] = useState("EXTERIOR");
   const [uploadUrl, setUploadUrl] = useState("");
   const [uploadDescription, setUploadDescription] = useState("");
+  // How the photo reaches Google. Only "post" is wired (Localith publishes
+  // posts carrying image URLs; it offers no gallery upload or profile/cover
+  // assignment). Gallery/profile are honest disabled options until the
+  // native Google connection lands.
+  const [publishMethod, setPublishMethod] = useState<"post" | "gallery" | "profile">("post");
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -234,6 +241,7 @@ function MediaInner() {
           caption: uploadDescription.trim(),
           action: scheduleEnabled ? "schedule" : "publish",
           scheduled_on: scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : null,
+          publish_method: publishMethod,
         }),
       });
       await refreshItems();
@@ -432,6 +440,37 @@ function MediaInner() {
               <button onClick={() => setUploadMode("url")} className={`flex-1 py-2.5 text-[13px] font-semibold ${uploadMode === "url" ? "border-b-2 border-deep-violet text-deep-violet" : "text-ink/40"}`}>Add from URL</button>
             </div>
             <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-1 block text-[12px] font-medium text-ink/50">Publish to Google as</label>
+                <div className="space-y-1.5">
+                  {([
+                    { key: "post", title: "Google post", note: "Photo goes live inside a post — works today.", wired: true },
+                    { key: "gallery", title: "Photo gallery", note: "Straight into the gallery — needs the native Google connection.", wired: false },
+                    { key: "profile", title: "Profile / cover photo", note: "Set as profile or cover — needs the native Google connection.", wired: false },
+                  ] as const).map((m) => (
+                    <button
+                      key={m.key}
+                      type="button"
+                      disabled={!m.wired}
+                      onClick={() => setPublishMethod(m.key)}
+                      aria-pressed={publishMethod === m.key}
+                      title={m.wired ? undefined : "Available with the native Google connection"}
+                      className={`flex w-full items-center gap-2.5 rounded-xl border p-3 text-left transition ${!m.wired ? "cursor-not-allowed border-ink/[0.06] bg-ink/[0.02] opacity-60 dark:border-fog/[0.06]" : publishMethod === m.key ? "border-deep-violet bg-deep-violet/[0.06]" : "border-ink/[0.08] hover:border-deep-violet/30"}`}
+                    >
+                      <span aria-hidden className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${publishMethod === m.key && m.wired ? "border-deep-violet" : "border-ink/20"}`}>
+                        {publishMethod === m.key && m.wired && <span className="h-2 w-2 rounded-full bg-deep-violet" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px] font-semibold text-ink dark:text-fog">
+                          {m.title}
+                          {!m.wired && <span className="ml-1.5 rounded-full bg-ink/[0.06] px-1.5 py-px align-middle text-[9px] font-bold uppercase tracking-wide text-ink/40">Soon</span>}
+                        </span>
+                        <span className="block text-[11px] text-ink/40">{m.note}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="flex gap-2">
                 {(["PHOTO", "VIDEO"] as const).map((t) => (
                   <button key={t} onClick={() => setUploadType(t)}
@@ -504,6 +543,7 @@ function MediaInner() {
                 <div><p className="text-ink/40">Views</p><p className="font-semibold text-ink dark:text-fog">{viewing.views.toLocaleString()}</p></div>
                 <div><p className="text-ink/40">Source</p><p className="font-semibold text-ink dark:text-fog">{viewing.source === "CUSTOMER" ? "Customer" : "Business"}</p></div>
                 <div><p className="text-ink/40">Uploaded</p><p className="font-semibold text-ink dark:text-fog">{viewing.createdAt}</p></div>
+                <div><p className="text-ink/40">Goes live as</p><p className="font-semibold text-ink dark:text-fog">{viewing.method === "gallery" ? "Photo gallery" : viewing.method === "profile" ? "Profile / cover" : "Google post"}</p></div>
               </div>
               {viewing.attribution && (
                 <p className="rounded-lg bg-ink/[0.03] px-3 py-2 text-[12px] text-ink/50 dark:bg-fog/[0.04] dark:text-fog/50">By {viewing.attribution}</p>
