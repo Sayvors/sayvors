@@ -34,6 +34,10 @@ Rules you MUST follow (Google review reply policy):
 - Do not include personal data of the reviewer or staff.
 - Keep it short: 2-4 sentences, plain text only (no markdown, no emoji spam).
 - NEVER use em dashes (—). This is strict: no em dash anywhere in the reply. Use commas or periods instead.
+- Only state business facts (products, menus, prices, hours, services) that appear in
+  the business-facts context below. If there is no such context, or it does not cover
+  what the reviewer asks: NEVER invent products, menus, prices, availability or hours.
+  Say the team will follow up with accurate details and invite them to visit or contact.
 
 Tone: {tone}.
 {rating_guidance}
@@ -47,6 +51,11 @@ Write only the reply text — nothing else."""
 POSITIVE_GUIDANCE = "This is a positive review: thank the reviewer warmly and mention something specific they praised if possible."
 NEUTRAL_GUIDANCE = "This is a neutral review: thank the reviewer and invite constructive feedback."
 NEGATIVE_GUIDANCE = "This is a negative review: acknowledge the specific complaint, apologise sincerely, and offer to make it right. Do not be defensive. Do not dispute their account."
+QUESTION_GUIDANCE = (
+    "This review is a QUESTION from a potential customer, not feedback: do NOT thank them "
+    "for their review or rating, and do not praise their feedback. Answer the question "
+    "directly and briefly, using only verified business facts."
+)
 
 
 def _rating_guidance(rating: int) -> str:
@@ -124,6 +133,11 @@ async def generate_review_reply(
             f"This is attempt #{attempt} of drafting a reply for this review "
             "(earlier attempts failed to generate)."
         )
+    # Question-type reviews: an inquiry is not feedback. Thanking
+    # "هل تبيعون شاورما؟" for a "wonderful review" is nonsense.
+    from ..review_engine.understanding import looks_like_question
+
+    is_question = looks_like_question(review_text)
     lang = _review_language(review_text)
     policy = (getattr(config, "reply_language", None) or "match").strip().lower()
     if policy not in ("match", "en", "ar"):
@@ -180,6 +194,16 @@ async def generate_review_reply(
     from ...config import settings as _settings
     if _settings.GOOGLE_REVIEWS_MOCK:
         name = reviewer_name.split(" ")[0] if reviewer_name else "there"
+        if looks_like_question(review_text):
+            if lang == "ar":
+                return (
+                    f"شكراً على سؤالك يا {name}! يسعدنا مساعدتك، وتواصل معنا مباشرة "
+                    f"حتى نعطيك التفاصيل الدقيقة ونعود إليك بالرد."
+                )
+            return (
+                f"Thanks for the question, {name}! Happy to help — reach out to us "
+                f"directly and we'll follow up with the exact details."
+            )
         if lang == "ar":
             if rating >= 4:
                 return (
@@ -222,7 +246,7 @@ async def generate_review_reply(
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         tone=config.tone,
-        rating_guidance=_rating_guidance(rating),
+        rating_guidance=QUESTION_GUIDANCE if is_question else _rating_guidance(rating),
         custom_block=custom_block,
         context_block=context_block,
         retry_block=retry_block,
@@ -257,15 +281,10 @@ async def generate_review_reply(
     try:
         resp = await provider.complete(req)
     except ProviderError:
-        # Configured model unreachable (no key, 403, …) — one retry on Groq.
-        if config.model == "groq:openai/gpt-oss-120b":
-            raise
-        logger.warning("Reply model %s failed; retrying on groq:openai/gpt-oss-120b", config.model)
-        provider = get_provider_for_model("groq:openai/gpt-oss-120b")
-        api_model, _ = _resolve_model("groq:openai/gpt-oss-120b")
-        req.model = api_model
-        req.model_id = "groq:openai/gpt-oss-120b"
-        resp = await provider.complete(req)
+        # No fallback: the configured model is the tenant's choice from the
+        # database. A dead model must fail loudly so the admin fixes the
+        # key, not silently switch bills to another provider.
+        raise
     reply = resp.content.strip()
     if not reply:
         raise ProviderError(config.model, "Empty reply generated", 502)

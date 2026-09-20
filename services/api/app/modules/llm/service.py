@@ -104,6 +104,23 @@ def _resolve_model(model_id: str) -> tuple[str, str]:
     return api_model, provider
 
 
+async def resolve_tenant_model(db: AsyncSession, preferred: str | None = None) -> str:
+    """The single model id to generate with. Preferred when the tenant has
+    it enabled, else the tenant's first enabled model. Raises ValueError
+    when there is nothing enabled. No defaults, no fallbacks — the
+    admin-managed database is the only source of truth."""
+    from .providers.registry import list_tenant_models
+
+    visible = [m.id for m, _ in await list_tenant_models(db)]
+    if preferred:
+        if preferred in visible:
+            return preferred
+        raise ValueError(f"Model {preferred} is not enabled by your administrator.")
+    if visible:
+        return visible[0]
+    raise ValueError("No AI model is enabled by your administrator.")
+
+
 async def send_message(
     conv_id: str, body: MessageCreate, user: User, db: AsyncSession
 ) -> tuple[Message, Message]:

@@ -570,7 +570,7 @@ async def test_ai_draft_parses_and_caps(monkeypatch, db, user_id):
     )
     monkeypatch.setattr(
         "app.modules.llm.providers.registry.list_tenant_models",
-        _no_tenant_models,
+        _custom_tenant_model,
     )
     out = await _svc.draft_post_content(db, user_id, "Weekend Deal", "offer", "Sayvors")
     assert len(out["description"]) <= 1500
@@ -580,12 +580,29 @@ async def test_ai_draft_parses_and_caps(monkeypatch, db, user_id):
 
 
 @pytest.mark.asyncio
-async def test_ai_draft_falls_back_to_groq(monkeypatch, db, user_id):
-    import json as _json
-
+async def test_ai_draft_no_enabled_model_raises(db, user_id):
+    """No enabled models and no fallback: loud error naming the cause."""
     from app.modules.posts import service as _svc
 
-    provider, calls = _fake_llm_provider(_json.dumps({"description": "Hi"}), fail_first=True)
+    import app.modules.llm.providers.registry as _reg
+
+    async def _no_models(db):
+        return []
+
+    orig = _reg.list_tenant_models
+    _reg.list_tenant_models = _no_models
+    try:
+        with pytest.raises(ValueError, match="No AI model is enabled"):
+            await _svc.draft_post_content(db, user_id, "Hi", "update", None)
+    finally:
+        _reg.list_tenant_models = orig
+
+
+@pytest.mark.asyncio
+async def test_ai_draft_failure_has_no_fallback(monkeypatch, db, user_id):
+    from app.modules.posts import service as _svc
+
+    provider, calls = _fake_llm_provider("{}", fail_first=True)
     monkeypatch.setattr(
         "app.modules.llm.providers.registry.get_provider_for_model",
         lambda mid: provider,
@@ -598,9 +615,9 @@ async def test_ai_draft_falls_back_to_groq(monkeypatch, db, user_id):
         "app.modules.llm.providers.registry.list_tenant_models",
         _custom_tenant_model,
     )
-    out = await _svc.draft_post_content(db, user_id, "Hi", "update", None)
-    assert out["description"] == "Hi"
-    assert calls["n"] == 2
+    with pytest.raises(RuntimeError, match="AI drafting failed"):
+        await _svc.draft_post_content(db, user_id, "Hi", "update", None)
+    assert calls["n"] == 1
 
 
 @pytest.mark.asyncio
@@ -626,7 +643,7 @@ async def test_ai_draft_garbage_returns_empty_fields(monkeypatch, db, user_id):
     )
     monkeypatch.setattr(
         "app.modules.llm.providers.registry.list_tenant_models",
-        _no_tenant_models,
+        _custom_tenant_model,
     )
     out = await _svc.draft_post_content(db, user_id, "T", "update", None)
     assert out == {"description": "", "tags": [], "keywords": []}

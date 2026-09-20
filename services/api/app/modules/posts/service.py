@@ -561,11 +561,12 @@ async def draft_post_content(
     business_name: str | None = None,
 ) -> dict:
     """AI-draft the composer fields (description + tags + keywords) from a
-    title. Uses the tenant's first enabled model, Groq default as fallback.
-    Raises ValueError for bad input, RuntimeError when no model answers."""
+    title. Model comes from the tenant's enabled list — no default, no
+    fallback. Raises ValueError for bad input, RuntimeError when the
+    single attempt fails."""
     from ..llm.providers.base import LLMMessage, LLMRequest
-    from ..llm.providers.registry import get_provider_for_model, list_tenant_models
-    from ..llm.service import _resolve_model
+    from ..llm.providers.registry import get_provider_for_model
+    from ..llm.service import _resolve_model, resolve_tenant_model
 
     title = (title or "").strip()
     if not title:
@@ -577,8 +578,7 @@ async def draft_post_content(
         "offer": "a promotional offer post",
         "event": "an event announcement post",
     }[post_type]
-    visible = [m.id for m, _ in await list_tenant_models(db)]
-    model_id = visible[0] if visible else "groq:openai/gpt-oss-120b"
+    model_id = await resolve_tenant_model(db)
     system = (
         "You write Google Business Profile posts for small businesses. "
         "Reply with STRICT JSON only, no other text: "
@@ -609,16 +609,9 @@ async def draft_post_content(
     provider, req = _build(model_id)
     try:
         resp = await provider.complete(req)
-    except Exception:
-        if model_id == "groq:openai/gpt-oss-120b":
-            raise
-        logger.warning("Post draft model %s failed; retrying on groq default", model_id)
-        provider, req = _build("groq:openai/gpt-oss-120b")
-        try:
-            resp = await provider.complete(req)
-        except Exception as e:
-            raise RuntimeError(f"AI drafting failed: {e}")
+    except Exception as e:
+        raise RuntimeError(f"AI drafting failed ({model_id}): {e}")
     content = (resp.content or "").strip()
     if not content:
-        raise RuntimeError("AI drafting returned nothing.")
+        raise RuntimeError(f"AI drafting returned nothing ({model_id}).")
     return _parse_ai_draft(content)

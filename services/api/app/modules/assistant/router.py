@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/assistant", tags=["assistant"])
 
-DEFAULT_MODEL = "groq:openai/gpt-oss-120b"
 MAX_HISTORY = 12
 
 
@@ -50,7 +49,11 @@ class AssistantChatResponse(BaseModel):
 
 
 async def _resolve_model(db: AsyncSession, user_id: str) -> str:
-    """Tenant's configured reply model (hidden from end users), else default."""
+    """Tenant's configured reply model when still enabled, else the
+    tenant's first enabled model. Raises when nothing is enabled — no
+    hardcoded default, the database is the only source of truth."""
+    from ..llm.service import resolve_tenant_model
+
     cfg = (
         await db.execute(
             select(AutoReplyConfig.model)
@@ -59,7 +62,7 @@ async def _resolve_model(db: AsyncSession, user_id: str) -> str:
             .limit(1)
         )
     ).scalar_one_or_none()
-    return cfg or DEFAULT_MODEL
+    return await resolve_tenant_model(db, preferred=cfg)
 
 
 MAX_LISTED_ITEMS = 200
