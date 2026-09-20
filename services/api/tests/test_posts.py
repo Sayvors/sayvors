@@ -410,3 +410,113 @@ async def test_worker_summary_one_row_per_user(monkeypatch, db, user_id):
     for uid in (user_id, uid2):
         types = await _notif_types(db, uid)
         assert types.count("post_published") == 1, types
+
+
+@pytest.mark.asyncio
+async def test_event_requires_start_date(db, user_id):
+    with pytest.raises(ValueError, match="start date"):
+        await posts.create_post(db, user_id, _draft(post_type="event"))
+    res = await posts.create_post(
+        db, user_id,
+        _draft(post_type="event", title="Grand Opening",
+               start_date=_future(24), end_date=_future(48)),
+    )
+    assert res["post"]["start_date"]
+    assert res["post"]["end_date"]
+
+
+@pytest.mark.asyncio
+async def test_offer_maps_coupon_terms_cta_to_google(monkeypatch, db, user_id):
+    await _connection(db, user_id)
+    calls = []
+
+    def _fake_publish(listing_id, **kw):
+        calls.append(kw)
+        return {"id": "pub-offer"}
+
+    monkeypatch.setattr(
+        "integrations.channels.embedsocial.publish_media_post", _fake_publish
+    )
+    created = await posts.create_post(
+        db, user_id,
+        _draft(post_type="offer", title="20% Off",
+               coupon_code="SAVE20", terms_conditions="Dine-in only.",
+               cta_type="shop", cta_url="https://shop.example.com"),
+    )
+    assert created["post"]["coupon_code"] == "SAVE20"
+    await posts.publish_post(db, user_id, created["post"]["id"])
+    body = calls[0]
+    assert body["post_type"] == "offer"
+    assert body["voucher_code"] == "SAVE20"
+    assert "Dine-in only." in body["caption"]
+    assert "Weekend deal" in body["caption"]
+    assert body["cta_type"] == "shop"
+    assert body["cta_url"] == "https://shop.example.com"
+
+
+@pytest.mark.asyncio
+async def test_delete_at_becomes_google_end_for_dated_posts(monkeypatch, db, user_id):
+    """Scheduled deletion removes the Google copy too — via endDate, the
+    only Google-side removal Localith supports (no post delete exists)."""
+    await _connection(db, user_id)
+    calls = []
+
+    def _fake_publish(listing_id, **kw):
+        calls.append(kw)
+        return {"id": "pub-end"}
+
+    monkeypatch.setattr(
+        "integrations.channels.embedsocial.publish_media_post", _fake_publish
+    )
+    delete_at = _future(72)
+    created = await posts.create_post(
+        db, user_id,
+        _draft(post_type="event", title="Show",
+               start_date=_future(24), delete_at=delete_at),
+    )
+    await posts.publish_post(db, user_id, created["post"]["id"])
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    def _instant(s: str) -> float:
+        d = _dt.fromisoformat(s)
+        return d.replace(tzinfo=_tz.utc).timestamp() if d.tzinfo is None else d.timestamp()
+
+    # String forms differ by backend tz handling (sqlite strips offsets,
+    # Postgres keeps them) — compare instants.
+    assert _instant(calls[0]["end_date"]) == _instant(delete_at)
+    assert calls[0]["start_date"]
+
+
+def test_adapter_body_uses_localith_field_names(monkeypatch):
+    """The Google-bound JSON must carry voucherCode/startDate/endDate —
+    this is the exact contract Localith documents."""
+    from integrations.channels import embedsocial
+
+    seen = {}
+
+    class _Resp:
+        status_code = 200
+        text = "{}"
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "x"}
+
+    def _fake_post(url, **kw):
+        seen.update(kw["json"])
+        return _Resp()
+
+    monkeypatch.setattr(embedsocial.httpx, "post", _fake_post)
+    monkeypatch.setenv("LOCALITH_API_KEY", "test-key")
+    embedsocial.publish_media_post(
+        "loc-1", post_type="offer", title="Deal", caption="Hi",
+        voucher_code="SAVE20", start_date="2026-10-01T10:00:00Z",
+        end_date="2026-10-31T10:00:00Z",
+    )
+    assert seen["type"] == "offer"
+    assert seen["voucherCode"] == "SAVE20"
+    assert seen["startDate"] == "2026-10-01T10:00:00Z"
+    assert seen["endDate"] == "2026-10-31T10:00:00Z"

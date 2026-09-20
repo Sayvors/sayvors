@@ -35,6 +35,14 @@ interface PostItem {
   deleteAt?: string;
   // Why the last publish attempt failed (backend stores it on failure).
   error?: string;
+  // Google post type + type-specific fields (absent = update defaults).
+  post_type?: string;
+  start_date?: string;
+  end_date?: string;
+  coupon_code?: string;
+  terms_conditions?: string;
+  cta_type?: string | null;
+  cta_url?: string | null;
 }
 
 interface LocationOption {
@@ -75,7 +83,17 @@ function PostsInner() {
   // even with a single branch.
   const [selectedLocIds, setSelectedLocIds] = useState<string[]>([]);
   const [businessName, setBusinessName] = useState("");
+  // Google post type. Drives which fields Google accepts: updates take
+  // text+images+button; offers add coupon/redeem/terms/end; events need a
+  // title plus start/end date & time.
+  const [postType, setPostType] = useState<"update" | "offer" | "event">("update");
   const [description, setDescription] = useState("");
+  const [eventStart, setEventStart] = useState("");
+  const [eventEnd, setEventEnd] = useState("");
+  const [coupon, setCoupon] = useState("");
+  const [terms, setTerms] = useState("");
+  const [ctaType, setCtaType] = useState("");
+  const [ctaUrl, setCtaUrl] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [keywords, setKeywords] = useState<string[]>([]);
@@ -172,7 +190,14 @@ function PostsInner() {
     setPostLocationId(first);
     setSelectedLocIds(first ? [first] : []);
     setBusinessName("Sayvors");
+    setPostType("update");
     setDescription("");
+    setEventStart("");
+    setEventEnd("");
+    setCoupon("");
+    setTerms("");
+    setCtaType("");
+    setCtaUrl("");
     setTags([]);
     setTagInput("");
     setKeywords([]);
@@ -204,7 +229,14 @@ function PostsInner() {
     setPostLocationId(p.locationId);
     setSelectedLocIds(p.locationId ? [p.locationId] : []);
     setBusinessName(p.businessName);
+    setPostType(p.post_type === "offer" || p.post_type === "event" ? p.post_type : "update");
     setDescription(p.description);
+    setEventStart((p.start_date ?? "").slice(0, 16));
+    setEventEnd((p.end_date ?? "").slice(0, 16));
+    setCoupon(p.coupon_code ?? "");
+    setTerms(p.terms_conditions ?? "");
+    setCtaType(p.cta_type ?? "");
+    setCtaUrl(p.cta_url ?? "");
     setTags(p.tags);
     setKeywords(p.keywords);
     setImages(p.images);
@@ -246,7 +278,18 @@ function PostsInner() {
   const targetIds = view.kind === "create"
     ? selectedLocIds.filter(Boolean)
     : [postLocationId];
-  const valid = title.trim() && businessName.trim() && description.trim() && targetIds.length > 0 && targetIds.every(Boolean) && (!scheduleEnabled || scheduledAt) && !deleteErr;
+  // Per-type rules mirror Google: events need start + end date & time.
+  const typeErr = (() => {
+    if (postType !== "event") return null;
+    if (!eventStart) return "Events need a start date and time.";
+    if (!eventEnd) return "Events need an end date and time.";
+    const s = new Date(eventStart).getTime();
+    const e = new Date(eventEnd).getTime();
+    if (Number.isNaN(s) || Number.isNaN(e)) return "Pick valid event dates.";
+    if (e <= s) return "Event end must be after its start.";
+    return null;
+  })();
+  const valid = title.trim() && businessName.trim() && description.trim() && targetIds.length > 0 && targetIds.every(Boolean) && (!scheduleEnabled || scheduledAt) && !deleteErr && !typeErr;
 
   const showBannerTimed = (kind: "ok" | "err", text: string) => {
     setBanner({ kind, text });
@@ -283,7 +326,14 @@ function PostsInner() {
               location_name: locations.find((l) => l.id === lid)?.name ?? "",
               business_name: businessName.trim(),
               title: title.trim(),
+              post_type: postType,
               description: description.trim(),
+              start_date: postType === "event" && eventStart ? new Date(eventStart).toISOString() : null,
+              end_date: (postType === "event" || postType === "offer") && eventEnd ? new Date(eventEnd).toISOString() : null,
+              coupon_code: postType === "offer" && coupon.trim() ? coupon.trim() : null,
+              terms_conditions: postType === "offer" && terms.trim() ? terms.trim() : null,
+              cta_type: ctaType || null,
+              cta_url: ctaUrl.trim() || null,
               tags,
               keywords,
               image_urls: images,
@@ -333,7 +383,14 @@ function PostsInner() {
         location_name: locations.find((l) => l.id === postLocationId)?.name ?? "",
         business_name: businessName.trim(),
         title: title.trim(),
+        post_type: postType,
         description: description.trim(),
+        start_date: postType === "event" && eventStart ? new Date(eventStart).toISOString() : null,
+        end_date: (postType === "event" || postType === "offer") && eventEnd ? new Date(eventEnd).toISOString() : null,
+        coupon_code: postType === "offer" && coupon.trim() ? coupon.trim() : null,
+        terms_conditions: postType === "offer" && terms.trim() ? terms.trim() : null,
+        cta_type: ctaType || null,
+        cta_url: ctaUrl.trim() || null,
         tags,
         keywords,
         image_urls: images,
@@ -557,7 +614,15 @@ function PostsInner() {
               postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
               multi selectedIds={selectedLocIds} onToggleLoc={toggleCreateLoc} onSelectAll={selectAllCreateLocs}
               businessName={businessName} setBusinessName={setBusinessName}
+              postType={postType} setPostType={setPostType}
               description={description} setDescription={setDescription}
+              eventStart={eventStart} setEventStart={setEventStart}
+              eventEnd={eventEnd} setEventEnd={setEventEnd}
+              coupon={coupon} setCoupon={setCoupon}
+              terms={terms} setTerms={setTerms}
+              ctaType={ctaType} setCtaType={setCtaType}
+              ctaUrl={ctaUrl} setCtaUrl={setCtaUrl}
+              typeErr={typeErr}
               tags={tags} tagInput={tagInput} setTagInput={setTagInput}
               onAddTag={() => { addChip(tagInput, tags, setTags); setTagInput(""); }}
               onRemoveTag={(t) => setTags(tags.filter((x) => x !== t))}
@@ -591,7 +656,15 @@ function PostsInner() {
                   postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
                   multi={false} selectedIds={[]} onToggleLoc={() => {}} onSelectAll={() => {}}
                   businessName={businessName} setBusinessName={setBusinessName}
+                  postType={postType} setPostType={setPostType}
                   description={description} setDescription={setDescription}
+                  eventStart={eventStart} setEventStart={setEventStart}
+                  eventEnd={eventEnd} setEventEnd={setEventEnd}
+                  coupon={coupon} setCoupon={setCoupon}
+                  terms={terms} setTerms={setTerms}
+                  ctaType={ctaType} setCtaType={setCtaType}
+                  ctaUrl={ctaUrl} setCtaUrl={setCtaUrl}
+                  typeErr={typeErr}
                   tags={tags} tagInput={tagInput} setTagInput={setTagInput}
                   onAddTag={() => { addChip(tagInput, tags, setTags); setTagInput(""); }}
                   onRemoveTag={(t) => setTags(tags.filter((x) => x !== t))}
@@ -625,9 +698,35 @@ function PostsInner() {
                         <h2 className="text-[17px] font-bold text-ink dark:text-fog">{activePost.title}</h2>
                         <p className="mt-0.5 text-[12px] text-ink/40 dark:text-fog/40">{activePost.businessName} · {activePost.locationName}</p>
                       </div>
-                      <StatusBadge status={activePost.status} />
+                      <div className="flex shrink-0 flex-col items-end gap-1.5">
+                        <StatusBadge status={activePost.status} />
+                        {(activePost.post_type === "offer" || activePost.post_type === "event") && (
+                          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">
+                            {activePost.post_type}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <p className="mt-3 text-[13px] leading-relaxed text-ink/80 dark:text-fog/80">{activePost.description}</p>
+                    {(activePost.start_date || activePost.end_date) && (
+                      <p className="mt-2 text-[12px] font-medium text-ink/60 dark:text-fog/60">
+                        📅 {activePost.start_date ? new Date(activePost.start_date).toLocaleString() : "…"}
+                        {activePost.end_date ? ` → ${new Date(activePost.end_date).toLocaleString()}` : ""}
+                      </p>
+                    )}
+                    {activePost.coupon_code && (
+                      <p className="mt-2 inline-block rounded-lg border border-dashed border-deep-violet/40 bg-deep-violet/[0.05] px-2.5 py-1 text-[12px] font-bold text-deep-violet">
+                        🎟 {activePost.coupon_code}
+                      </p>
+                    )}
+                    {activePost.terms_conditions && (
+                      <p className="mt-2 text-[11px] leading-relaxed text-ink/45 dark:text-fog/45">Terms: {activePost.terms_conditions}</p>
+                    )}
+                    {activePost.cta_url && (
+                      <a href={activePost.cta_url} target="_blank" rel="noreferrer" className="mt-2 inline-block rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white hover:opacity-90">
+                        {activePost.cta_type ? activePost.cta_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Learn more"} ↗
+                      </a>
+                    )}
                     {activePost.tags.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {activePost.tags.map((t) => (
@@ -725,6 +824,13 @@ function normalizePosts(raw: unknown, deleteOverlay?: Record<string, string | nu
       scheduledAt: p.scheduled_on ? String(p.scheduled_on) : p.scheduledAt ? String(p.scheduledAt) : undefined,
       deleteAt: backendDelete ?? overlayDelete ?? undefined,
       error: typeof p.error === "string" && p.error ? p.error : undefined,
+      post_type: typeof p.post_type === "string" ? p.post_type : "update",
+      start_date: p.start_date ? String(p.start_date) : undefined,
+      end_date: p.end_date ? String(p.end_date) : undefined,
+      coupon_code: typeof p.coupon_code === "string" ? p.coupon_code : undefined,
+      terms_conditions: typeof p.terms_conditions === "string" ? p.terms_conditions : undefined,
+      cta_type: typeof p.cta_type === "string" ? p.cta_type : undefined,
+      cta_url: typeof p.cta_url === "string" ? p.cta_url : undefined,
     };
   });
 }
@@ -800,7 +906,15 @@ function PostForm(props: {
   postLocationId: string; setPostLocationId: (v: string) => void; locations: LocationOption[];
   multi: boolean; selectedIds: string[]; onToggleLoc: (id: string) => void; onSelectAll: () => void;
   businessName: string; setBusinessName: (v: string) => void;
+  postType: "update" | "offer" | "event"; setPostType: (v: "update" | "offer" | "event") => void;
   description: string; setDescription: (v: string) => void;
+  eventStart: string; setEventStart: (v: string) => void;
+  eventEnd: string; setEventEnd: (v: string) => void;
+  coupon: string; setCoupon: (v: string) => void;
+  terms: string; setTerms: (v: string) => void;
+  ctaType: string; setCtaType: (v: string) => void;
+  ctaUrl: string; setCtaUrl: (v: string) => void;
+  typeErr: string | null;
   tags: string[]; tagInput: string; setTagInput: (v: string) => void; onAddTag: () => void; onRemoveTag: (t: string) => void;
   keywords: string[]; keywordInput: string; setKeywordInput: (v: string) => void; onAddKeyword: () => void; onRemoveKeyword: (k: string) => void;
   images: string[]; onFiles: (f: FileList | null) => void; onRemoveImage: (n: string) => void;
@@ -822,6 +936,29 @@ function PostForm(props: {
         <div>
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Title *</label>
           <input value={p.title} onChange={(e) => p.setTitle(e.target.value)} placeholder="e.g. Weekend Offer — 20% Off" className="input-field" autoFocus />
+        </div>
+        <div>
+          <label className="mb-1 block text-[12px] font-medium text-ink/50">Post type *</label>
+          <div className="flex rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]" role="radiogroup" aria-label="Post type">
+            {([
+              { key: "update", label: "Update", hint: "News & announcements" },
+              { key: "offer", label: "Offer", hint: "Deals with coupon & end date" },
+              { key: "event", label: "Event", hint: "Dated happening" },
+            ] as const).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="radio"
+                aria-checked={p.postType === t.key}
+                onClick={() => p.setPostType(t.key)}
+                title={t.hint}
+                className={`flex-1 rounded-lg px-2 py-2 text-center outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${p.postType === t.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"}`}
+              >
+                <span className="block text-[12px] font-semibold">{t.label}</span>
+                <span className="block text-[10px] opacity-70">{t.hint}</span>
+              </button>
+            ))}
+          </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -848,7 +985,66 @@ function PostForm(props: {
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Description *</label>
           <textarea value={p.description} onChange={(e) => p.setDescription(e.target.value)} rows={4} maxLength={1500} placeholder="Full post text customers will see..." className="input-field resize-y" />
         </div>
-        <div>
+        {p.postType === "event" && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-[12px] font-medium text-ink/50">Event start *</label>
+              <input type="datetime-local" value={p.eventStart} onChange={(e) => p.setEventStart(e.target.value)} className="input-field" />
+            </div>
+            <div>
+              <label className="mb-1 block text-[12px] font-medium text-ink/50">Event end *</label>
+              <input type="datetime-local" value={p.eventEnd} onChange={(e) => p.setEventEnd(e.target.value)} className="input-field" />
+            </div>
+          </div>
+        )}
+        {p.postType === "offer" && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-[12px] font-medium text-ink/50">Coupon code</label>
+                <input value={p.coupon} onChange={(e) => p.setCoupon(e.target.value)} maxLength={64} placeholder="e.g. SAVE20" className="input-field" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[12px] font-medium text-ink/50">Offer end</label>
+                <input type="datetime-local" value={p.eventEnd} onChange={(e) => p.setEventEnd(e.target.value)} className="input-field" />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[12px] font-medium text-ink/50">Terms &amp; conditions</label>
+              <textarea value={p.terms} onChange={(e) => p.setTerms(e.target.value)} rows={2} maxLength={2000} placeholder="e.g. Valid till month end, dine-in only…" className="input-field resize-y" />
+              <p className="mt-1 text-[10px] text-ink/35 dark:text-fog/35">Shown under the post text on Google.</p>
+            </div>
+          </>
+        )}
+        {p.typeErr && (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-[11px] font-medium text-red-700">{p.typeErr}</p>
+        )}
+        <div className="rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
+          <p className="text-[12px] font-semibold text-ink dark:text-fog">Call-to-action button</p>
+          <p className="text-[11px] text-ink/40">The button Google shows under your post.</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-ink/50">Button action</label>
+              <select value={p.ctaType} onChange={(e) => p.setCtaType(e.target.value)} className="input-field" aria-label="Button action">
+                <option value="">No button</option>
+                <option value="book">Book</option>
+                <option value="order">Order</option>
+                <option value="shop">Shop</option>
+                <option value="learn_more">Learn more</option>
+                <option value="sign_up">Sign up</option>
+                <option value="call">Call</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-ink/50">{p.postType === "offer" ? "Redeem URL" : "Button URL"}</label>
+              <input value={p.ctaUrl} onChange={(e) => p.setCtaUrl(e.target.value)} placeholder="https://…" className="input-field" inputMode="url" />
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-dashed border-ink/[0.1] p-3 dark:border-fog/[0.1]">
+          <p className="text-[12px] font-semibold text-ink dark:text-fog">Sayvors internal metadata</p>
+          <p className="text-[11px] text-ink/40">For your AI and organization only — never sent to Google.</p>
+          <div className="mt-3">
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Tags</label>
           <div className="flex flex-wrap gap-1.5">
             {p.tags.map((t) => (
@@ -876,6 +1072,7 @@ function PostForm(props: {
           <div className="mt-2 flex gap-2">
             <input value={p.keywordInput} onChange={(e) => p.setKeywordInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && p.onAddKeyword()} placeholder="Add keyword + Enter" className="input-field flex-1" />
             <button onClick={p.onAddKeyword} className="btn-secondary">Add</button>
+          </div>
           </div>
         </div>
         <div>

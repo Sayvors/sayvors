@@ -85,6 +85,9 @@ def _serialize(p: LocationPost) -> dict:
         "published_at": p.published_at.isoformat() if p.published_at else None,
         "delete_at": p.delete_at.isoformat() if p.delete_at else None,
         "end_date": p.end_date.isoformat() if p.end_date else None,
+        "start_date": p.start_date.isoformat() if p.start_date else None,
+        "coupon_code": p.coupon_code,
+        "terms_conditions": p.terms_conditions,
         "google_post_id": p.google_post_id,
         "error": p.error,
         "created_at": p.created_at.isoformat() if p.created_at else None,
@@ -138,6 +141,29 @@ def _validate_delete_at(delete_at: datetime | None, scheduled_on: datetime | Non
         raise ValueError("delete_at must be after the scheduled publish time.")
 
 
+def _google_caption(description: str | None, terms: str | None) -> str:
+    """Caption text Google shows. Localith's wrapper exposes no separate
+    terms field, so offer terms travel inside the caption."""
+    text = (description or "").strip()
+    terms = (terms or "").strip()
+    if terms:
+        text = f"{text}\n\nTerms: {terms}" if text else f"Terms: {terms}"
+    return text
+
+
+def _effective_end_date(post: LocationPost) -> datetime | None:
+    """Google-side removal for dated posts: an event/offer ends when its
+    end date passes — Google takes it down itself. When the merchant set a
+    scheduled deletion but no explicit end, the deletion time doubles as
+    the end date, so the Google copy actually disappears too (updates
+    ignore end dates on Google's side, so this only affects event/offer)."""
+    if post.end_date is not None:
+        return post.end_date
+    if post.post_type in ("event", "offer") and post.delete_at is not None:
+        return post.delete_at
+    return None
+
+
 async def list_posts(
     db: AsyncSession, user_id: str, listing_id: str | None = None
 ) -> list[dict]:
@@ -162,6 +188,12 @@ async def create_post(db: AsyncSession, user_id: str, data: dict) -> dict:
     delete_at = _parse_dt(data.get("delete_at"))
     _validate_delete_at(delete_at, scheduled_on)
     end_date = _parse_dt(data.get("end_date"))
+    start_date = _parse_dt(data.get("start_date"))
+    post_type = data.get("post_type", "update")
+    if post_type not in ("update", "event", "offer"):
+        raise ValueError("post_type must be update, event or offer.")
+    if post_type == "event" and start_date is None:
+        raise ValueError("Events need a start date — Google requires it.")
 
     post = LocationPost(
         id=str(uuid.uuid4()),
@@ -170,7 +202,7 @@ async def create_post(db: AsyncSession, user_id: str, data: dict) -> dict:
         location_name=(data.get("location_name") or "")[:255],
         business_name=(data.get("business_name") or "Sayvors")[:255],
         title=(data.get("title") or "")[:500],
-        post_type=data.get("post_type", "update"),
+        post_type=post_type,
         description=(data.get("description") or "")[:1500],
         tags=[str(t)[:80] for t in data.get("tags", [])][:20],
         keywords=[str(k)[:80] for k in data.get("keywords", [])][:20],
@@ -181,6 +213,9 @@ async def create_post(db: AsyncSession, user_id: str, data: dict) -> dict:
         scheduled_on=scheduled_on,
         delete_at=delete_at,
         end_date=end_date,
+        start_date=start_date,
+        coupon_code=(str(data.get("coupon_code") or "")[:64] or None),
+        terms_conditions=(str(data.get("terms_conditions") or "")[:2000] or None),
     )
     db.add(post)
     await db.flush()
@@ -213,11 +248,19 @@ async def update_post(
     for field in ("location_name", "business_name", "title", "description", "cta_type", "cta_url"):
         if data.get(field) is not None:
             setattr(post, field, data[field])
-    if data.get("post_type") in ("update", "event", "offer"):
-        post.post_type = data["post_type"]
     for field in ("tags", "keywords", "image_urls"):
         if data.get(field) is not None:
             setattr(post, field, list(data[field]))
+    if "coupon_code" in data:
+        post.coupon_code = (str(data.get("coupon_code") or "")[:64] or None)
+    if "terms_conditions" in data:
+        post.terms_conditions = (str(data.get("terms_conditions") or "")[:2000] or None)
+    if "start_date" in data:
+        post.start_date = _parse_dt(data.get("start_date"))
+    if data.get("post_type") in ("update", "event", "offer"):
+        post.post_type = data["post_type"]
+        if post.post_type == "event" and post.start_date is None:
+            raise ValueError("Events need a start date — Google requires it.")
 
     # delete_at: explicit null cancels, absent key leaves untouched
     # (router passes exclude_unset).
@@ -293,17 +336,20 @@ async def _publish_post_inner(
 
     sent = [u for u in (post.image_urls or []) if u.startswith("http")]
     skipped = len(post.image_urls or []) - len(sent)
+    effective_end = _effective_end_date(post)
     try:
         response = await asyncio.to_thread(
             embedsocial.publish_media_post,
             post.listing_id,
             post_type=post.post_type,
             title=post.title or None,
-            caption=post.description,
+            caption=_google_caption(post.description, post.terms_conditions),
             image_urls=sent,
             cta_type=post.cta_type,
             cta_url=post.cta_url,
-            end_date=post.end_date.isoformat() if post.end_date else None,
+            start_date=post.start_date.isoformat() if post.start_date else None,
+            end_date=effective_end.isoformat() if effective_end else None,
+            voucher_code=post.coupon_code or None,
         )
     except Exception as e:
         _register_publish_failure(post, str(e)[:500])
