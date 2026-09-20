@@ -250,3 +250,67 @@ def _photo_for_upload(url: str) -> dict:
         "type": "PHOTO", "category": "EXTERIOR", "caption": "",
         "action": "draft", "scheduled_on": None,
     }
+
+
+async def _notif_types(db, user_id):
+    from sqlalchemy import select as _select
+
+    from app.modules.notifications.models import Notification
+
+    rows = (
+        await db.execute(
+            _select(Notification.type).where(Notification.user_id == user_id)
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+@pytest.mark.asyncio
+async def test_media_schedule_publish_and_park_notify(db, user_id, monkeypatch):
+    await _connection(db, user_id)
+
+    def _fake_publish(listing_id, **kw):
+        return {"id": "mpub-n"}
+
+    monkeypatch.setattr(
+        "integrations.channels.embedsocial.publish_media_post", _fake_publish
+    )
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    created = await media.create_media(db, user_id, _photo())
+    pid = created["media"]["id"]
+    await media.update_media(db, user_id, pid, {"status": "scheduled", "scheduled_on": past})
+    await media.publish_media(db, user_id, pid)
+    assert "media_published" in await _notif_types(db, user_id)
+
+    def _fail(*a, **k):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(
+        "integrations.channels.embedsocial.publish_media_post", _fail
+    )
+    created2 = await media.create_media(db, user_id, _photo())
+    pid2 = created2["media"]["id"]
+    await media.update_media(db, user_id, pid2, {"status": "scheduled", "scheduled_on": past})
+    with pytest.raises(RuntimeError):
+        await media.publish_media(db, user_id, pid2)
+    # Retryable: silent.
+    assert "media_failed" not in await _notif_types(db, user_id)
+    from app.modules.media.models import LocationMedia
+    from sqlalchemy import select as _select
+
+    row = (await db.execute(
+        _select(LocationMedia).where(LocationMedia.id == pid2)
+    )).scalar_one()
+    row.attempts = media.MAX_PUBLISH_ATTEMPTS - 1
+    await db.commit()
+    with pytest.raises(RuntimeError):
+        await media.publish_media(db, user_id, pid2)
+    assert "media_failed" in await _notif_types(db, user_id)
+
+
+@pytest.mark.asyncio
+async def test_media_schedule_create_notifies(db, user_id):
+    future = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    res = await media.create_media(db, user_id, _photo(action="schedule", scheduled_on=future))
+    assert res["media"]["status"] == "scheduled"
+    assert await _notif_types(db, user_id) == ["media_scheduled"]

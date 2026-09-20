@@ -270,3 +270,111 @@ async def test_delete_due_removes_only_due(db, user_id):
     remaining = await posts.list_posts(db, user_id, "loc-1")
     assert [r["id"] for r in remaining] == [future_id]
     assert due_id not in [r["id"] for r in remaining]
+
+
+async def _notif_types(db, user_id):
+    from sqlalchemy import select as _select
+
+    from app.modules.notifications.models import Notification
+
+    rows = (
+        await db.execute(
+            _select(Notification.type).where(Notification.user_id == user_id)
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+@pytest.mark.asyncio
+async def test_schedule_create_notifies(db, user_id):
+    res = await posts.create_post(
+        db, user_id, _draft(action="schedule", scheduled_on=_future())
+    )
+    assert res["post"]["status"] == "scheduled"
+    types = await _notif_types(db, user_id)
+    assert types.count("post_scheduled") == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_publish_notifies_published(monkeypatch, db, user_id):
+    await _connection(db, user_id)
+
+    def _fake_publish(listing_id, **kw):
+        return {"id": "pub-n"}
+
+    monkeypatch.setattr(
+        "integrations.channels.embedsocial.publish_media_post", _fake_publish
+    )
+    created = await posts.create_post(db, user_id, _draft())
+    await posts.publish_post(db, user_id, created["post"]["id"])
+    assert "post_published" in await _notif_types(db, user_id)
+
+
+@pytest.mark.asyncio
+async def test_parked_failure_notifies_but_retry_does_not(monkeypatch, db, user_id):
+    await _connection(db, user_id)
+
+    def _fail(*a, **k):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(
+        "integrations.channels.embedsocial.publish_media_post", _fail
+    )
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    created = await posts.create_post(db, user_id, _draft())
+    pid = created["post"]["id"]
+    await posts.update_post(db, user_id, pid, {"status": "scheduled", "scheduled_on": past})
+    with pytest.raises(RuntimeError):
+        await posts.publish_post(db, user_id, pid)
+    # Still scheduled (retrying): no failure notification yet.
+    assert "post_failed" not in await _notif_types(db, user_id)
+    from app.modules.posts.models import LocationPost
+    from sqlalchemy import select as _select
+
+    row = (await db.execute(
+        _select(LocationPost).where(LocationPost.id == pid)
+    )).scalar_one()
+    row.attempts = posts.MAX_PUBLISH_ATTEMPTS - 1
+    await db.commit()
+    with pytest.raises(RuntimeError):
+        await posts.publish_post(db, user_id, pid)
+    assert "post_failed" in await _notif_types(db, user_id)
+
+
+@pytest.mark.asyncio
+async def test_worker_summary_one_row_per_user(monkeypatch, db, user_id):
+    from app.modules.users.models import User
+
+    await _connection(db, user_id)
+    uid2 = f"{user_id}-b"
+    db.add(User(id=uid2, first_name="T", last_name="U",
+                email="second@example.com", password_hash="x"))
+    db.add(__import__("app.modules.localith.models", fromlist=["LocalithConnection"]).LocalithConnection(
+        id="conn-post-2", user_id=uid2, listing_id="loc-1",
+        listing_name="Test Place", listing_google_id="g1",
+    ))
+    await db.commit()
+
+    def _fake_publish(listing_id, **kw):
+        return {"id": "pub-w"}
+
+    monkeypatch.setattr(
+        "integrations.channels.embedsocial.publish_media_post", _fake_publish
+    )
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    for uid in (user_id, uid2):
+        created = await posts.create_post(db, uid, _draft())
+        await posts.update_post(db, uid, created["post"]["id"],
+                                {"status": "scheduled", "scheduled_on": past})
+    # create_post already emitted a post_scheduled row each; isolate worker rows.
+    from sqlalchemy import delete as _delete
+
+    from app.modules.notifications.models import Notification
+
+    await db.execute(_delete(Notification).where(Notification.user_id.in_([user_id, uid2])))
+    await db.commit()
+    totals = await posts.publish_due(db)
+    assert totals["published"] == 2
+    for uid in (user_id, uid2):
+        types = await _notif_types(db, uid)
+        assert types.count("post_published") == 1, types

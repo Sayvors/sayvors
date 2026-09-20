@@ -1,6 +1,6 @@
 /* Shared notification helpers: pill kinds + fire-and-forget emitter.
-   Only two events ever surface as reminder pills — everything else
-   lives quietly in the bell and the detail page. */
+   Pills surface only failures and fresh arrivals needing action —
+   everything else lives quietly in the bell and the detail page. */
 
 export type PillKind = "pulled" | "failed";
 
@@ -73,9 +73,11 @@ export function rememberSeenIds(ids: Set<string>): void {
   }
 }
 
-/** Backend notification type -> pill kind (only these two surface). */
+/** Backend notification type -> pill kind (failures surface as pills). */
 export function pillKindFor(type: string): PillKind | null {
   if (type === "review_pulled") return "pulled";
   if (type === "reply_failed") return "failed";
+  if (type === "post_failed") return "failed";
+  if (type === "media_failed") return "failed";
   return null;
 }

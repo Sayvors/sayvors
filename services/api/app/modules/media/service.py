@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ..localith.models import LocalithConnection
+from ..notifications.service import notify
 from ..scheduling import (
     MAX_PUBLISH_ATTEMPTS,
     provider_post_id as _google_post_id,
@@ -212,6 +213,15 @@ async def create_media(db: AsyncSession, user_id: str, data: dict) -> dict:
 
     if action == "publish":
         return await publish_media(db, user_id, item.id)
+    if action == "schedule":
+        when = scheduled_on.strftime("%b %d, %H:%M") if scheduled_on else "soon"
+        await notify(
+            db, user_id, "media_scheduled",
+            f"Photo scheduled — {item.caption or item.category.replace('_', ' ').title()}",
+            f"Publishes {when}.",
+            data={"media_id": item.id, "listing_id": item.listing_id},
+            href="/dashboard/media",
+        )
     await db.commit()
     await db.refresh(item)
     return {"media": _serialize(item), "google_published": False}
@@ -267,22 +277,27 @@ async def delete_media(db: AsyncSession, user_id: str, media_id: str) -> None:
     await db.commit()
 
 
-async def publish_media(db: AsyncSession, user_id: str, media_id: str) -> dict:
+async def publish_media(
+    db: AsyncSession, user_id: str, media_id: str, notify_user: bool = True
+) -> dict:
     """Publish one photo to Google right now (inside a Google post).
 
     Held under the item's advisory lock: a double publish would post the
     photo twice on Google. Videos are library-only — the provider takes
-    image URLs, not video.
+    image URLs, not video. notify_user=False lets batch callers (worker)
+    emit one summary instead of a row per photo.
     """
     locked = await _acquire_media_lock(db, media_id)
     try:
-        return await _publish_media_inner(db, user_id, media_id)
+        return await _publish_media_inner(db, user_id, media_id, notify_user)
     finally:
         if locked:
             await _release_media_lock(db, media_id)
 
 
-async def _publish_media_inner(db: AsyncSession, user_id: str, media_id: str) -> dict:
+async def _publish_media_inner(
+    db: AsyncSession, user_id: str, media_id: str, notify_user: bool = True
+) -> dict:
     from integrations.channels import embedsocial
 
     item = await _owned_media(db, user_id, media_id)
@@ -318,6 +333,15 @@ async def _publish_media_inner(db: AsyncSession, user_id: str, media_id: str) ->
         )
     except Exception as e:
         _register_publish_failure(item, str(e)[:500])
+        if notify_user and item.status == "failed":
+            # Parked (not merely retrying): this needs the human.
+            await notify(
+                db, user_id, "media_failed",
+                f"Photo failed to publish — {item.caption or item.category.replace('_', ' ').title()}",
+                (item.error or "")[:160],
+                data={"media_id": item.id, "listing_id": item.listing_id},
+                href="/dashboard/media",
+            )
         await db.commit()
         raise RuntimeError(f"Google media publish failed: {e}")
 
@@ -330,6 +354,14 @@ async def _publish_media_inner(db: AsyncSession, user_id: str, media_id: str) ->
     google_id = _google_post_id(response)
     if google_id:
         item.google_post_id = google_id
+    if notify_user:
+        await notify(
+            db, user_id, "media_published",
+            f"Photo published to Google — {item.caption or item.category.replace('_', ' ').title()}",
+            None,
+            data={"media_id": item.id, "listing_id": item.listing_id},
+            href="/dashboard/media",
+        )
     await db.commit()
     await db.refresh(item)
     return {"media": _serialize(item), "google_published": True}
@@ -367,6 +399,7 @@ async def publish_due(db: AsyncSession) -> dict:
         "checked": len(rows), "published": 0, "failed": 0,
         "retried": 0, "skipped": 0, "errors": [],
     }
+    per_user: dict[str, dict[str, int]] = {}
     for item in rows:
         media_id, user_id = item.id, item.user_id
         held = await _try_media_lock(db, media_id)
@@ -374,14 +407,18 @@ async def publish_due(db: AsyncSession) -> dict:
             totals["skipped"] += 1
             continue
         try:
-            await publish_media(db, user_id, media_id)
+            await publish_media(db, user_id, media_id, notify_user=False)
             totals["published"] += 1
+            per_user.setdefault(user_id, {"published": 0, "failed": 0})
+            per_user[user_id]["published"] += 1
         except Exception as e:
             fresh = await _owned_media(db, user_id, media_id)
             if fresh is not None and fresh.status == "scheduled":
                 totals["retried"] += 1
             else:
                 totals["failed"] += 1
+                per_user.setdefault(user_id, {"published": 0, "failed": 0})
+                per_user[user_id]["failed"] += 1
             totals["errors"].append(f"{media_id[:8]}: {str(e)[:120]}")
             try:
                 await db.rollback()
@@ -389,6 +426,25 @@ async def publish_due(db: AsyncSession) -> dict:
                 pass
         finally:
             await _release_media_lock(db, media_id)
+    # One summary row per active user per pass — never a row per photo.
+    for uid, counts in per_user.items():
+        parts = []
+        if counts["published"]:
+            parts.append(f"published {counts['published']}")
+        if counts["failed"]:
+            parts.append(f"{counts['failed']} failed")
+        await notify(
+            db, uid,
+            "media_published" if counts["published"] else "media_failed",
+            f"Scheduled photos: {', '.join(parts)}",
+            None,
+            data={"published": counts["published"], "failed": counts["failed"]},
+            href="/dashboard/media",
+        )
+    try:
+        await db.commit()
+    except Exception:
+        pass
     return totals
 
 

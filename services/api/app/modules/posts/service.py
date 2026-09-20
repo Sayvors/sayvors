@@ -17,6 +17,7 @@ from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..localith.models import LocalithConnection
+from ..notifications.service import notify
 from .models import LocationPost
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,15 @@ async def create_post(db: AsyncSession, user_id: str, data: dict) -> dict:
 
     if action == "publish":
         return await publish_post(db, user_id, post.id)
+    if action == "schedule":
+        when = scheduled_on.strftime("%b %d, %H:%M") if scheduled_on else "soon"
+        await notify(
+            db, user_id, "post_scheduled",
+            f"Post scheduled — {post.title or 'Untitled'}",
+            f"Publishes {when}.",
+            data={"post_id": post.id, "listing_id": post.listing_id},
+            href="/dashboard/posts",
+        )
     await db.commit()
     await db.refresh(post)
     return {"post": _serialize(post), "google_published": False, "images_sent": 0, "images_skipped": 0}
@@ -250,25 +260,28 @@ async def delete_post(db: AsyncSession, user_id: str, post_id: str) -> None:
     await db.commit()
 
 
-async def publish_post(db: AsyncSession, user_id: str, post_id: str) -> dict:
+async def publish_post(
+    db: AsyncSession, user_id: str, post_id: str, notify_user: bool = True
+) -> dict:
     """Publish one post to Google via Localith right now.
 
     Publishing is NOT idempotent (a double call posts twice on Google), so
     the post's advisory lock is held for the whole call: manual clicks, the
     background loop, and racing workers serialize per post while different
-    posts proceed in parallel.
+    posts proceed in parallel. notify_user=False lets batch callers (worker)
+    emit one summary instead of a row per post.
     """
-    from integrations.channels import embedsocial
-
     locked = await _acquire_post_lock(db, post_id)
     try:
-        return await _publish_post_inner(db, user_id, post_id)
+        return await _publish_post_inner(db, user_id, post_id, notify_user)
     finally:
         if locked:
             await _release_post_lock(db, post_id)
 
 
-async def _publish_post_inner(db: AsyncSession, user_id: str, post_id: str) -> dict:
+async def _publish_post_inner(
+    db: AsyncSession, user_id: str, post_id: str, notify_user: bool = True
+) -> dict:
     from integrations.channels import embedsocial
 
     post = await _owned_post(db, user_id, post_id)
@@ -294,6 +307,15 @@ async def _publish_post_inner(db: AsyncSession, user_id: str, post_id: str) -> d
         )
     except Exception as e:
         _register_publish_failure(post, str(e)[:500])
+        if notify_user and post.status == "failed":
+            # Parked (not merely retrying): this needs the human.
+            await notify(
+                db, user_id, "post_failed",
+                f"Post failed to publish — {post.title or 'Untitled'}",
+                (post.error or "")[:160],
+                data={"post_id": post.id, "listing_id": post.listing_id},
+                href="/dashboard/posts",
+            )
         await db.commit()
         raise RuntimeError(f"Google publish failed: {e}")
 
@@ -306,6 +328,14 @@ async def _publish_post_inner(db: AsyncSession, user_id: str, post_id: str) -> d
     google_id = _google_post_id(response)
     if google_id:
         post.google_post_id = google_id
+    if notify_user:
+        await notify(
+            db, user_id, "post_published",
+            f"Published to Google — {post.title or 'Untitled'}",
+            (post.description or "")[:160] or None,
+            data={"post_id": post.id, "listing_id": post.listing_id},
+            href="/dashboard/posts",
+        )
     await db.commit()
     await db.refresh(post)
     return {
@@ -357,6 +387,7 @@ async def publish_due(db: AsyncSession) -> dict:
         "checked": len(rows), "published": 0, "failed": 0,
         "retried": 0, "skipped": 0, "errors": [],
     }
+    per_user: dict[str, dict[str, int]] = {}
     for post in rows:
         post_id, user_id = post.id, post.user_id
         held = await _try_post_lock(db, post_id)
@@ -364,14 +395,18 @@ async def publish_due(db: AsyncSession) -> dict:
             totals["skipped"] += 1
             continue
         try:
-            await publish_post(db, user_id, post_id)
+            await publish_post(db, user_id, post_id, notify_user=False)
             totals["published"] += 1
+            per_user.setdefault(user_id, {"published": 0, "failed": 0})
+            per_user[user_id]["published"] += 1
         except Exception as e:
             fresh = await _owned_post(db, user_id, post_id)
             if fresh is not None and fresh.status == "scheduled":
                 totals["retried"] += 1
             else:
                 totals["failed"] += 1
+                per_user.setdefault(user_id, {"published": 0, "failed": 0})
+                per_user[user_id]["failed"] += 1
             totals["errors"].append(f"{post_id[:8]}: {str(e)[:120]}")
             try:
                 await db.rollback()
@@ -379,6 +414,25 @@ async def publish_due(db: AsyncSession) -> dict:
                 pass
         finally:
             await _release_post_lock(db, post_id)
+    # One summary row per active user per pass — never a row per post.
+    for uid, counts in per_user.items():
+        parts = []
+        if counts["published"]:
+            parts.append(f"published {counts['published']}")
+        if counts["failed"]:
+            parts.append(f"{counts['failed']} failed")
+        await notify(
+            db, uid,
+            "post_published" if counts["published"] else "post_failed",
+            f"Scheduled posts: {', '.join(parts)}",
+            None,
+            data={"published": counts["published"], "failed": counts["failed"]},
+            href="/dashboard/posts",
+        )
+    try:
+        await db.commit()
+    except Exception:
+        pass
     return totals
 
 
