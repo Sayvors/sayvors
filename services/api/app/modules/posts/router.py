@@ -69,6 +69,7 @@ async def ai_draft_post(
     db: AsyncSession = Depends(get_db),
 ):
     """AI-draft composer fields (description + tags + keywords) from a title."""
+    import logging as _logging
     import sys
 
     if not sys.modules.get("pytest") and not await rate_limit(f"aidraft:{user.id}", 30, 60):
@@ -80,7 +81,10 @@ async def ai_draft_post(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        # Users see "try again" only. Model names, keys and provider
+        # internals stay in the server log, never in the response.
+        _logging.getLogger(__name__).warning("ai-draft failed for user %s: %s", user.id, e)
+        raise HTTPException(status_code=502, detail="AI drafting failed. Try again.")
     return AiDraftResponse(**result)
 
 

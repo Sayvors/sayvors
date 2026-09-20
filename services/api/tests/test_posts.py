@@ -647,3 +647,68 @@ async def test_ai_draft_garbage_returns_empty_fields(monkeypatch, db, user_id):
     )
     out = await _svc.draft_post_content(db, user_id, "T", "update", None)
     assert out == {"description": "", "tags": [], "keywords": []}
+
+
+@pytest.mark.asyncio
+async def test_ai_draft_empty_content_retried_once_same_model(monkeypatch, db, user_id):
+    """Empty replies get one same-model retry (not a fallback), then a
+    model-free error for the user."""
+    import json as _json
+
+    from app.modules.posts import service as _svc
+
+    calls = {"n": 0}
+
+    class _Resp:
+        def __init__(self, text):
+            self.content = text
+
+    class _Provider:
+        async def complete(self, req):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _Resp("")
+            return _Resp(_json.dumps({"description": "Second try", "tags": [], "keywords": []}))
+
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.get_provider_for_model",
+        lambda mid: _Provider(),
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model",
+        lambda mid: ("api-x", "groq"),
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.list_tenant_models",
+        _custom_tenant_model,
+    )
+    out = await _svc.draft_post_content(db, user_id, "T", "update", None)
+    assert out["description"] == "Second try"
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_ai_draft_empty_twice_raises_without_model_name(monkeypatch, db, user_id):
+    from app.modules.posts import service as _svc
+
+    class _Resp:
+        content = ""
+
+    class _Provider:
+        async def complete(self, req):
+            return _Resp()
+
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.get_provider_for_model",
+        lambda mid: _Provider(),
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model",
+        lambda mid: ("api-x", "groq"),
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.list_tenant_models",
+        _custom_tenant_model,
+    )
+    with pytest.raises(RuntimeError, match="AI drafting returned nothing"):
+        await _svc.draft_post_content(db, user_id, "T", "update", None)

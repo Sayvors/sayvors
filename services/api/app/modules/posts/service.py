@@ -610,8 +610,18 @@ async def draft_post_content(
     try:
         resp = await provider.complete(req)
     except Exception as e:
-        raise RuntimeError(f"AI drafting failed ({model_id}): {e}")
+        logger.warning("Post drafting failed on first attempt: %s", e)
+        raise RuntimeError("AI drafting failed.")
     content = (resp.content or "").strip()
     if not content:
-        raise RuntimeError(f"AI drafting returned nothing ({model_id}).")
+        # Empty replies happen (truncated streams, provider hiccups): one
+        # retry on the SAME model, then give up loudly.
+        logger.warning("Post drafting returned empty content; retrying once")
+        try:
+            resp = await provider.complete(req)
+        except Exception as e:
+            raise RuntimeError("AI drafting failed.")
+        content = (resp.content or "").strip()
+    if not content:
+        raise RuntimeError("AI drafting returned nothing.")
     return _parse_ai_draft(content)

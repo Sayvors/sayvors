@@ -136,7 +136,19 @@ function PostsInner() {
       }
       showBannerTimed("ok", "AI draft ready — edit anything you like.");
     } catch (e) {
-      showBannerTimed("err", e instanceof Error ? e.message.slice(0, 200) : "AI drafting failed.");
+      // Backend sends {"detail": "..."} — show the message, never raw JSON.
+      let msg = "AI drafting failed. Try again.";
+      if (e instanceof Error) {
+        try {
+          const parsed = JSON.parse(e.message) as { detail?: unknown };
+          if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+            msg = parsed.detail.slice(0, 200);
+          }
+        } catch {
+          if (e.message.trim()) msg = e.message.slice(0, 200);
+        }
+      }
+      showBannerTimed("err", msg);
     } finally {
       setAiDrafting(false);
     }
