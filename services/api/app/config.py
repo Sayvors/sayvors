@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # ── File uploads ────────────────────────────────────
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 100
+    # Public media files (photo uploads that go to Google): stored under
+    # UPLOAD_DIR/media and served at <api-origin>/media-files/... so the
+    # provider can fetch them by URL. Mounted on a docker volume so
+    # redeploys never wipe them.
+    MEDIA_DIR: str = "./data/uploads/media"
+    MEDIA_PUBLIC_PATH: str = "/media-files"
+    MEDIA_MAX_MB: int = 25
 
     # ── Channel encryption ────────────────────────────────
     CHANNEL_ENCRYPTION_KEY: str = ""  # Falls back to JWT_SECRET if empty

@@ -91,6 +91,7 @@ function MediaInner() {
   const [uploadType, setUploadType] = useState<MediaType>("PHOTO");
   const [uploadCategory, setUploadCategory] = useState("EXTERIOR");
   const [uploadUrl, setUploadUrl] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadDescription, setUploadDescription] = useState("");
   // How the photo reaches Google. Only "post" is wired (Localith publishes
   // posts carrying image URLs; it offers no gallery upload or profile/cover
@@ -215,12 +216,19 @@ function MediaInner() {
 
   const scheduleValid = !scheduleEnabled || !!scheduledAt;
 
+  const MAX_FILE_MB = 25;
+
   const handleUpload = async () => {
     if (!selectedId) {
       setBanner({ kind: "err", text: "Connect a location first." });
       return;
     }
     if (uploadMode === "url" && !uploadUrl.trim()) return;
+    if (uploadMode === "file" && !uploadFile) return;
+    if (uploadMode === "file" && uploadFile && uploadFile.size > MAX_FILE_MB * 1024 * 1024) {
+      setBanner({ kind: "err", text: `That file is over ${MAX_FILE_MB}MB — pick a smaller one.` });
+      return;
+    }
     if (uploadType === "VIDEO" && scheduleEnabled) {
       setBanner({ kind: "err", text: "Video auto-publishing isn't supported by the provider yet — save videos to the library for now." });
       return;
@@ -231,12 +239,25 @@ function MediaInner() {
     }
     setUploading(true);
     try {
+      // File mode: computer → our server first (public URL), then the same
+      // create flow as URL mode. The provider fetches the photo from that
+      // URL at publish time.
+      let imageUrl = uploadMode === "url" ? uploadUrl.trim() : "";
+      let mediaType = uploadType;
+      if (uploadMode === "file" && uploadFile) {
+        setBanner({ kind: "ok", text: "Uploading file…" });
+        const form = new FormData();
+        form.append("file", uploadFile);
+        const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
+        imageUrl = up.image_url as string;
+        if (up.type === "VIDEO" || up.type === "PHOTO") mediaType = up.type;
+      }
       await apiFetch("/api/v1/media/", {
         method: "POST",
         body: JSON.stringify({
           listing_id: selectedId,
-          image_url: uploadMode === "url" ? uploadUrl.trim() : "",
-          type: uploadType,
+          image_url: imageUrl,
+          type: mediaType,
           category: uploadCategory,
           caption: uploadDescription.trim(),
           action: scheduleEnabled ? "schedule" : "publish",
@@ -247,6 +268,7 @@ function MediaInner() {
       await refreshItems();
       setShowUpload(false);
       setUploadUrl("");
+      setUploadFile(null);
       setUploadDescription("");
       setScheduleEnabled(false);
       setScheduledAt("");
@@ -480,12 +502,28 @@ function MediaInner() {
                 ))}
               </div>
               {uploadMode === "file" ? (
-                <div className="flex flex-col items-center rounded-xl border-2 border-dashed border-ink/[0.12] py-8">
-                  <p className="text-[12px] text-ink/40">Direct file hosting isn&apos;t connected yet</p>
-                  <p className="mt-1 max-w-[26ch] text-center text-[11px] text-ink/30">Paste a hosted image URL instead — it goes live on Google the same way.</p>
-                  <button onClick={() => setUploadMode("url")} className="mt-3 rounded-lg bg-deep-violet/[0.08] px-3 py-1.5 text-[12px] font-semibold text-deep-violet hover:bg-deep-violet/[0.15]">
-                    Use URL instead
-                  </button>
+                <div>
+                  <label className="flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-ink/[0.12] py-8 transition hover:border-deep-violet/40">
+                    <span className="text-[13px] font-semibold text-ink dark:text-fog">
+                      {uploadFile ? uploadFile.name : `Drop ${uploadType === "PHOTO" ? "photo" : "video"} or click to browse`}
+                    </span>
+                    <span className="mt-1 text-[11px] text-ink/40">
+                      {uploadFile
+                        ? `${(uploadFile.size / 1024 / 1024).toFixed(1)}MB — will upload to your Sayvors library`
+                        : `JPG, PNG, WEBP${uploadType === "VIDEO" ? ", MP4" : ""} up to ${MAX_FILE_MB}MB`}
+                    </span>
+                    <input
+                      type="file"
+                      accept={uploadType === "PHOTO" ? "image/jpeg,image/png,image/webp,image/gif" : "video/mp4,video/quicktime"}
+                      className="hidden"
+                      onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                  {uploadFile && (
+                    <button onClick={() => setUploadFile(null)} className="mt-1.5 text-[11px] font-medium text-ink/40 hover:text-ink">
+                      Remove file
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div>
@@ -522,7 +560,7 @@ function MediaInner() {
             </div>
             <div className="flex justify-end gap-2 border-t border-ink/[0.06] px-5 py-3 dark:border-fog/[0.06]">
               <button onClick={() => setShowUpload(false)} className="btn-secondary">Cancel</button>
-              <button onClick={handleUpload} disabled={uploading || uploadMode === "file" || (uploadMode === "url" && !uploadUrl.trim()) || !scheduleValid} className="btn-primary disabled:opacity-50" title={uploadMode === "file" ? "File hosting isn't connected yet — use Add from URL" : !scheduleValid ? "Pick a date and time to schedule" : undefined}>
+              <button onClick={handleUpload} disabled={uploading || (uploadMode === "url" && !uploadUrl.trim()) || (uploadMode === "file" && !uploadFile) || !scheduleValid} className="btn-primary disabled:opacity-50" title={uploadMode === "file" && !uploadFile ? "Choose a file first" : !scheduleValid ? "Pick a date and time to schedule" : undefined}>
                 {uploading ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : scheduleEnabled ? "Schedule photo" : "Publish photo"}
               </button>
             </div>

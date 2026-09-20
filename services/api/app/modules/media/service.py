@@ -7,12 +7,15 @@ advisory locks (double publish impossible), retry-then-park, delete-due.
 """
 import asyncio
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
 from ..localith.models import LocalithConnection
 from ..scheduling import (
     MAX_PUBLISH_ATTEMPTS,
@@ -44,6 +47,55 @@ async def _try_media_lock(db: AsyncSession, media_id: str) -> bool:
 
 async def _release_media_lock(db: AsyncSession, media_id: str) -> None:
     await release_lock(db, _MEDIA_LOCK_PREFIX, media_id)
+
+
+# File uploads from the owner's computer. Stored under MEDIA_DIR (a docker
+# volume, so redeploys never wipe them) and served publicly at
+# <api-origin>/media-files/... — the provider fetches the photo from that
+# URL at publish time, which is why it must be public, not just on disk.
+UPLOAD_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov")
+VIDEO_EXTENSIONS = (".mp4", ".mov")
+
+
+def _media_dir() -> Path:
+    path = Path(settings.MEDIA_DIR)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def detect_media_type(filename: str, content_type: str | None) -> str:
+    name = (filename or "").lower()
+    if name.endswith(VIDEO_EXTENSIONS) or (content_type or "").startswith("video/"):
+        return "VIDEO"
+    return "PHOTO"
+
+
+async def save_upload(
+    user_id: str, filename: str, content_type: str | None, data: bytes, base_url: str
+) -> dict:
+    """Store one uploaded file and return its public URL + detected type."""
+    max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
+    if len(data) > max_bytes:
+        raise ValueError(f"File is too big — max {settings.MEDIA_MAX_MB}MB.")
+    if not data:
+        raise ValueError("Empty file.")
+    ext = Path(filename or "").suffix.lower()
+    if ext not in UPLOAD_EXTENSIONS:
+        raise ValueError("Only JPG, PNG, WEBP, GIF, MP4 or MOV files.")
+    ctype = content_type or ""
+    if ctype and not (ctype.startswith("image/") or ctype.startswith("video/")):
+        raise ValueError("Only image or video files.")
+    stored = f"{uuid.uuid4().hex}{ext}"
+    dest = _media_dir() / user_id / stored
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    public = f"{base_url.rstrip('/')}{settings.MEDIA_PUBLIC_PATH}/{user_id}/{stored}"
+    return {
+        "image_url": public,
+        "type": detect_media_type(filename, content_type),
+        "size": len(data),
+        "content_type": ctype or None,
+    }
 
 
 def _serialize(m: LocationMedia) -> dict:

@@ -211,6 +211,23 @@ app.include_router(csv_router)
 app.include_router(assistant_router)
 app.include_router(notifications_router)
 
+# Public media files: owner uploads that go to Google by URL. Served here
+# (Caddy proxies the whole API host, so this path is public) from a
+# persistent volume — redeploys never wipe them.
+try:
+    import os as _os
+
+    from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+    _os.makedirs(settings.MEDIA_DIR, exist_ok=True)
+    app.mount(
+        settings.MEDIA_PUBLIC_PATH,
+        _StaticFiles(directory=settings.MEDIA_DIR, check_dir=False),
+        name="media-files",
+    )
+except Exception:
+    pass
+
 
 @app.get("/health")
 async def health():

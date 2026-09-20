@@ -11,7 +11,7 @@ DELETE /api/v1/media/{media_id}     delete permanently
 POST   /api/v1/media/{media_id}/publish   publish a draft/scheduled/failed photo now
 POST   /api/v1/media/sync           publish due + delete expired (worker pass on demand)
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
@@ -20,6 +20,33 @@ from . import service
 from .schemas import MediaCreate, MediaOut, MediaPublishResult, MediaSyncResult, MediaUpdate
 
 router = APIRouter(prefix="/api/v1/media", tags=["media"])
+
+
+@router.post("/upload")
+async def upload_media_file(
+    request: Request,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a photo/video from the owner's computer.
+
+    Returns a public URL the provider can fetch at publish time. Files live
+    on a persistent volume; nothing is published yet — call POST / with the
+    returned image_url (or schedule it) afterwards.
+    """
+    _ = db
+    try:
+        data = await file.read()
+        return await service.save_upload(
+            user.id,
+            file.filename or "upload",
+            file.content_type,
+            data,
+            str(request.base_url),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _out(result: dict) -> MediaOut:

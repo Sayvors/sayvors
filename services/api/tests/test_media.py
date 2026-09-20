@@ -198,3 +198,55 @@ async def test_delete_due(db, user_id):
     assert totals == {"checked": 1, "deleted": 1}
     remaining = await media.list_media(db, user_id, "loc-1")
     assert [r["id"] for r in remaining] == ["m-keep"]
+
+
+@pytest.mark.asyncio
+async def test_upload_from_computer_returns_public_url(monkeypatch, tmp_path, db, user_id, client):
+    """Computer → server → public URL → usable as a media row immediately."""
+    from pathlib import Path as _Path
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    r = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("shop.jpg", b"\xff\xd8fake-bytes", "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["image_url"].startswith("http")
+    assert body["image_url"].endswith(".jpg")
+    assert body["type"] == "PHOTO"
+    assert len(list(_Path(tmp_path).rglob("*.jpg"))) == 1
+    # The returned URL flows straight into create (http check passes).
+    res = await media.create_media(db, user_id, _photo_for_upload(body["image_url"]))
+    assert res["media"]["status"] == "draft"
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_bad_files(monkeypatch, tmp_path, client):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    r = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("evil.exe", b"xx", "application/octet-stream")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 400
+    monkeypatch.setattr(settings, "MEDIA_MAX_MB", 1)
+    r = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("big.jpg", b"y" * (2 * 1024 * 1024), "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 400
+
+
+def _photo_for_upload(url: str) -> dict:
+    return {
+        "listing_id": "loc-1", "image_url": url,
+        "type": "PHOTO", "category": "EXTERIOR", "caption": "",
+        "action": "draft", "scheduled_on": None,
+    }
