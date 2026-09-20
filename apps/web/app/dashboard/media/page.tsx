@@ -342,15 +342,15 @@ function MediaInner() {
           {!hideAutopilot && (
             <div className="rounded-2xl border border-deep-violet/15 bg-gradient-to-br from-deep-violet/[0.06] to-transparent p-4 dark:border-deep-violet/25">
               <div className="flex items-start justify-between gap-3">
-                <h3 className="text-[14px] font-bold text-ink dark:text-fog">📸 Put your photos on autopilot</h3>
+                <h3 className="text-[14px] font-bold text-ink dark:text-fog">📸 Let your photos sell while you work</h3>
                 <button onClick={dismissAutopilot} aria-label="Dismiss" className="shrink-0 rounded-md px-1.5 py-0.5 text-[13px] text-ink/30 hover:bg-ink/[0.05] hover:text-ink/60">✕</button>
               </div>
-              <p className="mt-0.5 text-[12px] text-ink/50 dark:text-fog/50">Scheduled photos go live on Google inside posts — the freshness Google rewards, with zero manual work.</p>
+              <p className="mt-0.5 text-[12px] text-ink/50 dark:text-fog/50">Pick a photo and a time — it appears on your Google listing by itself. Nothing to remember.</p>
               <ul className="mt-2.5 space-y-1.5">
                 {[
-                  ["Freshness wins views", "Listings with 10+ recent photos get ~2× engagement — a new photo every week beats a yearly dump."],
-                  ["Weekly drip, no thinking", "Schedule Sunday 9am once — a photo goes live every week while you run the shop."],
-                  ["Offer & event visuals", "Sale and event shots publish with the moment, so the storefront always looks current."],
+                  ["New photos bring more customers", "Listings with 10+ recent photos get about double the views. One new photo a week beats uploading 50 once a year."],
+                  ["Set it once, forget it", "Schedule Sunday 9am and a fresh photo shows on your Google page every week while you run the shop."],
+                  ["Sale photos on time, every time", "Offer and event shots go up with the promotion — not a month later when nobody cares."],
                 ].map(([title, body]) => (
                   <li key={title} className="flex gap-2 text-[12px] leading-relaxed">
                     <span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-deep-violet" />
