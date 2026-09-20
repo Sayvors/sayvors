@@ -206,7 +206,17 @@ def _post(path: str, body: dict, timeout: int = 60) -> dict | list:
         headers={**_HEADERS, "Authorization": f"Bearer {key}"},
         timeout=timeout,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        # Localith returns the useful part (which field, what limit) in
+        # the body — never swallow it into a bare status code, or every
+        # publish failure becomes undebuggable.
+        detail = (resp.text or "").strip().replace("\n", " ")[:500]
+        raise RuntimeError(
+            f"Localith rejected {path} (HTTP {resp.status_code})"
+            + (f": {detail}" if detail else "")
+        ) from e
     return resp.json()
 
 
@@ -222,6 +232,7 @@ def publish_media_post(
     scheduled_on: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    voucher_code: str | None = None,
     extra: dict | None = None,
 ) -> dict:
     """Publish (or schedule) a Google post through Localith.
@@ -256,6 +267,8 @@ def publish_media_post(
         body["startDate"] = start_date
     if end_date:
         body["endDate"] = end_date
+    if voucher_code:
+        body["voucherCode"] = voucher_code
     if extra:
         body.update(extra)
     payload = _post("rest/v1/content_publishing_media", body)

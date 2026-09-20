@@ -41,6 +41,21 @@ class Settings(BaseSettings):
     # ── File uploads ────────────────────────────────────
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 100
+    # Public media files (photo uploads that go to Google): stored under
+    # UPLOAD_DIR/media and served at <api-origin>/media-files/... so the
+    # provider can fetch them by URL. Mounted on a docker volume so
+    # redeploys never wipe them.
+    MEDIA_DIR: str = "./data/uploads/media"
+    MEDIA_PUBLIC_PATH: str = "/media-files"
+    MEDIA_MAX_MB: int = 25
+    # Google Cloud Storage (optional; empty = local disk). Two buckets:
+    #   GCS_PUBLIC_BUCKET  — owner photos/videos (uniform PUBLIC access).
+    #                        The provider fetches media from public URLs.
+    #   GCS_PRIVATE_BUCKET — databank docs/scrapes/exports (private).
+    # Auth is standard: GOOGLE_APPLICATION_CREDENTIALS points at the
+    # service-account JSON (mounted as a secret, never committed).
+    GCS_PUBLIC_BUCKET: str = ""
+    GCS_PRIVATE_BUCKET: str = ""
 
     # ── Channel encryption ────────────────────────────────
     CHANNEL_ENCRYPTION_KEY: str = ""  # Falls back to JWT_SECRET if empty
@@ -85,6 +100,8 @@ class Settings(BaseSettings):
     LOCALITH_SYNC_INTERVAL_SECONDS: int = 60  # 1 min
     # Scheduled-post publisher: how often due posts are pushed to Google.
     POSTS_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
+    # Scheduled-media publisher: how often due photos go live on Google.
+    MEDIA_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
 
     # ── Platform admin (separate password, no user record) ──────
     # Bcrypt hash of the admin password. Empty = admin API disabled.

@@ -93,13 +93,11 @@ async def delete_databank(
     await db.delete(bank)
     await db.commit()
 
-    # Remove uploaded files from disk (best effort — DB is source of truth).
-    try:
-        import shutil
+    # Remove uploaded files from shared storage (best effort — DB is source
+    # of truth). Works for GCS and local alike.
+    from ...core.storage import delete_bank
 
-        shutil.rmtree(os.path.join(settings.UPLOAD_DIR, databank_id), ignore_errors=True)
-    except Exception:
-        pass
+    delete_bank(databank_id)
     return True
 
 
@@ -132,12 +130,10 @@ async def upload_document(
     await db.commit()
     await db.refresh(doc)
 
-    upload_dir = os.path.join(settings.UPLOAD_DIR, databank_id)
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, f"{doc.id}.{ext}")
-    with open(file_path, "wb") as f:
-        f.write(content)
+    # Shared storage (GCS private bucket when configured, else local disk).
+    from ...core.storage import put_doc
 
+    put_doc(databank_id, f"{doc.id}.{ext}", content)
     return doc
 
 
@@ -192,11 +188,12 @@ async def preview_document(
     page_size = min(max(1, page_size), 100)
 
     if (doc.file_type or "").lower() == "csv":
-        file_path = os.path.join(settings.UPLOAD_DIR, databank_id, f"{doc.id}.{doc.file_type}")
-        if not os.path.exists(file_path):
-            raise ValueError("Source file missing from disk")
-        with open(file_path, "rb") as f:
-            content = f.read()
+        from ...core.storage import get_doc
+
+        try:
+            content = get_doc(databank_id, f"{doc.id}.{doc.file_type}")
+        except FileNotFoundError:
+            raise ValueError("Source file missing from storage")
         reader = csv.DictReader(StringIO(content.decode("utf-8", errors="replace")))
         columns = list(reader.fieldnames or [])
         all_rows = [dict(r) for r in reader]
@@ -257,11 +254,10 @@ async def delete_document(doc_id: str, user: User, db: AsyncSession) -> bool:
     await db.delete(doc)
     await db.commit()
 
-    # Remove the uploaded file from disk (best effort).
-    try:
-        os.remove(os.path.join(settings.UPLOAD_DIR, databank_id, f"{doc_id}.{file_type}"))
-    except OSError:
-        pass
+    # Remove the uploaded file from shared storage (best effort).
+    from ...core.storage import delete_doc
+
+    delete_doc(databank_id, f"{doc_id}.{file_type}")
     return True
 
 
@@ -505,13 +501,6 @@ async def _parse_document(doc: Document) -> str:
     from .parsers.sql import parse_sql
     from .parsers.text import parse_text
 
-    file_path = os.path.join(settings.UPLOAD_DIR, doc.databank_id, f"{doc.id}.{doc.file_type}")
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Document file not found: {file_path}")
-
-    with open(file_path, "rb") as f:
-        content = f.read()
-
     parsers = {
         "pdf": parse_pdf,
         "docx": parse_docx,
@@ -524,6 +513,13 @@ async def _parse_document(doc: Document) -> str:
     parser = parsers.get(doc.file_type)
     if not parser:
         raise ValueError(f"No parser for file type: {doc.file_type}")
+
+    from ...core.storage import get_doc
+
+    try:
+        content = get_doc(doc.databank_id, f"{doc.id}.{doc.file_type}")
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Document file not found: {doc.id}.{doc.file_type}")
 
     return await parser(content)
 
@@ -708,9 +704,8 @@ async def ingest_query_results(
     await db.commit()
     await db.refresh(doc)
 
-    upload_dir = os.path.join(settings.UPLOAD_DIR, source.databank_id)
-    os.makedirs(upload_dir, exist_ok=True)
-    with open(os.path.join(upload_dir, f"{doc.id}.csv"), "wb") as f:
-        f.write(content)
+    from ...core.storage import put_doc
+
+    put_doc(source.databank_id, f"{doc.id}.csv", content)
 
     return doc

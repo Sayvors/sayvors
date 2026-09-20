@@ -43,23 +43,27 @@ class _GroqProvider:
 
 
 @pytest.mark.asyncio
-async def test_falls_back_to_groq_when_configured_model_dead(monkeypatch):
+async def test_dead_model_fails_loudly_without_fallback(monkeypatch):
+    """No model fallbacks: a dead configured model raises (single attempt)
+    so the admin fixes the key instead of silently switching providers."""
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
-    groq = _GroqProvider()
+    calls = []
 
-    def _fake_get(model_id):
-        if model_id == "groq:openai/gpt-oss-120b":
-            return groq
-        return _DeadProvider()
+    class _DeadCountingProvider:
+        async def complete(self, req):
+            calls.append(req.model)
+            raise ProviderError("openai", "API key not configured", 503)
 
-    monkeypatch.setattr(review_reply, "get_provider_for_model", _fake_get)
+    monkeypatch.setattr(
+        review_reply, "get_provider_for_model", lambda mid: _DeadCountingProvider()
+    )
     config = SimpleNamespace(model="openai:gpt-4o-mini", tone="friendly",
                              databank_id=None, custom_instructions=None)
-    text = await review_reply.generate_review_reply(
-        config, 5, "Loved it", "Sara", _FakeDB()
-    )
-    assert text == "Thank you for the great review!"
-    assert groq.models_seen == ["openai/gpt-oss-120b"]
+    with pytest.raises(ProviderError):
+        await review_reply.generate_review_reply(
+            config, 5, "Loved it", "Sara", _FakeDB()
+        )
+    assert len(calls) == 1
 
 
 @pytest.mark.asyncio

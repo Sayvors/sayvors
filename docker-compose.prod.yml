@@ -38,6 +38,10 @@ services:
       kafka:
         condition: service_healthy
     mem_limit: 768m
+    volumes:
+      # Uploaded files (media photos for Google, databank docs) live here —
+      # without this volume every redeploy would wipe them.
+      - uploadsdata:/app/data/uploads
 
   redis:
     image: redis:7-alpine
@@ -84,3 +88,4 @@ volumes:
   caddy_config:
   redisdata:
   kafkadata:
+  uploadsdata:

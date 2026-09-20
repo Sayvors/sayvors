@@ -113,13 +113,15 @@ async def _csv_direct_search(
             q_terms = [query.lower()]
 
         hits: list[dict] = []
+        from ...core.storage import get_doc
+
         for doc in docs:
-            path = os.path.join(settings.UPLOAD_DIR, doc.databank_id, f"{doc.id}.{doc.file_type}")
-            if not os.path.exists(path):
+            try:
+                content = get_doc(doc.databank_id, f"{doc.id}.{doc.file_type}")
+            except FileNotFoundError:
                 continue
             try:
-                with open(path, "rb") as f:
-                    text = f.read().decode("utf-8", errors="replace").replace("\ufeff", "")
+                text = content.decode("utf-8", errors="replace").replace("\ufeff", "")
                 reader = csv.DictReader(StringIO(text))
                 for row in reader:
                     rt = (row.get("record_type") or "").strip().lower()

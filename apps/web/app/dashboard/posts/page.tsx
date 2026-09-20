@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
@@ -33,6 +34,16 @@ interface PostItem {
   scheduledAt?: string;
   // Auto-deletion time (ISO). Absent = no scheduled deletion.
   deleteAt?: string;
+  // Why the last publish attempt failed (backend stores it on failure).
+  error?: string;
+  // Google post type + type-specific fields (absent = update defaults).
+  post_type?: string;
+  start_date?: string;
+  end_date?: string;
+  coupon_code?: string;
+  terms_conditions?: string;
+  cta_type?: string | null;
+  cta_url?: string | null;
 }
 
 interface LocationOption {
@@ -73,7 +84,17 @@ function PostsInner() {
   // even with a single branch.
   const [selectedLocIds, setSelectedLocIds] = useState<string[]>([]);
   const [businessName, setBusinessName] = useState("");
+  // Google post type. Drives which fields Google accepts: updates take
+  // text+images+button; offers add coupon/redeem/terms/end; events need a
+  // title plus start/end date & time.
+  const [postType, setPostType] = useState<"update" | "offer" | "event">("update");
   const [description, setDescription] = useState("");
+  const [eventStart, setEventStart] = useState("");
+  const [eventEnd, setEventEnd] = useState("");
+  const [coupon, setCoupon] = useState("");
+  const [terms, setTerms] = useState("");
+  const [ctaType, setCtaType] = useState("");
+  const [ctaUrl, setCtaUrl] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [keywords, setKeywords] = useState<string[]>([]);
@@ -88,6 +109,50 @@ function PostsInner() {
   // ISO string = pending schedule, null = pending cancel.
   const [deleteOverlay, setDeleteOverlay] = useState<Record<string, string | null>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [aiDrafting, setAiDrafting] = useState(false);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+
+  const handleAiDraft = async () => {
+    if (!title.trim()) {
+      showBannerTimed("err", "Add a title first — the AI writes from it.");
+      return;
+    }
+    setAiDrafting(true);
+    try {
+      const r = await apiFetch("/api/v1/posts/ai-draft", {
+        method: "POST",
+        body: JSON.stringify({
+          title: title.trim(),
+          post_type: postType,
+          business_name: businessName.trim() || undefined,
+        }),
+      });
+      if (typeof r.description === "string" && r.description) setDescription(r.description);
+      if (Array.isArray(r.tags) && r.tags.length > 0) {
+        setTags((prev) => [...prev, ...r.tags.filter((t: unknown) => typeof t === "string" && !(prev as string[]).includes(t as string))].slice(0, 20));
+      }
+      if (Array.isArray(r.keywords) && r.keywords.length > 0) {
+        setKeywords((prev) => [...prev, ...r.keywords.filter((k: unknown) => typeof k === "string" && !(prev as string[]).includes(k as string))].slice(0, 20));
+      }
+      showBannerTimed("ok", "AI draft ready — edit anything you like.");
+    } catch (e) {
+      // Backend sends {"detail": "..."} — show the message, never raw JSON.
+      let msg = "AI drafting failed. Try again.";
+      if (e instanceof Error) {
+        try {
+          const parsed = JSON.parse(e.message) as { detail?: unknown };
+          if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+            msg = parsed.detail.slice(0, 200);
+          }
+        } catch {
+          if (e.message.trim()) msg = e.message.slice(0, 200);
+        }
+      }
+      showBannerTimed("err", msg);
+    } finally {
+      setAiDrafting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +222,7 @@ function PostsInner() {
   }), [posts]);
 
   const filtered = posts.filter((p) => {
+    if (tagFilter && !p.tags.includes(tagFilter)) return false;
     if (tab === "scheduled") return p.status === "SCHEDULED";
     if (tab === "archived") return p.status === "ARCHIVED";
     return p.status === "LIVE" || p.status === "FAILED" || p.status === "DRAFT";
@@ -170,7 +236,14 @@ function PostsInner() {
     setPostLocationId(first);
     setSelectedLocIds(first ? [first] : []);
     setBusinessName("Sayvors");
+    setPostType("update");
     setDescription("");
+    setEventStart("");
+    setEventEnd("");
+    setCoupon("");
+    setTerms("");
+    setCtaType("");
+    setCtaUrl("");
     setTags([]);
     setTagInput("");
     setKeywords([]);
@@ -202,7 +275,14 @@ function PostsInner() {
     setPostLocationId(p.locationId);
     setSelectedLocIds(p.locationId ? [p.locationId] : []);
     setBusinessName(p.businessName);
+    setPostType(p.post_type === "offer" || p.post_type === "event" ? p.post_type : "update");
     setDescription(p.description);
+    setEventStart((p.start_date ?? "").slice(0, 16));
+    setEventEnd((p.end_date ?? "").slice(0, 16));
+    setCoupon(p.coupon_code ?? "");
+    setTerms(p.terms_conditions ?? "");
+    setCtaType(p.cta_type ?? "");
+    setCtaUrl(p.cta_url ?? "");
     setTags(p.tags);
     setKeywords(p.keywords);
     setImages(p.images);
@@ -244,7 +324,18 @@ function PostsInner() {
   const targetIds = view.kind === "create"
     ? selectedLocIds.filter(Boolean)
     : [postLocationId];
-  const valid = title.trim() && businessName.trim() && description.trim() && targetIds.length > 0 && targetIds.every(Boolean) && (!scheduleEnabled || scheduledAt) && !deleteErr;
+  // Per-type rules mirror Google: events need start + end date & time.
+  const typeErr = (() => {
+    if (postType !== "event") return null;
+    if (!eventStart) return "Events need a start date and time.";
+    if (!eventEnd) return "Events need an end date and time.";
+    const s = new Date(eventStart).getTime();
+    const e = new Date(eventEnd).getTime();
+    if (Number.isNaN(s) || Number.isNaN(e)) return "Pick valid event dates.";
+    if (e <= s) return "Event end must be after its start.";
+    return null;
+  })();
+  const valid = title.trim() && businessName.trim() && description.trim() && targetIds.length > 0 && targetIds.every(Boolean) && (!scheduleEnabled || scheduledAt) && !deleteErr && !typeErr;
 
   const showBannerTimed = (kind: "ok" | "err", text: string) => {
     setBanner({ kind, text });
@@ -281,7 +372,14 @@ function PostsInner() {
               location_name: locations.find((l) => l.id === lid)?.name ?? "",
               business_name: businessName.trim(),
               title: title.trim(),
+              post_type: postType,
               description: description.trim(),
+              start_date: postType === "event" && eventStart ? new Date(eventStart).toISOString() : null,
+              end_date: (postType === "event" || postType === "offer") && eventEnd ? new Date(eventEnd).toISOString() : null,
+              coupon_code: postType === "offer" && coupon.trim() ? coupon.trim() : null,
+              terms_conditions: postType === "offer" && terms.trim() ? terms.trim() : null,
+              cta_type: ctaType || null,
+              cta_url: ctaUrl.trim() || null,
               tags,
               keywords,
               image_urls: images,
@@ -331,7 +429,14 @@ function PostsInner() {
         location_name: locations.find((l) => l.id === postLocationId)?.name ?? "",
         business_name: businessName.trim(),
         title: title.trim(),
+        post_type: postType,
         description: description.trim(),
+        start_date: postType === "event" && eventStart ? new Date(eventStart).toISOString() : null,
+        end_date: (postType === "event" || postType === "offer") && eventEnd ? new Date(eventEnd).toISOString() : null,
+        coupon_code: postType === "offer" && coupon.trim() ? coupon.trim() : null,
+        terms_conditions: postType === "offer" && terms.trim() ? terms.trim() : null,
+        cta_type: ctaType || null,
+        cta_url: ctaUrl.trim() || null,
         tags,
         keywords,
         image_urls: images,
@@ -502,6 +607,12 @@ function PostsInner() {
                 ))}
               </div>
 
+              {tagFilter && (
+                <div className="flex items-center gap-2 rounded-xl bg-deep-violet/[0.06] px-3 py-2 text-[12px]">
+                  <span className="text-ink/50">Filtered by <strong className="font-semibold text-deep-violet">#{tagFilter}</strong></span>
+                  <button onClick={() => setTagFilter(null)} className="ml-auto font-semibold text-deep-violet hover:underline">Clear ✕</button>
+                </div>
+              )}
               {filtered.length === 0 ? (
                 <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
                   <p className="text-[14px] font-medium text-ink/40 dark:text-fog/40">
@@ -517,18 +628,41 @@ function PostsInner() {
               ) : (
                 <div className="space-y-2">
                   {filtered.map((p) => (
-                    <button key={p.id} onClick={() => openDetail(p.id, false)} className="block w-full rounded-2xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/25 hover:shadow-sm dark:border-fog/[0.06] dark:bg-ink">
+                    <div
+                      key={p.id}
+                      role="link"
+                      tabIndex={0}
+                      aria-label={`Open post ${p.title}`}
+                      onClick={() => openDetail(p.id, false)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(p.id, false); } }}
+                      className="block w-full cursor-pointer rounded-2xl border border-ink/[0.06] bg-white p-4 text-left outline-none transition hover:border-deep-violet/25 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-fog/[0.06] dark:bg-ink"
+                    >
                       <span className="flex items-start justify-between gap-3">
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[14px] font-bold text-ink dark:text-fog">{p.title}</span>
                           <span className="mt-0.5 block text-[11px] text-ink/40 dark:text-fog/40">{p.businessName} · {p.locationName}</span>
                         </span>
-                        <StatusBadge status={p.status} />
+                        <span className="flex shrink-0 flex-col items-end gap-1">
+                          <StatusBadge status={p.status} />
+                          {(p.post_type === "offer" || p.post_type === "event") && (
+                            <span className="rounded-full bg-sky-100 px-2 py-px text-[9px] font-bold uppercase tracking-wide text-sky-700">
+                              {p.post_type}
+                            </span>
+                          )}
+                        </span>
                       </span>
                       <span className="mt-2 line-clamp-2 block text-[13px] leading-relaxed text-ink/70 dark:text-fog/70">{p.description}</span>
                       <span className="mt-2 flex flex-wrap items-center gap-1.5">
                         {p.tags.slice(0, 3).map((t) => (
-                          <span key={t} className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet">#{t}</span>
+                          <button
+                            key={t}
+                            type="button"
+                            title={`Filter by #${t}`}
+                            onClick={(e) => { e.stopPropagation(); setTagFilter(t); }}
+                            className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/20 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                          >
+                            #{t}
+                          </button>
                         ))}
                         {p.images.length > 0 && (
                           <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06]">📷 {p.images.length}</span>
@@ -542,7 +676,7 @@ function PostsInner() {
                           </span>
                         )}
                       </span>
-                    </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -555,7 +689,15 @@ function PostsInner() {
               postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
               multi selectedIds={selectedLocIds} onToggleLoc={toggleCreateLoc} onSelectAll={selectAllCreateLocs}
               businessName={businessName} setBusinessName={setBusinessName}
+              postType={postType} setPostType={setPostType}
               description={description} setDescription={setDescription}
+              eventStart={eventStart} setEventStart={setEventStart}
+              eventEnd={eventEnd} setEventEnd={setEventEnd}
+              coupon={coupon} setCoupon={setCoupon}
+              terms={terms} setTerms={setTerms}
+              ctaType={ctaType} setCtaType={setCtaType}
+              ctaUrl={ctaUrl} setCtaUrl={setCtaUrl}
+              typeErr={typeErr}
               tags={tags} tagInput={tagInput} setTagInput={setTagInput}
               onAddTag={() => { addChip(tagInput, tags, setTags); setTagInput(""); }}
               onRemoveTag={(t) => setTags(tags.filter((x) => x !== t))}
@@ -569,6 +711,7 @@ function PostsInner() {
               deleteAt={deleteAt} setDeleteAt={setDeleteAt}
               deleteErr={deleteErr}
               valid={!!valid}
+              aiDrafting={aiDrafting} canAiDraft={!!title.trim()} onAiDraft={() => void handleAiDraft()}
               onBack={backToList} onSubmit={handleCreate} submitting={submitting}
               submitLabel={
                 selectedLocIds.length > 1
@@ -589,7 +732,15 @@ function PostsInner() {
                   postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
                   multi={false} selectedIds={[]} onToggleLoc={() => {}} onSelectAll={() => {}}
                   businessName={businessName} setBusinessName={setBusinessName}
+                  postType={postType} setPostType={setPostType}
                   description={description} setDescription={setDescription}
+                  eventStart={eventStart} setEventStart={setEventStart}
+                  eventEnd={eventEnd} setEventEnd={setEventEnd}
+                  coupon={coupon} setCoupon={setCoupon}
+                  terms={terms} setTerms={setTerms}
+                  ctaType={ctaType} setCtaType={setCtaType}
+                  ctaUrl={ctaUrl} setCtaUrl={setCtaUrl}
+                  typeErr={typeErr}
                   tags={tags} tagInput={tagInput} setTagInput={setTagInput}
                   onAddTag={() => { addChip(tagInput, tags, setTags); setTagInput(""); }}
                   onRemoveTag={(t) => setTags(tags.filter((x) => x !== t))}
@@ -603,6 +754,7 @@ function PostsInner() {
                   deleteAt={deleteAt} setDeleteAt={setDeleteAt}
                   deleteErr={deleteErr}
                   valid={!!valid}
+                  aiDrafting={aiDrafting} canAiDraft={!!title.trim()} onAiDraft={() => void handleAiDraft()}
                   onBack={() => openDetail(activePost.id, false)} onSubmit={handleUpdate} submitting={submitting}
                   submitLabel="Save Changes" heading="Edit post" subheading="Update every field, then save."
                 />
@@ -623,9 +775,35 @@ function PostsInner() {
                         <h2 className="text-[17px] font-bold text-ink dark:text-fog">{activePost.title}</h2>
                         <p className="mt-0.5 text-[12px] text-ink/40 dark:text-fog/40">{activePost.businessName} · {activePost.locationName}</p>
                       </div>
-                      <StatusBadge status={activePost.status} />
+                      <div className="flex shrink-0 flex-col items-end gap-1.5">
+                        <StatusBadge status={activePost.status} />
+                        {(activePost.post_type === "offer" || activePost.post_type === "event") && (
+                          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">
+                            {activePost.post_type}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <p className="mt-3 text-[13px] leading-relaxed text-ink/80 dark:text-fog/80">{activePost.description}</p>
+                    {(activePost.start_date || activePost.end_date) && (
+                      <p className="mt-2 text-[12px] font-medium text-ink/60 dark:text-fog/60">
+                        📅 {activePost.start_date ? new Date(activePost.start_date).toLocaleString() : "…"}
+                        {activePost.end_date ? ` → ${new Date(activePost.end_date).toLocaleString()}` : ""}
+                      </p>
+                    )}
+                    {activePost.coupon_code && (
+                      <p className="mt-2 inline-block rounded-lg border border-dashed border-deep-violet/40 bg-deep-violet/[0.05] px-2.5 py-1 text-[12px] font-bold text-deep-violet">
+                        🎟 {activePost.coupon_code}
+                      </p>
+                    )}
+                    {activePost.terms_conditions && (
+                      <p className="mt-2 text-[11px] leading-relaxed text-ink/45 dark:text-fog/45">Terms: {activePost.terms_conditions}</p>
+                    )}
+                    {activePost.cta_url && (
+                      <a href={activePost.cta_url} target="_blank" rel="noreferrer" className="mt-2 inline-block rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white hover:opacity-90">
+                        {activePost.cta_type ? activePost.cta_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Learn more"} ↗
+                      </a>
+                    )}
                     {activePost.tags.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {activePost.tags.map((t) => (
@@ -647,6 +825,12 @@ function PostsInner() {
                           Cancel deletion
                         </button>
                       </p>
+                    )}
+                    {activePost.status === "FAILED" && activePost.error && (
+                      <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 dark:border-red-500/20 dark:bg-red-500/10">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-red-600 dark:text-red-300">Why publishing failed</p>
+                        <p className="mt-1 break-words text-[12px] leading-relaxed text-red-700 dark:text-red-200">{activePost.error}</p>
+                      </div>
                     )}
                     <div className="mt-4 flex flex-wrap gap-2 border-t border-ink/[0.05] pt-4">
                       {activePost.status !== "ARCHIVED" && (
@@ -716,6 +900,14 @@ function normalizePosts(raw: unknown, deleteOverlay?: Record<string, string | nu
       createdAt: String(p.created_at ?? p.createdAt ?? new Date().toISOString().slice(0, 10)).slice(0, 10),
       scheduledAt: p.scheduled_on ? String(p.scheduled_on) : p.scheduledAt ? String(p.scheduledAt) : undefined,
       deleteAt: backendDelete ?? overlayDelete ?? undefined,
+      error: typeof p.error === "string" && p.error ? p.error : undefined,
+      post_type: typeof p.post_type === "string" ? p.post_type : "update",
+      start_date: p.start_date ? String(p.start_date) : undefined,
+      end_date: p.end_date ? String(p.end_date) : undefined,
+      coupon_code: typeof p.coupon_code === "string" ? p.coupon_code : undefined,
+      terms_conditions: typeof p.terms_conditions === "string" ? p.terms_conditions : undefined,
+      cta_type: typeof p.cta_type === "string" ? p.cta_type : undefined,
+      cta_url: typeof p.cta_url === "string" ? p.cta_url : undefined,
     };
   });
 }
@@ -791,7 +983,15 @@ function PostForm(props: {
   postLocationId: string; setPostLocationId: (v: string) => void; locations: LocationOption[];
   multi: boolean; selectedIds: string[]; onToggleLoc: (id: string) => void; onSelectAll: () => void;
   businessName: string; setBusinessName: (v: string) => void;
+  postType: "update" | "offer" | "event"; setPostType: (v: "update" | "offer" | "event") => void;
   description: string; setDescription: (v: string) => void;
+  eventStart: string; setEventStart: (v: string) => void;
+  eventEnd: string; setEventEnd: (v: string) => void;
+  coupon: string; setCoupon: (v: string) => void;
+  terms: string; setTerms: (v: string) => void;
+  ctaType: string; setCtaType: (v: string) => void;
+  ctaUrl: string; setCtaUrl: (v: string) => void;
+  typeErr: string | null;
   tags: string[]; tagInput: string; setTagInput: (v: string) => void; onAddTag: () => void; onRemoveTag: (t: string) => void;
   keywords: string[]; keywordInput: string; setKeywordInput: (v: string) => void; onAddKeyword: () => void; onRemoveKeyword: (k: string) => void;
   images: string[]; onFiles: (f: FileList | null) => void; onRemoveImage: (n: string) => void;
@@ -801,6 +1001,7 @@ function PostForm(props: {
   deleteAt: string; setDeleteAt: (v: string) => void;
   deleteErr: string | null;
   valid: boolean;
+  aiDrafting: boolean; canAiDraft: boolean; onAiDraft: () => void;
   onBack: () => void; onSubmit: () => void; submitting: boolean;
   submitLabel: string; heading: string; subheading: string;
 }) {
@@ -813,6 +1014,29 @@ function PostForm(props: {
         <div>
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Title *</label>
           <input value={p.title} onChange={(e) => p.setTitle(e.target.value)} placeholder="e.g. Weekend Offer — 20% Off" className="input-field" autoFocus />
+        </div>
+        <div>
+          <label className="mb-1 block text-[12px] font-medium text-ink/50">Post type *</label>
+          <div className="flex rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]" role="radiogroup" aria-label="Post type">
+            {([
+              { key: "update", label: "Update", hint: "News & announcements" },
+              { key: "offer", label: "Offer", hint: "Deals with coupon & end date" },
+              { key: "event", label: "Event", hint: "Dated happening" },
+            ] as const).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="radio"
+                aria-checked={p.postType === t.key}
+                onClick={() => p.setPostType(t.key)}
+                title={t.hint}
+                className={`flex-1 rounded-lg px-2 py-2 text-center outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${p.postType === t.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"}`}
+              >
+                <span className="block text-[12px] font-semibold">{t.label}</span>
+                <span className="block text-[10px] opacity-70">{t.hint}</span>
+              </button>
+            ))}
+          </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -836,10 +1060,85 @@ function PostForm(props: {
           </div>
         </div>
         <div>
-          <label className="mb-1 block text-[12px] font-medium text-ink/50">Description *</label>
-          <textarea value={p.description} onChange={(e) => p.setDescription(e.target.value)} rows={4} maxLength={1500} placeholder="Full post text customers will see..." className="input-field resize-y" />
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label className="block text-[12px] font-medium text-ink/50">Description *</label>
+            <button
+              type="button"
+              onClick={() => p.onAiDraft()}
+              disabled={p.aiDrafting || !p.canAiDraft}
+              title="Sayvors AI writes the description, tags and keywords from your title"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-deep-violet/[0.08] px-2.5 py-1 text-[11px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+            >
+              {p.aiDrafting ? (
+                <LogoLoader size={14} />
+              ) : (
+                <Image src="/Sayvors_Icon.png" alt="" width={14} height={14} className="rounded-[4px]" />
+              )}
+              {p.aiDrafting ? "Writing…" : "Generate with AI"}
+            </button>
+          </div>
+          <textarea value={p.description} onChange={(e) => p.setDescription(e.target.value)} rows={4} maxLength={1500} placeholder="Full post text customers will see... — or generate it with AI" className="input-field resize-y" />
         </div>
-        <div>
+        {p.postType === "event" && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-[12px] font-medium text-ink/50">Event start *</label>
+              <input type="datetime-local" value={p.eventStart} onChange={(e) => p.setEventStart(e.target.value)} className="input-field" />
+            </div>
+            <div>
+              <label className="mb-1 block text-[12px] font-medium text-ink/50">Event end *</label>
+              <input type="datetime-local" value={p.eventEnd} onChange={(e) => p.setEventEnd(e.target.value)} className="input-field" />
+            </div>
+          </div>
+        )}
+        {p.postType === "offer" && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-[12px] font-medium text-ink/50">Coupon code</label>
+                <input value={p.coupon} onChange={(e) => p.setCoupon(e.target.value)} maxLength={64} placeholder="e.g. SAVE20" className="input-field" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[12px] font-medium text-ink/50">Offer end</label>
+                <input type="datetime-local" value={p.eventEnd} onChange={(e) => p.setEventEnd(e.target.value)} className="input-field" />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[12px] font-medium text-ink/50">Terms &amp; conditions</label>
+              <textarea value={p.terms} onChange={(e) => p.setTerms(e.target.value)} rows={2} maxLength={2000} placeholder="e.g. Valid till month end, dine-in only…" className="input-field resize-y" />
+              <p className="mt-1 text-[10px] text-ink/35 dark:text-fog/35">Shown under the post text on Google.</p>
+            </div>
+          </>
+        )}
+        {p.typeErr && (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-[11px] font-medium text-red-700">{p.typeErr}</p>
+        )}
+        <div className="rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
+          <p className="text-[12px] font-semibold text-ink dark:text-fog">Call-to-action button</p>
+          <p className="text-[11px] text-ink/40">The button Google shows under your post.</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-ink/50">Button action</label>
+              <select value={p.ctaType} onChange={(e) => p.setCtaType(e.target.value)} className="input-field" aria-label="Button action">
+                <option value="">No button</option>
+                <option value="book">Book</option>
+                <option value="order">Order</option>
+                <option value="shop">Shop</option>
+                <option value="learn_more">Learn more</option>
+                <option value="sign_up">Sign up</option>
+                <option value="call">Call</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-ink/50">{p.postType === "offer" ? "Redeem URL" : "Button URL"}</label>
+              <input value={p.ctaUrl} onChange={(e) => p.setCtaUrl(e.target.value)} placeholder="https://…" className="input-field" inputMode="url" />
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-dashed border-ink/[0.1] p-3 dark:border-fog/[0.1]">
+          <p className="text-[12px] font-semibold text-ink dark:text-fog">🏷️ Organize</p>
+          <p className="text-[11px] text-ink/40">Private labels to find your posts — only you see them. Tap any tag to filter the list.</p>
+          <div className="mt-3">
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Tags</label>
           <div className="flex flex-wrap gap-1.5">
             {p.tags.map((t) => (
@@ -867,6 +1166,7 @@ function PostForm(props: {
           <div className="mt-2 flex gap-2">
             <input value={p.keywordInput} onChange={(e) => p.setKeywordInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && p.onAddKeyword()} placeholder="Add keyword + Enter" className="input-field flex-1" />
             <button onClick={p.onAddKeyword} className="btn-secondary">Add</button>
+          </div>
           </div>
         </div>
         <div>

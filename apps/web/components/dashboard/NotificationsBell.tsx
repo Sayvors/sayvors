@@ -31,6 +31,12 @@ const TYPE_META: Record<string, { icon: string; tint: string }> = {
   reply_posted: { icon: "✓", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
   reply_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
   review_edited: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300" },
+  post_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300" },
+  post_published: { icon: "📝", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
+  post_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
+  media_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300" },
+  media_published: { icon: "📸", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
+  media_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
 };
 
 function timeAgo(iso: string): string {
@@ -73,7 +79,8 @@ export default function NotificationsBell() {
 
   const maybeFirePills = useCallback(
     (list: BellNotification[]) => {
-      // Reminder pills surface ONLY new pulled reviews / failed replies.
+      // Reminder pills surface ONLY failures and fresh arrivals needing
+      // action — everything else lives quietly in this dropdown.
       const fresh = list
         .filter((n) => !n.read_at && !seenIds().has(n.id) && pillKindFor(n.type) !== null)
         .slice(-3);
@@ -93,7 +100,7 @@ export default function NotificationsBell() {
       const before = prevUnreadRef.current;
       prevUnreadRef.current = r.unread;
       setUnread(r.unread);
-      // Count rose → fetch the newcomers; pills fire for pulled/failed only.
+      // Count rose → fetch the newcomers; pills fire for failures only.
       if (r.unread > before) {
         try {
           const list = await apiFetch("/api/v1/notifications?limit=10");
@@ -173,7 +180,7 @@ export default function NotificationsBell() {
         /* badge corrected on next poll */
       }
     }
-    router.push("/dashboard/notifications");
+    router.push(n.href ?? "/dashboard/notifications");
   }
 
   return (
@@ -222,7 +229,7 @@ export default function NotificationsBell() {
               <p className="px-3.5 py-6 text-center text-[12px] text-ink/40 dark:text-fog/40">Loading…</p>
             ) : items.length === 0 ? (
               <p className="px-3.5 py-6 text-center text-[12px] text-ink/40 dark:text-fog/40">
-                Nothing yet — new reviews, syncs and replies will show up here.
+                Nothing yet — new reviews, syncs, replies, posts and photos will show up here.
               </p>
             ) : (
               items.map((n) => {

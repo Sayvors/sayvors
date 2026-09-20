@@ -99,6 +99,16 @@ export default function BenchmarkPage() {
     return branches.reduce((s, b) => s + focusValue(b, focus), 0) / branches.length;
   }, [branches, focus]);
 
+  const portfolio = benchmark ? {
+    health: benchmark.portfolio_health_score,
+    actionRate: benchmark.portfolio_action_rate,
+    velocity: benchmark.portfolio_velocity_per_month,
+    impressions: benchmark.portfolio_impressions,
+    actions: benchmark.portfolio_actions,
+    plain: benchmark.plain_summary,
+    dist: benchmark.distribution,
+  } : null;
+
   return (
     <div className="h-full overflow-y-auto bg-[#f3f0ff] p-4 sm:p-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
@@ -134,6 +144,50 @@ export default function BenchmarkPage() {
         </div>
       ) : (
         <div className="space-y-3">
+          {/* Portfolio health strip — the 4 numbers owners check first */}
+          {portfolio && benchmark && (
+            <section aria-label="Portfolio health" className="grid gap-2.5 sm:grid-cols-4">
+              <div className="rounded-2xl border-2 border-white bg-gradient-to-br from-deep-violet to-[#5b3bb0] p-4 text-white shadow-sm">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-white/70">Health score</p>
+                <p className="mt-1 text-[28px] font-black leading-none">{portfolio.health ?? "—"}<span className="text-[14px] font-bold text-white/70">/100</span></p>
+                <p className="mt-1 text-[11px] leading-tight text-white/75">
+                  {portfolio.health != null ? (portfolio.health >= 80 ? "Strong — keep the lead" : portfolio.health >= 60 ? "Solid — close the gaps" : "Needs work — see below") : "—"}
+                </p>
+              </div>
+              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-ink/40">Action rate</p>
+                <p className="mt-1 text-[22px] font-black leading-none text-ink">
+                  {portfolio.actionRate != null ? `${portfolio.actionRate.toFixed(1)}%` : "—"}
+                </p>
+                <p className="mt-1 text-[11px] leading-tight text-ink/55">
+                  {portfolio.impressions != null && portfolio.impressions > 0
+                    ? `${portfolio.actions} actions from ${portfolio.impressions.toLocaleString()} views · ${portfolio.actionRate != null && portfolio.actionRate < 5 ? "views not turning into calls" : portfolio.actionRate != null && portfolio.actionRate >= 8 ? "converting well" : "average" }`
+                    : "Need location views data"}
+                </p>
+              </div>
+              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-ink/40">Velocity</p>
+                <p className="mt-1 text-[22px] font-black leading-none text-ink">
+                  {portfolio.velocity != null ? `${portfolio.velocity}` : "—"}<span className="text-[13px] font-bold text-ink/40">/mo</span>
+                </p>
+                <p className="mt-1 text-[11px] leading-tight text-ink/55">Reviews per month · last {benchmark.days}d pace</p>
+              </div>
+              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-ink/40">Response rate</p>
+                <p className="mt-1 text-[22px] font-black leading-none text-ink">{(benchmark.current_response_rate ?? 0).toFixed(0)}%</p>
+                <p className="mt-1 text-[11px] leading-tight text-ink/55">{benchmark.current_response_rate < 70 ? "Lift this to protect reputation" : benchmark.current_response_rate >= 90 ? "Excellent — answering everyone" : "Good — aim for 90%+"}</p>
+              </div>
+            </section>
+          )}
+
+          {/* Plain-English AI summary — replaces industry estimate as primary insight */}
+          {portfolio?.plain && (
+            <section aria-label="Summary" className="rounded-2xl border border-deep-violet/10 bg-white p-4 shadow-sm">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-deep-violet">In plain English</p>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-ink/75">{portfolio.plain}</p>
+            </section>
+          )}
+
           {/* Metric focus filter */}
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison metric">
             {(Object.keys(FOCUS_META) as MetricFocus[]).map((f) => (
@@ -190,6 +244,32 @@ export default function BenchmarkPage() {
               {branches.length} of {benchmark?.branches.length ?? 0} shown
             </span>
           </div>
+
+          {/* Distribution strip — variance at a glance */}
+          {portfolio?.dist && benchmark!.branches.length > 1 && (
+            <section aria-label="Distribution" className="flex flex-wrap gap-2 rounded-2xl border border-white bg-white/60 p-3 text-[11px] backdrop-blur-sm">
+              {(() => {
+                const d = portfolio.dist as Record<string, { best: number; median: number; worst: number; gap: number }>;
+                const rep = d["reputation_score"];
+                const vel = d["velocity_per_month"];
+                return (
+                  <>
+                    {rep && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-ink/[0.06] px-3 py-1.5 font-medium text-ink/70">
+                        <span className="h-1.5 w-1.5 rounded-full bg-deep-violet" aria-hidden />
+                        Reputation: <strong className="text-ink">{rep.best}</strong> best · {rep.median} median · {rep.worst} worst · <span className={rep.gap > 30 ? "font-bold text-coral" : "text-ink/60"}>gap {rep.gap}</span>{rep.gap > 30 ? " — fix variance" : ""}
+                      </span>
+                    )}
+                    {vel && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-ink/[0.06] px-3 py-1.5 font-medium text-ink/70">
+                        Velocity: <strong className="text-ink">{vel.best}/mo</strong> best · {vel.median}/mo median · gap {vel.gap}/mo
+                      </span>
+                    )}
+                  </>
+                );
+              })()}
+            </section>
+          )}
 
           {/* Leader spotlight */}
           {benchmark?.leader && (
@@ -276,12 +356,22 @@ export default function BenchmarkPage() {
                             <span>⭐ {b.avg_rating.toFixed(1)} · {b.reviews_total} reviews</span>
                             <span>😊 {b.positive_pct.toFixed(0)}% positive</span>
                             <span>↩️ {b.response_rate.toFixed(0)}% replied</span>
+                            {b.health_score != null && <span className="font-semibold text-deep-violet">♥ {b.health_score} health</span>}
+                            {b.velocity_per_month != null && <span>⚡ {b.velocity_per_month}/mo</span>}
+                            {b.action_rate != null && <span>🎯 {b.action_rate.toFixed(1)}% action rate</span>}
+                            {b.impressions_maps != null && b.impressions_maps > 0 && <span>👁 {b.impressions_maps.toLocaleString()} views</span>}
                             {typeof b.rating_delta === "number" && b.rating_delta !== 0 && (
                               <span className={b.rating_delta > 0 ? "font-semibold text-emerald" : "font-semibold text-coral"}>
                                 {b.rating_delta > 0 ? "▲" : "▼"} {Math.abs(b.rating_delta).toFixed(1)}★ this period
                               </span>
                             )}
+                            {b.gap_vs_leader_per_year != null && b.gap_vs_leader_per_year > 0 && (
+                              <span className="font-semibold text-coral">gap +{b.gap_vs_leader_per_year}/yr vs leader</span>
+                            )}
                           </div>
+                          {b.top_problem_mentions > 0 && b.action_rate != null && b.action_rate < 5 && (
+                            <p className="mt-1 text-[10.5px] font-medium text-amber-600">Views not converting — check listing completeness & CTA.</p>
+                          )}
                           {empty && (
                             <p className="mt-1 text-[10.5px] italic text-ink/40">
                               No reviews synced yet — still waiting on Google. Excluded from ranking.
@@ -425,20 +515,55 @@ export default function BenchmarkPage() {
             </section>
           )}
 
-          {/* External estimate — honestly labeled secondary reference */}
-          <section aria-label="Industry estimate" className="rounded-2xl border border-dashed border-ink/15 bg-white/40 p-4 backdrop-blur-sm">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/40">
-              Industry estimate · approximated from similar profiles, not live competitor data
-            </p>
-            <p className="mt-1 text-[12px] text-ink/60">
-              Similar businesses average <strong>{benchmark?.similar_avg_rating?.toFixed(1) ?? "—"}★</strong>
-              {" "}across <strong>{benchmark?.similar_reviews_total ?? 0}</strong> reviews
-              {typeof benchmark?.similar_response_rate === "number" && (
-                <> · <strong>{benchmark.similar_response_rate.toFixed(0)}%</strong> reply rate</>
+          {/* Market view — you vs real Sayvors tenants, no synthetic averages */}
+          {benchmark?.cohort && benchmark.cohort.count > 0 && (benchmark.market ?? []).length > 0 ? (
+            <section aria-label="Market ranking" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+              <h3 className="text-[14px] font-bold text-ink">
+                🏆 You vs {benchmark.cohort.count} {benchmark.cohort.label} on Sayvors
+              </h3>
+              <p className="mt-1 text-[11px] text-ink/45">
+                {benchmark.my_rank
+                  ? <>You rank <strong className="font-semibold text-ink">#{benchmark.my_rank} of {(benchmark.market ?? []).length}</strong> — real connected businesses, same {benchmark.cohort.scope === "network" ? "network" : "market"}.</>
+                  : <>Real connected businesses in your market — connect a branch to enter the ranking.</>}
+              </p>
+              <ol className="mt-3 space-y-1.5">
+                {(benchmark.market ?? []).map((e) => (
+                  <li
+                    key={`${e.is_you ? "you" : "them"}-${e.channel_id ?? e.listing_id ?? e.name}`}
+                    className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 ${e.is_you ? "border-deep-violet/30 bg-deep-violet/[0.05]" : "border-ink/[0.05] bg-white"}`}
+                  >
+                    <span className="w-6 shrink-0 text-center text-[13px] font-bold text-ink/60">
+                      {e.rank === 1 ? "🥇" : e.rank === 2 ? "🥈" : e.rank === 3 ? "🥉" : e.rank}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold text-ink">
+                        {e.name}
+                        {e.is_you && (
+                          <span className="ml-1.5 rounded-full bg-deep-violet px-1.5 py-px align-middle text-[9px] font-bold uppercase tracking-wide text-white">You</span>
+                        )}
+                      </span>
+                      <span className="block text-[11px] text-ink/45">
+                        {e.avg_rating.toFixed(1)}★ · {e.reviews_total} reviews
+                        {typeof e.response_rate === "number" ? ` · ${e.response_rate.toFixed(0)}% replies` : ""}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[13px] font-bold text-ink">{e.reputation_score}</span>
+                  </li>
+                ))}
+              </ol>
+              {typeof benchmark.cohort.median_rating === "number" && (
+                <p className="mt-3 text-[11px] text-ink/45">
+                  Market median: <strong className="font-semibold text-ink/60">{benchmark.cohort.median_rating.toFixed(1)}★</strong>
+                  {" · "}{benchmark.cohort.median_reviews ?? 0} reviews
+                  {typeof benchmark.cohort.top3_median_rating === "number" && <> · top-3 median {benchmark.cohort.top3_median_rating.toFixed(1)}★</>}
+                </p>
               )}
-              . {benchmark?.benchmark_text}
+            </section>
+          ) : (
+            <p className="px-1 text-center text-[10.5px] leading-relaxed text-ink/35">
+              {benchmark?.benchmark_text}
             </p>
-          </section>
+          )}
         </div>
       )}
     </div>

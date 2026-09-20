@@ -14,6 +14,12 @@ const TYPE_META: Record<string, { icon: string; tint: string; label: string }> =
   reply_posted: { icon: "✓", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", label: "Reply posted" },
   reply_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Reply failed" },
   review_edited: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300", label: "Review edited" },
+  post_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300", label: "Post scheduled" },
+  post_published: { icon: "📝", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", label: "Post published" },
+  post_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Post failed" },
+  media_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300", label: "Photo scheduled" },
+  media_published: { icon: "📸", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", label: "Photo published" },
+  media_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Photo failed" },
 };
 
 function fullTime(iso: string): string {
@@ -32,6 +38,7 @@ function DetailRows({ n }: { n: BellNotification }) {
   const rows: [string, string][] = [];
   if (typeof data.listing === "string") rows.push(["Branch", data.listing]);
   if (typeof data.rating === "number") rows.push(["Rating", `${data.rating} / 5`]);
+  if (typeof data.previous_rating === "number") rows.push(["Was", `${data.previous_rating} / 5`]);
   if (typeof data.new_reviews === "number") rows.push(["New reviews", String(data.new_reviews)]);
   if (typeof data.review_id === "string") rows.push(["Review", data.review_id.replace(/^localith:/, "").slice(0, 24)]);
   return rows.length === 0 ? null : (

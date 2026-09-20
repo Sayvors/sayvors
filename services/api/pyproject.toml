@@ -28,6 +28,7 @@ dependencies = [
     "ollama>=0.4",
     "cryptography>=43.0",
     "aiomysql>=0.2",
+    "google-cloud-storage>=2.0",
 ]
 
 [project.optional-dependencies]

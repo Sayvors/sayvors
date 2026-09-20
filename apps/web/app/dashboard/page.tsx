@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, editReply, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, editReply, fetchBenchmark, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
 import { dedupeBusinesses } from "@/lib/channel-identity";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
@@ -62,6 +62,27 @@ interface EditedItem {
   previous_rating: number | null;
 }
 
+interface ScheduledItem {
+  kind: "post" | "photo";
+  id: string;
+  title: string;
+  location: string;
+  at: string;
+}
+
+/** "Today 6:00 PM" / "tomorrow 9:00 AM" / "Sep 25 9:00 AM". */
+function fmtWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return `today ${time}`;
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (d.toDateString() === tomorrow.toDateString()) return `tomorrow ${time}`;
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+
 function AttentionQueue() {
   const [items, setItems] = useState<AttentionItem[] | null>(null);
   const [drafts, setDrafts] = useState<ReviewReplyDTO[]>([]);
@@ -96,6 +117,10 @@ function AttentionQueue() {
   const [editedRewritingId, setEditedRewritingId] = useState<string | null>(null);
   const [editedGeneratingId, setEditedGeneratingId] = useState<string | null>(null);
   const [editedError, setEditedError] = useState<string | null>(null);
+  // Scheduled posts + photos: shown only when something is actually queued.
+  const [scheduled, setScheduled] = useState<ScheduledItem[]>([]);
+  const [scheduledTotal, setScheduledTotal] = useState(0);
+  const [scheduledOpen, setScheduledOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -210,10 +235,73 @@ function AttentionQueue() {
              );
              if (!cancelled) setEditedDrafts(draftMap);
            }
-         } catch {
-           /* edited section hidden on error */
-         }
-         const delta = overview?.period.rating_delta;
+          } catch {
+            /* edited section hidden on error */
+          }
+          try {
+            // Scheduled posts + photos across branches (nearest first).
+            // Any failure hides the row — never an error state.
+            const rawConns = (Array.isArray(connsData) ? connsData : []) as {
+              listing_id?: string; listing_name?: string;
+            }[];
+            const locs = rawConns.filter((c) => c.listing_id).slice(0, 10);
+            const locNames: Record<string, string> = {};
+            for (const c of rawConns) {
+              if (c.listing_id) locNames[c.listing_id] = c.listing_name ?? "Location";
+            }
+            const sched: ScheduledItem[] = [];
+            await Promise.all(locs.map(async (loc) => {
+              const lid = loc.listing_id!;
+              const [postRows, mediaRows] = await Promise.all([
+                (async () => {
+                  try {
+                    const d = await apiFetch(`/api/v1/posts/?listing_id=${encodeURIComponent(lid)}`);
+                    return (Array.isArray(d) ? d : []) as Record<string, unknown>[];
+                  } catch {
+                    return [] as Record<string, unknown>[];
+                  }
+                })(),
+                (async () => {
+                  try {
+                    const d = await apiFetch(`/api/v1/media/?listing_id=${encodeURIComponent(lid)}`);
+                    const arr = Array.isArray(d) ? d : (d as { media?: unknown }).media;
+                    return (Array.isArray(arr) ? arr : []) as Record<string, unknown>[];
+                  } catch {
+                    return [] as Record<string, unknown>[];
+                  }
+                })(),
+              ]);
+              for (const p of postRows) {
+                if (p.status === "scheduled" && typeof p.scheduled_on === "string") {
+                  sched.push({
+                    kind: "post", id: String(p.id ?? ""),
+                    title: String(p.title || "Untitled post"),
+                    location: locNames[lid] ?? "Location", at: p.scheduled_on,
+                  });
+                }
+              }
+              for (const m of mediaRows) {
+                if (m.status === "scheduled" && typeof m.scheduled_on === "string") {
+                  const caption = typeof m.caption === "string" && m.caption.trim()
+                    ? m.caption.trim()
+                    : `Photo · ${String(m.category ?? "gallery").replace(/_/g, " ")}`;
+                  sched.push({
+                    kind: "photo", id: String(m.id ?? ""),
+                    title: caption, location: locNames[lid] ?? "Location",
+                    at: m.scheduled_on,
+                  });
+                }
+              }
+            }));
+            sched.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+            if (!cancelled) {
+              setScheduledTotal(sched.length);
+              setScheduled(sched.slice(0, 5));
+            }
+          } catch {
+            /* scheduled row hidden on error */
+          }
+          const delta = overview?.period.rating_delta;
         if (typeof delta === "number" && delta < 0) {
           found.push({
             severity: "high",
@@ -497,13 +585,16 @@ function AttentionQueue() {
   }
 
   if (items === null) return null;
-   const showDrafts = draftTotal > 0;
-   const showFailed = failedTotal > 0;
-   const showFlagged = flaggedTotal > 0;
-   const showEdited = editedTotal > 0;
-   const allClear = !showDrafts && !showFailed && !showFlagged && !showEdited && items.length === 0;
-   const draftTitle =
-     draftTotal === 1 ? "1 drafted reply needs your approval" : `${draftTotal} drafted replies across all locations need your approval`;
+    const showDrafts = draftTotal > 0;
+    const showScheduled = scheduledTotal > 0;
+    const showFailed = failedTotal > 0;
+    const showFlagged = flaggedTotal > 0;
+    const showEdited = editedTotal > 0;
+    const allClear = !showDrafts && !showScheduled && !showFailed && !showFlagged && !showEdited && items.length === 0;
+    const draftTitle =
+      draftTotal === 1 ? "1 drafted reply needs your approval" : `${draftTotal} drafted replies across all locations need your approval`;
+    const scheduledTitle =
+      scheduledTotal === 1 ? "1 scheduled post or photo" : `${scheduledTotal} scheduled posts and photos`;
    const failedTitle =
      failedTotal === 1 ? "1 reply failed to publish" : `${failedTotal} replies failed to publish`;
    // Token-flavored failures genuinely need a Google re-consent; anything
@@ -668,6 +759,62 @@ function AttentionQueue() {
                          </span>
                        )}
                      </Link>
+                  </div>
+                </div>
+              )}
+            </li>
+          )}
+          {showScheduled && (
+            <li>
+              <button
+                onClick={() => setScheduledOpen((o) => !o)}
+                aria-expanded={scheduledOpen}
+                aria-controls="attention-scheduled-body"
+                className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-ink">{scheduledTitle}</span>
+                  <span className="block truncate text-[11px] text-ink/45">
+                    {scheduled[0]
+                      ? `Next: ${scheduled[0].title} · ${fmtWhen(scheduled[0].at)}`
+                      : "Queued to publish to Google"}
+                  </span>
+                </span>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 transition group-hover:text-deep-violet ${scheduledOpen ? "rotate-180" : ""}`}>
+                  <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {scheduledOpen && (
+                <div id="attention-scheduled-body" className="space-y-2 px-2 pb-3 pt-1">
+                  {scheduled.map((s) => (
+                    <div key={`${s.kind}-${s.id}`} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                      <div className="flex items-center gap-2">
+                        <span aria-hidden className="text-[13px]">{s.kind === "post" ? "📝" : "📸"}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12px] font-semibold text-ink">{s.title}</span>
+                          <span className="block truncate text-[11px] text-ink/45">{s.location} · goes live {fmtWhen(s.at)}</span>
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex gap-2">
+                    {scheduled.some((s) => s.kind === "post") && (
+                      <Link
+                        href="/dashboard/posts"
+                        className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                      >
+                        Manage posts <span aria-hidden> →</span>
+                      </Link>
+                    )}
+                    {scheduled.some((s) => s.kind === "photo") && (
+                      <Link
+                        href="/dashboard/media"
+                        className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                      >
+                        Manage media <span aria-hidden> →</span>
+                      </Link>
+                    )}
                   </div>
                 </div>
               )}
@@ -932,6 +1079,7 @@ function BusinessPulse() {
   const [hoursStatus, setHoursStatus] = useState<{ open: boolean | null; label: string; detail: string }>({
     open: null, label: "--", detail: "Not configured yet",
   });
+  const [marketRank, setMarketRank] = useState<{ rank: number; total: number; label: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -943,10 +1091,11 @@ function BusinessPulse() {
           (channel: DashboardChannel) => channel.platform === "google_reviews"
         );
         const googleChannels = dedupeBusinesses(rawChannels);
-        const [nextOverview, nextPoints, serviceResults] = await Promise.all([
+        const [nextOverview, nextPoints, serviceResults, bench] = await Promise.all([
           fetchOverview(30, channelId || null),
           fetchTimeseries(30, channelId || null),
           Promise.all((channelId ? googleChannels.filter((channel: DashboardChannel) => channel.id === channelId) : googleChannels).map((channel: DashboardChannel) => apiFetch(`/api/v1/channels/${channel.id}/services`))),
+          fetchBenchmark(30, null).catch(() => null),
         ]);
         if (cancelled) return;
         const allServices = serviceResults.flatMap((result) => (result.services ?? []) as DashboardService[]);
@@ -955,6 +1104,11 @@ function BusinessPulse() {
         setPoints(nextPoints);
         setServiceCount(allServices.length);
         setOfferedCount(allServices.filter((service) => service.is_offered).length);
+        if (bench?.my_rank && (bench.market ?? []).length > 0 && bench.cohort) {
+          setMarketRank({ rank: bench.my_rank, total: (bench.market ?? []).length, label: bench.cohort.label });
+        } else {
+          setMarketRank(null);
+        }
       } catch {
         if (!cancelled) {
           setOverview(null);
@@ -962,6 +1116,7 @@ function BusinessPulse() {
           setChannels([]);
           setServiceCount(0);
           setOfferedCount(0);
+          setMarketRank(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -1034,7 +1189,7 @@ function BusinessPulse() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <PulseStat label="Total reviews" value={totalReviews} detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"} color="text-amber-600" href="/dashboard/reviews" delta={overview?.period.reviews_delta_pct} deltaSuffix="%" spark={points.map((p) => p.reviews_count)} sparkColor="#d97706" />
-        <PulseStat label="Connected businesses" value={channels.length} detail={channels.length ? "Google Business channels" : "No Google channel yet"} color="text-deep-violet" href="/dashboard/locations" />
+        <PulseStat label="Connected businesses" value={channels.length} detail={channels.length ? `Google Business channels${marketRank ? ` · #${marketRank.rank} of ${marketRank.total} ${marketRank.label}` : ""}` : "No Google channel yet"} color="text-deep-violet" href="/dashboard/locations" />
         <PulseStat label="Services offered" value={offeredCount} detail={serviceCount ? `${serviceCount} services configured` : "No service data yet"} color="text-emerald-600" href="/dashboard/services" />
         <PulseStat
           label="Working hours"

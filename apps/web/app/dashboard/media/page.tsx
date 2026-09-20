@@ -6,7 +6,8 @@ import LogoLoader from "@/components/LogoLoader";
 
 type MediaType = "PHOTO" | "VIDEO";
 type MediaSource = "OWN" | "CUSTOMER";
-type MediaTab = "all" | "photos" | "videos" | "customer";
+type MediaTab = "all" | "photos" | "videos" | "customer" | "scheduled";
+type MediaStatus = "DRAFT" | "SCHEDULED" | "PUBLISHED" | "FAILED";
 
 interface MediaItem {
   id: string;
@@ -20,6 +21,10 @@ interface MediaItem {
   createdAt: string;
   isProfile?: boolean;
   isCover?: boolean;
+  status?: MediaStatus;
+  scheduledAt?: string;
+  error?: string;
+  method?: string;
 }
 
 interface LocationOption {
@@ -28,6 +33,39 @@ interface LocationOption {
 }
 
 const CATEGORIES = ["PROFILE", "COVER", "EXTERIOR", "INTERIOR", "PRODUCT", "AT_WORK", "FOOD_AND_DRINK", "TEAM"];
+
+const BACKEND_STATUS: Record<string, MediaStatus> = {
+  draft: "DRAFT",
+  scheduled: "SCHEDULED",
+  published: "PUBLISHED",
+  failed: "FAILED",
+};
+
+const AUTOPILOT_KEY = "sayvors.media-autopilot";
+
+function normalizeMedia(raw: unknown): MediaItem[] {
+  const list = Array.isArray(raw) ? raw : (raw as { media?: unknown[] }).media;
+  if (!Array.isArray(list)) return [];
+  return (list as Record<string, unknown>[]).map((m: Record<string, unknown>, i: number) => {
+    const url = typeof m.image_url === "string" ? m.image_url : undefined;
+    return {
+      id: String(m.id ?? `m_${i}`),
+      type: m.type === "VIDEO" ? "VIDEO" : "PHOTO",
+      source: "OWN" as const,
+      category: String(m.category ?? "EXTERIOR"),
+      thumbnailUrl: url,
+      sourceUrl: url,
+      views: 0,
+      createdAt: String(m.created_at ?? m.createdAt ?? new Date().toISOString().slice(0, 10)).slice(0, 10),
+      isProfile: m.is_profile === true,
+      isCover: m.is_cover === true,
+      status: (typeof m.status === "string" ? BACKEND_STATUS[m.status] : undefined) ?? "DRAFT",
+      scheduledAt: m.scheduled_on ? String(m.scheduled_on) : undefined,
+      error: typeof m.error === "string" ? m.error : undefined,
+      method: typeof m.publish_method === "string" ? m.publish_method : undefined,
+    };
+  });
+}
 
 export default function MediaPage() {
   return (
@@ -53,20 +91,77 @@ function MediaInner() {
   const [uploadType, setUploadType] = useState<MediaType>("PHOTO");
   const [uploadCategory, setUploadCategory] = useState("EXTERIOR");
   const [uploadUrl, setUploadUrl] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadDescription, setUploadDescription] = useState("");
+  // How the photo reaches Google. Only "post" is wired (Localith publishes
+  // posts carrying image URLs; it offers no gallery upload or profile/cover
+  // assignment). Gallery/profile are honest disabled options until the
+  // native Google connection lands.
+  const [publishMethod, setPublishMethod] = useState<"post" | "gallery" | "profile">("post");
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [hideAutopilot, setHideAutopilot] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(AUTOPILOT_KEY) === "1") setHideAutopilot(true);
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+
+  const dismissAutopilot = () => {
+    setHideAutopilot(true);
+    try {
+      localStorage.setItem(AUTOPILOT_KEY, "1");
+    } catch {
+      /* storage unavailable */
+    }
+  };
+
+  const openScheduleUpload = () => {
+    setUploadType("PHOTO");
+    setUploadMode("url");
+    setScheduleEnabled(true);
+    setShowUpload(true);
+  };
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch("/api/v1/locations/?limit=100");
+        // Real branches: every Localith-connected listing (same as Posts).
+        try {
+          const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as { listing_id: string; listing_name: string }[];
+          if (!cancelled && Array.isArray(conns) && conns.length > 0) {
+            const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
+            if (!cancelled) {
+              setLocations(locs);
+              setSelectedId(locs[0].id);
+              return;
+            }
+          }
+        } catch {
+          /* fall through to channels */
+        }
+        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const googleChannels = (data.channels ?? [])
+          .filter((channel: { platform: string }) => channel.platform === "google_reviews")
+          .map((channel: { id: string; display_name: string | null }) => ({
+            id: channel.id,
+            name: channel.display_name ?? "Google location",
+          }));
         if (!cancelled) {
-          setLocations(data.locations ?? []);
-          if (data.locations?.length) setSelectedId(data.locations[0].id);
+          setLocations(googleChannels);
+          if (googleChannels.length) setSelectedId(googleChannels[0].id);
         }
       } catch {
-        if (!cancelled) setLocations([]);
+        if (!cancelled) {
+          setLocations([]);
+          setSelectedId(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -74,18 +169,33 @@ function MediaInner() {
     return () => { cancelled = true; };
   }, []);
 
+  const loadItems = async () => {
+    const q = selectedId ? `?listing_id=${encodeURIComponent(selectedId)}` : "";
+    const data = await apiFetch(`/api/v1/media/${q}`);
+    return normalizeMedia(data);
+  };
+
+  const refreshItems = async () => {
+    try {
+      setItems(await loadItems());
+    } catch {
+      /* keep current list on failure */
+    }
+  };
+
   useEffect(() => {
     if (!selectedId) return;
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch(`/api/v1/locations/${selectedId}/media`);
-        if (!cancelled) setItems(data.media ?? []);
+        const items = await loadItems();
+        if (!cancelled) setItems(items);
       } catch {
         if (!cancelled) setItems([]);
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
   const counts = useMemo(() => ({
@@ -93,14 +203,20 @@ function MediaInner() {
     photos: items.filter((m) => m.type === "PHOTO" && m.source === "OWN").length,
     videos: items.filter((m) => m.type === "VIDEO" && m.source === "OWN").length,
     customer: items.filter((m) => m.source === "CUSTOMER").length,
+    scheduled: items.filter((m) => m.status === "SCHEDULED").length,
   }), [items]);
 
   const filtered = items.filter((m) => {
     if (tab === "photos") return m.type === "PHOTO" && m.source === "OWN";
     if (tab === "videos") return m.type === "VIDEO" && m.source === "OWN";
     if (tab === "customer") return m.source === "CUSTOMER";
+    if (tab === "scheduled") return m.status === "SCHEDULED";
     return true;
   });
+
+  const scheduleValid = !scheduleEnabled || !!scheduledAt;
+
+  const MAX_FILE_MB = 25;
 
   const handleUpload = async () => {
     if (!selectedId) {
@@ -108,50 +224,96 @@ function MediaInner() {
       return;
     }
     if (uploadMode === "url" && !uploadUrl.trim()) return;
+    if (uploadMode === "file" && !uploadFile) return;
+    if (uploadMode === "file" && uploadFile && uploadFile.size > MAX_FILE_MB * 1024 * 1024) {
+      setBanner({ kind: "err", text: `That file is over ${MAX_FILE_MB}MB — pick a smaller one.` });
+      return;
+    }
+    if (uploadType === "VIDEO" && scheduleEnabled) {
+      setBanner({ kind: "err", text: "Video auto-publishing isn't supported by the provider yet — save videos to the library for now." });
+      return;
+    }
+    if (scheduleEnabled && !scheduledAt) {
+      setBanner({ kind: "err", text: "Pick a date and time to schedule this photo." });
+      return;
+    }
     setUploading(true);
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/media`, {
+      // File mode: computer → our server first (public URL), then the same
+      // create flow as URL mode. The provider fetches the photo from that
+      // URL at publish time.
+      let imageUrl = uploadMode === "url" ? uploadUrl.trim() : "";
+      let mediaType = uploadType;
+      if (uploadMode === "file" && uploadFile) {
+        setBanner({ kind: "ok", text: "Uploading file…" });
+        const form = new FormData();
+        form.append("file", uploadFile);
+        const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
+        imageUrl = up.image_url as string;
+        if (up.type === "VIDEO" || up.type === "PHOTO") mediaType = up.type;
+      }
+      await apiFetch("/api/v1/media/", {
         method: "POST",
         body: JSON.stringify({
-          type: uploadType,
+          listing_id: selectedId,
+          image_url: imageUrl,
+          type: mediaType,
           category: uploadCategory,
-          sourceUrl: uploadMode === "url" ? uploadUrl.trim() : undefined,
-          description: uploadDescription.trim() || undefined,
+          caption: uploadDescription.trim(),
+          action: scheduleEnabled ? "schedule" : "publish",
+          scheduled_on: scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : null,
+          publish_method: publishMethod,
         }),
       });
-      const item: MediaItem = {
-        id: `m_${Date.now()}`,
-        type: uploadType,
-        source: "OWN",
-        category: uploadCategory,
-        views: 0,
-        createdAt: new Date().toISOString().slice(0, 10),
-      };
-      setItems((prev) => [item, ...prev]);
+      await refreshItems();
       setShowUpload(false);
       setUploadUrl("");
+      setUploadFile(null);
       setUploadDescription("");
-      setBanner({ kind: "ok", text: "Media uploaded." });
-      setTimeout(() => setBanner(null), 2500);
-    } catch {
-      setBanner({ kind: "err", text: "Upload failed." });
+      setScheduleEnabled(false);
+      setScheduledAt("");
+      setBanner({
+        kind: "ok",
+        text: scheduleEnabled
+          ? "Photo scheduled — it goes live on Google inside a post at that time."
+          : "Photo published to Google.",
+      });
+      setTimeout(() => setBanner(null), 4000);
+    } catch (e) {
+      setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Upload failed." });
     }
     setUploading(false);
   };
 
   const handleDelete = async (id: string) => {
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/media/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/v1/media/${id}`, { method: "DELETE" });
     } catch { /* optimistic */ }
     setItems((prev) => prev.filter((m) => m.id !== id));
     setViewing(null);
   };
 
+  const handlePublishNow = async (id: string) => {
+    setPublishingId(id);
+    try {
+      await apiFetch(`/api/v1/media/${id}/publish`, { method: "POST" });
+      await refreshItems();
+      setViewing((prev) => (prev && prev.id === id ? { ...prev, status: "PUBLISHED" as const, error: undefined } : prev));
+      setBanner({ kind: "ok", text: "Photo published to Google." });
+      setTimeout(() => setBanner(null), 4000);
+    } catch (e) {
+      setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Publish failed." });
+      await refreshItems();
+    } finally {
+      setPublishingId(null);
+    }
+  };
+
   const handleCategorySave = async () => {
     if (!viewing) return;
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/media/${viewing.id}`, {
-        method: "PATCH",
+      await apiFetch(`/api/v1/media/${viewing.id}`, {
+        method: "PUT",
         body: JSON.stringify({ category: editingCategory }),
       });
     } catch { /* optimistic */ }
@@ -163,8 +325,8 @@ function MediaInner() {
     if (!viewing) return;
     const patch = flag === "isProfile" ? { isProfile: true } : { isCover: true };
     try {
-      await apiFetch(`/api/v1/locations/${selectedId}/media/${viewing.id}`, {
-        method: "PATCH",
+      await apiFetch(`/api/v1/media/${viewing.id}`, {
+        method: "PUT",
         body: JSON.stringify(patch),
       });
     } catch { /* optimistic */ }
@@ -207,11 +369,36 @@ function MediaInner() {
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-4xl space-y-4">
+          {!hideAutopilot && (
+            <div className="rounded-2xl border border-deep-violet/15 bg-gradient-to-br from-deep-violet/[0.06] to-transparent p-4 dark:border-deep-violet/25">
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="text-[14px] font-bold text-ink dark:text-fog">📸 Let your photos sell while you work</h3>
+                <button onClick={dismissAutopilot} aria-label="Dismiss" className="shrink-0 rounded-md px-1.5 py-0.5 text-[13px] text-ink/30 hover:bg-ink/[0.05] hover:text-ink/60">✕</button>
+              </div>
+              <p className="mt-0.5 text-[12px] text-ink/50 dark:text-fog/50">Pick a photo and a time — it appears on your Google listing by itself. Nothing to remember.</p>
+              <ul className="mt-2.5 space-y-1.5">
+                {[
+                  ["New photos bring more customers", "Listings with 10+ recent photos get about double the views. One new photo a week beats uploading 50 once a year."],
+                  ["Set it once, forget it", "Schedule Sunday 9am and a fresh photo shows on your Google page every week while you run the shop."],
+                  ["Sale photos on time, every time", "Offer and event shots go up with the promotion — not a month later when nobody cares."],
+                ].map(([title, body]) => (
+                  <li key={title} className="flex gap-2 text-[12px] leading-relaxed">
+                    <span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-deep-violet" />
+                    <span className="text-ink/70 dark:text-fog/70"><strong className="font-semibold text-ink dark:text-fog">{title} — </strong>{body}</span>
+                  </li>
+                ))}
+              </ul>
+              <button onClick={openScheduleUpload} className="mt-3 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:opacity-90">
+                Schedule a photo
+              </button>
+            </div>
+          )}
           <div className="flex gap-1 overflow-x-auto rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
             {([
               { key: "all", label: `All Media (${counts.all})` },
               { key: "photos", label: `Photos (${counts.photos})` },
               { key: "videos", label: `Videos (${counts.videos})` },
+              { key: "scheduled", label: `Scheduled (${counts.scheduled})` },
               { key: "customer", label: `Customer Photos (${counts.customer})` },
             ] as const).map((t) => (
               <button key={t.key} onClick={() => setTab(t.key)}
@@ -245,7 +432,16 @@ function MediaInner() {
                   </div>
                   <div className="p-2.5">
                     <p className="truncate text-[12px] font-semibold text-ink dark:text-fog">{m.category.replace(/_/g, " ")}</p>
-                    <p className="text-[10px] text-ink/35 dark:text-fog/35">{m.views.toLocaleString()} views{m.attribution ? ` · ${m.attribution}` : ""}</p>
+                    <p className="flex flex-wrap items-center gap-1.5 text-[10px] text-ink/35 dark:text-fog/35">
+                      <span>{m.views.toLocaleString()} views</span>
+                      {m.attribution ? <span> · {m.attribution}</span> : null}
+                      {m.status === "SCHEDULED" && m.scheduledAt && (
+                        <span className="rounded-full bg-amber-100 px-1.5 py-px font-semibold text-amber-700">🕑 {new Date(m.scheduledAt).toLocaleString()}</span>
+                      )}
+                      {m.status === "FAILED" && (
+                        <span className="rounded-full bg-red-100 px-1.5 py-px font-semibold text-red-700">Failed</span>
+                      )}
+                    </p>
                   </div>
                 </button>
               ))}
@@ -266,6 +462,37 @@ function MediaInner() {
               <button onClick={() => setUploadMode("url")} className={`flex-1 py-2.5 text-[13px] font-semibold ${uploadMode === "url" ? "border-b-2 border-deep-violet text-deep-violet" : "text-ink/40"}`}>Add from URL</button>
             </div>
             <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-1 block text-[12px] font-medium text-ink/50">Publish to Google as</label>
+                <div className="space-y-1.5">
+                  {([
+                    { key: "post", title: "Google post", note: "Photo goes live inside a post — works today.", wired: true },
+                    { key: "gallery", title: "Photo gallery", note: "Straight into the gallery — needs the native Google connection.", wired: false },
+                    { key: "profile", title: "Profile / cover photo", note: "Set as profile or cover — needs the native Google connection.", wired: false },
+                  ] as const).map((m) => (
+                    <button
+                      key={m.key}
+                      type="button"
+                      disabled={!m.wired}
+                      onClick={() => setPublishMethod(m.key)}
+                      aria-pressed={publishMethod === m.key}
+                      title={m.wired ? undefined : "Available with the native Google connection"}
+                      className={`flex w-full items-center gap-2.5 rounded-xl border p-3 text-left transition ${!m.wired ? "cursor-not-allowed border-ink/[0.06] bg-ink/[0.02] opacity-60 dark:border-fog/[0.06]" : publishMethod === m.key ? "border-deep-violet bg-deep-violet/[0.06]" : "border-ink/[0.08] hover:border-deep-violet/30"}`}
+                    >
+                      <span aria-hidden className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${publishMethod === m.key && m.wired ? "border-deep-violet" : "border-ink/20"}`}>
+                        {publishMethod === m.key && m.wired && <span className="h-2 w-2 rounded-full bg-deep-violet" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px] font-semibold text-ink dark:text-fog">
+                          {m.title}
+                          {!m.wired && <span className="ml-1.5 rounded-full bg-ink/[0.06] px-1.5 py-px align-middle text-[9px] font-bold uppercase tracking-wide text-ink/40">Soon</span>}
+                        </span>
+                        <span className="block text-[11px] text-ink/40">{m.note}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="flex gap-2">
                 {(["PHOTO", "VIDEO"] as const).map((t) => (
                   <button key={t} onClick={() => setUploadType(t)}
@@ -275,9 +502,28 @@ function MediaInner() {
                 ))}
               </div>
               {uploadMode === "file" ? (
-                <div className="flex flex-col items-center rounded-xl border-2 border-dashed border-ink/[0.12] py-8">
-                  <p className="text-[12px] text-ink/40">Drop {uploadType === "PHOTO" ? "photo" : "video"} or click to browse</p>
-                  <p className="text-[10px] text-ink/25">JPG, PNG{uploadType === "VIDEO" ? ", MP4" : ""} up to 25MB</p>
+                <div>
+                  <label className="flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-ink/[0.12] py-8 transition hover:border-deep-violet/40">
+                    <span className="text-[13px] font-semibold text-ink dark:text-fog">
+                      {uploadFile ? uploadFile.name : `Drop ${uploadType === "PHOTO" ? "photo" : "video"} or click to browse`}
+                    </span>
+                    <span className="mt-1 text-[11px] text-ink/40">
+                      {uploadFile
+                        ? `${(uploadFile.size / 1024 / 1024).toFixed(1)}MB — will upload to your Sayvors library`
+                        : `JPG, PNG, WEBP${uploadType === "VIDEO" ? ", MP4" : ""} up to ${MAX_FILE_MB}MB`}
+                    </span>
+                    <input
+                      type="file"
+                      accept={uploadType === "PHOTO" ? "image/jpeg,image/png,image/webp,image/gif" : "video/mp4,video/quicktime"}
+                      className="hidden"
+                      onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                  {uploadFile && (
+                    <button onClick={() => setUploadFile(null)} className="mt-1.5 text-[11px] font-medium text-ink/40 hover:text-ink">
+                      Remove file
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div>
@@ -292,14 +538,30 @@ function MediaInner() {
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-[12px] font-medium text-ink/50">Description (set once at upload)</label>
+                <label className="mb-1 block text-[12px] font-medium text-ink/50">Description (goes live as the post caption)</label>
                 <textarea value={uploadDescription} onChange={(e) => setUploadDescription(e.target.value)} rows={2} maxLength={200} placeholder="Optional caption..." className="input-field resize-y" />
               </div>
+              <label className="flex cursor-pointer items-center justify-between rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
+                <span>
+                  <span className="block text-[13px] font-semibold text-ink dark:text-fog">Schedule for later</span>
+                  <span className="block text-[11px] text-ink/40">Photo goes live on Google inside a post at that time.</span>
+                </span>
+                <span onClick={() => setScheduleEnabled(!scheduleEnabled)}
+                  className={`h-5 w-9 shrink-0 rounded-full transition ${scheduleEnabled ? "bg-deep-violet" : "bg-ink/15 dark:bg-fog/15"}`}>
+                  <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${scheduleEnabled ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                </span>
+              </label>
+              {scheduleEnabled && (
+                <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} className="input-field" />
+              )}
+              {uploadType === "VIDEO" && (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">Videos save to your library — auto-publishing works for photos (the provider takes image URLs, not video).</p>
+              )}
             </div>
             <div className="flex justify-end gap-2 border-t border-ink/[0.06] px-5 py-3 dark:border-fog/[0.06]">
               <button onClick={() => setShowUpload(false)} className="btn-secondary">Cancel</button>
-              <button onClick={handleUpload} disabled={uploading || (uploadMode === "url" && !uploadUrl.trim())} className="btn-primary disabled:opacity-50">
-                {uploading ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Uploading...</span> : "Upload"}
+              <button onClick={handleUpload} disabled={uploading || (uploadMode === "url" && !uploadUrl.trim()) || (uploadMode === "file" && !uploadFile) || !scheduleValid} className="btn-primary disabled:opacity-50" title={uploadMode === "file" && !uploadFile ? "Choose a file first" : !scheduleValid ? "Pick a date and time to schedule" : undefined}>
+                {uploading ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : scheduleEnabled ? "Schedule photo" : "Publish photo"}
               </button>
             </div>
           </div>
@@ -319,9 +581,31 @@ function MediaInner() {
                 <div><p className="text-ink/40">Views</p><p className="font-semibold text-ink dark:text-fog">{viewing.views.toLocaleString()}</p></div>
                 <div><p className="text-ink/40">Source</p><p className="font-semibold text-ink dark:text-fog">{viewing.source === "CUSTOMER" ? "Customer" : "Business"}</p></div>
                 <div><p className="text-ink/40">Uploaded</p><p className="font-semibold text-ink dark:text-fog">{viewing.createdAt}</p></div>
+                <div><p className="text-ink/40">Goes live as</p><p className="font-semibold text-ink dark:text-fog">{viewing.method === "gallery" ? "Photo gallery" : viewing.method === "profile" ? "Profile / cover" : "Google post"}</p></div>
               </div>
               {viewing.attribution && (
                 <p className="rounded-lg bg-ink/[0.03] px-3 py-2 text-[12px] text-ink/50 dark:bg-fog/[0.04] dark:text-fog/50">By {viewing.attribution}</p>
+              )}
+              {viewing.source === "OWN" && (viewing.status === "SCHEDULED" || viewing.status === "FAILED") && (
+                <div className="rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.08]">
+                  <p className="text-[12px] font-medium text-ink/70 dark:text-fog/70">
+                    {viewing.status === "SCHEDULED"
+                      ? viewing.scheduledAt
+                        ? `Scheduled — goes live ${new Date(viewing.scheduledAt).toLocaleString()}`
+                        : "Scheduled"
+                      : "Publishing failed — retries automatically, or publish now."}
+                  </p>
+                  {viewing.status === "FAILED" && viewing.error && (
+                    <p className="mt-1 text-[11px] text-red-600">{viewing.error}</p>
+                  )}
+                  <button
+                    onClick={() => handlePublishNow(viewing.id)}
+                    disabled={publishingId !== null}
+                    className="mt-2 w-full rounded-xl bg-emerald-500 py-2 text-[12px] font-semibold text-white transition hover:bg-emerald-600 disabled:opacity-50"
+                  >
+                    {publishingId === viewing.id ? "Publishing…" : "Publish now"}
+                  </button>
+                </div>
               )}
               {viewing.source === "OWN" ? (
                 <>

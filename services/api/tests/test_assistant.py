@@ -7,7 +7,19 @@ import pytest
 from fastapi import HTTPException
 
 from app.modules.assistant.router import AssistantChatRequest, chat
+from app.modules.assistant import router as assistant_router
 from app.modules.users.models import User
+
+
+@pytest.fixture(autouse=True)
+def _tenant_model(monkeypatch):
+    """Model resolution is DB-driven in prod; tests pin a fake id so chat
+    tests exercise generation, not model administration."""
+
+    async def _fake(db, user_id):
+        return "test:model"
+
+    monkeypatch.setattr(assistant_router, "_resolve_model", _fake)
 
 
 def _user(user_id: str) -> User:

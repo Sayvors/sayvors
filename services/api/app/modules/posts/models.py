@@ -60,6 +60,13 @@ class LocationPost(Base):
     # Event/offer end date, forwarded to Localith at publish time — the one
     # Google-side removal lever that exists (Google takes down ended posts).
     end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Event start date (required by Google for events).
+    start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Offer fields. Google has no separate coupon/terms inputs in Localith's
+    # wrapper: coupon_code travels as voucherCode; terms_conditions are
+    # appended to the caption text that Google shows.
+    coupon_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    terms_conditions: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Google-side post id captured at publish time, when the provider
     # returns one. Reserved for true remote deletion the day an API
     # (Localith delete or per-tenant native Google) supports it.

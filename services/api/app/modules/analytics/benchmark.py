@@ -1,13 +1,15 @@
 """Benchmarking / competitive intelligence — P4 pillar backend.
 
-Two comparison layers:
-1. Branch vs branch (primary, always real): the tenant's own locations
-   ranked against each other on rating, sentiment, response rate, volume
-   and reputation — with per-branch reasons and recommendations.
-2. External aggregate (secondary estimate): an anonymized aggregate
-   profile (second demo account) as an industry reference point.
+Two comparison layers, both real:
+1. Branch vs branch (primary): the tenant's own locations ranked against
+   each other on rating, sentiment, response rate, volume and reputation —
+   with per-branch reasons and recommendations.
+2. Tenant cohort (market view): the tenant's branches ranked against every
+   other Sayvors-connected business in the same city + category. Tenants
+   ARE the competitor set — no manual entry, no synthetic aggregates.
 """
 import logging
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,27 +19,51 @@ from .models import LocationDailyMetric, ReviewInsight
 from .service import get_overview, reputation_score
 
 logger = logging.getLogger(__name__)
-BENCHMARK_USER_EMAIL = "syab293@gmail.com"
+
+SAUDI_CITIES = (
+    "RIYADH", "JEDDAH", "DAMMAM", "MECCA", "MAKKAH", "MEDINA",
+    "MADINAH", "KHOBAR", "AL KHOBAR", "DHAHRAN", "TAIF", "BURAIDAH",
+    "TABUK", "ABHA", "JIZAN", "HAIL", "NAJRAN", "YANBU", "JUBAIL",
+    "HOFUF", "AL AHSA", "AHSA", "QATIF", "KHAMIS", "ARAR", "SAKAKA",
+    "DUBAI", "ABU DHABI", "SHARJAH", "AJMAN", "DOHA", "MANAMA", "KUWAIT",
+)
 
 
-async def _find_benchmark_user_id(db: AsyncSession, current_user_id: str) -> str | None:
-    from ..users.models import User
+def _parse_city(address: str | None) -> str | None:
+    """City from a free-text listing address ("RIYADH Al Malqa Dist." → RIYADH).
 
-    result = await db.execute(
-        select(User.id).where(User.email == BENCHMARK_USER_EMAIL)
-    )
-    bench = result.scalar_one_or_none()
-    if bench and bench != current_user_id:
-        return bench
-    # Fallback: any different user with analytics rows
-    row = await db.execute(
-        select(ReviewInsight.user_id)
-        .where(ReviewInsight.user_id != current_user_id)
-        .order_by(ReviewInsight.created_at.desc())
-        .limit(1)
-    )
-    bench_fallback = row.scalar_one_or_none()
-    return bench_fallback
+    Matches a known Gulf-city list first (two-word names included); falls
+    back to the raw leading token so identically-written addresses still
+    group together. Never invents geography from junk.
+    """
+    if not address:
+        return None
+    cleaned = "".join(ch if ch.isalnum() or ch == " " else " " for ch in address)
+    tokens = [t for t in cleaned.strip().split() if t]
+    if not tokens:
+        return None
+    if len(tokens) > 1 and f"{tokens[0]} {tokens[1]}".upper() in SAUDI_CITIES:
+        return f"{tokens[0]} {tokens[1]}".upper()
+    first = tokens[0].upper()
+    if first in SAUDI_CITIES:
+        return first
+    return first if len(first) >= 3 and first.isalpha() else None
+
+
+def _median(values: list[float]) -> float | None:
+    vals = sorted(values)
+    if not vals:
+        return None
+    n = len(vals)
+    return vals[n // 2] if n % 2 == 1 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+
+
+def _recent(dt: datetime | None, cutoff: datetime) -> bool:
+    if dt is None:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt >= cutoff
 
 
 async def _branch_breakdown(
@@ -72,6 +98,24 @@ async def _branch_breakdown(
             ov.get("response_rate", 0.0) or 0.0,
             (ov.get("sentiment", {}) or {}).get("positive_pct", 0.0) / 100.0,
         )
+        # — health, velocity, action rate: owner-centric signals —
+        health = ov.get("health_score")
+        if health is None:
+            from .service import health_score as _health
+            health = _health(
+                ov.get("avg_rating", 0.0) or 0.0,
+                (ov.get("response_rate", 0.0) or 0.0) / 100.0 if (ov.get("response_rate", 0.0) or 0.0) > 1 else (ov.get("response_rate", 0.0) or 0.0),
+                (ov.get("sentiment", {}) or {}).get("positive_pct", 0.0) / 100.0,
+                (ov.get("period", {}) or {}).get("velocity_ratio") or 1.0,
+            )
+        period = ov.get("period", {}) or {}
+        gp = ov.get("google_performance", {}) or {}
+        impressions = (gp.get("impressions_maps", 0) or 0)
+        actions = (gp.get("customer_actions", 0) or 0)
+        action_rate = round(actions / impressions * 100, 1) if impressions > 0 else None
+        reviews_last_period = period.get("reviews", 0) or 0
+        # annualised velocity (reviews/month) at current pace
+        velocity_per_month = round(reviews_last_period * (30 / days), 1) if days else reviews_last_period
         branches.append({
             "channel_id": ch.id,
             "name": ch.display_name or "Location",
@@ -82,16 +126,225 @@ async def _branch_breakdown(
             if (ov.get("response_rate", 0.0) or 0.0) <= 1.0
             else round(ov.get("response_rate", 0.0) or 0.0, 1),
             "reputation_score": rep,
-            "rating_delta": ((ov.get("period", {}) or {}).get("rating_delta")),
-            "reviews_delta_pct": ((ov.get("period", {}) or {}).get("reviews_delta_pct")),
+            "health_score": health,
+            "rating_delta": period.get("rating_delta"),
+            "reviews_delta_pct": period.get("reviews_delta_pct"),
+            "velocity_ratio": period.get("velocity_ratio"),
+            "reviews_last_period": reviews_last_period,
+            "velocity_per_month": velocity_per_month,
+            "impressions_maps": impressions,
+            "customer_actions": actions,
+            "action_rate": action_rate,
             "top_problem": (top or {}).get("name"),
             "top_problem_mentions": (top or {}).get("mentions", 0),
-            "customer_actions": ((ov.get("google_performance", {}) or {}).get("customer_actions", 0)) or 0,
         })
     branches.sort(key=lambda b: (-b["reputation_score"], -b["reviews_total"]))
     for i, b in enumerate(branches):
         b["rank"] = i + 1
+    # gap-widening math: how fast leader pulls away per year
+    if branches:
+        leader_vel = branches[0].get("velocity_per_month") or 0
+        for b in branches:
+            v = b.get("velocity_per_month") or 0
+            gap_per_year = round((leader_vel - v) * 12, 0)
+            b["gap_vs_leader_per_year"] = int(gap_per_year) if b["rank"] != 1 else 0
     return branches
+
+
+def _distribution(branches: list[dict], key: str) -> dict | None:
+    """Best / median / worst / gap for a numeric branch key."""
+    vals = sorted([b[key] for b in branches if b.get(key) is not None], reverse=True)
+    if not vals:
+        return None
+    n = len(vals)
+    median = vals[n // 2] if n % 2 == 1 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+    gap = vals[0] - vals[-1]
+    return {"best": vals[0], "median": round(median, 1), "worst": vals[-1], "gap": round(gap, 1)}
+
+
+async def _tenant_cohort(
+    db: AsyncSession, user_id: str, days: int = 30
+) -> dict:
+    """You vs every other Sayvors business in your market.
+
+    Tenants ARE the competitor set: each connected listing (any tenant but
+    you) in the same city + business category becomes one ranked entry,
+    using data already synced into this database (profile snapshot +
+    insights). Scope widens city+category → city → whole network until it
+    finds anyone; empty network returns an honest empty cohort.
+    """
+    from ..localith.models import LocalithConnection
+    from ..users.models import User
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=max(1, days))
+
+    me = await db.get(User, user_id)
+    my_category = ((getattr(me, "business_type", None) or "").strip() or None) if me else None
+    my_conns = (
+        await db.execute(
+            select(LocalithConnection).where(LocalithConnection.user_id == user_id)
+        )
+    ).scalars().all()
+    city_counts: dict[str, int] = {}
+    for c in my_conns:
+        city = _parse_city(c.address)
+        if city:
+            city_counts[city] = city_counts.get(city, 0) + 1
+    my_city = max(city_counts, key=city_counts.get) if city_counts else None
+
+    all_conns = (
+        await db.execute(select(LocalithConnection).order_by(LocalithConnection.created_at))
+    ).scalars().all()
+    other = [c for c in all_conns if c.user_id != user_id]
+    if not other:
+        return {"scope": "none", "label": "Sayvors network", "city": my_city,
+                "category": my_category, "count": 0, "competitors": [],
+                "user_ids": [],
+                "median_rating": None, "median_reviews": None,
+                "top3_median_rating": None, "median_response_rate": None,
+                "median_positive_pct": None, "median_reputation": None}
+
+    other_ids = list({c.user_id for c in other})
+    users = {
+        u.id: u
+        for u in (
+            await db.execute(select(User).where(User.id.in_(other_ids)))
+        ).scalars().all()
+    }
+
+    def _cat(uid: str) -> str | None:
+        u = users.get(uid)
+        return ((getattr(u, "business_type", None) or "").strip() or None) if u else None
+
+    levels: list[tuple[str, list]] = []
+    if my_city and my_category:
+        levels.append(("city_category", [
+            c for c in other
+            if _parse_city(c.address) == my_city
+            and (_cat(c.user_id) or "").lower() == my_category.lower()
+        ]))
+    if my_city:
+        levels.append(("city", [c for c in other if _parse_city(c.address) == my_city]))
+    levels.append(("network", list(other)))
+
+    scope, picked = next(((s, rows) for s, rows in levels if rows), ("none", []))
+    picked = picked[:50]  # bounded: ranking stays instant at any network size
+
+    # Channels + insights for the picked branches (batched, two queries).
+    picked_ids = list({c.user_id for c in picked})
+    ch_rows = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id.in_(picked_ids),
+                Channel.platform == "google_reviews",
+            )
+        )
+    ).scalars().all()
+    chan_by_listing: dict[tuple[str, str], list[Channel]] = {}
+    for ch in ch_rows:
+        key = ch.listing_key or ""
+        chan_by_listing.setdefault((ch.user_id, key), []).append(ch)
+        chan_by_listing.setdefault((ch.user_id, (ch.display_name or "").lower()), []).append(ch)
+
+    chan_ids = [ch.id for ch in ch_rows]
+    insights: list[ReviewInsight] = []
+    if chan_ids:
+        insights = (
+            await db.execute(
+                select(ReviewInsight).where(ReviewInsight.channel_id.in_(chan_ids))
+            )
+        ).scalars().all()
+    ins_by_chan: dict[str, list[ReviewInsight]] = {}
+    for ins in insights:
+        ins_by_chan.setdefault(ins.channel_id, []).append(ins)
+
+    competitors: list[dict] = []
+    for c in picked:
+        chans = (chan_by_listing.get((c.user_id, c.listing_id))
+                 or chan_by_listing.get((c.user_id, (c.listing_name or "").lower()))
+                 or [])
+        rows = [ins for ch in chans for ins in ins_by_chan.get(ch.id, [])]
+        total = len(rows)
+        replied = sum(1 for r in rows if r.replied)
+        positives = sum(1 for r in rows if (r.sentiment or "") == "positive")
+        response_rate = round(replied / total * 100, 1) if total else None
+        positive_pct = positives / total if total else None
+        velocity = round(sum(1 for r in rows if _recent(r.created_at, cutoff)) * (30 / days), 1) if days else 0
+        competitors.append({
+            "name": c.listing_name or "Nearby business",
+            "city": _parse_city(c.address),
+            "avg_rating": c.average_rating or 0.0,
+            "reviews_total": c.total_reviews or 0,
+            "response_rate": response_rate,
+            "velocity_per_month": velocity,
+            "positive_pct": round(positive_pct * 100, 1) if positive_pct is not None else None,
+            "reputation_score": reputation_score(
+                c.average_rating or 0.0,
+                (response_rate / 100.0) if response_rate is not None else 0.0,
+                positive_pct if positive_pct is not None else 0.5,
+            ),
+            "is_you": False,
+            "listing_id": c.listing_id,
+        })
+
+    ratings = [e["avg_rating"] for e in competitors if e["avg_rating"] > 0] or [e["avg_rating"] for e in competitors]
+    reviews = [e["reviews_total"] for e in competitors]
+    responses = [e["response_rate"] for e in competitors if e["response_rate"] is not None]
+    positives = [e["positive_pct"] for e in competitors if e["positive_pct"] is not None]
+    reputations = [e["reputation_score"] for e in competitors]
+    top3 = sorted(ratings, reverse=True)[:3]
+    city_label = (my_city or "").title() if scope != "network" else ""
+    if scope == "city_category":
+        label = f"{city_label} {(my_category or '').lower()}"
+    elif scope == "city":
+        label = f"{city_label} businesses"
+    else:
+        label = "Sayvors network"
+    return {
+        "scope": scope,
+        "label": label,
+        "city": my_city,
+        "category": my_category,
+        "count": len(competitors),
+        "competitors": competitors,
+        "user_ids": sorted({c.user_id for c in picked}),
+        "median_rating": round(_median(ratings) or 0.0, 2) if ratings else None,
+        "median_reviews": int(_median(reviews) or 0) if reviews else None,
+        "top3_median_rating": round(_median(top3) or 0.0, 2) if top3 else None,
+        "median_response_rate": round(_median(responses) or 0.0, 1) if responses else None,
+        "median_positive_pct": round(_median(positives) or 0.0, 1) if positives else None,
+        "median_reputation": int(_median(reputations) or 0) if reputations else None,
+    }
+
+
+def _rank_market(mine: list[dict], theirs: list[dict]) -> tuple[list[dict], int | None]:
+    """One ranked table, my branches flagged — same score both sides."""
+    table = (
+        [{**m, "is_you": True} for m in mine]
+        + [{**t, "is_you": False} for t in theirs]
+    )
+    table.sort(key=lambda e: (-e.get("reputation_score", 0), -e.get("reviews_total", 0)))
+    for i, e in enumerate(table):
+        e["rank"] = i + 1
+    my_rank = min([e["rank"] for e in table if e.get("is_you")], default=None)
+    return table, my_rank
+
+
+async def _cohort_complaints(db: AsyncSession, user_ids: list[str], days: int) -> list[str]:
+    """Top complaint themes across cohort tenants (bounded, best-effort)."""
+    from .intelligence import get_problems
+
+    counts: dict[str, int] = {}
+    for uid in user_ids[:5]:
+        try:
+            for p in (await get_problems(db, uid, None, days)).get("problems", [])[:4]:
+                name = (p.get("name") or "").strip()
+                if name:
+                    counts[name] = counts.get(name, 0) + 1
+        except Exception:
+            continue
+    return sorted(counts, key=counts.get, reverse=True)[:3]
 
 
 async def _service_recommendations(
@@ -207,33 +460,75 @@ def _branch_highlights(
     return leader_out, attention, recommendations[:6]
 
 
+def _plain_summary(branches: list[dict], cur: dict, distribution: dict) -> str:
+    """One-paragraph, non-technical read for the owner."""
+    if not branches:
+        return "Connect a location to see how your branches compare — then we will tell you where to send customers and what to fix."
+    rated = [b for b in branches if b["reviews_total"] > 0]
+    if not rated:
+        return f"You have {len(branches)} locations connected but no reviews yet. Once Google syncs reviews, your best and weakest branches will appear here."
+    leader = rated[0]
+    worst = rated[-1] if len(rated) > 1 else None
+    rep_gap = distribution.get("reputation", {}) or {}
+    gap = rep_gap.get("gap", 0) if isinstance(rep_gap, dict) else 0
+    parts = [f"{leader['name']} leads with {leader['reputation_score']} reputation ({leader['avg_rating']:.1f}★, {leader['response_rate']:.0f}% replies)."]
+    if worst and len(rated) > 1:
+        parts.append(f"{worst['name']} is {int(gap)} points behind — fix \"{worst.get('top_problem') or 'response rate'}\" there first.")
+        if worst.get("gap_vs_leader_per_year") and worst["gap_vs_leader_per_year"] > 0:
+            parts.append(f"At current pace, the gap widens by ~{worst['gap_vs_leader_per_year']} reviews a year.")
+    if cur.get("google_performance", {}).get("impressions_maps", 0) > 0:
+        ar = cur.get("google_performance", {}).get("customer_actions", 0) / max(1, cur["google_performance"]["impressions_maps"]) * 100
+        if ar < 5:
+            parts.append("Your views are not turning into calls — add a clear CTA and reply faster.")
+        elif ar >= 8:
+            parts.append("Your views are converting well into actions — keep it up.")
+    return " ".join(parts)
+
+
 async def get_benchmark(
     db: AsyncSession, user_id: str, channel_id: str | None, days: int = 30
 ) -> dict:
-    bench_user = await _find_benchmark_user_id(db, user_id)
-    if bench_user:
-        similar = await get_overview(db, bench_user, channel_id, days)
-    else:
-        # No comparable user found — synthesize neutral baseline from current
-        similar = await get_overview(db, user_id, channel_id, days)
+    cohort = await _tenant_cohort(db, user_id, days)
     cur = await get_overview(db, user_id, channel_id, days)
+    branches = await _branch_breakdown(db, user_id, days)
+
+    # Market table: my branches vs tenant cohort, one ranking.
+    mine = [{
+        "name": b["name"],
+        "avg_rating": b["avg_rating"],
+        "reviews_total": b["reviews_total"],
+        "response_rate": b["response_rate"],
+        "velocity_per_month": b.get("velocity_per_month") or 0,
+        "reputation_score": b["reputation_score"],
+        "channel_id": b["channel_id"],
+    } for b in branches]
+    market, my_rank = _rank_market(mine, cohort["competitors"])
+    market_total = len(market)
+    market_label = cohort["label"] if cohort["count"] else (
+        f"{(cohort['city'] or '').title()} {(cohort['category'] or '').lower()}".strip()
+        or "your market"
+    )
+
+    def _med(key: str, fallback: float) -> float:
+        value = cohort.get(key)
+        return float(value) if value is not None else float(fallback)
+
+    similar_avg = _med("median_rating", cur["avg_rating"])
+    similar_pos = _med("median_positive_pct", cur["sentiment"]["positive_pct"])
+    similar_resp = _med("median_response_rate", cur["response_rate"])
+    similar_rep = _med("median_reputation", cur["reputation_score"])
 
     outperforms = []
     underperforms = []
-    if cur["avg_rating"] > similar["avg_rating"]:
-        outperforms.append("Average rating (%.1f vs %.1f)" % (cur["avg_rating"], similar["avg_rating"]))
+    if cur["avg_rating"] > similar_avg:
+        outperforms.append("Average rating (%.1f vs %.1f)" % (cur["avg_rating"], similar_avg))
     else:
-        underperforms.append("Average rating (%.1f vs %.1f)" % (cur["avg_rating"], similar["avg_rating"]))
+        underperforms.append("Average rating (%.1f vs %.1f)" % (cur["avg_rating"], similar_avg))
 
-    if cur["sentiment"]["positive_pct"] > similar["sentiment"]["positive_pct"]:
-        outperforms.append("Positive sentiment (%d%% vs %d%%)" % (cur["sentiment"]["positive_pct"], similar["sentiment"]["positive_pct"]))
+    if cur["sentiment"]["positive_pct"] > similar_pos:
+        outperforms.append("Positive sentiment (%d%% vs %d%%)" % (cur["sentiment"]["positive_pct"], similar_pos))
     else:
-        underperforms.append("Positive sentiment (%d%% vs %d%%)" % (cur["sentiment"]["positive_pct"], similar["sentiment"]["positive_pct"]))
-
-    if cur["google_performance"]["customer_actions"] > similar["google_performance"]["customer_actions"]:
-        outperforms.append("Customer actions (%d vs %d)" % (cur["google_performance"]["customer_actions"], similar["google_performance"]["customer_actions"]))
-    else:
-        underperforms.append("Customer actions (%d vs %d)" % (cur["google_performance"]["customer_actions"], similar["google_performance"]["customer_actions"]))
+        underperforms.append("Positive sentiment (%d%% vs %d%%)" % (cur["sentiment"]["positive_pct"], similar_pos))
 
     # Competitive opportunities: derive from gaps
     opps: list[str] = []
@@ -248,26 +543,59 @@ async def get_benchmark(
     if not opps:
         opps.append("Keep promoting your best-rated products and maintain response speed")
 
-    # Benchmark comparison text
-    rep_diff = cur["reputation_score"] - similar["reputation_score"]
-    if rep_diff >= 15:
-        benchmark_text = "You're performing significantly better than comparable businesses (reputation +%d)." % rep_diff
-    elif rep_diff >= 5:
-        benchmark_text = "You're outperforming most comparable businesses (reputation +%d)." % rep_diff
-    elif rep_diff <= -15:
-        benchmark_text = "You're underperforming comparable businesses (reputation -%d). Focus on the top opportunity below." % abs(rep_diff)
+    # Rank-based verdict against real tenants — never a synthetic average.
+    if not cohort["count"]:
+        benchmark_text = (
+            f"You are the first {market_label} on Sayvors — "
+            "every business that joins sharpens this view."
+        )
+        percentile_text = "No other businesses to rank against yet"
+    elif not my_rank:
+        benchmark_text = (
+            f"{cohort['count']} {market_label} on Sayvors — "
+            "connect a branch to enter the ranking."
+        )
+        percentile_text = f"{cohort['count']} {market_label} on Sayvors"
+    elif my_rank == 1:
+        benchmark_text = (
+            f"You're #1 of {market_total} {market_label} on Sayvors — leading the pack."
+        )
+        percentile_text = f"Ranked #1 of {market_total} {market_label}"
     else:
-        benchmark_text = "Your reputation and visibility are in line with comparable businesses. Focus on the opportunity below to stand out."
+        leader = market[0]
+        gap = (leader["avg_rating"] or 0) - (cur["avg_rating"] or 0)
+        benchmark_text = (
+            f"You're #{my_rank} of {market_total} {market_label} on Sayvors"
+            + (f" — {gap:.1f}★ behind {leader['name']}." if gap > 0 else ".")
+        )
+        percentile_text = f"Ranked #{my_rank} of {market_total} {market_label}"
 
-    # Industry common complaints: aggregate problems across both accounts as proxy
-    from .intelligence import get_problems
-    bench_problems = (await get_problems(db, bench_user or user_id, None, days))["problems"]
-    common_complaints = [p["name"] for p in bench_problems[:3]]
+    # Industry complaints: real themes across cohort tenants, not one account.
+    common_complaints = await _cohort_complaints(db, cohort.get("user_ids", []), days)
 
-    branches = await _branch_breakdown(db, user_id, days)
     leader, attention, recommendations = _branch_highlights(branches)
     svc = await _service_recommendations(db, user_id, days)
 
+    # — distribution & portfolio summary (owner-centric) —
+    dist = {}
+    for k in ("reputation_score", "avg_rating", "response_rate", "velocity_per_month"):
+        d = _distribution(branches, k)
+        if d:
+            dist[k] = d
+    # portfolio health / action rate
+    total_impr = cur["google_performance"]["impressions_maps"]
+    total_actions = cur["google_performance"]["customer_actions"]
+    portfolio_action_rate = round(total_actions / total_impr * 100, 1) if total_impr > 0 else None
+    portfolio_velocity_pm = round((cur["period"]["reviews"] or 0) * (30 / days), 1) if days else 0
+    plain_summary = _plain_summary(branches, cur, dist)
+    if cohort["count"] and my_rank:
+        plain_summary += (
+            f" You're #{my_rank} of {market_total} {market_label} on Sayvors."
+        )
+
+    # similar_* now read off the tenant cohort medians — real businesses,
+    # never a synthetic account.
+    median_reviews = cohort.get("median_reviews")
     return {
         "branches": branches,
         "leader": leader,
@@ -276,23 +604,33 @@ async def get_benchmark(
         "top_services": svc["top_services"],
         "needs_fix_services": svc["needs_fix_services"],
         "top_topics": svc["top_topics"],
+        "distribution": dist,
+        "portfolio_health_score": cur.get("health_score"),
+        "portfolio_action_rate": portfolio_action_rate,
+        "portfolio_velocity_per_month": portfolio_velocity_pm,
+        "portfolio_impressions": total_impr,
+        "portfolio_actions": total_actions,
+        "plain_summary": plain_summary,
         "days": days,
         "current_avg_rating": cur["avg_rating"],
-        "similar_avg_rating": similar["avg_rating"],
+        "similar_avg_rating": similar_avg,
         "current_reviews_total": cur["total_reviews"],
-        "similar_reviews_total": similar["total_reviews"],
+        "similar_reviews_total": int(median_reviews) if median_reviews is not None else cur["total_reviews"],
         "current_sentiment_positive_pct": cur["sentiment"]["positive_pct"],
-        "similar_sentiment_positive_pct": similar["sentiment"]["positive_pct"],
+        "similar_sentiment_positive_pct": similar_pos,
         "current_response_rate": cur["response_rate"],
-        "similar_response_rate": similar["response_rate"],
+        "similar_response_rate": similar_resp,
         "current_customer_actions": cur["google_performance"]["customer_actions"],
-        "similar_customer_actions": similar["google_performance"]["customer_actions"],
+        "similar_customer_actions": cur["google_performance"]["customer_actions"],
         "current_reputation_score": cur["reputation_score"],
-        "similar_reputation_score": similar["reputation_score"],
+        "similar_reputation_score": similar_rep,
         "benchmark_text": benchmark_text,
-        "percentile_text": f"You're in the top {min(99, max(12, 50 + rep_diff))}% of comparable businesses" if cur["reputation_score"] >= similar["reputation_score"] else f"There's significant room to grow vs comparable businesses",
+        "percentile_text": percentile_text,
         "outperforms": outperforms,
         "underperforms": underperforms,
         "competitive_opportunities": opps[:3],
         "industry_trends": common_complaints,
+        "cohort": {k: v for k, v in cohort.items() if k != "user_ids"},
+        "market": market,
+        "my_rank": my_rank,
     }

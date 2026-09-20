@@ -17,6 +17,7 @@ from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..localith.models import LocalithConnection
+from ..notifications.service import notify
 from .models import LocationPost
 
 logger = logging.getLogger(__name__)
@@ -29,11 +30,18 @@ if str(_REPO_ROOT) not in sys.path:
 
 PUBLISHABLE_FROM = ("draft", "scheduled", "failed")
 
-# Retry-then-park: failed scheduled publishes retry with backoff this many
-# times, then park as failed for the manual Retry button.
-MAX_PUBLISH_ATTEMPTS = 5
-RETRY_BASE_SECONDS = 300
-RETRY_MAX_SECONDS = 7200
+# Scheduling primitives live in one place (app.modules.scheduling) and are
+# re-exported here under their historic names so callers and tests don't
+# churn. Same behavior, single implementation.
+from ..scheduling import (
+    MAX_PUBLISH_ATTEMPTS,
+    is_postgres as _is_postgres,
+    provider_post_id as _google_post_id,
+    release_lock,
+    retry_delay as _retry_delay,
+    take_lock,
+)
+
 # Safety cap per worker pass (API quotas + bounded pass duration).
 MAX_PER_PASS = 50
 
@@ -44,94 +52,18 @@ MAX_PER_PASS = 50
 _POST_LOCK_PREFIX = "sayvors:post-publish:"
 
 
-def _is_postgres(db: AsyncSession) -> bool:
-    """Advisory locks exist only on Postgres. Anywhere else (sqlite tests,
-    single-process dev) there is nothing to coordinate with: take the lock
-    as trivially held."""
-    try:
-        bind = db.get_bind() if hasattr(db, "get_bind") else db.bind  # type: ignore[union-attr]
-        return bind is not None and bind.dialect.name == "postgresql"
-    except Exception:
-        return False
-
-
-def _post_lock_stmt(blocking: bool, post_id: str):
-    fn = "pg_advisory_lock" if blocking else "pg_try_advisory_lock"
-    return sa_text(f"SELECT {fn}(hashtext('{_POST_LOCK_PREFIX}' || :pid))").bindparams(
-        pid=str(post_id)
-    )
-
-
 async def _acquire_post_lock(db: AsyncSession, post_id: str) -> bool:
     """Blocking take. Trivially held where Postgres locks don't exist."""
-    if not _is_postgres(db):
-        return True
-    try:
-        await db.execute(_post_lock_stmt(True, post_id))
-        return True
-    except Exception as e:
-        logger.debug("Post lock unavailable, proceeding unlocked: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+    return await take_lock(db, True, _POST_LOCK_PREFIX, post_id)
 
 
 async def _try_post_lock(db: AsyncSession, post_id: str) -> bool:
     """Non-blocking take for worker passes: miss means SKIP, not wait."""
-    if not _is_postgres(db):
-        return True
-    try:
-        row = (await db.execute(_post_lock_stmt(False, post_id))).scalar()
-        if row:
-            return True
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
-    except Exception as e:
-        logger.debug("Post try-lock unavailable, proceeding unlocked: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+    return await take_lock(db, False, _POST_LOCK_PREFIX, post_id)
 
 
 async def _release_post_lock(db: AsyncSession, post_id: str) -> None:
-    try:
-        await db.execute(
-            sa_text(
-                f"SELECT pg_advisory_unlock(hashtext('{_POST_LOCK_PREFIX}' || :pid))"
-            ).bindparams(pid=str(post_id))
-        )
-    except Exception:
-        pass
-
-
-def _retry_delay(attempts: int) -> timedelta:
-    """Backoff after N consecutive failures: 5m, 10m, 20m … capped at 2h."""
-    seconds = min(RETRY_BASE_SECONDS * (2 ** max(0, attempts - 1)), RETRY_MAX_SECONDS)
-    return timedelta(seconds=seconds)
-
-
-def _google_post_id(response: object) -> str | None:
-    """Provider's post id, when it returns one (reserved for future remote
-    deletion: per-tenant native Google or a Localith delete endpoint)."""
-    if not isinstance(response, dict):
-        return None
-    for key in ("id", "postId", "post_id", "mediaId", "media_id"):
-        value = response.get(key)
-        if value:
-            return str(value)
-    for value in response.values():
-        if isinstance(value, dict):
-            nested = _google_post_id(value)
-            if nested:
-                return nested
-    return None
+    await release_lock(db, _POST_LOCK_PREFIX, post_id)
 
 
 def _serialize(p: LocationPost) -> dict:
@@ -153,6 +85,9 @@ def _serialize(p: LocationPost) -> dict:
         "published_at": p.published_at.isoformat() if p.published_at else None,
         "delete_at": p.delete_at.isoformat() if p.delete_at else None,
         "end_date": p.end_date.isoformat() if p.end_date else None,
+        "start_date": p.start_date.isoformat() if p.start_date else None,
+        "coupon_code": p.coupon_code,
+        "terms_conditions": p.terms_conditions,
         "google_post_id": p.google_post_id,
         "error": p.error,
         "created_at": p.created_at.isoformat() if p.created_at else None,
@@ -206,6 +141,29 @@ def _validate_delete_at(delete_at: datetime | None, scheduled_on: datetime | Non
         raise ValueError("delete_at must be after the scheduled publish time.")
 
 
+def _google_caption(description: str | None, terms: str | None) -> str:
+    """Caption text Google shows. Localith's wrapper exposes no separate
+    terms field, so offer terms travel inside the caption."""
+    text = (description or "").strip()
+    terms = (terms or "").strip()
+    if terms:
+        text = f"{text}\n\nTerms: {terms}" if text else f"Terms: {terms}"
+    return text
+
+
+def _effective_end_date(post: LocationPost) -> datetime | None:
+    """Google-side removal for dated posts: an event/offer ends when its
+    end date passes — Google takes it down itself. When the merchant set a
+    scheduled deletion but no explicit end, the deletion time doubles as
+    the end date, so the Google copy actually disappears too (updates
+    ignore end dates on Google's side, so this only affects event/offer)."""
+    if post.end_date is not None:
+        return post.end_date
+    if post.post_type in ("event", "offer") and post.delete_at is not None:
+        return post.delete_at
+    return None
+
+
 async def list_posts(
     db: AsyncSession, user_id: str, listing_id: str | None = None
 ) -> list[dict]:
@@ -230,6 +188,12 @@ async def create_post(db: AsyncSession, user_id: str, data: dict) -> dict:
     delete_at = _parse_dt(data.get("delete_at"))
     _validate_delete_at(delete_at, scheduled_on)
     end_date = _parse_dt(data.get("end_date"))
+    start_date = _parse_dt(data.get("start_date"))
+    post_type = data.get("post_type", "update")
+    if post_type not in ("update", "event", "offer"):
+        raise ValueError("post_type must be update, event or offer.")
+    if post_type == "event" and start_date is None:
+        raise ValueError("Events need a start date — Google requires it.")
 
     post = LocationPost(
         id=str(uuid.uuid4()),
@@ -238,7 +202,7 @@ async def create_post(db: AsyncSession, user_id: str, data: dict) -> dict:
         location_name=(data.get("location_name") or "")[:255],
         business_name=(data.get("business_name") or "Sayvors")[:255],
         title=(data.get("title") or "")[:500],
-        post_type=data.get("post_type", "update"),
+        post_type=post_type,
         description=(data.get("description") or "")[:1500],
         tags=[str(t)[:80] for t in data.get("tags", [])][:20],
         keywords=[str(k)[:80] for k in data.get("keywords", [])][:20],
@@ -249,12 +213,24 @@ async def create_post(db: AsyncSession, user_id: str, data: dict) -> dict:
         scheduled_on=scheduled_on,
         delete_at=delete_at,
         end_date=end_date,
+        start_date=start_date,
+        coupon_code=(str(data.get("coupon_code") or "")[:64] or None),
+        terms_conditions=(str(data.get("terms_conditions") or "")[:2000] or None),
     )
     db.add(post)
     await db.flush()
 
     if action == "publish":
         return await publish_post(db, user_id, post.id)
+    if action == "schedule":
+        when = scheduled_on.strftime("%b %d, %H:%M") if scheduled_on else "soon"
+        await notify(
+            db, user_id, "post_scheduled",
+            f"Post scheduled — {post.title or 'Untitled'}",
+            f"Publishes {when}.",
+            data={"post_id": post.id, "listing_id": post.listing_id},
+            href="/dashboard/posts",
+        )
     await db.commit()
     await db.refresh(post)
     return {"post": _serialize(post), "google_published": False, "images_sent": 0, "images_skipped": 0}
@@ -272,11 +248,19 @@ async def update_post(
     for field in ("location_name", "business_name", "title", "description", "cta_type", "cta_url"):
         if data.get(field) is not None:
             setattr(post, field, data[field])
-    if data.get("post_type") in ("update", "event", "offer"):
-        post.post_type = data["post_type"]
     for field in ("tags", "keywords", "image_urls"):
         if data.get(field) is not None:
             setattr(post, field, list(data[field]))
+    if "coupon_code" in data:
+        post.coupon_code = (str(data.get("coupon_code") or "")[:64] or None)
+    if "terms_conditions" in data:
+        post.terms_conditions = (str(data.get("terms_conditions") or "")[:2000] or None)
+    if "start_date" in data:
+        post.start_date = _parse_dt(data.get("start_date"))
+    if data.get("post_type") in ("update", "event", "offer"):
+        post.post_type = data["post_type"]
+        if post.post_type == "event" and post.start_date is None:
+            raise ValueError("Events need a start date — Google requires it.")
 
     # delete_at: explicit null cancels, absent key leaves untouched
     # (router passes exclude_unset).
@@ -319,25 +303,28 @@ async def delete_post(db: AsyncSession, user_id: str, post_id: str) -> None:
     await db.commit()
 
 
-async def publish_post(db: AsyncSession, user_id: str, post_id: str) -> dict:
+async def publish_post(
+    db: AsyncSession, user_id: str, post_id: str, notify_user: bool = True
+) -> dict:
     """Publish one post to Google via Localith right now.
 
     Publishing is NOT idempotent (a double call posts twice on Google), so
     the post's advisory lock is held for the whole call: manual clicks, the
     background loop, and racing workers serialize per post while different
-    posts proceed in parallel.
+    posts proceed in parallel. notify_user=False lets batch callers (worker)
+    emit one summary instead of a row per post.
     """
-    from integrations.channels import embedsocial
-
     locked = await _acquire_post_lock(db, post_id)
     try:
-        return await _publish_post_inner(db, user_id, post_id)
+        return await _publish_post_inner(db, user_id, post_id, notify_user)
     finally:
         if locked:
             await _release_post_lock(db, post_id)
 
 
-async def _publish_post_inner(db: AsyncSession, user_id: str, post_id: str) -> dict:
+async def _publish_post_inner(
+    db: AsyncSession, user_id: str, post_id: str, notify_user: bool = True
+) -> dict:
     from integrations.channels import embedsocial
 
     post = await _owned_post(db, user_id, post_id)
@@ -349,20 +336,32 @@ async def _publish_post_inner(db: AsyncSession, user_id: str, post_id: str) -> d
 
     sent = [u for u in (post.image_urls or []) if u.startswith("http")]
     skipped = len(post.image_urls or []) - len(sent)
+    effective_end = _effective_end_date(post)
     try:
         response = await asyncio.to_thread(
             embedsocial.publish_media_post,
             post.listing_id,
             post_type=post.post_type,
             title=post.title or None,
-            caption=post.description,
+            caption=_google_caption(post.description, post.terms_conditions),
             image_urls=sent,
             cta_type=post.cta_type,
             cta_url=post.cta_url,
-            end_date=post.end_date.isoformat() if post.end_date else None,
+            start_date=post.start_date.isoformat() if post.start_date else None,
+            end_date=effective_end.isoformat() if effective_end else None,
+            voucher_code=post.coupon_code or None,
         )
     except Exception as e:
         _register_publish_failure(post, str(e)[:500])
+        if notify_user and post.status == "failed":
+            # Parked (not merely retrying): this needs the human.
+            await notify(
+                db, user_id, "post_failed",
+                f"Post failed to publish — {post.title or 'Untitled'}",
+                (post.error or "")[:160],
+                data={"post_id": post.id, "listing_id": post.listing_id},
+                href="/dashboard/posts",
+            )
         await db.commit()
         raise RuntimeError(f"Google publish failed: {e}")
 
@@ -375,6 +374,14 @@ async def _publish_post_inner(db: AsyncSession, user_id: str, post_id: str) -> d
     google_id = _google_post_id(response)
     if google_id:
         post.google_post_id = google_id
+    if notify_user:
+        await notify(
+            db, user_id, "post_published",
+            f"Published to Google — {post.title or 'Untitled'}",
+            (post.description or "")[:160] or None,
+            data={"post_id": post.id, "listing_id": post.listing_id},
+            href="/dashboard/posts",
+        )
     await db.commit()
     await db.refresh(post)
     return {
@@ -426,6 +433,7 @@ async def publish_due(db: AsyncSession) -> dict:
         "checked": len(rows), "published": 0, "failed": 0,
         "retried": 0, "skipped": 0, "errors": [],
     }
+    per_user: dict[str, dict[str, int]] = {}
     for post in rows:
         post_id, user_id = post.id, post.user_id
         held = await _try_post_lock(db, post_id)
@@ -433,14 +441,18 @@ async def publish_due(db: AsyncSession) -> dict:
             totals["skipped"] += 1
             continue
         try:
-            await publish_post(db, user_id, post_id)
+            await publish_post(db, user_id, post_id, notify_user=False)
             totals["published"] += 1
+            per_user.setdefault(user_id, {"published": 0, "failed": 0})
+            per_user[user_id]["published"] += 1
         except Exception as e:
             fresh = await _owned_post(db, user_id, post_id)
             if fresh is not None and fresh.status == "scheduled":
                 totals["retried"] += 1
             else:
                 totals["failed"] += 1
+                per_user.setdefault(user_id, {"published": 0, "failed": 0})
+                per_user[user_id]["failed"] += 1
             totals["errors"].append(f"{post_id[:8]}: {str(e)[:120]}")
             try:
                 await db.rollback()
@@ -448,6 +460,25 @@ async def publish_due(db: AsyncSession) -> dict:
                 pass
         finally:
             await _release_post_lock(db, post_id)
+    # One summary row per active user per pass — never a row per post.
+    for uid, counts in per_user.items():
+        parts = []
+        if counts["published"]:
+            parts.append(f"published {counts['published']}")
+        if counts["failed"]:
+            parts.append(f"{counts['failed']} failed")
+        await notify(
+            db, uid,
+            "post_published" if counts["published"] else "post_failed",
+            f"Scheduled posts: {', '.join(parts)}",
+            None,
+            data={"published": counts["published"], "failed": counts["failed"]},
+            href="/dashboard/posts",
+        )
+    try:
+        await db.commit()
+    except Exception:
+        pass
     return totals
 
 
@@ -481,3 +512,123 @@ async def delete_due(db: AsyncSession) -> dict:
     except Exception:
         pass
     return totals
+
+
+def _parse_ai_draft(text: str) -> dict:
+    """Parse the model reply into description/tags/keywords. Never raises:
+    garbage in gives empty fields out (the composer stays usable)."""
+    import json as _json
+    import re as _re
+
+    try:
+        data = _json.loads(text)
+    except Exception:
+        match = _re.search(r"\{.*\}", text, _re.S)
+        try:
+            data = _json.loads(match.group(0)) if match else {}
+        except Exception:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+
+    def _words(value: object) -> list[str]:
+        if isinstance(value, str):
+            parts = [p.strip().lower() for p in value.replace(",", " ").split()]
+        elif isinstance(value, list):
+            parts = [str(x).strip().lower() for x in value]
+        else:
+            parts = []
+        seen: list[str] = []
+        for part in parts:
+            part = part.strip("# ")[:40]
+            if part and part not in seen:
+                seen.append(part)
+        return seen[:5]
+
+    description = str(data.get("description") or "")[:1500]
+    return {
+        "description": description,
+        "tags": _words(data.get("tags")),
+        "keywords": _words(data.get("keywords")),
+    }
+
+
+async def draft_post_content(
+    db: AsyncSession,
+    user_id: str,
+    title: str,
+    post_type: str = "update",
+    business_name: str | None = None,
+) -> dict:
+    """AI-draft the composer fields (description + tags + keywords) from a
+    title. Model comes from the tenant's enabled list — no default, no
+    fallback. Raises ValueError for bad input, RuntimeError when the
+    single attempt fails."""
+    from ..llm.providers.base import LLMMessage, LLMRequest
+    from ..llm.providers.registry import get_provider_for_model
+    from ..llm.service import _resolve_model, resolve_tenant_model
+
+    title = (title or "").strip()
+    if not title:
+        raise ValueError("A title is required to draft content.")
+    if post_type not in ("update", "offer", "event"):
+        post_type = "update"
+    kind_line = {
+        "update": "a general news/announcement post",
+        "offer": "a promotional offer post",
+        "event": "an event announcement post",
+    }[post_type]
+    model_id = await resolve_tenant_model(db)
+    system = (
+        "You write Google Business Profile posts for small businesses. "
+        "Reply with STRICT JSON only, no other text: "
+        '{"description": "<120-400 chars of post text>", '
+        '"tags": ["up to 5 short lowercase labels"], '
+        '"keywords": ["up to 5 search terms"]}. No em dashes."'
+    )
+    user_msg = (
+        f"Business: {(business_name or '').strip() or 'local business'}\n"
+        f"Post type: {kind_line}\nTitle: {title}\nWrite the post content."
+    )
+
+    def _build(mid: str):
+        provider = get_provider_for_model(mid)
+        api_model, _ = _resolve_model(mid)
+        return provider, LLMRequest(
+            model=api_model,
+            messages=[LLMMessage(role="user", content=user_msg)],
+            system_prompt=system,
+            temperature=0.7,
+            # Reasoning models spend tokens thinking before the answer —
+            # a tight cap makes them return 200 with EMPTY content
+            # (finish_reason="length"). Keep generous headroom.
+            max_tokens=2000,
+            stream=False,
+            tenant_id=user_id,
+            model_id=mid,
+            purpose="posts.ai_draft",
+        )
+
+    provider, req = _build(model_id)
+    try:
+        resp = await provider.complete(req)
+    except Exception as e:
+        logger.warning("Post drafting failed on first attempt: %s", e)
+        raise RuntimeError("AI drafting failed.")
+    content = (resp.content or "").strip()
+    if not content:
+        # Empty replies happen when a reasoning model exhausts its token
+        # budget thinking, or on provider hiccups: log WHY, retry once on
+        # the SAME model, then give up loudly.
+        logger.warning(
+            "Post drafting returned empty content (finish_reason=%s); retrying once",
+            getattr(resp, "finish_reason", "?"),
+        )
+        try:
+            resp = await provider.complete(req)
+        except Exception as e:
+            raise RuntimeError("AI drafting failed.")
+        content = (resp.content or "").strip()
+    if not content:
+        raise RuntimeError("AI drafting returned nothing.")
+    return _parse_ai_draft(content)

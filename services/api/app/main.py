@@ -21,6 +21,7 @@ from .modules.profile.router import router as profile_router
 from .modules.localith.router import router as localith_router
 from .modules.locations.router import router as locations_router
 from .modules.posts.router import router as posts_router
+from .modules.media.router import router as media_router
 from .modules.admin.router import router as admin_router
 from .modules.email.router import router as email_router
 from .modules.review_engine.router import router as review_engine_router
@@ -202,12 +203,30 @@ app.include_router(profile_router)
 app.include_router(localith_router)
 app.include_router(locations_router)
 app.include_router(posts_router)
+app.include_router(media_router)
 app.include_router(admin_router)
 app.include_router(email_router)
 app.include_router(review_engine_router)
 app.include_router(csv_router)
 app.include_router(assistant_router)
 app.include_router(notifications_router)
+
+# Public media files: owner uploads that go to Google by URL. Served here
+# (Caddy proxies the whole API host, so this path is public) from a
+# persistent volume — redeploys never wipe them.
+try:
+    import os as _os
+
+    from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+    _os.makedirs(settings.MEDIA_DIR, exist_ok=True)
+    app.mount(
+        settings.MEDIA_PUBLIC_PATH,
+        _StaticFiles(directory=settings.MEDIA_DIR, check_dir=False),
+        name="media-files",
+    )
+except Exception:
+    pass
 
 
 @app.get("/health")
