@@ -599,7 +599,10 @@ async def draft_post_content(
             messages=[LLMMessage(role="user", content=user_msg)],
             system_prompt=system,
             temperature=0.7,
-            max_tokens=600,
+            # Reasoning models spend tokens thinking before the answer —
+            # a tight cap makes them return 200 with EMPTY content
+            # (finish_reason="length"). Keep generous headroom.
+            max_tokens=2000,
             stream=False,
             tenant_id=user_id,
             model_id=mid,
@@ -614,9 +617,13 @@ async def draft_post_content(
         raise RuntimeError("AI drafting failed.")
     content = (resp.content or "").strip()
     if not content:
-        # Empty replies happen (truncated streams, provider hiccups): one
-        # retry on the SAME model, then give up loudly.
-        logger.warning("Post drafting returned empty content; retrying once")
+        # Empty replies happen when a reasoning model exhausts its token
+        # budget thinking, or on provider hiccups: log WHY, retry once on
+        # the SAME model, then give up loudly.
+        logger.warning(
+            "Post drafting returned empty content (finish_reason=%s); retrying once",
+            getattr(resp, "finish_reason", "?"),
+        )
         try:
             resp = await provider.complete(req)
         except Exception as e:
