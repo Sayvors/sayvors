@@ -799,18 +799,22 @@ function AttentionQueue() {
                     </div>
                   ))}
                   <div className="flex gap-2">
-                    <Link
-                      href="/dashboard/posts"
-                      className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
-                    >
-                      Manage posts <span aria-hidden> →</span>
-                    </Link>
-                    <Link
-                      href="/dashboard/media"
-                      className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
-                    >
-                      Manage media <span aria-hidden> →</span>
-                    </Link>
+                    {scheduled.some((s) => s.kind === "post") && (
+                      <Link
+                        href="/dashboard/posts"
+                        className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                      >
+                        Manage posts <span aria-hidden> →</span>
+                      </Link>
+                    )}
+                    {scheduled.some((s) => s.kind === "photo") && (
+                      <Link
+                        href="/dashboard/media"
+                        className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                      >
+                        Manage media <span aria-hidden> →</span>
+                      </Link>
+                    )}
                   </div>
                 </div>
               )}
