@@ -7,7 +7,9 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..analytics.models import ReviewInsight
+from ..channels.models import ReviewReply
 from ..localith.models import LocalithConnection
+from ..media.models import LocationMedia
 from ..outbox.models import EventOutbox
 from ..posts.models import LocationPost
 from ..rag.models import Databank, Document
@@ -52,6 +54,14 @@ async def get_overview(db: AsyncSession) -> dict:
         await db.execute(select(LocationPost.status, func.count()).group_by(LocationPost.status))
     ).all()
     posts_by_status = {str(s): int(n) for s, n in post_rows}
+    reply_rows = (
+        await db.execute(select(ReviewReply.status, func.count()).group_by(ReviewReply.status))
+    ).all()
+    replies_by_status = {str(s): int(n) for s, n in reply_rows}
+    media_rows = (
+        await db.execute(select(LocationMedia.status, func.count()).group_by(LocationMedia.status))
+    ).all()
+    media_by_status = {str(s): int(n) for s, n in media_rows}
     databanks = (
         await db.execute(select(func.count()).select_from(Databank))
     ).scalar() or 0
@@ -82,6 +92,8 @@ async def get_overview(db: AsyncSession) -> dict:
         "reviews_total": reviews,
         "posts_total": sum(posts_by_status.values()),
         "posts_by_status": posts_by_status,
+        "replies_by_status": replies_by_status,
+        "media_by_status": media_by_status,
         "databanks_total": databanks,
         "documents_total": documents,
         "outbox_pending": outbox_pending,

@@ -552,6 +552,40 @@ async def admin_dialect_delete(
     logger.info("Admin deleted dialect %s", code)
 
 
+@router.get("/dialects")
+async def admin_dialects_list(
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dialect catalog (admin view; 'auto' pseudo-row included)."""
+    from ..review_engine.dialects import list_dialects as _list_dialects
+
+    rows = await _list_dialects(db)
+    return [
+        {"code": "auto", "dialect_en": "Auto (match the review)", "dialect_ar": "تلقائي", "examples": []}
+    ] + [
+        {"code": r.code, "dialect_en": r.dialect_en, "dialect_ar": r.dialect_ar, "examples": list(r.examples or [])}
+        for r in rows
+    ]
+
+
+@router.get("/tones")
+async def admin_tones_list(
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tone catalog (admin view)."""
+    from ..review_engine.models import Tone
+
+    rows = (
+        await db.execute(select(Tone).order_by(Tone.code))
+    ).scalars().all()
+    return [
+        {"code": r.code, "label": r.label, "description": r.description or ""}
+        for r in rows
+    ]
+
+
 class ToneCreate(BaseModel):
     code: str = Field(..., min_length=2, max_length=30, pattern="^[A-Za-z0-9-]+$")
     label: str = Field(..., min_length=2, max_length=120)

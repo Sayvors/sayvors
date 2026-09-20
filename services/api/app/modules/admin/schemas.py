@@ -10,6 +10,8 @@ class AdminOverview(BaseModel):
     reviews_total: int
     posts_total: int
     posts_by_status: dict[str, int] = {}
+    replies_by_status: dict[str, int] = {}
+    media_by_status: dict[str, int] = {}
     databanks_total: int
     documents_total: int
     outbox_pending: int
