@@ -49,18 +49,12 @@ async def _release_media_lock(db: AsyncSession, media_id: str) -> None:
     await release_lock(db, _MEDIA_LOCK_PREFIX, media_id)
 
 
-# File uploads from the owner's computer. Stored under MEDIA_DIR (a docker
-# volume, so redeploys never wipe them) and served publicly at
-# <api-origin>/media-files/... — the provider fetches the photo from that
+# File uploads from the owner's computer. Stored in shared storage: GCS
+# public bucket when configured, otherwise local disk served publicly at
+# <api-origin>/media-files/... The provider fetches the photo from that
 # URL at publish time, which is why it must be public, not just on disk.
 UPLOAD_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov")
 VIDEO_EXTENSIONS = (".mp4", ".mov")
-
-
-def _media_dir() -> Path:
-    path = Path(settings.MEDIA_DIR)
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def detect_media_type(filename: str, content_type: str | None) -> str:
@@ -74,6 +68,8 @@ async def save_upload(
     user_id: str, filename: str, content_type: str | None, data: bytes, base_url: str
 ) -> dict:
     """Store one uploaded file and return its public URL + detected type."""
+    from ...core.storage import local_media_url, put_media
+
     max_bytes = max(1, settings.MEDIA_MAX_MB) * 1024 * 1024
     if len(data) > max_bytes:
         raise ValueError(f"File is too big — max {settings.MEDIA_MAX_MB}MB.")
@@ -85,13 +81,11 @@ async def save_upload(
     ctype = content_type or ""
     if ctype and not (ctype.startswith("image/") or ctype.startswith("video/")):
         raise ValueError("Only image or video files.")
-    stored = f"{uuid.uuid4().hex}{ext}"
-    dest = _media_dir() / user_id / stored
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
-    public = f"{base_url.rstrip('/')}{settings.MEDIA_PUBLIC_PATH}/{user_id}/{stored}"
+    storage_key, public_url = put_media(user_id, filename, data, ctype or None)
+    if not public_url:
+        public_url = local_media_url(base_url, user_id, storage_key)
     return {
-        "image_url": public,
+        "image_url": public_url,
         "type": detect_media_type(filename, content_type),
         "size": len(data),
         "content_type": ctype or None,

@@ -301,10 +301,9 @@ async def _process_pending_scrape() -> None:
             )
             db.add(doc)
             await db.flush()
-            upload_dir = os.path.join(settings.UPLOAD_DIR, databank_id)
-            os.makedirs(upload_dir, exist_ok=True)
-            with open(os.path.join(upload_dir, f"{doc.id}.txt"), "wb") as f:
-                f.write(content)
+            from ...core.storage import put_doc
+
+            put_doc(databank_id, f"{doc.id}.txt", content)
             created += 1
         result = await db.execute(select(ScrapeJob).where(ScrapeJob.id == job_id))
         done = result.scalar_one_or_none()
