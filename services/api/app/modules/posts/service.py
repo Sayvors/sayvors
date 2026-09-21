@@ -585,9 +585,16 @@ async def draft_post_content(
     identity_block = ""
     bank_facts = ""
     try:
-        from ..profile.service import format_business_identity, get_business_context
+        from ..profile.service import (
+            format_business_identity,
+            get_business_context,
+            get_offered_services,
+        )
 
-        identity_block = format_business_identity(await get_business_context(user_id, db))
+        identity_block = format_business_identity(
+            await get_business_context(user_id, db),
+            services=await get_offered_services(user_id, db),
+        )
     except Exception as e:
         logger.warning("Business identity unavailable for post draft: %s", e)
     try:

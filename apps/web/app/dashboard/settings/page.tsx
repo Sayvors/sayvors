@@ -653,7 +653,7 @@ export default function SettingsPage() {
               </select>
             </Field>
             {bizType === "Other" && (
-              <Field label="Your domain" hint="free text — e.g. Shawarma Grill, Car Wash">
+              <Field label="Your domain" hint="free text — e.g. Car Wash, Dental Clinic">
                 <input
                   value={bizCustom}
                   onChange={(e) => setBizCustom(e.target.value)}
@@ -663,23 +663,23 @@ export default function SettingsPage() {
                 />
               </Field>
             )}
-            <Field label="What do you sell?" hint="one per line or comma-separated — e.g. shawarma, mixed grill, falafel">
+            <Field label="What do you sell?" hint="one per line or comma-separated — your Services page list is included automatically, add only extras here">
               <textarea
                 value={bizSells}
                 onChange={(e) => setBizSells(e.target.value)}
                 disabled={busy !== null}
                 rows={2}
-                placeholder="shawarma, mixed grill, falafel"
+                placeholder="repairs, installations, consultations"
                 className={`${inputCls} resize-y`}
               />
             </Field>
-            <Field label="What you DON'T sell" hint="the AI will politely decline these instead of inventing them — e.g. shampoo, alcohol">
+            <Field label="What you DON'T sell" hint="the AI will politely decline these instead of inventing them">
               <textarea
                 value={bizNoSell}
                 onChange={(e) => setBizNoSell(e.target.value)}
                 disabled={busy !== null}
                 rows={2}
-                placeholder="shampoo, cleaning products"
+                placeholder="anything outside your trade, e.g. alcohol, tobacco"
                 className={`${inputCls} resize-y`}
               />
             </Field>
@@ -689,7 +689,7 @@ export default function SettingsPage() {
                 onChange={(e) => setBizDesc(e.target.value)}
                 disabled={busy !== null}
                 maxLength={500}
-                placeholder="Family-run shawarma spot in Jeddah, famous for charcoal grill"
+                placeholder="Family-run business in Jeddah, known for fast service and fair prices"
                 className={inputCls}
               />
             </Field>

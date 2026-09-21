@@ -254,3 +254,91 @@ async def test_profile_patch_roundtrip(client, db, user_id):
     assert body["business_sells"] == "shawarma, mixed grill"
     assert body["business_doesnt_sell"] == "shampoo"
     assert body["business_description"] == "Charcoal grill spot"
+
+
+async def _make_service(db, channel_id, name, category="Custom", offered=True):
+    from app.modules.channels.models import BusinessService
+
+    db.add(BusinessService(channel_id=channel_id, name=name,
+                           category=category, is_offered=offered))
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_offered_services_scoping(db, user_id, channel_id):
+    from app.modules.profile.service import get_offered_services
+
+    await _make_service(db, channel_id, "Charcoal Grill", "Dine-in", True)
+    await _make_service(db, channel_id, "Catering", "Custom", True)
+    await _make_service(db, channel_id, "Valet Parking", "Custom", False)
+    # Channel-scoped: only this channel's offered rows.
+    scoped = await get_offered_services(user_id, db, channel_id=channel_id)
+    assert "Charcoal Grill (Dine-in)" in scoped
+    assert "Catering" in scoped
+    assert not any("Valet" in s for s in scoped)
+    # Tenant-wide: same rows (single channel tenant).
+    wide = await get_offered_services(user_id, db)
+    assert scoped == wide
+    # Unknown user / no user never raises, returns [].
+    assert await get_offered_services("no-such-user", db) == []
+    assert await get_offered_services(None, db) == []
+
+
+def test_identity_includes_services_line():
+    text = format_business_identity({"business_type": "Food & Restaurant"},
+                                    services=["Charcoal Grill (Dine-in)"])
+    assert "Services offered" in text
+    assert "Charcoal Grill" in text
+
+
+@pytest.mark.asyncio
+async def test_review_reply_context_includes_service(db, user_id, config_id, channel_id):
+    from sqlalchemy import select as _select
+
+    from app.modules.channels.models import AutoReplyConfig
+    from app.modules.channels.review_reply import _build_context
+
+    await _make_user(db, user_id, business_type="Food & Restaurant")
+    await _make_service(db, channel_id, "Charcoal Grill", "Dine-in", True)
+    config = (await db.execute(
+        _select(AutoReplyConfig).where(AutoReplyConfig.id == config_id)
+    )).scalar_one()
+    text = await _build_context(config, "do you have grilled food?", db)
+    assert "Services offered" in text
+    assert "Charcoal Grill" in text
+
+
+@pytest.mark.asyncio
+async def test_post_draft_prompt_includes_service(monkeypatch, db, user_id, channel_id):
+    import json as _json
+    from types import SimpleNamespace
+
+    from app.modules.posts import service as _svc
+
+    await _make_user(db, user_id, business_type="Food & Restaurant")
+    await _make_service(db, channel_id, "Family Platter", "Dine-in", True)
+    await _make_service(db, channel_id, "Closed Service", "Custom", False)
+    seen = {}
+
+    class _Provider:
+        async def complete(self, req):
+            seen["msg"] = req.messages[0].content
+            return SimpleNamespace(content=_json.dumps({
+                "description": "Family platter night!",
+                "tags": ["platter"], "keywords": ["family"],
+            }), finish_reason="stop")
+
+    async def _models(db):
+        return [(SimpleNamespace(id="custom:model"), None)]
+
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.get_provider_for_model",
+        lambda mid: _Provider(),
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model", lambda mid: ("api-x", "groq"))
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.list_tenant_models", _models)
+    await _svc.draft_post_content(db, user_id, "Weekend deal", "offer", None)
+    assert "Family Platter" in seen["msg"]
+    assert "Closed Service" not in seen["msg"]

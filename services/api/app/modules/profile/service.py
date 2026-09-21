@@ -302,15 +302,16 @@ async def get_business_context(user_id: str | None, db) -> dict:
     return {k: v for k, v in ctx.items() if v}
 
 
-def format_business_identity(ctx: dict | None) -> str:
+def format_business_identity(ctx: dict | None, services: list[str] | None = None) -> str:
     """Render business context as a prompt-ready identity block.
 
     Owner-configured facts — the model must treat them as ground truth and
     never contradict them (they outrank anything the reviewer claims).
-    Returns "" when there is nothing configured.
+    `services` is the owner's offered-services list (Services page);
+    appended as its own line. Returns "" when there is nothing configured.
     """
     if not ctx:
-        return ""
+        ctx = {}
     lines = ["Business identity (owner-configured facts — treat as ground truth):"]
     name = ctx.get("business_name") or ""
     btype = ctx.get("business_type") or ""
@@ -321,6 +322,11 @@ def format_business_identity(ctx: dict | None) -> str:
         lines.append(f"- Business type: {btype}")
     if ctx.get("business_sells"):
         lines.append(f"- Sells / offers: {ctx['business_sells'][:500]}")
+    if services:
+        lines.append(
+            "- Services offered (from the owner's Services page — treat as "
+            f"ground truth): {', '.join(services)[:800]}"
+        )
     if ctx.get("business_doesnt_sell"):
         lines.append(
             "- Does NOT sell (never claim otherwise, never apologize for "
@@ -329,3 +335,47 @@ def format_business_identity(ctx: dict | None) -> str:
     if ctx.get("business_description"):
         lines.append(f"- About: {ctx['business_description'][:500]}")
     return "\n".join(lines) if len(lines) > 1 else ""
+
+
+async def get_offered_services(
+    user_id: str | None, db, channel_id: str | None = None, limit: int = 20
+) -> list[str]:
+    """Names of services the tenant offers (channel-scoped when given).
+
+    Reads the same channel_services rows the owner toggles on the Services
+    page — the AI treats them as ground truth beside sells/does-not-sell.
+    Never raises.
+    """
+    if not user_id:
+        return []
+    try:
+        from sqlalchemy import select
+
+        from ..channels.models import BusinessService, Channel
+
+        stmt = (
+            select(BusinessService.name, BusinessService.category)
+            .join(Channel, Channel.id == BusinessService.channel_id)
+            .where(
+                Channel.user_id == user_id,
+                BusinessService.is_offered.is_(True),
+            )
+            .order_by(BusinessService.name)
+            .limit(limit)
+        )
+        if channel_id:
+            stmt = stmt.where(BusinessService.channel_id == channel_id)
+        rows = (await db.execute(stmt)).all()
+    except Exception:
+        return []
+    names: list[str] = []
+    for name, category in rows:
+        label = (name or "").strip()
+        if not label:
+            continue
+        cat = (category or "").strip()
+        if cat and cat.lower() not in ("custom", label.lower()):
+            label = f"{label} ({cat})"
+        if label not in names:
+            names.append(label)
+    return names

@@ -433,9 +433,18 @@ async def process_review(
     all_tool_calls: list[ToolCall] = []
     # Owner identity FIRST — tool retrieval corroborates it, never replaces it.
     try:
-        from ..profile.service import format_business_identity, get_business_context
+        from ..profile.service import (
+            format_business_identity,
+            get_business_context,
+            get_offered_services,
+        )
 
-        _identity = format_business_identity(await get_business_context(tenant_id, db))
+        _identity = format_business_identity(
+            await get_business_context(tenant_id, db),
+            services=await get_offered_services(
+                tenant_id, db, channel_id=req.channel_id
+            ),
+        )
     except Exception:
         _identity = ""
     business_context_parts: list[str] = [_identity] if _identity else []
@@ -680,9 +689,18 @@ async def process_review_stream(
                                          tenant_id=tenant_id, channel_id=req.channel_id)
     # Owner identity FIRST — tool retrieval corroborates it, never replaces it.
     try:
-        from ..profile.service import format_business_identity, get_business_context
+        from ..profile.service import (
+            format_business_identity,
+            get_business_context,
+            get_offered_services,
+        )
 
-        _identity = format_business_identity(await get_business_context(tenant_id, db))
+        _identity = format_business_identity(
+            await get_business_context(tenant_id, db),
+            services=await get_offered_services(
+                tenant_id, db, channel_id=req.channel_id
+            ),
+        )
     except Exception:
         _identity = ""
     business_context_parts: list[str] = [_identity] if _identity else []

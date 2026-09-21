@@ -101,7 +101,11 @@ async def _build_context(config: AutoReplyConfig, review_text: str, db: AsyncSes
     """
     parts: list[str] = []
     try:
-        from ..profile.service import format_business_identity, get_business_context
+        from ..profile.service import (
+            format_business_identity,
+            get_business_context,
+            get_offered_services,
+        )
         from sqlalchemy import select
 
         from .models import Channel
@@ -117,7 +121,12 @@ async def _build_context(config: AutoReplyConfig, review_text: str, db: AsyncSes
             ).scalar_one_or_none()
         except Exception:
             owner_id = None
-        identity = format_business_identity(await get_business_context(owner_id, db))
+        identity = format_business_identity(
+            await get_business_context(owner_id, db),
+            services=await get_offered_services(
+                owner_id, db, channel_id=getattr(config, "channel_id", None)
+            ),
+        )
         if identity:
             parts.append(identity)
     except Exception as e:
