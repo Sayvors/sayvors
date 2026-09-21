@@ -406,6 +406,57 @@ class GoogleReviewsClient:
                 out[metric] = dated
         return out
 
+    async def fetch_keyword_timeseries(
+        self, location_id: str, start_date: datetime, end_date: datetime
+    ) -> dict[str, list[tuple]]:
+        """Daily search-keyword impressions for a location.
+
+        Returns {keyword: [(date, impressions), ...]}. Only the native
+        Google path can produce this — Localith has no keyword endpoint,
+        so Localith-only tenants get an honest empty state, never fake rows.
+        """
+        def _d(d: datetime) -> dict:
+            return {"year": d.year, "month": d.month, "day": d.day}
+
+        url = (
+            f"{self.PERFORMANCE_API}/locations/{location_id}"
+            f":fetchMultiDailyMetricsTimeSeries"
+        )
+        body = {
+            "dailyMetrics": ["SEARCH_KEYWORD_IMPRESSIONS"],
+            "dailyRange": {"startDate": _d(start_date), "endDate": _d(end_date)},
+        }
+        resp = await self._authed_request("POST", url, json=body)
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"fetch_keyword_timeseries failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+
+        out: dict[str, list[tuple]] = {}
+        for series in resp.json().get("multiDailyMetricTimeSeries", []):
+            for kw_block in series.get("searchKeywordImpressions", []):
+                keyword = (kw_block.get("searchKeyword") or "").strip()
+                if not keyword:
+                    continue
+                dated: list[tuple] = []
+                inner = (kw_block.get("dailyMetricTimeSeries") or {}).get(
+                    "timeSeries", {})
+                for v in inner.get("datedValues", []):
+                    d = v.get("date") or {}
+                    raw_value = v.get("value")
+                    if not raw_value:
+                        continue
+                    try:
+                        day = datetime(int(d["year"]), int(d["month"]), int(d["day"]),
+                                       tzinfo=timezone.utc)
+                        dated.append((day.date(), int(raw_value)))
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                if dated:
+                    out.setdefault(keyword, []).extend(dated)
+        return out
+
 
 def parse_review_resource(review_id: str) -> tuple[str, str] | None:
     """Split 'accounts/{a}/locations/{l}/reviews/{r}' into (account, location)."""
