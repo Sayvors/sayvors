@@ -11,6 +11,10 @@ export interface Profile {
   onboarded: boolean;
   bio: string | null;
   business_name: string | null;
+  business_type: string | null;
+  business_sells: string | null;
+  business_doesnt_sell: string | null;
+  business_description: string | null;
   phone: string | null;
   country: string | null;
   theme: string;
@@ -44,6 +48,10 @@ export async function updateProfile(data: {
   last_name?: string;
   bio?: string;
   business_name?: string;
+  business_type?: string | null;
+  business_sells?: string | null;
+  business_doesnt_sell?: string | null;
+  business_description?: string | null;
   phone?: string;
   country?: string | null;
 }): Promise<Profile> {

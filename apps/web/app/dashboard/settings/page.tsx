@@ -107,6 +107,30 @@ function Field({ label, hint, children, varies }: { label: string; hint?: string
 const selectCls =
   "w-full max-w-md rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition focus:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog";
 
+const inputCls = selectCls;
+
+// Tenant's own domain — what the company IS. The AI reads this (plus what
+// they sell / don't sell below) to answer "do you sell X?" factually and to
+// decline off-topic questions instead of hallucinating.
+const BUSINESS_TYPES = [
+  "Food & Restaurant",
+  "Cafe & Bakery",
+  "Retail & Shops",
+  "E-commerce",
+  "Pharmacy",
+  "Bank / Finance",
+  "AI / SaaS / Software",
+  "Agency",
+  "Healthcare & Clinics",
+  "Beauty & Salon",
+  "Gym & Fitness",
+  "Education",
+  "Media / Content",
+  "Professional Services",
+  "Non-profit",
+  "Other",
+];
+
 const ALL = "__all__";
 
 interface BulkFailed {
@@ -133,6 +157,13 @@ export default function SettingsPage() {
   const [dialects, setDialects] = useState<DialectOpt[]>([]);
   const [country, setCountry] = useState("");
   const [savedCountry, setSavedCountry] = useState<string | null>(null);
+  // Business context (account-wide, feeds the AI for replies + post drafts).
+  const [bizType, setBizType] = useState("");
+  const [bizCustom, setBizCustom] = useState("");
+  const [bizSells, setBizSells] = useState("");
+  const [bizNoSell, setBizNoSell] = useState("");
+  const [bizDesc, setBizDesc] = useState("");
+  const [savedBiz, setSavedBiz] = useState({ type: "", sells: "", noSell: "", desc: "" });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -184,6 +215,23 @@ export default function SettingsPage() {
         if (prof) {
           setCountry(prof.country ?? "");
           setSavedCountry(prof.country ?? null);
+          const pType = prof.business_type ?? "";
+          if (pType && !BUSINESS_TYPES.includes(pType)) {
+            setBizType("Other");
+            setBizCustom(pType);
+          } else {
+            setBizType(pType);
+            setBizCustom("");
+          }
+          setBizSells(prof.business_sells ?? "");
+          setBizNoSell(prof.business_doesnt_sell ?? "");
+          setBizDesc(prof.business_description ?? "");
+          setSavedBiz({
+            type: pType,
+            sells: prof.business_sells ?? "",
+            noSell: prof.business_doesnt_sell ?? "",
+            desc: prof.business_description ?? "",
+          });
         }
         const cfgs: Record<string, ChannelCfg> = {};
         await Promise.all(
@@ -380,6 +428,51 @@ export default function SettingsPage() {
     }
   }
 
+  const bizTypeEffective = bizType === "Other" ? bizCustom.trim() : bizType;
+  const bizDirty =
+    bizTypeEffective !== savedBiz.type ||
+    bizSells !== savedBiz.sells ||
+    bizNoSell !== savedBiz.noSell ||
+    bizDesc !== savedBiz.desc;
+
+  async function saveBizContext() {
+    setBusy("bizctx");
+    setBanner(null);
+    try {
+      const updated = await updateProfile({
+        business_type: bizTypeEffective || null,
+        business_sells: bizSells.trim() || null,
+        business_doesnt_sell: bizNoSell.trim() || null,
+        business_description: bizDesc.trim() || null,
+      });
+      const pType = updated.business_type ?? "";
+      if (pType && !BUSINESS_TYPES.includes(pType)) {
+        setBizType("Other");
+        setBizCustom(pType);
+      } else {
+        setBizType(pType);
+        setBizCustom("");
+      }
+      setBizSells(updated.business_sells ?? "");
+      setBizNoSell(updated.business_doesnt_sell ?? "");
+      setBizDesc(updated.business_description ?? "");
+      setSavedBiz({
+        type: pType,
+        sells: updated.business_sells ?? "",
+        noSell: updated.business_doesnt_sell ?? "",
+        desc: updated.business_description ?? "",
+      });
+      setBanner({ kind: "ok", text: "Business context saved — the AI now answers from these facts." });
+    } catch (e) {
+      setBanner({
+        kind: "err",
+        text: e instanceof Error ? e.message.slice(0, 200) : "Could not save business context.",
+      });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const dialectName = (code: string) => {
     if (code === "auto") return "Auto";
     const d = dialects.find((x) => x.code === code);
@@ -542,6 +635,70 @@ export default function SettingsPage() {
               className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
               {busy === "country" ? "Saving…" : "Save country"}
+            </button>
+          </Section>
+
+          <Section
+            title="Business context"
+            subtitle="What your company is. The AI reads this for every reply and post draft — it answers 'do you sell X?' from these facts and declines off-topic questions instead of guessing."
+          >
+            <Field label="What do you do?" hint="your domain — restaurant, pharmacy, bank…">
+              <select value={bizType} onChange={(e) => setBizType(e.target.value)} disabled={busy !== null} className={selectCls}>
+                <option value="">Not set</option>
+                {BUSINESS_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {bizType === "Other" && (
+              <Field label="Your domain" hint="free text — e.g. Shawarma Grill, Car Wash">
+                <input
+                  value={bizCustom}
+                  onChange={(e) => setBizCustom(e.target.value)}
+                  disabled={busy !== null}
+                  placeholder="Describe what you do"
+                  className={inputCls}
+                />
+              </Field>
+            )}
+            <Field label="What do you sell?" hint="one per line or comma-separated — e.g. shawarma, mixed grill, falafel">
+              <textarea
+                value={bizSells}
+                onChange={(e) => setBizSells(e.target.value)}
+                disabled={busy !== null}
+                rows={2}
+                placeholder="shawarma, mixed grill, falafel"
+                className={`${inputCls} resize-y`}
+              />
+            </Field>
+            <Field label="What you DON'T sell" hint="the AI will politely decline these instead of inventing them — e.g. shampoo, alcohol">
+              <textarea
+                value={bizNoSell}
+                onChange={(e) => setBizNoSell(e.target.value)}
+                disabled={busy !== null}
+                rows={2}
+                placeholder="shampoo, cleaning products"
+                className={`${inputCls} resize-y`}
+              />
+            </Field>
+            <Field label="One-line description" hint="shown to the AI as ground truth about your business">
+              <input
+                value={bizDesc}
+                onChange={(e) => setBizDesc(e.target.value)}
+                disabled={busy !== null}
+                maxLength={500}
+                placeholder="Family-run shawarma spot in Jeddah, famous for charcoal grill"
+                className={inputCls}
+              />
+            </Field>
+            <button
+              onClick={() => void saveBizContext()}
+              disabled={busy !== null || !bizDirty}
+              className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+            >
+              {busy === "bizctx" ? "Saving…" : "Save business context"}
             </button>
           </Section>
 

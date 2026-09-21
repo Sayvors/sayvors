@@ -579,6 +579,43 @@ async def draft_post_content(
         "event": "an event announcement post",
     }[post_type]
     model_id = await resolve_tenant_model(db)
+    # Ground the draft in the tenant's own facts: owner identity (category,
+    # sells, does-not-sell) + top databank chunks for the title. Without this
+    # the model invents products a shawarma place never sold.
+    identity_block = ""
+    bank_facts = ""
+    try:
+        from ..profile.service import format_business_identity, get_business_context
+
+        identity_block = format_business_identity(await get_business_context(user_id, db))
+    except Exception as e:
+        logger.warning("Business identity unavailable for post draft: %s", e)
+    try:
+        from sqlalchemy import select as _select
+
+        from ..rag.models import Databank
+        from ..rag.schemas import SearchRequest
+        from ..rag.service import search as rag_search
+
+        bank_id = (
+            await db.execute(
+                _select(Databank.id)
+                .where(Databank.user_id == user_id)
+                .order_by(Databank.created_at)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if bank_id:
+            results, _degraded = await rag_search(
+                bank_id,
+                SearchRequest(query=title[:500], top_k=3),
+                None,  # type: ignore[arg-type]
+                db,
+            )
+            if results:
+                bank_facts = "\n".join(f"- {r['content'][:300]}" for r in results)
+    except Exception as e:
+        logger.warning("Databank facts unavailable for post draft: %s", e)
     system = (
         "You write Google Business Profile posts for small businesses. "
         "Reply with STRICT JSON only, no other text: "
@@ -586,8 +623,21 @@ async def draft_post_content(
         '"tags": ["up to 5 short lowercase labels"], '
         '"keywords": ["up to 5 search terms"]}. No em dashes."'
     )
+    context_parts = []
+    if identity_block:
+        context_parts.append(identity_block)
+    if bank_facts:
+        context_parts.append(
+            "Facts from the business Databank (use these for specifics):\n" + bank_facts
+        )
+    grounding_rule = (
+        "Write ONLY about what the business facts above support — never invent "
+        "products, prices, offers, hours or services not stated there."
+    )
     user_msg = (
         f"Business: {(business_name or '').strip() or 'local business'}\n"
+        + ("\n".join(context_parts) + "\n" if context_parts else "")
+        + f"{grounding_rule}\n"
         f"Post type: {kind_line}\nTitle: {title}\nWrite the post content."
     )
 

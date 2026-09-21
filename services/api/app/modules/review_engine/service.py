@@ -218,12 +218,25 @@ def build_requirements(
         "No invented operational claims (training, refunds, investigations, manager contact, "
         "policy changes, overhauls, never-again promises) unless stated in Business Context."
     )
-    if "question" in (analysis.intent or []) and not (business_context or "").strip():
-        reqs.append(
-            "The customer asks WHY — Business Context has no verified reason: "
-            "acknowledge the concern WITHOUT inventing an explanation. "
-            "No pricing rationale, ingredient stories, or process descriptions."
-        )
+    if "question" in (analysis.intent or []):
+        # A question-review is an inquiry, not feedback — thanking it for a
+        # "wonderful review" is nonsense, and without verified facts the
+        # reply must not invent products, menus, prices or availability.
+        if (business_context or "").strip():
+            reqs.append(
+                "The review is a QUESTION, not feedback: answer it directly and ONLY from "
+                "Business Context. Do NOT thank the reviewer for their review or rating and "
+                "do not praise their feedback. Never state products, availability, prices or "
+                "hours that Business Context does not confirm."
+            )
+        else:
+            reqs.append(
+                "The review is a QUESTION, not feedback: never thank the reviewer for their "
+                "review or rating, and never praise their feedback. Business Context has no "
+                "verified answer: do NOT invent products, menus, prices, availability or any "
+                "operational fact — say the team will follow up with accurate details and "
+                "invite them to visit or contact the business."
+            )
     reqs.append(
         "Customer-facing copy only: no internal labels, snake_case terms, strategy names, "
         "or classification vocabulary anywhere in the reply."
@@ -418,7 +431,14 @@ async def process_review(
 
     # Step 4: Decide + call tools (the AI decides what data it needs)
     all_tool_calls: list[ToolCall] = []
-    business_context_parts: list[str] = []
+    # Owner identity FIRST — tool retrieval corroborates it, never replaces it.
+    try:
+        from ..profile.service import format_business_identity, get_business_context
+
+        _identity = format_business_identity(await get_business_context(tenant_id, db))
+    except Exception:
+        _identity = ""
+    business_context_parts: list[str] = [_identity] if _identity else []
     has_offer_data = False
     has_product_data = False
     offer_texts: list[str] = []
@@ -489,7 +509,9 @@ async def process_review(
     if relevance.verdict == "off_topic":
         requirements.append(
             "Possible off-topic review: do NOT discuss, apologize for, or make claims about "
-            "the specific mentioned item — keep the reply general and brief."
+            "the specific mentioned item — keep the reply general and brief. If it is phrased "
+            "as a question about something the business does not offer (see the identity block), "
+            "answer NO plainly in one clause and point at what the business DOES offer instead."
         )
     requirements.extend(marketing_requirements(prefs))
 
@@ -656,7 +678,14 @@ async def process_review_stream(
     yield {"step": "tools", "message": "Deciding which business data to retrieve...", "progress": 40}
     tool_decisions = await _decide_tools(analysis, strategies, model,
                                          tenant_id=tenant_id, channel_id=req.channel_id)
-    business_context_parts: list[str] = []
+    # Owner identity FIRST — tool retrieval corroborates it, never replaces it.
+    try:
+        from ..profile.service import format_business_identity, get_business_context
+
+        _identity = format_business_identity(await get_business_context(tenant_id, db))
+    except Exception:
+        _identity = ""
+    business_context_parts: list[str] = [_identity] if _identity else []
     all_tool_calls: list[ToolCall] = []
     has_offer_data = False
     has_product_data = False
@@ -716,7 +745,9 @@ async def process_review_stream(
     if relevance.verdict == "off_topic":
         requirements.append(
             "Possible off-topic review: do NOT discuss, apologize for, or make claims about "
-            "the specific mentioned item — keep the reply general and brief."
+            "the specific mentioned item — keep the reply general and brief. If it is phrased "
+            "as a question about something the business does not offer (see the identity block), "
+            "answer NO plainly in one clause and point at what the business DOES offer instead."
         )
     requirements.extend(marketing_requirements(prefs))
     yield {"step": "requirements", "message": f"{len(requirements)} binding generation requirement(s).",

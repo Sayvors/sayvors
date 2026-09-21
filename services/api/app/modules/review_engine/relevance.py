@@ -51,17 +51,24 @@ async def resolve_business_domain(
 ) -> dict:
     """Collect business-domain terms from everything the tenant configured.
 
-    Sources: location profiles (categories + description), channel services,
-    channel display name, databank names + document filenames. Tenant-wide
-    (not per-channel exact) — robust when links are missing.
+    Sources: tenant business context (category/sells/description), location
+    profiles (categories + description), channel services, channel display
+    name, databank names + document filenames. Tenant-wide (not per-channel
+    exact) — robust when links are missing.
+
+    The tenant's explicit "does NOT sell" list is returned separately under
+    `not_offered` and is deliberately NOT part of `terms`: those words must
+    never count as evidence that a review is on-topic.
     """
     from sqlalchemy import select
 
     terms: set[str] = set()
+    not_offered: set[str] = set()
     sources: dict[str, int] = {}
     try:
         from ..channels.models import BusinessService, Channel
         from ..locations.models import LocationProfile
+        from ..profile.service import get_business_context
         from ..rag.models import Databank, Document
 
         # Each source is queried independently — a missing table or
@@ -82,6 +89,23 @@ async def resolve_business_domain(
                 except Exception:
                     pass
                 return None
+
+        # Tenant business context FIRST — the owner's own identity of the
+        # company (category, what they sell, 1-line description) is the most
+        # direct signal of what the business is. The explicit "does NOT sell"
+        # list is kept OUT of `terms` — those words must never count as
+        # on-topic evidence.
+        try:
+            ctx = await get_business_context(tenant_id, db)
+        except Exception as e:
+            logger.debug("Business context unavailable: %s", e)
+            ctx = {}
+        if ctx:
+            terms.update(_words(ctx.get("business_type") or ""))
+            terms.update(_words(ctx.get("business_sells") or ""))
+            terms.update(_words(ctx.get("business_description") or ""))
+            not_offered.update(_words(ctx.get("business_doesnt_sell") or ""))
+            sources["business_context"] = sum(1 for v in ctx.values() if v)
 
         res = await _safe_execute(select(LocationProfile).where(LocationProfile.user_id == tenant_id), "location_profiles")
         profiles = res.scalars().all() if res is not None else []
@@ -139,7 +163,8 @@ async def resolve_business_domain(
             await db.rollback()
         except Exception:
             pass
-    return {"terms": sorted(terms), "sources": sources}
+    return {"terms": sorted(terms), "sources": sources,
+            "not_offered": sorted(not_offered)}
 
 
 def assess_relevance(
@@ -150,6 +175,7 @@ def assess_relevance(
     """Verdict dict: {verdict, reason, evidence, matched_terms}."""
     product_ref = ((analysis.product_reference or "").strip()) if analysis else ""
     domain_words = set((domain or {}).get("terms", []))
+    not_offered_words = set((domain or {}).get("not_offered", []))
 
     if not product_ref:
         return {
@@ -158,19 +184,32 @@ def assess_relevance(
             "evidence": "",
             "matched_terms": [],
         }
-    if len(domain_words) < MIN_DOMAIN_TERMS:
-        return {
-            "verdict": "uncertain",
-            "reason": "Too little business domain configured — cannot judge relevance.",
-            "evidence": "",
-            "matched_terms": [],
-        }
-
     ref_words = [w for w in _words(product_ref) if w not in NEUTRAL_WORDS]
     if not ref_words:
         return {
             "verdict": "uncertain",
             "reason": "Mentioned item is too generic to judge — normal pipeline.",
+            "evidence": "",
+            "matched_terms": [],
+        }
+    # Explicit owner exclusion beats everything: the tenant said they do NOT
+    # sell this. Evaluated before the domain-size gate — direct tenant intent
+    # needs no minimum corpus.
+    excluded = [w for w in ref_words if _term_hit(w, not_offered_words)] if not_offered_words else []
+    if excluded:
+        return {
+            "verdict": "off_topic",
+            "reason": (
+                f"Mentioned item '{product_ref}' is on the business's explicit "
+                f"does-not-sell list — review is about something else."
+            ),
+            "evidence": f"'{product_ref}' ↔ not-offered: {', '.join(sorted(set(excluded)))}",
+            "matched_terms": [],
+        }
+    if len(domain_words) < MIN_DOMAIN_TERMS:
+        return {
+            "verdict": "uncertain",
+            "reason": "Too little business domain configured — cannot judge relevance.",
             "evidence": "",
             "matched_terms": [],
         }

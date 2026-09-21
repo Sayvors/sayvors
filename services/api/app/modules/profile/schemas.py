@@ -10,6 +10,10 @@ class ProfileResponse(BaseModel):
     onboarded: bool
     bio: str | None = None
     business_name: str | None = None
+    business_type: str | None = None
+    business_sells: str | None = None
+    business_doesnt_sell: str | None = None
+    business_description: str | None = None
     phone: str | None = None
     country: str | None = None
     theme: str = "light"
@@ -24,6 +28,10 @@ class ProfileUpdateRequest(BaseModel):
     last_name: str | None = Field(default=None, min_length=2, max_length=100)
     bio: str | None = Field(default=None, max_length=2000)
     business_name: str | None = Field(default=None, max_length=255)
+    business_type: str | None = Field(default=None, max_length=100)
+    business_sells: str | None = Field(default=None, max_length=2000)
+    business_doesnt_sell: str | None = Field(default=None, max_length=2000)
+    business_description: str | None = Field(default=None, max_length=500)
     phone: str | None = Field(default=None, max_length=50)
     country: str | None = Field(default=None, max_length=8, description="Account-wide ISO country code, e.g. SA")
 
