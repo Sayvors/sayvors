@@ -23,15 +23,15 @@ _LEGACY_DEFAULT = "groq:openai/gpt-oss-120b"
 
 
 def upgrade() -> None:
+    op.alter_column("auto_reply_configs", "model",
+                    existing_type=sa.String(100),
+                    nullable=True)
     op.execute(
         sa.text(
             "UPDATE auto_reply_configs SET model = NULL "
             "WHERE model = :legacy"
         ).bindparams(legacy=_LEGACY_DEFAULT)
     )
-    op.alter_column("auto_reply_configs", "model",
-                    existing_type=sa.String(100),
-                    nullable=True)
 
 
 def downgrade() -> None:

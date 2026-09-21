@@ -414,9 +414,10 @@ async def process_review(
 
     # Step 4b: Business relevance — flag reviews about something else.
     # Assessed after retrieval so databank hits corroborate relevance.
+    # Complaint topics count too: "cold food" fires without a product ref.
     domain = await resolve_business_domain(req.channel_id, tenant_id, db)
     relevance = RelevanceVerdict(**apply_retrieval_corroboration(
-        assess_relevance(req.review_text, analysis, domain), has_product_data))
+        assess_relevance(req.review_text, analysis, domain, issues), has_product_data))
     if relevance.verdict == "off_topic":
         logger.info("Review flagged off-topic: %s", relevance.reason)
 
@@ -660,7 +661,7 @@ async def process_review_stream(
     # Step 4b: Business relevance (after retrieval so hits corroborate).
     domain = await resolve_business_domain(req.channel_id, tenant_id, db)
     relevance = RelevanceVerdict(**apply_retrieval_corroboration(
-        assess_relevance(req.review_text, analysis, domain), has_product_data))
+        assess_relevance(req.review_text, analysis, domain, issues), has_product_data))
     if relevance.verdict == "off_topic":
         logger.info("Review (stream) flagged off-topic: %s", relevance.reason)
     yield {"step": "relevance", "message": f"Relevance: {relevance.verdict}.",

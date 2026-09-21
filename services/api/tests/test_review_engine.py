@@ -1590,6 +1590,57 @@ def test_retrieval_corroboration_flips_to_on_topic():
     assert kept["verdict"] == "off_topic"
 
 
+def _issue(label, detail, keywords, generic=False):
+    from app.modules.review_engine.schemas import ExtractedIssue
+
+    return ExtractedIssue(key="k", label=label, detail=detail,
+                          keywords=keywords, generic=generic)
+
+
+def test_issue_topic_hits_exclusion_without_product_ref():
+    """'Cold food' complaint at a software company: no product_reference,
+    but the complaint topic is on the does-not-sell list → off-topic."""
+    from app.modules.review_engine.relevance import assess_relevance
+
+    issues = [_issue("Cold food", "cold food served late",
+                     ["cold", "food", "waiter", "waited"])]
+    v = assess_relevance("Terrible service, cold food, rude waiter",
+                         _rel_analysis(None),
+                         {"terms": ["ai", "saas", "software", "company"],
+                          "not_offered": ["food", "beverages", "dine-in"]},
+                         issues)
+    assert v["verdict"] == "off_topic"
+    assert "does-not-sell" in v["reason"]
+
+
+def test_issue_only_without_exclusion_stays_uncertain():
+    """Legit support gripe ('slow support, waited days') must NOT be
+    flagged: no explicit exclusion, no product ref → normal pipeline."""
+    from app.modules.review_engine.relevance import assess_relevance
+
+    issues = [_issue("Slow support", "waited 3 days for a response",
+                     ["support", "waited", "days", "response", "rude"])]
+    v = assess_relevance("Support was rude, waited 3 days for a response",
+                         _rel_analysis(None),
+                         {"terms": ["ai", "saas", "software", "company"],
+                          "not_offered": ["food", "shampoo"]},
+                         issues)
+    assert v["verdict"] == "uncertain"
+
+
+def test_generic_issues_are_uncertain():
+    from app.modules.review_engine.relevance import assess_relevance
+
+    issues = [_issue("Bad service", "terrible service", ["service"],
+                     generic=True)]
+    v = assess_relevance("terrible service",
+                         _rel_analysis(None),
+                         {"terms": ["ai", "saas", "software", "company"],
+                          "not_offered": ["food"]},
+                         issues)
+    assert v["verdict"] == "uncertain"
+
+
 # ── engine-level claim grounding ─────────────────────────
 
 def test_user_case_ingredients_and_always_looking_fail():

@@ -73,39 +73,63 @@ def assess_relevance(
     review_text: str,
     analysis,
     domain: dict,
+    issues: list | None = None,
 ) -> dict:
-    """Verdict dict: {verdict, reason, evidence, matched_terms}."""
+    """Verdict dict: {verdict, reason, evidence, matched_terms}.
+
+    Judges the product reference AND the concrete complaint topics (issue
+    labels/details/keywords): a review complaining about "cold food" and
+    "waiters" is assessable even when no product_reference was extracted.
+    The explicit does-not-sell list is checked against ALL candidate terms;
+    domain overlap stays product-gated — an issue-only complaint without an
+    explicit exclusion is too ambiguous to call (slow "support" could be a
+    legitimate gripe), so it stays uncertain.
+    """
     product_ref = ((analysis.product_reference or "").strip()) if analysis else ""
     domain_words = set((domain or {}).get("terms", []))
     not_offered_words = set((domain or {}).get("not_offered", []))
 
-    if not product_ref:
-        return {
-            "verdict": "uncertain",
-            "reason": "No specific product mentioned — cannot judge relevance; normal pipeline.",
-            "evidence": "",
-            "matched_terms": [],
-        }
     ref_words = [w for w in _words(product_ref) if w not in NEUTRAL_WORDS]
-    if not ref_words:
+    issue_words: list[str] = []
+    for iss in issues or []:
+        if getattr(iss, "generic", False):
+            continue
+        issue_words += _words(getattr(iss, "label", "") or "")
+        issue_words += _words(getattr(iss, "detail", "") or "")
+        for kw in getattr(iss, "keywords", None) or []:
+            issue_words += _words(kw)
+    issue_words = [w for w in issue_words if w not in NEUTRAL_WORDS]
+    candidates = ref_words + [w for w in issue_words if w not in ref_words]
+
+    if not candidates:
         return {
             "verdict": "uncertain",
-            "reason": "Mentioned item is too generic to judge — normal pipeline.",
+            "reason": "No specific product or complaint topic — cannot judge relevance; normal pipeline.",
             "evidence": "",
             "matched_terms": [],
         }
     # Explicit owner exclusion beats everything: the tenant said they do NOT
     # sell this. Evaluated before the domain-size gate — direct tenant intent
-    # needs no minimum corpus.
-    excluded = [w for w in ref_words if _term_hit(w, not_offered_words)] if not_offered_words else []
+    # needs no minimum corpus. Checked against complaint topics too, so a
+    # "cold food" complaint fires even with no product reference.
+    excluded = [w for w in candidates if _term_hit(w, not_offered_words)] if not_offered_words else []
     if excluded:
+        subject = f"'{product_ref}'" if product_ref else (
+            f"complaint topic ({', '.join(sorted(set(excluded)))})")
         return {
             "verdict": "off_topic",
             "reason": (
-                f"Mentioned item '{product_ref}' is on the business's explicit "
+                f"Mentioned item {subject} is on the business's explicit "
                 f"does-not-sell list — review is about something else."
             ),
-            "evidence": f"'{product_ref}' ↔ not-offered: {', '.join(sorted(set(excluded)))}",
+            "evidence": f"{subject} ↔ not-offered: {', '.join(sorted(set(excluded)))}",
+            "matched_terms": [],
+        }
+    if not ref_words:
+        return {
+            "verdict": "uncertain",
+            "reason": "Mentioned topics are too generic to judge — normal pipeline.",
+            "evidence": "",
             "matched_terms": [],
         }
     if len(domain_words) < MIN_DOMAIN_TERMS:
