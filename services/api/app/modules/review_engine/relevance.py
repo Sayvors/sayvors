@@ -71,23 +71,23 @@ async def resolve_business_domain(
         from ..profile.service import get_business_context
         from ..rag.models import Databank, Document
 
-        # Each source is queried independently — a missing table or
-        # aborted transaction in one must NOT poison the session for the
-        # rest of the pipeline (the later INSERT of review_response_logs).
+        # Each source is queried independently inside a SAVEPOINT — a missing
+        # table or any other probe failure rolls back ONLY the savepoint. The
+        # caller's session is NEVER rolled back here: that would expire every
+        # ORM object it holds, and any later attribute access would raise
+        # MissingGreenlet ("greenlet_spawn has not been called").
         async def _safe_execute(stmt, label: str):
             try:
-                return await db.execute(stmt)
+                async with db.begin_nested():
+                    return await db.execute(stmt)
             except Exception as e:
-                # Missing table on dev DBs (e.g. location_profiles) is expected until migrated —
-                # debug level so it doesn't spam every review request.
+                # Missing table on DBs that haven't run migrations yet
+                # (e.g. location_profiles) — debug level so it doesn't spam
+                # every review request.
                 if "UndefinedTableError" in type(e).__name__ or "does not exist" in str(e):
                     logger.debug("Business domain %s skipped (table missing): %s", label, e)
                 else:
                     logger.warning("Business domain %s failed: %s", label, e)
-                try:
-                    await db.rollback()
-                except Exception:
-                    pass
                 return None
 
         # Tenant business context FIRST — the owner's own identity of the
@@ -155,14 +155,13 @@ async def resolve_business_domain(
                 terms.update(w for w in _words(cleaned) if w not in {"databank", "data", "csv", "final", "new"})
             sources["documents"] = len(rows)
     except Exception as e:
+        # Read-only probes: nothing was written, so there is nothing to roll
+        # back — and rolling back the caller's session here would expire its
+        # ORM objects (MissingGreenlet on next attribute access). Just log.
         if "UndefinedTableError" in type(e).__name__ or "does not exist" in str(e):
             logger.debug("Business domain resolution failed (table missing): %s", e)
         else:
             logger.warning("Business domain resolution failed: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
     return {"terms": sorted(terms), "sources": sources,
             "not_offered": sorted(not_offered)}
 

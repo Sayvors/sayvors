@@ -277,13 +277,20 @@ async def get_business_context(user_id: str | None, db) -> dict:
     Never raises — AI paths must survive a missing user/table. Returns {}
     when there is nothing configured so callers can distinguish "no facts"
     from "no user".
+
+    The probe runs inside a SAVEPOINT: a failure (e.g. column missing on a
+    DB that hasn't migrated) rolls back only the savepoint, never the
+    caller's session — otherwise the aborted transaction (Postgres) or the
+    expiry from a session rollback would break every later ORM access with
+    MissingGreenlet.
     """
     if not user_id:
         return {}
     try:
-        user = (
-            await db.execute(select(User).where(User.id == user_id))
-        ).scalar_one_or_none()
+        async with db.begin_nested():
+            user = (
+                await db.execute(select(User).where(User.id == user_id))
+            ).scalar_one_or_none()
     except Exception:
         return {}
     if not user:
@@ -344,7 +351,8 @@ async def get_offered_services(
 
     Reads the same channel_services rows the owner toggles on the Services
     page — the AI treats them as ground truth beside sells/does-not-sell.
-    Never raises.
+    Never raises. Savepoint-isolated like get_business_context: a probe
+    failure must never poison the caller's session.
     """
     if not user_id:
         return []
@@ -365,7 +373,8 @@ async def get_offered_services(
         )
         if channel_id:
             stmt = stmt.where(BusinessService.channel_id == channel_id)
-        rows = (await db.execute(stmt)).all()
+        async with db.begin_nested():
+            rows = (await db.execute(stmt)).all()
     except Exception:
         return []
     names: list[str] = []

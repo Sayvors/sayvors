@@ -16,6 +16,7 @@ if str(_REPO_ROOT) not in sys.path:
 from app.modules.profile.service import (
     format_business_identity,
     get_business_context,
+    get_offered_services,
 )
 
 
@@ -342,3 +343,83 @@ async def test_post_draft_prompt_includes_service(monkeypatch, db, user_id, chan
     await _svc.draft_post_content(db, user_id, "Weekend deal", "offer", None)
     assert "Family Platter" in seen["msg"]
     assert "Closed Service" not in seen["msg"]
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_does_not_expire_caller_session(db, user_id, channel_id):
+    """Missing-table probe (e.g. unmigrated prod DB) must not poison the sync.
+
+    Regression test for "Localith sync failed: greenlet_spawn has not been
+    called": the old code rolled back the CALLER's session on probe failure,
+    expiring every ORM object — the next attribute access raised
+    MissingGreenlet. Savepoint isolation keeps caller state intact.
+    """
+    from sqlalchemy import select as _select
+    from sqlalchemy import text as _text
+
+    from app.modules.review_engine.relevance import resolve_business_domain
+    from app.modules.users.models import User
+
+    await _make_user(db, user_id, business_type="Food & Restaurant",
+                     business_sells="shawarma grill restaurant food menu")
+    user = (await db.execute(
+        _select(User).where(User.id == user_id))).scalar_one()
+    # Simulate an unmigrated DB: databanks table gone (kept uncommitted so
+    # the fixture session rolls it back on teardown).
+    await db.execute(_text("DROP TABLE databanks"))
+    domain = await resolve_business_domain(channel_id, user_id, db)
+    # Other sources still resolve…
+    assert "shawarma" in domain["terms"]
+    assert "business_context" in domain["sources"]
+    assert domain["sources"].get("databanks", 0) == 0
+    # …and the caller's ORM objects are untouched — this attribute access
+    # raised MissingGreenlet before the fix.
+    assert user.business_type == "Food & Restaurant"
+    # …and the session still runs fresh queries.
+    again = (await db.execute(
+        _select(User).where(User.id == user_id))).scalar_one()
+    assert again.business_type == "Food & Restaurant"
+    await db.rollback()
+
+
+@pytest.mark.asyncio
+async def test_context_probe_failure_returns_fallback_usable_session(db, user_id):
+    """get_business_context degrades to {} and leaves the session working."""
+    from sqlalchemy import select as _select
+    from sqlalchemy import text as _text
+
+    await _make_user(db, user_id, business_type="Food & Restaurant")
+    # Break the users-table probe (uncommitted; rolled back at teardown).
+    await db.execute(_text("DROP TABLE channel_services"))
+    services = await get_offered_services(user_id, db)
+    assert services == []
+    from app.modules.users.models import User
+
+    user = (await db.execute(
+        _select(User).where(User.id == user_id))).scalar_one()
+    assert user.business_type == "Food & Restaurant"
+    await db.rollback()
+
+
+@pytest.mark.asyncio
+async def test_notify_failure_does_not_poison_session(db, user_id):
+    """A failed notify insert must not expire caller state nor retry forever."""
+    from sqlalchemy import select as _select
+    from sqlalchemy import text as _text
+
+    from app.modules.notifications.service import notify
+    from app.modules.users.models import User
+
+    await _make_user(db, user_id, business_type="Food & Restaurant")
+    user = (await db.execute(
+        _select(User).where(User.id == user_id))).scalar_one()
+    await db.execute(_text("DROP TABLE notifications"))
+    nid = await notify(db, user_id, "sync_failed", "Sync failed")
+    assert nid is None
+    # Caller objects untouched (MissingGreenlet before the fix)…
+    assert user.business_type == "Food & Restaurant"
+    # …and later work isn't haunted by the failed row (no autoflush retry).
+    again = (await db.execute(
+        _select(User).where(User.id == user_id))).scalar_one()
+    assert again.business_type == "Food & Restaurant"
+    await db.rollback()
