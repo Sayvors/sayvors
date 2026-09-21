@@ -634,76 +634,172 @@ def test_review_analysis_invalid_sentiment():
         )
 
 
-# ── tool schema conformance (single source of truth) ───
+# ── evidence declarations (strategy owns WHAT, layer owns HOW) ───
 
-def test_tool_schemas_match_signatures():
-    import inspect
+def test_strategy_evidence_map_declares_data_needs():
+    from app.modules.retrieval.evidence import NEED_KINDS
+    from app.modules.review_engine.strategies import STRATEGY_EVIDENCE
 
-    from app.modules.review_engine.tools import TOOL_DEFINITIONS, TOOL_MAP
-
-    assert len(TOOL_DEFINITIONS) == len(TOOL_MAP) > 0
-    for t in TOOL_DEFINITIONS:
-        fn = TOOL_MAP[t["name"]]
-        sig = inspect.signature(fn)
-        props = t["parameters"]["properties"]
-        # injected params are engine-only — never exposed to the model
-        for injected in ("tenant_id", "db", "databank_id"):
-            assert injected not in props, f"{t['name']} leaks injected param {injected}"
-        # every schema-declared param exists in the signature
-        for pname in props:
-            assert pname in sig.parameters, f"{t['name']}.{pname} not in signature"
-        # every non-injected required sig param is declared required
-        for pname, p in sig.parameters.items():
-            if pname in ("tenant_id", "db"):
-                continue
-            if p.default is inspect.Parameter.empty:
-                assert pname in t["parameters"]["required"], f"{t['name']}.{pname} missing from required"
-        # types are valid JSON-schema types
-        for pname, spec in props.items():
-            assert spec["type"] in ("string", "integer", "number", "boolean", "array", "object")
+    assert STRATEGY_EVIDENCE["mention_relevant_offer"] == ["offer"]
+    assert STRATEGY_EVIDENCE["recommend_related_product"] == ["product"]
+    for kinds in STRATEGY_EVIDENCE.values():
+        for kind in kinds:
+            assert kind in NEED_KINDS, f"unknown evidence kind {kind}"
 
 
-def test_decision_prompt_contains_full_schemas():
-    from app.modules.review_engine.service import _tools_prompt
-    from app.modules.review_engine.tools import TOOL_DEFINITIONS
+def _ev_analysis(**over):
+    from app.modules.review_engine.schemas import ReviewAnalysis
 
-    prompt = _tools_prompt()
-    for t in TOOL_DEFINITIONS:
-        assert t["name"] in prompt
-        for pname in t["parameters"]["properties"]:
-            assert f'"{pname}"' in prompt, f"{t['name']}.{pname} missing from decision prompt"
-    assert '"keyword"' not in prompt  # the historic drift arg must not appear as a parameter
+    base = dict(sentiment="negative", emotion="disappointment",
+                intent=["complaint"], issue_type="product_quality",
+                product_reference=None, urgency="low",
+                customer_request=None, language="en")
+    base.update(over)
+    return ReviewAnalysis(**base)
 
 
-def test_all_tools_execute_with_schema_args():
-    import asyncio
-    import inspect
+def test_evidence_needs_for_product_strategy():
+    from app.modules.review_engine.strategies import evidence_needs_for
 
-    from app.modules.review_engine import tools as tools_mod
-    from app.modules.review_engine.tools import TOOL_DEFINITIONS, TOOL_MAP
+    needs = evidence_needs_for(
+        _ev_analysis(product_reference="pizza"),
+        [_match("recommend_related_product", "Recommend", 40)],
+    )
+    assert [n.kind for n in needs] == ["product"]
+    assert needs[0].query == "pizza"
 
-    async def _run():
-        # Stub RAG so no DB/network is touched
-        async def _fake_rag(tenant_id, query, db, top_k=5):
-            return [{"content": f"stub hit for {query}"}]
 
-        old = tools_mod._rag_search
-        tools_mod._rag_search = _fake_rag
-        try:
-            for t in TOOL_DEFINITIONS:
-                fn = TOOL_MAP[t["name"]]
-                sig = inspect.signature(fn)
-                args: dict = {}
-                for pname, spec in t["parameters"]["properties"].items():
-                    if pname not in sig.parameters:
-                        continue
-                    args[pname] = "test" if spec["type"] == "string" else 1
-                result = await fn(**args, tenant_id="t1", db=None)
-                assert isinstance(result, dict) and "results" in result, t["name"]
-        finally:
-            tools_mod._rag_search = old
+def test_evidence_needs_for_offer_request():
+    from app.modules.review_engine.strategies import evidence_needs_for
 
-    asyncio.run(_run())
+    needs = evidence_needs_for(
+        _ev_analysis(intent=["complaint", "discount"],
+                     customer_request="give me a discount please"),
+        [_match("mention_relevant_offer", "Offer", 35)],
+    )
+    assert [n.kind for n in needs] == ["offer"]
+
+
+def test_evidence_needs_for_business_question():
+    from app.modules.review_engine.strategies import evidence_needs_for
+
+    needs = evidence_needs_for(
+        _ev_analysis(intent=["question"],
+                     customer_request="what hours are you open?"),
+        [_match("acknowledge_feedback", "Ack", 70)],
+    )
+    assert [n.kind for n in needs] == ["business_profile"]
+
+
+def test_evidence_needs_empty_without_triggers():
+    from app.modules.review_engine.strategies import evidence_needs_for
+
+    needs = evidence_needs_for(
+        _ev_analysis(sentiment="positive", emotion="joy", intent=["praise"],
+                     issue_type=None),
+        [_match("show_appreciation", "Thanks", 60)],
+    )
+    assert needs == []
+
+
+@pytest.mark.asyncio
+async def test_retrieve_evidence_empty_without_banks(db, user_id):
+    """No databanks configured: needs are unfulfilled, never errors."""
+    from app.modules.retrieval.evidence import EvidenceNeed
+    from app.modules.retrieval.layer import retrieve_evidence
+
+    out = await retrieve_evidence(
+        [EvidenceNeed(kind="product", query="pizza")],
+        tenant_id=user_id, db=db,
+    )
+    assert out["product"].has_data is False
+    assert out["product"].facts == []
+    assert out["product"].rendered == ""
+
+
+@pytest.mark.asyncio
+async def test_retrieve_evidence_never_raises_without_tenant(db):
+    from app.modules.retrieval.evidence import EvidenceNeed
+    from app.modules.retrieval.layer import retrieve_evidence
+
+    out = await retrieve_evidence(
+        [EvidenceNeed(kind="product", query="pizza")],
+        tenant_id=None, db=db,
+    )
+    assert out["product"].has_data is False
+
+
+def _write_csv_bank(monkeypatch, tmp_path, db_user_id, bank_name="Menu",
+                    rows=("name,record_type,category\nShawarma Plate,product,Grill\n",)):
+    """A real CSV document on local disk (no embeddings needed)."""
+    import uuid
+
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "UPLOAD_DIR", str(tmp_path))
+    from app.modules.rag.models import Databank, Document
+
+    bank_id = f"bank-{uuid.uuid4().hex[:8]}"
+    doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+    return bank_id, doc_id, Databank(id=bank_id, user_id=db_user_id, name=bank_name), [
+        Document(id=doc_id, databank_id=bank_id, user_id=db_user_id,
+                 filename="menu.csv", source_type="upload",
+                 file_type="csv", status="completed")
+    ], rows[0]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_evidence_structured_fact_has_no_source_labels(
+        monkeypatch, tmp_path, db, user_id):
+    """Structured rows arrive as facts — the LLM never sees mechanism names."""
+    from app.modules.retrieval.evidence import EvidenceNeed
+    from app.modules.retrieval.layer import retrieve_evidence
+    from app.core.storage import put_doc
+
+    bank_id, doc_id, bank, docs, csv_text = _write_csv_bank(
+        monkeypatch, tmp_path, user_id)
+    db.add(bank)
+    for d in docs:
+        db.add(d)
+    await db.commit()
+    put_doc(bank_id, f"{doc_id}.csv", csv_text.encode())
+
+    out = await retrieve_evidence(
+        [EvidenceNeed(kind="product", query="shawarma")],
+        tenant_id=user_id, db=db,
+    )
+    res = out["product"]
+    assert res.has_data is True
+    assert any("Shawarma Plate" in f for f in res.facts)
+    blob = res.rendered.lower()
+    for leaked in ("csv", "rag", "hybrid", "vector", "search_products",
+                   "structured", "tool", "mode"):
+        assert leaked not in blob, f"source label leaked: {leaked}"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_evidence_minimizes_to_budget(
+        monkeypatch, tmp_path, db, user_id):
+    """Ten matching rows → at most the product budget (3)."""
+    from app.modules.retrieval.evidence import EvidenceNeed, NEED_BUDGETS
+    from app.modules.retrieval.layer import retrieve_evidence
+    from app.core.storage import put_doc
+
+    lines = ["name,record_type,category"]
+    lines += [f"Shawarma Item {i},product,Grill" for i in range(10)]
+    bank_id, doc_id, bank, docs, _ = _write_csv_bank(
+        monkeypatch, tmp_path, user_id, rows=("\n".join(lines),))
+    db.add(bank)
+    for d in docs:
+        db.add(d)
+    await db.commit()
+    put_doc(bank_id, f"{doc_id}.csv", "\n".join(lines).encode())
+
+    out = await retrieve_evidence(
+        [EvidenceNeed(kind="product", query="shawarma")],
+        tenant_id=user_id, db=db,
+    )
+    assert 0 < len(out["product"].items) <= NEED_BUDGETS["product"]
 
 
 # ── billing/refund suppression ───────────────────────────
@@ -1494,6 +1590,57 @@ def test_retrieval_corroboration_flips_to_on_topic():
     assert kept["verdict"] == "off_topic"
 
 
+def _issue(label, detail, keywords, generic=False):
+    from app.modules.review_engine.schemas import ExtractedIssue
+
+    return ExtractedIssue(key="k", label=label, detail=detail,
+                          keywords=keywords, generic=generic)
+
+
+def test_issue_topic_hits_exclusion_without_product_ref():
+    """'Cold food' complaint at a software company: no product_reference,
+    but the complaint topic is on the does-not-sell list → off-topic."""
+    from app.modules.review_engine.relevance import assess_relevance
+
+    issues = [_issue("Cold food", "cold food served late",
+                     ["cold", "food", "waiter", "waited"])]
+    v = assess_relevance("Terrible service, cold food, rude waiter",
+                         _rel_analysis(None),
+                         {"terms": ["ai", "saas", "software", "company"],
+                          "not_offered": ["food", "beverages", "dine-in"]},
+                         issues)
+    assert v["verdict"] == "off_topic"
+    assert "does-not-sell" in v["reason"]
+
+
+def test_issue_only_without_exclusion_stays_uncertain():
+    """Legit support gripe ('slow support, waited days') must NOT be
+    flagged: no explicit exclusion, no product ref → normal pipeline."""
+    from app.modules.review_engine.relevance import assess_relevance
+
+    issues = [_issue("Slow support", "waited 3 days for a response",
+                     ["support", "waited", "days", "response", "rude"])]
+    v = assess_relevance("Support was rude, waited 3 days for a response",
+                         _rel_analysis(None),
+                         {"terms": ["ai", "saas", "software", "company"],
+                          "not_offered": ["food", "shampoo"]},
+                         issues)
+    assert v["verdict"] == "uncertain"
+
+
+def test_generic_issues_are_uncertain():
+    from app.modules.review_engine.relevance import assess_relevance
+
+    issues = [_issue("Bad service", "terrible service", ["service"],
+                     generic=True)]
+    v = assess_relevance("terrible service",
+                         _rel_analysis(None),
+                         {"terms": ["ai", "saas", "software", "company"],
+                          "not_offered": ["food"]},
+                         issues)
+    assert v["verdict"] == "uncertain"
+
+
 # ── engine-level claim grounding ─────────────────────────
 
 def test_user_case_ingredients_and_always_looking_fail():
@@ -1553,12 +1700,20 @@ def test_why_question_adds_no_invention_requirement():
         _plain_analysis(sentiment="neutral", intent=["question"], issue_type="pricing"),
         [], [], [], {"label": "question", "max_sentences": 3, "max_words": 70, "min_words": 8},
         None)
-    assert any("no verified reason" in r for r in reqs)
+    joined = "\n".join(reqs)
+    # No verified context: never thank a question for being "feedback",
+    # never invent products/prices/availability.
+    assert "never thank the reviewer" in joined.lower()
+    assert "do NOT invent" in joined
     reqs2 = build_requirements(
         _plain_analysis(sentiment="neutral", intent=["question"], issue_type="pricing"),
         [], [], [], {"label": "question", "max_sentences": 3, "max_words": 70, "min_words": 8},
         "Our prices reflect small-batch sourcing.")
-    assert not any("no verified reason" in r for r in reqs2)
+    joined2 = "\n".join(reqs2)
+    # With context: answer directly from it — still no thanks-for-review.
+    assert "answer it directly" in joined2.lower()
+    assert "not thank the reviewer" in joined2.lower()
+    assert "never state products" in joined2.lower()
 
 
 # ── pricing objection → verified offer pipeline ──────────
@@ -2148,3 +2303,228 @@ async def test_admin_tone_update(db):
     assert missing.value.status_code == 404
 
     await admin_tone_delete("warm", _admin={}, _rate_limit=None, db=db)
+
+
+# -- question detection + question-aware generation requirements --
+
+def test_looks_like_question_arabic_and_english():
+    from app.modules.review_engine.understanding import looks_like_question
+
+    assert looks_like_question("?? ?????? ???????") is True
+    assert looks_like_question("????? ??????") is True  # dialect opener, no mark
+    assert looks_like_question("Do you sell shawarma?") is True
+    assert looks_like_question("what time do you close") is True
+    assert looks_like_question("Great product") is False
+    assert looks_like_question("I have used multiple platforms and this one wins.") is False
+    assert looks_like_question(None) is False
+
+
+def test_rule_based_analysis_flags_question_intent():
+    from app.modules.review_engine.understanding import _rule_based_analysis
+
+    analysis = _rule_based_analysis("?? ?????? ???????", 5)
+    assert "question" in analysis.intent
+
+
+def test_build_requirements_question_without_context_bans_invention():
+    from app.modules.review_engine.schemas import ReviewAnalysis
+    from app.modules.review_engine.service import build_requirements
+
+    analysis = ReviewAnalysis(
+        sentiment="positive", emotion="joy", intent=["question"],
+        urgency="low", language="ar",
+    )
+    reqs = build_requirements(analysis, [], [], [], tier=None, business_context=None)
+    joined = "\n".join(reqs)
+    assert "never thank the reviewer" in joined.lower()
+    assert "do NOT invent" in joined
+    # With verified context the reply should answer directly instead.
+    reqs_ctx = build_requirements(
+        analysis, [], [], [], tier=None, business_context="We sell shawarma.",
+    )
+    joined_ctx = "\n".join(reqs_ctx)
+    assert "answer it directly" in joined_ctx.lower()
+    assert "not thank the reviewer" in joined_ctx.lower()
+
+
+# ── model resolution: explicit > channel > tenant default, never hardcoded ──
+
+async def _enable_model(db, model_id="groq:oss-120b"):
+    from app.modules.channels.service import encrypt_token
+    from app.modules.llm.models import ModelConfig, ProviderConfig
+
+    db.add(ProviderConfig(
+        provider="groq", key_encrypted=encrypt_token("gsk_test"), enabled=True,
+    ))
+    db.add(ModelConfig(model_id=model_id, enabled=True))
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_engine_model_explicit_validated(db, user_id, channel_id):
+    """Explicit request model must be admin-enabled, else loud ValueError."""
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from app.modules.review_engine.service import _resolve_engine_model
+
+    await _enable_model(db)
+    req = ReviewEngineRequest(review_text="Hi", rating=5, model="groq:oss-120b")
+    model, source = await _resolve_engine_model(req, user_id, db)
+    assert (model, source) == ("groq:oss-120b", "request")
+
+    req = ReviewEngineRequest(review_text="Hi", rating=5, model="openai:nope")
+    with pytest.raises(ValueError, match="not enabled"):
+        await _resolve_engine_model(req, user_id, db)
+
+
+@pytest.mark.asyncio
+async def test_engine_model_channel_then_tenant_default(db, user_id):
+    """Channel explicit choice wins when enabled; NULL falls to tenant default."""
+    from sqlalchemy import select as _select
+
+    from app.modules.channels.models import AutoReplyConfig, Channel
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from app.modules.review_engine.service import _resolve_engine_model
+
+    await _enable_model(db, "groq:oss-120b")
+    db.add(Channel(id="ch-model-1", user_id=user_id, platform="google_reviews",
+                   platform_user_id="x", display_name="M", status="active"))
+    db.add(AutoReplyConfig(id="cfg-model-1", channel_id="ch-model-1",
+                           model="groq:oss-120b"))
+    await db.commit()
+    req = ReviewEngineRequest(review_text="Hi", rating=5, channel_id="ch-model-1")
+    # Explicit channel choice → channel source.
+    model, source = await _resolve_engine_model(req, user_id, db)
+    assert (model, source) == ("groq:oss-120b", "channel")
+
+    # NULL = tenant default: first enabled model, no hardcode.
+    config = (await db.execute(
+        _select(AutoReplyConfig).where(AutoReplyConfig.id == "cfg-model-1")
+    )).scalar_one()
+    config.model = None
+    await db.commit()
+    model, source = await _resolve_engine_model(req, user_id, db)
+    assert (model, source) == ("groq:oss-120b", "tenant-default")
+
+
+@pytest.mark.asyncio
+async def test_engine_model_none_enabled_raises(db, user_id):
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from app.modules.review_engine.service import _resolve_engine_model
+
+    req = ReviewEngineRequest(review_text="Hi", rating=5)
+    with pytest.raises(ValueError, match="No AI model is enabled"):
+        await _resolve_engine_model(req, user_id, db)
+
+
+# ── databank override: owned banks only ──
+
+@pytest.mark.asyncio
+async def test_bank_override_ownership(db, user_id):
+    import uuid
+
+    from app.modules.rag.models import Databank
+    from app.modules.review_engine.service import _resolve_bank_override
+
+    mine = f"bank-{uuid.uuid4().hex[:8]}"
+    db.add(Databank(id=mine, user_id=user_id, name="Mine"))
+    await db.commit()
+
+    assert await _resolve_bank_override(db, user_id, mine) == mine
+    assert await _resolve_bank_override(db, user_id, "bank-foreign") is None
+    assert await _resolve_bank_override(db, user_id, None) is None
+    assert await _resolve_bank_override(db, None, mine) is None
+
+
+@pytest.mark.asyncio
+async def test_engine_run_uses_override_bank(monkeypatch, tmp_path, db, user_id):
+    """End-to-end: databank_id override feeds CSV evidence into generation."""
+    import json as _json
+    import uuid
+    from types import SimpleNamespace
+
+    from app.config import settings as _settings
+    from app.core.storage import put_doc
+    from app.modules.rag.models import Databank, Document
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    import app.modules.review_engine.service as eng
+    import app.modules.review_engine.understanding as und
+    import app.modules.review_engine.generator as gen
+
+    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(_settings, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(eng, "_async_session",
+                        _shim_test_session_factory(db))
+
+    bank_id = f"bank-{uuid.uuid4().hex[:8]}"
+    doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+    db.add(Databank(id=bank_id, user_id=user_id, name="Menu"))
+    db.add(Document(id=doc_id, databank_id=bank_id, user_id=user_id,
+                    filename="menu.csv", source_type="upload",
+                    file_type="csv", status="completed"))
+    from app.modules.review_engine.models import ResponseStrategy
+
+    db.add(ResponseStrategy(
+        id="recommend_related_product", name="Recommend",
+        description="Recommend", category="recommend", priority=40,
+        conditions={"sentiments": ["positive", "very_positive"],
+                    "has_product_reference": True},
+        enabled=True,
+    ))
+    await db.commit()
+    put_doc(bank_id, f"{doc_id}.csv",
+            b"name,record_type,category\nTruffle Pasta,product,Mains\n")
+
+    analysis = _json.dumps({"sentiment": "positive", "emotion": "joy",
+                            "intent": ["praise"], "issue_type": None,
+                            "product_reference": "truffle pasta",
+                            "urgency": "low", "customer_request": None,
+                            "language": "en"})
+
+    def _usage():
+        return SimpleNamespace(prompt_tokens=10, completion_tokens=20,
+                               total_tokens=30)
+
+    class _Analysis:
+        async def complete(self, req):
+            return SimpleNamespace(content=analysis, finish_reason="stop",
+                                   usage=_usage())
+
+    seen = {}
+
+    class _Gen:
+        async def complete(self, req):
+            seen["prompt"] = "\n".join(m.content for m in req.messages)
+            return SimpleNamespace(
+                content=_json.dumps({"response_text": "Our truffle pasta, glad you loved it!"}),
+                finish_reason="stop", usage=_usage())
+
+    async def _models(db):
+        return [(SimpleNamespace(id="custom:model"), None)]
+
+    monkeypatch.setattr(und, "get_provider_for_model", lambda mid: _Analysis())
+    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "groq"))
+    monkeypatch.setattr(gen, "get_provider_for_model", lambda mid: _Gen())
+    monkeypatch.setattr(gen, "_resolve_model", lambda mid: ("api-x", "groq"))
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.list_tenant_models", _models)
+
+    req = ReviewEngineRequest(
+        review_text="Loved the truffle pasta!", rating=5,
+        reviewer_name="Sam", model="custom:model", databank_id=bank_id)
+    resp = await eng.process_review(req, user_id, db)
+    assert "truffle pasta" in resp.response_text.lower()
+    assert "Truffle Pasta" in seen["prompt"]
+
+
+def _shim_test_session_factory(session):
+    class _Factory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *args):
+            return False
+
+    return _Factory()

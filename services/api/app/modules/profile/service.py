@@ -116,6 +116,10 @@ def _serialize(user: User, feedback: dict[str, int]) -> dict:
         "onboarded": user.onboarded,
         "bio": user.bio,
         "business_name": user.business_name,
+        "business_type": user.business_type,
+        "business_sells": user.business_sells,
+        "business_doesnt_sell": user.business_doesnt_sell,
+        "business_description": user.business_description,
         "phone": user.phone,
         "country": user.country,
         "theme": user.theme or "light",
@@ -146,7 +150,9 @@ async def get_profile(user_id: str, db: AsyncSession) -> dict:
 
 
 async def update_profile(user_id: str, data: dict, db: AsyncSession) -> dict:
-    allowed = {"first_name", "last_name", "bio", "business_name", "phone", "country"}
+    allowed = {"first_name", "last_name", "bio", "business_name", "business_type",
+               "business_sells", "business_doesnt_sell", "business_description",
+               "phone", "country"}
     patch = {k: v for k, v in data.items() if k in allowed and v is not None}
     if not patch:
         raise ValueError("No valid fields to update")
@@ -263,3 +269,122 @@ async def submit_feedback(user_id: str, category: str, stars: int, db: AsyncSess
     )
 
     return await list_feedback(user_id, db)
+
+
+async def get_business_context(user_id: str | None, db) -> dict:
+    """Tenant-owned AI-grounding facts: category, sells, doesn't-sell, blurb.
+
+    Never raises — AI paths must survive a missing user/table. Returns {}
+    when there is nothing configured so callers can distinguish "no facts"
+    from "no user".
+
+    The probe runs inside a SAVEPOINT: a failure (e.g. column missing on a
+    DB that hasn't migrated) rolls back only the savepoint, never the
+    caller's session — otherwise the aborted transaction (Postgres) or the
+    expiry from a session rollback would break every later ORM access with
+    MissingGreenlet.
+    """
+    if not user_id:
+        return {}
+    try:
+        async with db.begin_nested():
+            user = (
+                await db.execute(select(User).where(User.id == user_id))
+            ).scalar_one_or_none()
+    except Exception:
+        return {}
+    if not user:
+        return {}
+    ctx = {
+        "business_name": (getattr(user, "business_name", None) or "").strip(),
+        "business_type": (getattr(user, "business_type", None) or "").strip(),
+        "business_sells": (getattr(user, "business_sells", None) or "").strip(),
+        "business_doesnt_sell": (
+            getattr(user, "business_doesnt_sell", None) or ""
+        ).strip(),
+        "business_description": (
+            getattr(user, "business_description", None) or ""
+        ).strip(),
+    }
+    return {k: v for k, v in ctx.items() if v}
+
+
+def format_business_identity(ctx: dict | None, services: list[str] | None = None) -> str:
+    """Render business context as a prompt-ready identity block.
+
+    Owner-configured facts — the model must treat them as ground truth and
+    never contradict them (they outrank anything the reviewer claims).
+    `services` is the owner's offered-services list (Services page);
+    appended as its own line. Returns "" when there is nothing configured.
+    """
+    if not ctx:
+        ctx = {}
+    lines = ["Business identity (owner-configured facts — treat as ground truth):"]
+    name = ctx.get("business_name") or ""
+    btype = ctx.get("business_type") or ""
+    who = " ".join(p for p in [name, f"({btype})" if btype else ""] if p).strip()
+    if who:
+        lines.append(f"- Business: {who}")
+    elif btype:
+        lines.append(f"- Business type: {btype}")
+    if ctx.get("business_sells"):
+        lines.append(f"- Sells / offers: {ctx['business_sells'][:500]}")
+    if services:
+        lines.append(
+            "- Services offered (from the owner's Services page — treat as "
+            f"ground truth): {', '.join(services)[:800]}"
+        )
+    if ctx.get("business_doesnt_sell"):
+        lines.append(
+            "- Does NOT sell (never claim otherwise, never apologize for "
+            f"not carrying these): {ctx['business_doesnt_sell'][:500]}"
+        )
+    if ctx.get("business_description"):
+        lines.append(f"- About: {ctx['business_description'][:500]}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+async def get_offered_services(
+    user_id: str | None, db, channel_id: str | None = None, limit: int = 20
+) -> list[str]:
+    """Names of services the tenant offers (channel-scoped when given).
+
+    Reads the same channel_services rows the owner toggles on the Services
+    page — the AI treats them as ground truth beside sells/does-not-sell.
+    Never raises. Savepoint-isolated like get_business_context: a probe
+    failure must never poison the caller's session.
+    """
+    if not user_id:
+        return []
+    try:
+        from sqlalchemy import select
+
+        from ..channels.models import BusinessService, Channel
+
+        stmt = (
+            select(BusinessService.name, BusinessService.category)
+            .join(Channel, Channel.id == BusinessService.channel_id)
+            .where(
+                Channel.user_id == user_id,
+                BusinessService.is_offered.is_(True),
+            )
+            .order_by(BusinessService.name)
+            .limit(limit)
+        )
+        if channel_id:
+            stmt = stmt.where(BusinessService.channel_id == channel_id)
+        async with db.begin_nested():
+            rows = (await db.execute(stmt)).all()
+    except Exception:
+        return []
+    names: list[str] = []
+    for name, category in rows:
+        label = (name or "").strip()
+        if not label:
+            continue
+        cat = (category or "").strip()
+        if cat and cat.lower() not in ("custom", label.lower()):
+            label = f"{label} ({cat})"
+        if label not in names:
+            names.append(label)
+    return names

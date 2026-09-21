@@ -328,6 +328,7 @@ async def _sync_connection_inner(
             # and sync attribute access afterwards raises MissingGreenlet.
             listing_id = connection.listing_id
             listing_name = connection.listing_name
+            owner_id = user.id
             try:
                 one = await _sync_single_connection(
                     user, db, connection, metrics_days_back
@@ -345,7 +346,7 @@ async def _sync_connection_inner(
                 except Exception:
                     pass
                 await notify(
-                    db, user.id, "sync_failed",
+                    db, owner_id, "sync_failed",
                     f"Sync failed for {listing_name or 'location'}",
                     str(e)[:160],
                     data={"listing_id": listing_id},

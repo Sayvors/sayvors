@@ -42,11 +42,78 @@ class _GroqProvider:
         return _resp("Thank you for the great review!")
 
 
+def _shim_session_factory(session):
+    """Redirect the engine's private log-write session to the test DB."""
+
+    class _Factory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *args):
+            return False
+
+    return _Factory()
+
+
+def _analysis_json(**over):
+    import json as _json
+
+    base = {"sentiment": "positive", "emotion": "joy", "intent": ["praise"],
+            "issue_type": None, "product_reference": None, "urgency": "low",
+            "customer_request": None, "language": "en"}
+    base.update(over)
+    return _json.dumps(base)
+
+
+class _AnalysisProvider:
+    def __init__(self, analysis_text):
+        self.analysis_text = analysis_text
+        self.calls = []
+
+    async def complete(self, req):
+        self.calls.append(req.model)
+        return _resp(self.analysis_text)
+
+
+class _ReplyProvider:
+    def __init__(self, text):
+        self.text = text
+        self.captured = {}
+
+    async def complete(self, req):
+        self.captured["prompt"] = "\n".join(
+            m.content for m in req.messages)
+        self.captured["system"] = req.system_prompt
+        return _resp(self.text)
+
+
+async def _enable_test_model(db, model_id="groq:oss-120b",
+                             provider="groq"):
+    """Admin-enabled model rows so explicit choices validate."""
+    from app.modules.channels.service import encrypt_token
+    from app.modules.llm.models import ModelConfig, ProviderConfig
+
+    db.add(ProviderConfig(
+        provider=provider, key_encrypted=encrypt_token("gsk_test"),
+        enabled=True,
+    ))
+    db.add(ModelConfig(model_id=model_id, enabled=True))
+    await db.commit()
+
+
 @pytest.mark.asyncio
-async def test_dead_model_fails_loudly_without_fallback(monkeypatch):
+async def test_dead_model_fails_loudly_without_fallback(monkeypatch, db, user_id):
     """No model fallbacks: a dead configured model raises (single attempt)
     so the admin fixes the key instead of silently switching providers."""
+    import app.modules.review_engine.service as eng
+    import app.modules.review_engine.understanding as und
+
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(eng, "_async_session", _shim_session_factory(db))
+    await _enable_test_model(db, "openai:gpt-4o-mini", provider="openai")
     calls = []
 
     class _DeadCountingProvider:
@@ -55,20 +122,27 @@ async def test_dead_model_fails_loudly_without_fallback(monkeypatch):
             raise ProviderError("openai", "API key not configured", 503)
 
     monkeypatch.setattr(
-        review_reply, "get_provider_for_model", lambda mid: _DeadCountingProvider()
+        und, "get_provider_for_model", lambda mid: _DeadCountingProvider()
     )
-    config = SimpleNamespace(model="openai:gpt-4o-mini", tone="friendly",
-                             databank_id=None, custom_instructions=None)
+    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "openai"))
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+
+    req = ReviewEngineRequest(review_text="Loved it", rating=5,
+                              reviewer_name="Sara",
+                              model="openai:gpt-4o-mini")
     with pytest.raises(ProviderError):
-        await review_reply.generate_review_reply(
-            config, 5, "Loved it", "Sara", _FakeDB()
-        )
+        await eng.process_review(req, user_id, db)
     assert len(calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_no_retry_when_groq_itself_fails(monkeypatch):
+async def test_no_retry_when_groq_itself_fails(monkeypatch, db, user_id):
+    import app.modules.review_engine.service as eng
+    import app.modules.review_engine.understanding as und
+
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(eng, "_async_session", _shim_session_factory(db))
+    await _enable_test_model(db, "groq:oss-120b", provider="groq")
     calls = []
 
     def _fake_get(model_id):
@@ -80,12 +154,16 @@ async def test_no_retry_when_groq_itself_fails(monkeypatch):
 
         return _Fail()
 
-    monkeypatch.setattr(review_reply, "get_provider_for_model", _fake_get)
-    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
-                             databank_id=None, custom_instructions=None)
+    monkeypatch.setattr(und, "get_provider_for_model", _fake_get)
+    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "groq"))
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+
+    req = ReviewEngineRequest(review_text="Loved it", rating=5,
+                              reviewer_name="Sara",
+                              model="groq:oss-120b")
     with pytest.raises(ProviderError):
-        await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", _FakeDB())
-    assert calls == ["groq:openai/gpt-oss-120b"]
+        await eng.process_review(req, user_id, db)
+    assert calls == ["groq:oss-120b"]
 
 
 @pytest.mark.asyncio
@@ -105,114 +183,125 @@ async def test_rejected_status_round_trips(db, user_id, channel_id):
     assert row.status == "rejected"
 
 
-# ── reply language: Arabic review → Arabic reply ──────────
+# ── reply language: Arabic review → Arabic reply (engine level) ──
 
 @pytest.mark.asyncio
-async def test_arabic_review_gets_arabic_language_instruction(monkeypatch):
+async def test_arabic_review_gets_arabic_language_instruction(monkeypatch, db, user_id):
+    import app.modules.review_engine.generator as gen
+    import app.modules.review_engine.service as eng
+    import app.modules.review_engine.understanding as und
+
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
-    captured = {}
-
-    class _Capture:
-        async def complete(self, req):
-            captured["system"] = req.system_prompt
-            return _resp("شكراً جزيلاً على تقييمك!")
-
-    monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
-    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
-                             databank_id=None, custom_instructions=None)
-    text = await review_reply.generate_review_reply(
-        config, 5, "الطعام رائع والخدمة ممتازة", "أحمد", _FakeDB()
+    monkeypatch.setattr(eng, "_async_session", _shim_session_factory(db))
+    await _enable_test_model(db, "groq:oss-120b", provider="groq")
+    monkeypatch.setattr(
+        und, "get_provider_for_model",
+        lambda mid: _AnalysisProvider(_analysis_json(language="ar")),
     )
-    assert text == "شكراً جزيلاً على تقييمك!"
-    assert "in Arabic" in captured["system"]
-    assert "العربية" in captured["system"]
+    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "groq"))
+    reply = _ReplyProvider("شكراً جزيلاً على تقييمك!")
+    monkeypatch.setattr(gen, "get_provider_for_model", lambda mid: reply)
+    monkeypatch.setattr(gen, "_resolve_model", lambda mid: ("api-x", "groq"))
+
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+
+    req = ReviewEngineRequest(
+        review_text="الطعام رائع والخدمة ممتازة", rating=5,
+        reviewer_name="أحمد", model="groq:oss-120b")
+    resp = await eng.process_review(req, user_id, db)
+    assert resp.response_text == "شكراً جزيلاً على تقييمك!"
+    assert "in Arabic" in reply.captured["prompt"]
+    assert "Write your ENTIRE reply in Arabic" in reply.captured["prompt"]
 
 
 @pytest.mark.asyncio
-async def test_english_review_gets_language_match_rule(monkeypatch):
+async def test_english_review_gets_language_match_rule(monkeypatch, db, user_id):
+    import app.modules.review_engine.generator as gen
+    import app.modules.review_engine.service as eng
+    import app.modules.review_engine.understanding as und
+
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
-    captured = {}
+    monkeypatch.setattr(eng, "_async_session", _shim_session_factory(db))
+    await _enable_test_model(db, "groq:oss-120b", provider="groq")
+    monkeypatch.setattr(
+        und, "get_provider_for_model",
+        lambda mid: _AnalysisProvider(_analysis_json()),
+    )
+    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "groq"))
+    reply = _ReplyProvider("Thanks for the kind words!")
+    monkeypatch.setattr(gen, "get_provider_for_model", lambda mid: reply)
+    monkeypatch.setattr(gen, "_resolve_model", lambda mid: ("api-x", "groq"))
 
-    class _Capture:
-        async def complete(self, req):
-            captured["system"] = req.system_prompt
-            return _resp("Thanks for the kind words!")
+    from app.modules.review_engine.schemas import ReviewEngineRequest
 
-    monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
-    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
-                             databank_id=None, custom_instructions=None)
-    await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", _FakeDB())
-    assert "SAME language as the review" in captured["system"]
+    req = ReviewEngineRequest(review_text="Loved it", rating=5,
+                              reviewer_name="Sara",
+                              model="groq:oss-120b")
+    resp = await eng.process_review(req, user_id, db)
+    assert resp.response_text == "Thanks for the kind words!"
+    # English review: the engine must not steer toward any other language.
+    assert "العربية" not in reply.captured["prompt"]
+    assert "in Arabic" not in reply.captured["prompt"]
 
 
 @pytest.mark.asyncio
 async def test_mock_mode_arabic_review_returns_arabic_reply(monkeypatch):
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", True)
-    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
-                             databank_id=None, custom_instructions=None)
-    text = await review_reply.generate_review_reply(
-        config, 5, "مطعم رائع جداً", "أحمد", _FakeDB()
+    config = SimpleNamespace(model="groq:oss-120b", tone="friendly")
+    channel = SimpleNamespace(id=None, user_id=None)
+    text = await review_reply.generate_auto_reply(
+        config, channel, 5, "مطعم رائع جداً", "أحمد", None
     )
     # Arabic script present, no English canned text
     assert any("؀" <= ch <= "ۿ" for ch in text)
     assert "Thank you" not in text
 
 
-# ── question-type reviews: inquiries, not feedback ─────────
+# ── question-type reviews: inquiries, not feedback (engine requirements) ──
 
-@pytest.mark.asyncio
-async def test_question_review_prompt_never_thanks(monkeypatch):
-    """"هل تبيعون شاورما؟" is an inquiry — the prompt must not instruct the
-    model to thank the reviewer for a "wonderful review"."""
-    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
-    captured = {}
+def _question_analysis():
+    from app.modules.review_engine.schemas import ReviewAnalysis
 
-    class _Capture:
-        async def complete(self, req):
-            captured["system"] = req.system_prompt
-            return _resp("سؤالك في محل!")
-
-    monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
-    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
-                             databank_id=None, custom_instructions=None)
-    await review_reply.generate_review_reply(
-        config, 5, "هل تبيعون شاورما؟", "سعيد", _FakeDB()
-    )
-    assert "QUESTION" in captured["system"]
-    assert "do NOT thank them" in captured["system"]
-    assert "thank the reviewer warmly" not in captured["system"]
+    return ReviewAnalysis(sentiment="neutral", emotion="curiosity",
+                          intent=["question"], issue_type=None,
+                          product_reference=None, urgency="low",
+                          customer_request="هل تبيعون شاورما؟", language="ar")
 
 
-@pytest.mark.asyncio
-async def test_prompt_bans_invented_business_facts(monkeypatch):
-    """No databank context = no facts — the model may not invent a menu."""
-    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
-    captured = {}
+def test_question_review_requirements_never_thank():
+    """"هل تبيعون شاورما؟" is an inquiry — requirements must not instruct
+    the model to thank the reviewer for a "wonderful review"."""
+    from app.modules.review_engine.service import build_requirements
 
-    class _Capture:
-        async def complete(self, req):
-            captured["system"] = req.system_prompt
-            return _resp("ok")
+    reqs = build_requirements(_question_analysis(), [], [], [], None,
+                              "Business identity: test restaurant")
+    blob = "\n".join(reqs)
+    assert "QUESTION" in blob
+    assert "Do NOT thank" in blob
+    assert "thank the reviewer warmly" not in blob
 
-    monkeypatch.setattr(review_reply, "get_provider_for_model", lambda model: _Capture())
-    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
-                             databank_id=None, custom_instructions=None)
-    await review_reply.generate_review_reply(config, 5, "Loved it", "Sara", _FakeDB())
-    assert "NEVER invent products" in captured["system"]
-    assert "follow up with accurate details" in captured["system"]
+
+def test_question_without_context_bans_invention():
+    """No verified facts — the requirements forbid inventing a menu."""
+    from app.modules.review_engine.service import build_requirements
+
+    reqs = build_requirements(_question_analysis(), [], [], [], None, None)
+    blob = "\n".join(reqs)
+    assert "do NOT invent products" in blob
+    assert "follow up with accurate details" in blob
 
 
 @pytest.mark.asyncio
 async def test_mock_mode_question_gets_answer_not_thanks(monkeypatch):
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", True)
-    config = SimpleNamespace(model="groq:openai/gpt-oss-120b", tone="friendly",
-                             databank_id=None, custom_instructions=None)
-    ar = await review_reply.generate_review_reply(
-        config, 5, "هل تبيعون شاورما؟", "سعيد", _FakeDB()
+    config = SimpleNamespace(model="groq:oss-120b", tone="friendly")
+    channel = SimpleNamespace(id=None, user_id=None)
+    ar = await review_reply.generate_auto_reply(
+        config, channel, 5, "هل تبيعون شاورما؟", "سعيد", None
     )
     assert "سؤالك" in ar
-    en = await review_reply.generate_review_reply(
-        config, 5, "Do you sell shawarma?", "Saeed", _FakeDB()
+    en = await review_reply.generate_auto_reply(
+        config, channel, 5, "Do you sell shawarma?", "Saeed", None
     )
     assert "question" in en.lower()
 
@@ -368,6 +457,7 @@ async def test_insights_carry_latest_response(db, user_id, channel_id, client):
     assert item["reply_id"] == "rr-edit-4"
     assert item["reply_text"] == "Live text"
     assert item["reply_status"] == "posted"
+
 
 
 

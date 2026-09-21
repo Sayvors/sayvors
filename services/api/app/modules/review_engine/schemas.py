@@ -84,7 +84,9 @@ class ValidationResult(BaseModel):
 
 
 class ReviewEngineRequest(BaseModel):
-    review_text: str = Field(..., min_length=1, max_length=5000)
+    # Empty text allowed: star-only ratings flow through the engine with no
+    # product reference (no evidence needed, strategies still apply).
+    review_text: str = Field(default="", max_length=5000)
     rating: int = Field(..., ge=1, le=5)
     reviewer_name: str | None = Field(default=None, max_length=200)
     review_id: str | None = Field(default=None, max_length=120)
@@ -100,6 +102,9 @@ class ReviewEngineRequest(BaseModel):
     dialect: str | None = Field(default=None, max_length=30)
     # Optional explicit language policy: match the review, or force en/ar.
     reply_language: str | None = Field(default=None, pattern="^(match|en|ar)$")
+    # Optional explicit databank override (playground/tests): honored only
+    # when the tenant owns the bank, else the channel-linked bank is used.
+    databank_id: str | None = Field(default=None, max_length=36)
 
 
 class ReviewEngineResponse(BaseModel):

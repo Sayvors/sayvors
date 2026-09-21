@@ -249,6 +249,21 @@ export const fetchAcquisition = (days: number, channelId?: string | null): Promi
 export const fetchOpportunities = (days: number, channelId?: string | null): Promise<OpportunitiesResponse> =>
   apiFetch(`/api/v1/analytics/opportunities?${qs(days, channelId)}`);
 
+export interface KeywordStat {
+  keyword: string;
+  impressions: number;
+  trend_pct: number | null;
+}
+
+export interface KeywordsResponse {
+  days: number;
+  available: boolean;
+  keywords: KeywordStat[];
+}
+
+export const fetchKeywords = (days: number, channelId?: string | null): Promise<KeywordsResponse> =>
+  apiFetch(`/api/v1/analytics/growth/keywords?${qs(days, channelId)}`);
+
 /* ── Benchmark pillar ─────────────────────────────────────────────── */
 
 export interface BenchmarkResponse {

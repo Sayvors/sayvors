@@ -250,11 +250,21 @@ class Opportunity(BaseModel):
     type: str
     title: str
     detail: str
-
-
 class OpportunitiesResponse(BaseModel):
     days: int
     opportunities: list[Opportunity]
+
+
+class KeywordStat(BaseModel):
+    keyword: str
+    impressions: int
+    trend_pct: float | None = None
+
+
+class KeywordsResponse(BaseModel):
+    days: int
+    available: bool
+    keywords: list[KeywordStat]
 
 
 # ── Benchmarking pillar ─────────────────────────────────────────────

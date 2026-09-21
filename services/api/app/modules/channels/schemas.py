@@ -100,7 +100,7 @@ class AutoReplyConfigUpdate(BaseModel):
     tone: str | None = Field(None, description="friendly, professional, apologetic, playful, ...")
     databank_id: str | None = Field(None, description="Databank linked for grounding; null to unlink")
     min_rating_auto: int | None = Field(None, ge=1, le=5, description="Ratings below this are queued for approval")
-    model: str | None = Field(None, description="LLM catalog model id, e.g. openai:gpt-4o-mini")
+    model: str | None = Field(None, description="LLM catalog model id from the enabled list; empty string resets to tenant default")
     approval_mode: str | None = Field(None, pattern="^(auto|approval)$", description="auto = post above threshold; approval = all replies wait for human approval")
     custom_instructions: str | None = Field(None, max_length=2000, description="Brand voice / house rules injected into every reply prompt; empty to clear")
     dialect: str | None = Field(None, max_length=30, description="Arabic dialect catalog code or 'auto'")
@@ -117,7 +117,7 @@ class AutoReplyConfigResponse(BaseModel):
     tone: str
     databank_id: str | None
     min_rating_auto: int
-    model: str
+    model: str | None = Field(None, description="Explicit model choice; null = tenant default from enabled models")
     approval_mode: str = "auto"
     custom_instructions: str | None = None
     dialect: str = "auto"

@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   fetchAcquisition,
+  fetchKeywords,
   fetchOpportunities,
   fetchOverview,
   fetchTimeseries,
   fetchVisibility,
   type AcquisitionResponse,
+  type KeywordsResponse,
   type OpportunitiesResponse,
   type Overview,
   type TimeseriesPoint,
@@ -91,6 +93,9 @@ export default function GrowthPage() {
   const [visibility, setVisibility] = useState<VisibilityResponse | null>(null);
   const [acquisition, setAcquisition] = useState<AcquisitionResponse | null>(null);
   const [opportunities, setOpportunities] = useState<OpportunitiesResponse | null>(null);
+  const [keywords, setKeywords] = useState<KeywordsResponse | null>(null);
+  const [granularity, setGranularity] = useState<"day" | "month">("day");
+  const [trendMetric, setTrendMetric] = useState<"impressions" | "website" | "calls" | "directions">("impressions");
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [presence, setPresence] = useState<PresencePerf | null>(null);
@@ -106,15 +111,17 @@ export default function GrowthPage() {
       fetchAcquisition(days, channelId),
       fetchOpportunities(days, channelId),
       fetchTimeseries(days, channelId),
+      fetchKeywords(days, channelId).catch(() => null),
       fetchOverview(days, channelId).catch(() => null),
       apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
     ])
-      .then(([v, a, o, t, ov, prof]) => {
+      .then(([v, a, o, t, k, ov, prof]) => {
         if (cancelled) return;
         setVisibility(v);
         setAcquisition(a);
         setOpportunities(o);
         setPoints(t);
+        setKeywords(k);
         setOverview(ov);
         setPresence(presencePerf(prof));
         setError(false);
@@ -130,6 +137,97 @@ export default function GrowthPage() {
       cancelled = true;
     };
   }, [days, channelId, refreshToken]);
+
+function TrendArrow({ value }: { value: number | null }) {
+  if (value === null || value === undefined) return <span className="text-[11px] text-ink/30">—</span>;
+  const up = value > 0;
+  const flat = value === 0;
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums ${up ? "bg-emerald/10 text-emerald" : flat ? "bg-ink/[0.05] text-ink/50" : "bg-coral/10 text-coral"}`}>
+      {!flat && (
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" className={`h-2 w-2 ${up ? "" : "rotate-180"}`} aria-hidden>
+          <path d="M6 10V2M2.5 5.5L6 2l3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+      {up ? "+" : ""}{value}%
+    </span>
+  );
+}
+
+type TrendMetricKey = "impressions" | "website" | "calls" | "directions";
+
+function trendValue(p: TimeseriesPoint, metric: TrendMetricKey): number {
+  if (metric === "website") return p.website_clicks;
+  if (metric === "calls") return p.call_clicks;
+  if (metric === "directions") return p.direction_requests;
+  return p.impressions_maps;
+}
+
+function rollupMonthly(points: TimeseriesPoint[], metric: TrendMetricKey): { label: string; value: number }[] {
+  const byMonth = new Map<string, number>();
+  for (const p of points) {
+    const key = p.date.slice(0, 7);
+    byMonth.set(key, (byMonth.get(key) ?? 0) + trendValue(p, metric));
+  }
+  return [...byMonth.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([key, value]) => {
+      const [y, m] = key.split("-").map(Number);
+      const label = new Date(y, m - 1, 1).toLocaleDateString("en", { month: "short" });
+      return { label, value };
+    });
+}
+
+function TrendChart({ points, metric, granularity }: {
+  points: TimeseriesPoint[];
+  metric: TrendMetricKey;
+  granularity: "day" | "month";
+}) {
+  const buckets = granularity === "month"
+    ? rollupMonthly(points, metric)
+    : points.map((p) => ({
+        label: new Date(`${p.date}T00:00:00`).toLocaleDateString("en", { day: "numeric", month: "short" }),
+        value: trendValue(p, metric),
+      }));
+  const max = Math.max(1, ...buckets.map((b) => b.value));
+  const W = 600;
+  const H = 150;
+  const PAD = 12;
+  if (buckets.length === 0) {
+    return <div className="flex h-36 items-center justify-center text-[12px] text-ink/35">No activity in this period yet</div>;
+  }
+  const step = buckets.length > 1 ? (W - PAD * 2) / (buckets.length - 1) : 0;
+  const path = buckets
+    .map((b, i) => `${i === 0 ? "M" : "L"}${(PAD + i * step).toFixed(1)},${(H - PAD - (b.value / max) * (H - PAD * 2)).toFixed(1)}`)
+    .join(" ");
+  const ticks = buckets.filter((_, i) => i % Math.max(1, Math.ceil(buckets.length / 6)) === 0);
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-36 w-full" role="img" aria-label={`${metric} trend`}>
+        {[0.25, 0.5, 0.75].map((f) => (
+          <line key={f} x1={PAD} x2={W - PAD} y1={H * f} y2={H * f} stroke="currentColor" strokeOpacity="0.08" />
+        ))}
+        <path d={path} fill="none" stroke="#5b2d8e" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+        {buckets.map((b, i) => (
+          <circle
+            key={i}
+            cx={PAD + i * step}
+            cy={H - PAD - (b.value / max) * (H - PAD * 2)}
+            r="3"
+            fill="#5b2d8e"
+          >
+            <title>{`${b.label}: ${b.value.toLocaleString("en")}`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div className="mt-1 flex justify-between text-[10px] tabular-nums text-ink/40">
+        {ticks.map((t, i) => (
+          <span key={i}>{t.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
   const fmt = (n: number) => new Intl.NumberFormat("en").format(n);
   const nativePerf = !!visibility && visibility.impressions_maps > 0;
@@ -278,6 +376,90 @@ export default function GrowthPage() {
             </div>
           </div>
           )}
+
+          {/* Trends — daily / monthly, fed by location_daily_metrics
+              (native OAuth + Localith daily ingest alike) */}
+          {showMain && (
+          <section aria-label="Trends" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-[14px] font-bold text-ink">Trends</h3>
+                <p className="text-[11px] text-ink/45">Which lever is moving — views, clicks, calls or visits.</p>
+              </div>
+              <div className="flex gap-2">
+                <div className="flex rounded-lg bg-deep-violet/[0.06] p-0.5" role="group" aria-label="Trend metric">
+                  {([
+                    { key: "impressions", label: "Views" },
+                    { key: "website", label: "Clicks" },
+                    { key: "calls", label: "Calls" },
+                    { key: "directions", label: "Visits" },
+                  ] as const).map((m) => (
+                    <button
+                      key={m.key}
+                      onClick={() => setTrendMetric(m.key)}
+                      aria-pressed={trendMetric === m.key}
+                      className={`rounded-md px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                        trendMetric === m.key ? "bg-white text-deep-violet shadow-sm" : "text-ink/45 hover:text-ink/70"
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex rounded-lg bg-deep-violet/[0.06] p-0.5" role="group" aria-label="Granularity">
+                  {(["day", "month"] as const).map((g) => (
+                    <button
+                      key={g}
+                      onClick={() => setGranularity(g)}
+                      aria-pressed={granularity === g}
+                      className={`rounded-md px-2.5 py-1 text-[11px] font-semibold capitalize outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                        granularity === g ? "bg-white text-deep-violet shadow-sm" : "text-ink/45 hover:text-ink/70"
+                      }`}
+                    >
+                      {g === "day" ? "Daily" : "Monthly"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {loading ? (
+              <div className="h-40 animate-pulse rounded-lg bg-ink/[0.06]" aria-hidden />
+            ) : (
+              <TrendChart points={points} metric={trendMetric} granularity={granularity} />
+            )}
+          </section>
+          )}
+
+          {/* Search keywords — native Google only; honest empty state otherwise */}
+          <section aria-label="Search keywords" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+            <h3 className="text-[14px] font-bold text-ink">Search keywords</h3>
+            <p className="text-[11px] text-ink/45">What people searched when they found you — reuse these words in posts and replies.</p>
+            {loading || !keywords ? (
+              <div className="mt-3 space-y-2" aria-hidden>
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="h-9 animate-pulse rounded-lg bg-ink/[0.06]" />
+                ))}
+              </div>
+            ) : !keywords.available ? (
+              <p className="mt-3 rounded-lg bg-ink/[0.03] px-3 py-3 text-[12px] text-ink/50">
+                Keyword data needs the native Google connection — it arrives automatically once your Google approval lands. No estimates shown meanwhile.
+              </p>
+            ) : keywords.keywords.length === 0 ? (
+              <p className="mt-3 rounded-lg bg-ink/[0.03] px-3 py-3 text-[12px] text-ink/50">
+                No keyword data yet — the next performance sync will populate this table.
+              </p>
+            ) : (
+              <ol className="mt-3 divide-y divide-ink/[0.05]">
+                {keywords.keywords.slice(0, 10).map((k) => (
+                  <li key={k.keyword} className="flex items-center gap-3 py-2">
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{k.keyword}</span>
+                    <span className="shrink-0 text-[12px] tabular-nums text-ink/60">{fmt(k.impressions)} views</span>
+                    <TrendArrow value={k.trend_pct} />
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
 
           {/* Opportunities — independent of performance data */}
           <section aria-label="Growth opportunities" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">

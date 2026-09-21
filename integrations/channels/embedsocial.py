@@ -412,6 +412,55 @@ def fetch_listing_metrics(
     return payload if isinstance(payload, dict) else {}
 
 
+def fetch_listing_metrics_for_day(listing_id: str, day) -> dict:
+    """Single-day performance numbers for one listing.
+
+    Calls listing_metrics with startDate == endDate == day and parses the
+    first listing row into daily ints. Returns zeros on any shape surprise
+    (missing listing, empty payload) — the caller treats zeros as "no data"
+    for that day, never as failure, so one odd day can't break a backfill.
+    """
+    try:
+        payload = fetch_listing_metrics(day, day, listing_id)
+    except Exception:
+        return _empty_day()
+    rows = payload.get("listings") if isinstance(payload, dict) else None
+    row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+
+    def _int(*keys: str) -> int:
+        total = 0
+        for key in keys:
+            try:
+                total += int(row.get(key) or 0)
+            except (TypeError, ValueError):
+                pass
+        return total
+
+    return {
+        "impressions_maps_desktop": _int("googleMapsDesktop"),
+        "impressions_maps_mobile": _int("googleMapsMobile"),
+        "impressions_search": _int("googleSearchDesktop", "googleSearchMobile"),
+        "website_clicks": _int("websiteClicks"),
+        "call_clicks": _int("callClicks"),
+        "direction_requests": _int("directions"),
+        "messages": _int("messages"),
+        "bookings": _int("bookings"),
+    }
+
+
+def _empty_day() -> dict:
+    return {
+        "impressions_maps_desktop": 0,
+        "impressions_maps_mobile": 0,
+        "impressions_search": 0,
+        "website_clicks": 0,
+        "call_clicks": 0,
+        "direction_requests": 0,
+        "messages": 0,
+        "bookings": 0,
+    }
+
+
 def fetch_item_metrics(
     start,
     end,

@@ -579,6 +579,28 @@ async def draft_post_content(
         "event": "an event announcement post",
     }[post_type]
     model_id = await resolve_tenant_model(db)
+    # Ground the draft in the tenant's own facts via the Retrieval Layer:
+    # owner identity (category, sells, services) + business-profile evidence
+    # from the Data Bank (structured, hybrid — never invented specifics).
+    from ..retrieval.evidence import EvidenceNeed
+    from ..retrieval.layer import identity as _layer_identity
+    from ..retrieval.layer import retrieve_evidence
+
+    identity_block = ""
+    bank_facts = ""
+    try:
+        identity_block = await _layer_identity(db, user_id)
+    except Exception as e:
+        logger.warning("Business identity unavailable for post draft: %s", e)
+    try:
+        res = await retrieve_evidence(
+            [EvidenceNeed(kind="business_profile", query=title)],
+            tenant_id=user_id, db=db,
+        )
+        bank_facts = (res.get("business_profile").rendered
+                      if res.get("business_profile") else "")
+    except Exception as e:
+        logger.warning("Databank facts unavailable for post draft: %s", e)
     system = (
         "You write Google Business Profile posts for small businesses. "
         "Reply with STRICT JSON only, no other text: "
@@ -586,8 +608,21 @@ async def draft_post_content(
         '"tags": ["up to 5 short lowercase labels"], '
         '"keywords": ["up to 5 search terms"]}. No em dashes."'
     )
+    context_parts = []
+    if identity_block:
+        context_parts.append(identity_block)
+    if bank_facts:
+        context_parts.append(
+            "Facts from the business Databank (use these for specifics):\n" + bank_facts
+        )
+    grounding_rule = (
+        "Write ONLY about what the business facts above support — never invent "
+        "products, prices, offers, hours or services not stated there."
+    )
     user_msg = (
         f"Business: {(business_name or '').strip() or 'local business'}\n"
+        + ("\n".join(context_parts) + "\n" if context_parts else "")
+        + f"{grounding_rule}\n"
         f"Post type: {kind_line}\nTitle: {title}\nWrite the post content."
     )
 

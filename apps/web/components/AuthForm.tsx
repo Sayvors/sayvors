@@ -24,8 +24,10 @@ interface FormValues {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const businessTypes = [
-  "E-commerce", "SaaS / Software", "Agency", "Healthcare",
-  "Education", "Finance", "Media / Content", "Non-profit", "Other",
+  "Food & Restaurant", "Cafe & Bakery", "Retail & Shops", "E-commerce",
+  "Pharmacy", "Bank / Finance", "AI / SaaS / Software", "Agency",
+  "Healthcare & Clinics", "Beauty & Salon", "Gym & Fitness", "Education",
+  "Media / Content", "Professional Services", "Non-profit", "Other",
 ];
 
 const referralOptions = [

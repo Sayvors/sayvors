@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import LocationDailyMetric, ReviewInsight
+from .models import LocationDailyMetric, ReviewInsight, SearchKeywordStat
 
 logger = logging.getLogger(__name__)
 
@@ -152,3 +152,68 @@ async def get_opportunities(db: AsyncSession, user_id: str, channel_id: str | No
         })
 
     return {"days": days, "opportunities": opportunities[:5]}
+
+
+async def get_keywords(db: AsyncSession, user_id: str, channel_id: str | None, days: int = 30) -> dict:
+    """Search keywords tenants were found by: keyword, impressions, trend.
+
+    `available` is False for Localith-only tenants — keyword breakdowns
+    come solely from the native Performance API, so the UI shows an honest
+    empty state instead of fake rows.
+    """
+    from ..channels.models import Channel
+
+    start, end, prev_start, prev_end = _prev_window(days)
+    native = (
+        await db.execute(
+            select(Channel.id).where(
+                Channel.user_id == user_id,
+                Channel.platform == "google_reviews",
+                Channel.status == "active",
+                Channel.access_token.is_not(None),
+            )
+        )
+    ).scalars().all()
+    if not native:
+        return {"days": days, "available": False, "keywords": []}
+
+    filters = [
+        SearchKeywordStat.user_id == user_id,
+        SearchKeywordStat.date >= start.date(),
+        SearchKeywordStat.date < end.date(),
+    ]
+    prev_filters = [
+        SearchKeywordStat.user_id == user_id,
+        SearchKeywordStat.date >= prev_start.date(),
+        SearchKeywordStat.date < prev_end.date(),
+    ]
+    if channel_id:
+        filters.append(SearchKeywordStat.channel_id == channel_id)
+        prev_filters.append(SearchKeywordStat.channel_id == channel_id)
+
+    cur_rows = (
+        await db.execute(
+            select(SearchKeywordStat.keyword, func.sum(SearchKeywordStat.impressions))
+            .where(*filters)
+            .group_by(SearchKeywordStat.keyword)
+            .order_by(func.sum(SearchKeywordStat.impressions).desc())
+            .limit(25)
+        )
+    ).all()
+    prev_rows = (
+        await db.execute(
+            select(SearchKeywordStat.keyword, func.sum(SearchKeywordStat.impressions))
+            .where(*prev_filters)
+            .group_by(SearchKeywordStat.keyword)
+        )
+    ).all()
+    prev_map = {k: int(v or 0) for k, v in prev_rows}
+    keywords = [
+        {
+            "keyword": k,
+            "impressions": int(v or 0),
+            "trend_pct": _delta(int(v or 0), prev_map.get(k, 0)),
+        }
+        for k, v in cur_rows
+    ]
+    return {"days": days, "available": True, "keywords": keywords}

@@ -129,13 +129,15 @@ async def test_orchestration_ai_path_overrides_numbers(monkeypatch):
     async def _fake_rows(*a, **k):
         return _rows()
 
-    async def _fake_rag(*a, **k):
-        return ("ctx", 2, "Bank")
+    async def _fake_retrieve(*a, **k):
+        return {"business_overview": SimpleNamespace(
+            has_data=True, rendered="ctx", items=[1, 2])}
 
     monkeypatch.setattr(ai, "_load_reviews", _fake_rows)
-    monkeypatch.setattr(ai, "_rag_context", _fake_rag)
+    monkeypatch.setattr(
+        "app.modules.retrieval.layer.retrieve_evidence", _fake_retrieve)
 
-    async def _fake_llm(facts, rag_text, model):
+    async def _fake_llm(facts, rag_text, model, tenant_id=None):
         assert rag_text == "ctx"
         assert facts["stats"]["total"] == 2
         return ('{"summary": "Customers love the quality and service.", '
@@ -160,11 +162,13 @@ async def test_orchestration_falls_back_when_llm_down(monkeypatch):
     async def _fake_rows(*a, **k):
         return _rows()
 
-    async def _fake_rag(*a, **k):
-        return ("", 0, None)
+    async def _fake_retrieve(*a, **k):
+        return {"business_overview": SimpleNamespace(
+            has_data=False, rendered="", items=[])}
 
     monkeypatch.setattr(ai, "_load_reviews", _fake_rows)
-    monkeypatch.setattr(ai, "_rag_context", _fake_rag)
+    monkeypatch.setattr(
+        "app.modules.retrieval.layer.retrieve_evidence", _fake_retrieve)
 
     async def _boom(*a, **k):
         raise RuntimeError("ProviderError 403")

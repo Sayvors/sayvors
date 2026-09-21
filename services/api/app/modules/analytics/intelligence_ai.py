@@ -1,12 +1,12 @@
-"""AI Review Intelligence — LLM analysis grounded in RAG context.
+"""AI Review Intelligence — LLM analysis grounded in Retrieval Layer context.
 
 Pipeline (accuracy-first):
   1. Load the tenant's real reviews (ReviewInsight rows).
   2. Compute VERIFIED stats server-side (avg, total, distribution, sentiment
      split, response rate). The LLM never supplies these numbers — they are
      overwritten with computed values after parsing.
-  3. Pull RAG grounding: keyword-matched chunks from the tenant's databanks
-     (pure SQL, no embeddings/LLM needed) so the analysis knows what the
+  3. Pull business-overview evidence from the Retrieval Layer (single need,
+     all mechanisms, minimized facts) so the analysis knows what the
      business actually sells and sounds like.
   4. Ask the LLM for an EXACT JSON shape (low temperature). Strip code
      fences, json-parse, Pydantic-validate. One retry with the validation
@@ -26,10 +26,9 @@ import logging
 import re
 
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..rag.models import Databank, Document, DocumentChunk
 from .models import ReviewInsight
 
 logger = logging.getLogger(__name__)
@@ -37,7 +36,6 @@ logger = logging.getLogger(__name__)
 MODELS_CHAIN = ["groq:oss-120b", "gemini:gemini-3.6-flash", "openai:gpt-4o-mini"]
 MAX_REVIEWS = 50
 MAX_RAG_CHARS = 4000
-MAX_RAG_CHUNKS = 6
 
 STOPWORDS = {
     "that", "this", "with", "from", "have", "still", "they", "them",
@@ -167,11 +165,12 @@ def _verified_stats(rows: list[dict]) -> dict:
     }
 
 
-async def _rag_context(db: AsyncSession, user_id: str, rows: list[dict]) -> tuple[str, int, str | None]:
-    """Keyword-matched databank chunks describing the business.
+def _overview_query(rows: list[dict]) -> str:
+    """Query formulation for the business-overview evidence need.
 
-    Returns (context_text, chunk_count, databank_name). Pure SQL LIKE —
-    no embeddings or LLM needed, works even when providers are down.
+    Top review-topic words focus retrieval on what customers actually talk
+    about. This is just a query string — storage access lives in the
+    Retrieval Layer.
     """
     words: dict[str, int] = {}
     for r in rows:
@@ -179,48 +178,8 @@ async def _rag_context(db: AsyncSession, user_id: str, rows: list[dict]) -> tupl
             if w not in STOPWORDS:
                 words[w] = words.get(w, 0) + 1
     keywords = sorted(words, key=words.get, reverse=True)[:8]
-
-    banks = (
-        await db.execute(select(Databank).where(Databank.user_id == user_id))
-    ).scalars().all()
-    if not banks:
-        return "", 0, None
-    bank_ids = [b.id for b in banks]
-    bank_names = {b.id: b.name for b in banks}
-
-    conditions = [DocumentChunk.databank_id.in_(bank_ids)]
-    if keywords:
-        conditions.append(or_(*[DocumentChunk.content.like(f"%{k}%") for k in keywords]))
-    chunks = (
-        await db.execute(
-            select(DocumentChunk).where(*conditions).order_by(DocumentChunk.seq).limit(MAX_RAG_CHUNKS)
-        )
-    ).scalars().all()
-    if not chunks and keywords:
-        # Fallback: first chunks of the newest bank (business description).
-        chunks = (
-            await db.execute(
-                select(DocumentChunk)
-                .where(DocumentChunk.databank_id == bank_ids[-1])
-                .order_by(DocumentChunk.seq)
-                .limit(3)
-            )
-        ).scalars().all()
-    _ = Document
-    texts: list[str] = []
-    used_bank: str | None = None
-    budget = MAX_RAG_CHARS
-    for c in chunks:
-        piece = (c.content or "").strip()
-        if not piece:
-            continue
-        piece = piece[:800]
-        if len(piece) > budget:
-            break
-        texts.append(piece)
-        budget -= len(piece)
-        used_bank = used_bank or bank_names.get(c.databank_id)
-    return "\n---\n".join(texts), len(texts), used_bank
+    base = "business description products services offered"
+    return f"{base} {' '.join(keywords)}".strip()
 
 
 # ── LLM call + strict parsing ───────────────────────────────────
@@ -357,26 +316,24 @@ async def get_review_intelligence(
     rows = await _load_reviews(db, user.id, channel_id, days)
     stats = _verified_stats(rows)
 
-    rag_text, rag_chunks, rag_bank = "", 0, None
-    if databank_id:
-        try:
-            from ..rag.agent import ask_question
+    # Business overview comes from the Retrieval Layer — one need, all
+    # mechanisms, minimized facts. No agent call, no SQL here, no fallback
+    # to arbitrary chunks: empty means honestly empty.
+    rag_text, rag_chunks, rag_bank = "", 0, databank_id
+    try:
+        from ..retrieval.evidence import EvidenceNeed
+        from ..retrieval.layer import retrieve_evidence
 
-            res = await ask_question(
-                databank_id,
-                "Describe this business in 6 lines: what it sells, services offered, tone of voice.",
-                user, db, top_k=3, max_steps=2,
-            )
-            rag_text = str(res.get("answer", ""))[:MAX_RAG_CHARS]
-            rag_chunks = len(res.get("citations", []))
-            rag_bank = databank_id
-        except Exception as e:
-            logger.debug("RAG agent context unavailable: %s", e)
-    if not rag_text:
-        try:
-            rag_text, rag_chunks, rag_bank = await _rag_context(db, user.id, rows)
-        except Exception as e:
-            logger.debug("RAG chunk context unavailable: %s", e)
+        res = await retrieve_evidence(
+            [EvidenceNeed(kind="business_overview", query=_overview_query(rows))],
+            tenant_id=user.id, db=db, bank_id=databank_id,
+        )
+        overview = res.get("business_overview")
+        if overview and overview.has_data:
+            rag_text = overview.rendered[:MAX_RAG_CHARS]
+            rag_chunks = len(overview.items)
+    except Exception as e:
+        logger.debug("Retrieval Layer overview unavailable: %s", e)
 
     facts = {"stats": stats, "reviews": rows}
     last_error = "no LLM provider configured"

@@ -43,6 +43,74 @@ async def search_strategies(
     return matches
 
 
+# ── Evidence declarations ─────────────────────────────────────
+# The Strategy Engine declares WHAT evidence each strategy needs; the
+# Retrieval Layer decides HOW to obtain it. Strategy code must never name
+# a storage mechanism (CSV, vector, SQL) or construct queries.
+STRATEGY_EVIDENCE: dict[str, list[str]] = {
+    "mention_relevant_offer": ["offer"],
+    "recommend_related_product": ["product"],
+}
+
+
+def evidence_needs_for(analysis: ReviewAnalysis,
+                       strategies: list[StrategyMatch]) -> list:
+    """Evidence needs for the selected strategies (deterministic, no LLM).
+
+    Mirrors the previous tool-selection rules, but returns storage-agnostic
+    needs instead of tool calls: product evidence when a product strategy
+    is active (or a happy customer names a product), offer evidence when an
+    offer strategy is active and the customer wants a deal, business-profile
+    evidence for explicit business questions.
+    """
+    from ..retrieval.evidence import EvidenceNeed
+
+    needs: list = []
+    sids = {getattr(s, "strategy_id", "") for s in strategies}
+    product_ref = ((getattr(analysis, "product_reference", None) or "").strip())
+    text = " ".join(getattr(analysis, "intent", []) or []) + " " + (
+        getattr(analysis, "customer_request", None) or "")
+    text_lower = text.lower()
+    sentiment = getattr(analysis, "sentiment", "")
+    issue_type = getattr(analysis, "issue_type", None)
+    wants_deal = any(k in text_lower for k in (
+        "discount", "coupon", "voucher", "compensation", "promo", "deal"))
+
+    if product_ref and (
+        "recommend_related_product" in sids
+        or (sentiment in ("positive", "very_positive")
+            and sids & {"recommend_related_product", "show_appreciation"})
+    ):
+        needs.append(EvidenceNeed(kind="product", query=product_ref))
+
+    if "mention_relevant_offer" in sids and (wants_deal or issue_type == "pricing"):
+        needs.append(EvidenceNeed(
+            kind="offer",
+            query=product_ref or "offers promotions discounts deals",
+        ))
+
+    # Business profile only when the review is an explicit question about
+    # the business (hours, location, prices…).
+    if "question" in (getattr(analysis, "intent", []) or []) and any(
+        k in (getattr(analysis, "customer_request", None) or "").lower()
+        for k in ("hour", "open", "location", "address", "phone", "price")
+    ):
+        needs.append(EvidenceNeed(
+            kind="business_profile",
+            query=getattr(analysis, "customer_request", None) or "business profile",
+        ))
+
+    # De-duplicate by kind, keep first.
+    seen: set[str] = set()
+    deduped: list = []
+    for n in needs:
+        if n.kind in seen:
+            continue
+        seen.add(n.kind)
+        deduped.append(n)
+    return deduped
+
+
 # ── Conflict resolution (eligibility gating) ─────────────
 
 # Priority tiers: required strategies must be fulfilled (fail blocks approval);

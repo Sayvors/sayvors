@@ -6,6 +6,8 @@ Everything the intelligence layer needs is stored in PostgreSQL:
                       problems) — the "Understand" data set
 - LocationDailyMetric per-channel daily rollups (review counts, sentiment
                       split, Google impressions/actions) — the "Grow" data set
+- SearchKeywordStat per-channel daily search-keyword impressions (native
+                      Google only — Localith exposes no keyword data)
 
 Events flow through the outbox → Kafka (`review-events`, `metrics-events`),
 mirroring the existing event architecture in `modules/outbox`.
@@ -159,6 +161,39 @@ class ReviewIntelligenceReport(Base):
     fallback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Review count at analysis time (staleness signal).
     review_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class SearchKeywordStat(Base):
+    """Daily search-keyword impressions per channel (Grow data set).
+
+    Populated ONLY for native-Google channels: keyword breakdowns come from
+    the Business Profile Performance API (SEARCH_KEYWORD_IMPRESSIONS),
+    which Localith does not expose. Localith-only tenants get an honest
+    empty state in the UI until native Google OAuth lands — never fake rows.
+    """
+
+    __tablename__ = "search_keyword_stats"
+    __table_args__ = (
+        UniqueConstraint("channel_id", "keyword", "date", name="uq_keyword_channel_day"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    keyword: Mapped[str] = mapped_column(String(255), index=True)
+    date: Mapped[datetime] = mapped_column(Date, index=True)
+    impressions: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

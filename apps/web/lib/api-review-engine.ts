@@ -12,6 +12,7 @@ export interface ReviewEngineInput {
   channel?: string;
   channel_id?: string;
   model?: string;
+  databank_id?: string;
 }
 
 export interface StreamEvent {
@@ -28,6 +29,9 @@ export interface StreamEvent {
   tool?: string;
   args?: Record<string, unknown>;
   result?: string;
+  bank_id?: string | null;
+  need?: string;
+  query?: string;
   fulfillment?: Array<{ strategy_id: string; strategy: string; status: string; reason: string; evidence: string }>;
   claims?: Array<{ claim: string; kind: string; status: string; source: string }>;
   relevance?: { verdict: string; reason: string; evidence: string; matched_terms: string[] };

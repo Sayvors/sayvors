@@ -51,110 +51,84 @@ async def resolve_business_domain(
 ) -> dict:
     """Collect business-domain terms from everything the tenant configured.
 
-    Sources: location profiles (categories + description), channel services,
-    channel display name, databank names + document filenames. Tenant-wide
-    (not per-channel exact) — robust when links are missing.
+    Delegates to the Retrieval Layer (domain vocabulary provider) — this
+    module owns relevance *assessment* only, never storage access. Returns
+    {"terms": [...], "sources": {...}, "not_offered": [...]}, where
+    `not_offered` (the tenant's explicit does-NOT-sell list) is deliberately
+    NOT part of `terms`.
     """
-    from sqlalchemy import select
-
-    terms: set[str] = set()
-    sources: dict[str, int] = {}
     try:
-        from ..channels.models import BusinessService, Channel
-        from ..locations.models import LocationProfile
-        from ..rag.models import Databank, Document
+        from ..retrieval.layer import domain_vocabulary
 
-        # Each source is queried independently — a missing table or
-        # aborted transaction in one must NOT poison the session for the
-        # rest of the pipeline (the later INSERT of review_response_logs).
-        async def _safe_execute(stmt, label: str):
-            try:
-                return await db.execute(stmt)
-            except Exception as e:
-                # Missing table on dev DBs (e.g. location_profiles) is expected until migrated —
-                # debug level so it doesn't spam every review request.
-                if "UndefinedTableError" in type(e).__name__ or "does not exist" in str(e):
-                    logger.debug("Business domain %s skipped (table missing): %s", label, e)
-                else:
-                    logger.warning("Business domain %s failed: %s", label, e)
-                try:
-                    await db.rollback()
-                except Exception:
-                    pass
-                return None
-
-        res = await _safe_execute(select(LocationProfile).where(LocationProfile.user_id == tenant_id), "location_profiles")
-        profiles = res.scalars().all() if res is not None else []
-        for p in profiles:
-            cats = p.categories or {}
-            if isinstance(cats, dict):
-                if cats.get("primary"):
-                    terms.update(_words(str(cats["primary"])))
-                for extra in cats.get("additional") or []:
-                    terms.update(_words(str(extra)))
-            terms.update(_words(p.description or ""))
-        if profiles:
-            sources["location_profiles"] = len(profiles)
-
-        if channel_id:
-            res = await _safe_execute(select(BusinessService).where(BusinessService.channel_id == channel_id), "channel_services")
-            services = res.scalars().all() if res is not None else []
-            for s in services:
-                terms.update(_words(s.name or ""))
-                terms.update(_words(s.category or ""))
-                terms.update(_words(s.description or ""))
-            if services:
-                sources["channel_services"] = len(services)
-
-            res = await _safe_execute(
-                select(Channel.display_name).where(Channel.id == channel_id, Channel.user_id == tenant_id),
-                "channel",
-            )
-            ch = res.scalar_one_or_none() if res is not None else None
-            if ch:
-                terms.update(_words(ch))
-                sources["channel_name"] = 1
-
-        res = await _safe_execute(select(Databank).where(Databank.user_id == tenant_id).limit(10), "databanks")
-        banks = res.scalars().all() if res is not None else []
-        for b in banks:
-            terms.update(_words(b.name or ""))
-        if banks:
-            sources["databanks"] = len(banks)
-            res = await _safe_execute(
-                select(Document.filename).where(Document.databank_id.in_([b.id for b in banks])).limit(50),
-                "documents",
-            )
-            rows = res.all() if res is not None else []
-            for (filename,) in rows:
-                cleaned = re.sub(r"\.[a-z0-9]+$", "", filename or "")
-                terms.update(w for w in _words(cleaned) if w not in {"databank", "data", "csv", "final", "new"})
-            sources["documents"] = len(rows)
+        return await domain_vocabulary(db, tenant_id, channel_id)
     except Exception as e:
         if "UndefinedTableError" in type(e).__name__ or "does not exist" in str(e):
             logger.debug("Business domain resolution failed (table missing): %s", e)
         else:
             logger.warning("Business domain resolution failed: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-    return {"terms": sorted(terms), "sources": sources}
+        return {"terms": [], "sources": {}, "not_offered": []}
 
 
 def assess_relevance(
     review_text: str,
     analysis,
     domain: dict,
+    issues: list | None = None,
 ) -> dict:
-    """Verdict dict: {verdict, reason, evidence, matched_terms}."""
+    """Verdict dict: {verdict, reason, evidence, matched_terms}.
+
+    Judges the product reference AND the concrete complaint topics (issue
+    labels/details/keywords): a review complaining about "cold food" and
+    "waiters" is assessable even when no product_reference was extracted.
+    The explicit does-not-sell list is checked against ALL candidate terms;
+    domain overlap stays product-gated — an issue-only complaint without an
+    explicit exclusion is too ambiguous to call (slow "support" could be a
+    legitimate gripe), so it stays uncertain.
+    """
     product_ref = ((analysis.product_reference or "").strip()) if analysis else ""
     domain_words = set((domain or {}).get("terms", []))
+    not_offered_words = set((domain or {}).get("not_offered", []))
 
-    if not product_ref:
+    ref_words = [w for w in _words(product_ref) if w not in NEUTRAL_WORDS]
+    issue_words: list[str] = []
+    for iss in issues or []:
+        if getattr(iss, "generic", False):
+            continue
+        issue_words += _words(getattr(iss, "label", "") or "")
+        issue_words += _words(getattr(iss, "detail", "") or "")
+        for kw in getattr(iss, "keywords", None) or []:
+            issue_words += _words(kw)
+    issue_words = [w for w in issue_words if w not in NEUTRAL_WORDS]
+    candidates = ref_words + [w for w in issue_words if w not in ref_words]
+
+    if not candidates:
         return {
             "verdict": "uncertain",
-            "reason": "No specific product mentioned — cannot judge relevance; normal pipeline.",
+            "reason": "No specific product or complaint topic — cannot judge relevance; normal pipeline.",
+            "evidence": "",
+            "matched_terms": [],
+        }
+    # Explicit owner exclusion beats everything: the tenant said they do NOT
+    # sell this. Evaluated before the domain-size gate — direct tenant intent
+    # needs no minimum corpus. Checked against complaint topics too, so a
+    # "cold food" complaint fires even with no product reference.
+    excluded = [w for w in candidates if _term_hit(w, not_offered_words)] if not_offered_words else []
+    if excluded:
+        subject = f"'{product_ref}'" if product_ref else (
+            f"complaint topic ({', '.join(sorted(set(excluded)))})")
+        return {
+            "verdict": "off_topic",
+            "reason": (
+                f"Mentioned item {subject} is on the business's explicit "
+                f"does-not-sell list — review is about something else."
+            ),
+            "evidence": f"{subject} ↔ not-offered: {', '.join(sorted(set(excluded)))}",
+            "matched_terms": [],
+        }
+    if not ref_words:
+        return {
+            "verdict": "uncertain",
+            "reason": "Mentioned topics are too generic to judge — normal pipeline.",
             "evidence": "",
             "matched_terms": [],
         }
@@ -162,15 +136,6 @@ def assess_relevance(
         return {
             "verdict": "uncertain",
             "reason": "Too little business domain configured — cannot judge relevance.",
-            "evidence": "",
-            "matched_terms": [],
-        }
-
-    ref_words = [w for w in _words(product_ref) if w not in NEUTRAL_WORDS]
-    if not ref_words:
-        return {
-            "verdict": "uncertain",
-            "reason": "Mentioned item is too generic to judge — normal pipeline.",
             "evidence": "",
             "matched_terms": [],
         }

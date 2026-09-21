@@ -1,9 +1,9 @@
 import logging
-import sys
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -349,7 +349,7 @@ async def channel_webhook(
     db: AsyncSession = Depends(get_db),
 ):
     # ── Rate limit ──
-    if not sys.modules.get("pytest") and not await rate_limit(f"webhook:{platform}", 100, 60):
+    if not settings.TESTING and not await rate_limit(f"webhook:{platform}", 100, 60):
         return Response(status_code=429, content="Too many requests")
 
     # ── Enforce body size limit ──
@@ -361,28 +361,46 @@ async def channel_webhook(
     if len(raw_body) > MAX_WEBHOOK_BODY_BYTES:
         return Response(status_code=413, content="Payload too large")
 
-    # ── Signature verification ──
+    # ── Signature verification (FAIL CLOSED) ──
+    # Every branch below rejects: an unsigned/forged payload must never reach
+    # dispatch. If no channel/secret is configured we cannot verify anything,
+    # so the correct answer is 503, not "process anyway".
     sig_header = _SIGNATURE_HEADERS.get(platform)
-    if sig_header:
-        signature = request.headers.get(sig_header)
-        # Look up the channel for this platform to get the webhook_secret
-        result = await db.execute(
+    if not sig_header:
+        return Response(status_code=404, content="Unknown platform")
+
+    signature = request.headers.get(sig_header)
+    channels = (
+        await db.execute(
             select(Channel).where(
                 Channel.platform == platform,
                 Channel.status == "active",
             )
         )
-        channel = result.scalar_one_or_none()
+    ).scalars().all()
 
-        if channel and channel.webhook_secret:
-            body_bytes = raw_body
-            verified = await verify_webhook_signature(platform, body_bytes, signature or "", channel)
-            if not verified:
-                logger.warning("Webhook signature verification failed for platform=%s", platform)
-                return Response(status_code=403, content="Invalid signature")
-        elif not channel:
-            # No channel found — might be a verify request or misconfiguration
-            logger.warning("Webhook received for platform=%s with no active channel", platform)
+    if not channels:
+        logger.warning(
+            "Webhook rejected for platform=%s: no active channel configured", platform
+        )
+        return Response(status_code=503, content="Channel not configured")
+
+    secret_channels = [c for c in channels if c.webhook_secret]
+    if not secret_channels:
+        # A channel without a webhook secret cannot be authenticated.
+        logger.warning(
+            "Webhook rejected for platform=%s: no channel secret configured", platform
+        )
+        return Response(status_code=503, content="Webhook secret not configured")
+
+    verified = False
+    for channel in secret_channels:
+        if await verify_webhook_signature(platform, raw_body, signature or "", channel):
+            verified = True
+            break
+    if not verified:
+        logger.warning("Webhook signature verification failed for platform=%s", platform)
+        return Response(status_code=403, content="Invalid signature")
 
     # ── Parse and dispatch ──
     try:
@@ -401,7 +419,14 @@ async def channel_webhook(
 async def get_current_user_or_query_token(
     request: Request, db: AsyncSession = Depends(get_db)
 ):
-    """Auth for browser-navigable endpoints: Authorization header OR ?token=."""
+    """Auth for browser-navigable endpoints: Authorization header OR ?ticket=.
+
+    Browser navigations cannot send headers, but raw access JWTs in query
+    strings leak via history, proxy logs, and Referer. Instead the SPA mints
+    a 120-second single-use `google_connect` ticket (POST /google/connect-ticket)
+    and passes THAT in the query — a leaked ticket is worthless after first
+    use or two minutes, and never grants any other endpoint.
+    """
     from ...core.deps import get_current_user
 
     auth_header = request.headers.get("authorization")
@@ -411,16 +436,33 @@ async def get_current_user_or_query_token(
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_header[7:])
         return await get_current_user(creds, db)
 
-    token = request.query_params.get("token")
-    if not token:
+    ticket = request.query_params.get("ticket")
+    if not ticket:
         raise HTTPException(status_code=401, detail="Not authenticated")
     import jwt as pyjwt
     try:
-        payload = pyjwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        payload = pyjwt.decode(ticket, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
-    if payload.get("type") != "access":
+    if payload.get("type") != "google_connect":
         raise HTTPException(status_code=401, detail="Invalid token type")
+
+    # Single-use: burn the jti. If Redis is down, degrade to TTL-only
+    # (a 2-minute replay window beats bricking the connect flow).
+    jti = payload.get("jti") or ""
+    if jti:
+        try:
+            from ..redis.client import get_redis
+
+            redis = await get_redis()
+            burned = await redis.getdel(f"gct:{jti}")
+            if not burned:
+                raise HTTPException(status_code=401, detail="Ticket already used")
+        except HTTPException:
+            raise
+        except Exception:
+            logger.warning("Connect-ticket burn unavailable (Redis); accepting TTL-only")
+
     from ..users.models import User
     result = await db.execute(select(User).where(User.id == payload.get("sub")))
     user = result.scalar_one_or_none()
@@ -465,17 +507,61 @@ def _verify_google_oauth_state(state: str) -> tuple[str | None, str | None]:
     return payload.get("sub"), next_path
 
 
+GOOGLE_CONNECT_TICKET_TTL_SECONDS = 120
+
+
+class _ConnectTicketOut(BaseModel):
+    ticket: str
+    expires_in: int
+
+
+@router.post("/google/connect-ticket", response_model=_ConnectTicketOut)
+async def create_google_connect_ticket(
+    user: User = Depends(get_current_user),
+):
+    """Mint a 120-second single-use ticket for the browser-navigable
+    /google/connect endpoint, so long-lived access JWTs never appear in URLs.
+    """
+    import secrets
+    from datetime import datetime, timedelta
+
+    import jwt as pyjwt
+
+    payload = {
+        "sub": user.id,
+        "type": "google_connect",
+        "jti": secrets.token_hex(16),
+        "exp": datetime.now(timezone.utc)
+        + timedelta(seconds=GOOGLE_CONNECT_TICKET_TTL_SECONDS),
+    }
+    ticket = pyjwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    try:
+        from ..redis.client import get_redis
+
+        redis = await get_redis()
+        await redis.setex(
+            f"gct:{payload['jti']}",
+            GOOGLE_CONNECT_TICKET_TTL_SECONDS,
+            "1",
+        )
+    except Exception:
+        # Without Redis the ticket is TTL-only — still a strict improvement
+        # over a 15-minute access token in a URL.
+        logger.warning("Connect-ticket jti not registered (Redis unavailable)")
+    return _ConnectTicketOut(ticket=ticket, expires_in=GOOGLE_CONNECT_TICKET_TTL_SECONDS)
+
+
 @router.get("/google/connect")
 async def google_connect(
     request: Request,
-    token: str | None = Query(None, description="Access token (query param) — lets the browser open this URL directly"),
+    ticket: str | None = Query(None, description="Single-use connect ticket from POST /google/connect-ticket"),
     next: str | None = Query(None, description="Frontend path to return to after connect (e.g. /onboarding)"),
     user: User = Depends(get_current_user_or_query_token),
 ):
     """Start the Google OAuth flow. Open this URL in the browser.
 
     Works both with an Authorization header (API clients) and with
-    `?token=<access_token>` (browser button navigations, which cannot
+    `?ticket=<connect ticket>` (browser button navigations, which cannot
     send headers). The state is a signed, 10-min, one-flow token.
     """
     import re
@@ -492,6 +578,17 @@ async def google_connect(
     url = build_auth_url(state, settings.GOOGLE_REVIEWS_REDIRECT_URI)
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url)
+
+
+_GOOGLE_ERROR_CODES = {
+    "access_denied", "missing_code", "invalid_state", "token_exchange_failed",
+    "accounts_unavailable", "no_business_account", "server_error",
+}
+
+
+def _safe_google_error(error: str | None) -> str:
+    """Echo only known error codes back to the frontend — never raw input."""
+    return error if error in _GOOGLE_ERROR_CODES else "oauth_error"
 
 
 @router.get("/google/callback")
@@ -512,7 +609,7 @@ async def google_callback(
     base = cfg.FRONTEND_URL.rstrip("/") + "/dashboard/channels"
 
     if error:
-        return RedirectResponse(f"{base}?google_error={error}")
+        return RedirectResponse(f"{base}?google_error={_safe_google_error(error)}")
     if not code or not state:
         return RedirectResponse(f"{base}?google_error=missing_code")
 
@@ -749,15 +846,20 @@ async def update_autoreply_config(
     if body.model is not None:
         from ..llm.providers.registry import list_tenant_models
 
-        # Only models the admin saved + enabled (with a usable provider
-        # key) may be assigned — the same set tenants see in the picker.
-        visible = {m.id for m, _ in await list_tenant_models(db)}
-        if body.model not in visible:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Model {body.model} is not enabled by your administrator.",
-            )
-        config.model = body.model[:100]
+        # Empty string resets to tenant default (NULL) — the model then
+        # resolves from the admin-managed enabled list at generation time.
+        if not body.model.strip():
+            config.model = None
+        else:
+            # Only models the admin saved + enabled (with a usable provider
+            # key) may be assigned — the same set tenants see in the picker.
+            visible = {m.id for m, _ in await list_tenant_models(db)}
+            if body.model not in visible:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Model {body.model} is not enabled by your administrator.",
+                )
+            config.model = body.model[:100]
     if body.approval_mode is not None:
         config.approval_mode = body.approval_mode
     if body.custom_instructions is not None:
@@ -1133,7 +1235,7 @@ async def generate_reply_for_review(
     db: AsyncSession = Depends(get_db),
 ):
     """Draft an AI reply for a review that has no reply row yet (inbox flow)."""
-    if not sys.modules.get("pytest") and not await rate_limit(f"gen:{channel_id}", 100, 60):
+    if not settings.TESTING and not await rate_limit(f"gen:{channel_id}", 100, 60):
         raise HTTPException(status_code=429, detail="Too many requests")
     channel = await _get_owned_channel(channel_id, user, db)
     config = (
@@ -1176,7 +1278,7 @@ async def generate_reply_for_review(
         await db.delete(existing_reply)
         await db.flush()
 
-    from .review_reply import generate_review_reply
+    from .review_reply import generate_auto_reply
 
     custom_text = (body.custom_text or "").strip()
     if custom_text:
@@ -1184,8 +1286,9 @@ async def generate_reply_for_review(
         reply_text = custom_text
     else:
         try:
-            reply_text = await generate_review_reply(
-                config, body.rating, body.review_text, body.reviewer_name, db
+            reply_text = await generate_auto_reply(
+                config, channel, body.rating, body.review_text,
+                body.reviewer_name, db, review_id=body.review_id,
             )
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
@@ -1244,64 +1347,43 @@ async def edit_pending_reply(
 async def regenerate_reply(
     channel_id: str,
     reply_id: str,
-    engine: bool = Query(False, description="Regenerate with the full agentic review engine"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Re-generate a pending reply: the full engine pipeline (?engine=true)
-    or a simple retry-aware rewrite."""
-    if not sys.modules.get("pytest") and not await rate_limit(f"regen:{channel_id}", 100, 60):
+    """Re-generate a pending reply through the review engine.
+
+    Single production path (the legacy `?engine=` flag is accepted but
+    ignored — every regeneration runs the full pipeline). The rejected
+    draft is passed along so the engine writes a fresh variation.
+    """
+    if not settings.TESTING and not await rate_limit(f"regen:{channel_id}", 100, 60):
         raise HTTPException(status_code=429, detail="Too many requests")
     reply = await _get_owned_reply(channel_id, reply_id, user, db)
     if reply.status != "pending_approval":
         raise HTTPException(status_code=400, detail="Only pending replies can be regenerated")
     attempt = (reply.generation_attempt or 1) + 1
 
-    if engine:
-        if not (reply.review_text or "").strip():
-            raise HTTPException(
-                status_code=400,
-                detail="Star-only reviews have no text for the engine — use Rewrite instead.",
-            )
-        try:
-            from ..review_engine.schemas import ReviewEngineRequest
-            from ..review_engine.service import process_review
+    config = (
+        await db.execute(select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel_id))
+    ).scalar_one_or_none()
+    if not config:
+        config = AutoReplyConfig(channel_id=channel_id)
+        db.add(config)
 
-            req = ReviewEngineRequest(
-                review_text=reply.review_text.strip()[:5000],
-                rating=reply.rating,
-                reviewer_name=reply.reviewer_name,
-                review_id=(reply.review_id or "")[:120] or None,
-                channel="google_review",
-                channel_id=channel_id,
-            )
-            resp = await process_review(req, user.id, db)
-            new_text = (resp.response_text or "").strip()
-            if not new_text:
-                raise ValueError("Engine returned an empty response")
-            reply.reply_text = new_text
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Engine generation failed: {e}")
-    else:
-        config = (
-            await db.execute(select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel_id))
-        ).scalar_one_or_none()
-        if not config:
-            config = AutoReplyConfig(channel_id=channel_id)
-            db.add(config)
+    from types import SimpleNamespace
 
-        from .review_reply import generate_review_reply
+    from .review_reply import generate_auto_reply
 
-        # The model knows this is a rejected draft so it writes a fresh variation.
-        try:
-            reply.reply_text = await generate_review_reply(
-                config, reply.rating, reply.review_text, reply.reviewer_name, db,
-                attempt=attempt, previous_draft=reply.reply_text,
-            )
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
+    # The model knows this is a rejected draft so it writes a fresh variation.
+    try:
+        reply.reply_text = await generate_auto_reply(
+            config, SimpleNamespace(id=channel_id, user_id=user.id),
+            reply.rating, reply.review_text, reply.reviewer_name, db,
+            review_id=(reply.review_id or "")[:120] or None,
+            attempt=attempt, previous_draft=reply.reply_text,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Reply generation failed: {e}")
 
     refreshed = await db.get(ReviewReply, reply_id)
     refreshed.reply_text = reply.reply_text
@@ -1335,12 +1417,16 @@ async def retry_failed_reply(
         if not config:
             config = AutoReplyConfig(channel_id=channel_id)
             db.add(config)
-        from .review_reply import generate_review_reply
+        from types import SimpleNamespace
+
+        from .review_reply import generate_auto_reply
 
         attempt += 1
         try:
-            reply.reply_text = await generate_review_reply(
-                config, reply.rating, reply.review_text, reply.reviewer_name, db,
+            reply.reply_text = await generate_auto_reply(
+                config, SimpleNamespace(id=channel_id, user_id=user.id),
+                reply.rating, reply.review_text, reply.reviewer_name, db,
+                review_id=(reply.review_id or "")[:120] or None,
                 attempt=attempt,
             )
         except Exception as e:
