@@ -55,16 +55,21 @@ async def _resolve_engine_model(req: ReviewEngineRequest, tenant_id: str, db: As
     """Resolve which model the engine must use. Returns (model_id, source).
 
     Priority:
-      1. Explicit `model` in the request (playground / API override).
-      2. The channel's auto-reply config model — what Automations saves.
+      1. Explicit `model` in the request (playground / API override) —
+         validated against the enabled list.
+      2. The channel's explicit model choice — validated the same way.
+      3. The tenant's first enabled model ("tenant-default").
 
-    No silent defaults, no fallback models. If neither is set, raises
-    ValueError telling the user to pick a reply model in Automations.
+    No silent defaults, no hardcoded provider, no fallback models. The
+    admin-managed database is the only source of truth; anything
+    unresolvable raises ValueError telling the user what to fix.
     """
     from sqlalchemy import select
 
+    from ..llm.service import resolve_tenant_model
+
     if req.model:
-        return req.model, "request"
+        return await resolve_tenant_model(db, preferred=req.model), "request"
 
     if req.channel_id:
         from ..channels.models import AutoReplyConfig, Channel
@@ -86,12 +91,40 @@ async def _resolve_engine_model(req: ReviewEngineRequest, tenant_id: str, db: As
             )
         ).scalar_one_or_none()
         if cfg:
-            return cfg, "channel"
+            return await resolve_tenant_model(db, preferred=cfg), "channel"
 
-    raise ValueError(
-        "No reply model configured for this channel. "
-        "Select a reply model in Automations for this location."
-    )
+    return await resolve_tenant_model(db), "tenant-default"
+
+
+async def _resolve_bank_override(db: AsyncSession, tenant_id: str | None,
+                                 databank_id: str | None) -> str | None:
+    """Explicit bank choice (playground/tests): use it only when the tenant
+    owns it. Anything else is ignored loudly in the log — never an error
+    to the caller, and never another tenant's bank."""
+    if not databank_id or not tenant_id:
+        return None
+    try:
+        from sqlalchemy import select
+
+        from ..rag.models import Databank
+
+        async with db.begin_nested():
+            row = (
+                await db.execute(
+                    select(Databank.id).where(
+                        Databank.id == databank_id,
+                        Databank.user_id == tenant_id,
+                    )
+                )
+            ).scalar_one_or_none()
+        if not row:
+            logger.warning("Bank override %s not owned by tenant; ignoring",
+                           databank_id)
+            return None
+        return row
+    except Exception as e:
+        logger.debug("Bank override lookup failed: %s", e)
+        return None
 
 
 async def _resolve_reply_prefs(req: ReviewEngineRequest, tenant_id: str, db: AsyncSession) -> dict:
@@ -344,8 +377,13 @@ async def process_review(
     else:
         dialect_entry = None
 
-    # Channel's linked databank (Automations) — tools search here first.
+    # Channel's linked databank (Automations), unless the request carries
+    # an explicit owned-bank override (playground/tests).
     channel_bank = await _channel_databank_id(req.channel_id, tenant_id, db)
+    channel_bank = (
+        await _resolve_bank_override(db, tenant_id, req.databank_id)
+        or channel_bank
+    )
 
     # Step 1: Analyze review (errors propagate — no rule-based cover-up)
     analysis, analysis_stats = await analyze_review(req.review_text, req.rating, req.reviewer_name, model,
@@ -553,6 +591,10 @@ async def process_review_stream(
     else:
         dialect_entry = None
     channel_bank = await _channel_databank_id(req.channel_id, tenant_id, db)
+    channel_bank = (
+        await _resolve_bank_override(db, tenant_id, req.databank_id)
+        or channel_bank
+    )
     yield {"step": "analyzing", "message": f"Analyzing with {model}...", "progress": 10, "model": model, "model_source": model_source}
 
     # Step 1: Analyze (errors propagate — surfaced as an SSE error event)
@@ -575,7 +617,7 @@ async def process_review_stream(
         yield {"step": "strategy_suppressed", "strategy": sp.model_dump(), "progress": 36}
 
     # Step 4: Strategy-declared evidence via the Retrieval Layer
-    yield {"step": "retrieval", "message": "Gathering business evidence for the selected strategies...", "progress": 40}
+    yield {"step": "retrieval", "message": "Gathering business evidence for the selected strategies...", "progress": 40, "bank_id": channel_bank}
     needs = evidence_needs_for(analysis, strategies)
     # Owner identity first — retrieved evidence corroborates it.
     try:

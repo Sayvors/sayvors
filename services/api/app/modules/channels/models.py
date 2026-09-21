@@ -105,8 +105,10 @@ class AutoReplyConfig(Base):
     )
     # Free-text brand voice / house rules injected into every reply prompt
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # LLM model id (provider catalog id, e.g. "groq:openai/gpt-oss-120b")
-    model: Mapped[str] = mapped_column(String(100), default="groq:openai/gpt-oss-120b")
+    # LLM model id (provider catalog id, e.g. "groq:openai/gpt-oss-120b").
+    # NULL = tenant default, resolved from the admin-managed enabled
+    # models at generation time. Never a hardcoded provider default.
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
     # Arabic dialect code (review_engine.dialects catalog) or "auto".
     dialect: Mapped[str] = mapped_column(String(30), default="auto")
     # Reply language policy: match the review, or force en/ar.

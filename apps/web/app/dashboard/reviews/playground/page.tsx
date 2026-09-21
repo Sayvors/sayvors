@@ -8,6 +8,8 @@ import {
   type StreamEvent,
   type EngineLog,
 } from "@/lib/api-review-engine";
+import { apiFetch } from "@/lib/api-rag";
+import { listDatabanks } from "@/lib/api-rag";
 
 const CHANNELS = ["google_review", "facebook", "instagram", "tripadvisor", "yelp"];
 
@@ -66,6 +68,13 @@ export default function ReviewPlaygroundPage() {
   const [channel, setChannel] = useState("google_review");
   const [channelId, setChannelId] = useState("");
   const [channels, setChannels] = useState<ChannelOpt[]>([]);
+  // DB-driven pickers: tenant enabled models + databanks. Empty = location default.
+  const [models, setModels] = useState<{ id: string; name: string; provider: string }[]>([]);
+  const [modelPick, setModelPick] = useState("");
+  const [banks, setBanks] = useState<{ id: string; name: string }[]>([]);
+  const [bankPick, setBankPick] = useState("");
+  const [linkedModel, setLinkedModel] = useState<string | null>(null);
+  const [linkedBank, setLinkedBank] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -98,6 +107,45 @@ export default function ReviewPlaygroundPage() {
   }, []);
 
   useEffect(() => {
+    // Tenant enabled AI models (admin-managed) + databanks — nothing hardcoded.
+    (async () => {
+      try {
+        const m = await apiFetch("/api/v1/llm/models").catch(() => null);
+        if (m?.models) setModels(m.models);
+      } catch {
+        /* picker stays empty */
+      }
+      try {
+        const b = await listDatabanks().catch(() => null);
+        if (b?.databanks) setBanks(b.databanks);
+      } catch {
+        /* picker stays empty */
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    // Location defaults: its configured model + linked databank.
+    if (!channelId) {
+      setLinkedModel(null);
+      setLinkedBank(null);
+      return;
+    }
+    setModelPick("");
+    setBankPick("");
+    (async () => {
+      try {
+        const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`).catch(() => null);
+        setLinkedModel(cfg?.model ?? null);
+        setLinkedBank(cfg?.databank_id ?? null);
+      } catch {
+        setLinkedModel(null);
+        setLinkedBank(null);
+      }
+    })();
+  }, [channelId]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [events]);
 
@@ -117,6 +165,9 @@ export default function ReviewPlaygroundPage() {
           reviewer_name: reviewerName || undefined,
           channel,
           channel_id: channelId || undefined,
+          // Explicit picks only — empty means location/tenant default chain.
+          model: modelPick || undefined,
+          databank_id: bankPick || undefined,
         },
         ctrl.signal
       )) {
@@ -142,10 +193,14 @@ export default function ReviewPlaygroundPage() {
   const requirementsEvent = events.find((e) => e.step === "requirements");
   const tier = requirementsEvent?.tier;
   const fulfillmentEvents = events.filter((e) => e.step === "fulfillment");
-  const toolCalls = events.filter((e) => e.step === "tool_call");
-  const toolResults = events.filter((e) => e.step === "tool_result");
+  const toolCalls = events.filter((e) => e.step === "tool_call" || e.step === "evidence");
+  const toolResults = events.filter((e) => e.step === "tool_result" || e.step === "evidence_result");
+  const analyzingEvent = events.find((e) => e.step === "analyzing");
+  const retrievalEvent = events.find((e) => e.step === "retrieval");
+  const bankNameOf = (id: string | null | undefined) =>
+    banks.find((b) => b.id === id)?.name ?? (id ? `${id.slice(0, 8)}…` : "none linked");
   const progressEvents = events.filter((e) =>
-    ["analyzing", "strategies", "tools", "generating", "validating", "done"].includes(e.step)
+    ["analyzing", "strategies", "tools", "retrieval", "generating", "validating", "done"].includes(e.step)
   );
 
   return (
@@ -230,6 +285,55 @@ export default function ReviewPlaygroundPage() {
             </div>
           </div>
 
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/45">
+                AI model
+              </label>
+              <select
+                value={modelPick}
+                onChange={(e) => setModelPick(e.target.value)}
+                disabled={running || models.length === 0}
+                className="mt-1.5 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
+              >
+                <option value="">
+                  Location default{linkedModel ? ` (${linkedModel})` : " (tenant default)"}
+                </option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} ({m.provider})
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-ink/40">
+                Only models your admin enabled — never hardcoded.
+              </p>
+            </div>
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/45">
+                Data bank
+              </label>
+              <select
+                value={bankPick}
+                onChange={(e) => setBankPick(e.target.value)}
+                disabled={running || banks.length === 0}
+                className="mt-1.5 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/40 disabled:opacity-60"
+              >
+                <option value="">
+                  Location default{linkedBank ? ` (${bankNameOf(linkedBank)})` : ""}
+                </option>
+                {banks.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-ink/40">
+                Evidence is pulled from this bank for the run.
+              </p>
+            </div>
+          </div>
+
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
             <div>
               <label className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/45">Rating</label>
@@ -300,6 +404,25 @@ export default function ReviewPlaygroundPage() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-[14px] font-bold text-ink">Live trace</h2>
             </div>
+            {(analyzingEvent?.model || retrievalEvent) && (
+              <p className="mt-1 text-[11px] text-ink/45">
+                {analyzingEvent?.model && (
+                  <span>
+                    Model: <span className="font-mono font-semibold text-ink/70">{analyzingEvent.model}</span>
+                    {analyzingEvent?.model_source && <span> ({analyzingEvent.model_source})</span>}
+                  </span>
+                )}
+                {analyzingEvent?.model && retrievalEvent && <span> · </span>}
+                {retrievalEvent && (
+                  <span>
+                    Data bank:{" "}
+                    <span className="font-mono font-semibold text-ink/70">
+                      {bankNameOf(retrievalEvent.bank_id ?? linkedBank)}
+                    </span>
+                  </span>
+                )}
+              </p>
+            )}
             <div className="mt-3 space-y-2">
               {progressEvents.map((e, i) => (
                 <div key={i} className="flex items-start gap-2.5">
@@ -461,17 +584,38 @@ export default function ReviewPlaygroundPage() {
                   Databank lookups ({toolCalls.length})
                 </h3>
                 <div className="mt-2 space-y-1.5">
-                  {toolCalls.map((e, i) => (
-                    <div key={i} className="rounded-xl bg-white px-3 py-2 text-[12px] shadow-sm">
-                      <span className="font-mono font-bold text-emerald-700">🔧 {e.tool}</span>
-                      {e.args && Object.keys(e.args).length > 0 && (
-                        <span className="ml-2 font-mono text-[11px] text-ink/45">{JSON.stringify(e.args)}</span>
-                      )}
-                      {toolResults[i]?.result && (
-                        <p className="mt-1 line-clamp-2 text-ink/60">{toolResults[i].result}</p>
-                      )}
-                    </div>
-                  ))}
+                  {toolCalls.map((e, i) => {
+                    let countLabel: string | null = null;
+                    const res = toolResults[i]?.result;
+                    if (res) {
+                      try {
+                        const parsed = JSON.parse(res);
+                        if (typeof parsed.count === "number") {
+                          countLabel = `${parsed.count} fact${parsed.count === 1 ? "" : "s"}`;
+                        }
+                      } catch {
+                        countLabel = null;
+                      }
+                    }
+                    return (
+                      <div key={i} className="rounded-xl bg-white px-3 py-2 text-[12px] shadow-sm">
+                        <span className="font-mono font-bold text-emerald-700">
+                          🔧 {e.tool ?? (e.need ? `evidence:${e.need}` : "evidence")}
+                        </span>
+                        {e.args && Object.keys(e.args).length > 0 && (
+                          <span className="ml-2 font-mono text-[11px] text-ink/45">{JSON.stringify(e.args)}</span>
+                        )}
+                        {e.query && (
+                          <span className="ml-2 font-mono text-[11px] text-ink/45">“{e.query}”</span>
+                        )}
+                        {(toolResults[i]?.result || countLabel) && (
+                          <p className="mt-1 line-clamp-2 text-ink/60">
+                            {countLabel ?? toolResults[i].result}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
                   {toolCalls.length === 0 && (
                     <p className="text-[12px] text-ink/40">No databank lookup needed for this review.</p>
                   )}

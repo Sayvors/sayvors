@@ -209,6 +209,36 @@ async def test_autoreply_model_accepts_admin_saved(client, channel_id, db):
 
 
 @pytest.mark.asyncio
+async def test_autoreply_model_empty_resets_to_tenant_default(client, channel_id, db):
+    """Empty string clears the explicit choice → null = tenant default."""
+    from app.modules.channels.service import encrypt_token
+    from app.modules.llm.models import ModelConfig, ProviderConfig
+
+    db.add(ProviderConfig(
+        provider="groq", key_encrypted=encrypt_token("gsk_test"), enabled=True,
+    ))
+    db.add(ModelConfig(model_id="groq:oss-120b", enabled=True))
+    await db.commit()
+
+    host = {"host": "localhost"}
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/autoreply",
+        json={"model": "groq:oss-120b"},
+        headers=host,
+    )
+    assert r.status_code == 200
+    assert r.json()["model"] == "groq:oss-120b"
+
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/autoreply",
+        json={"model": ""},
+        headers=host,
+    )
+    assert r.status_code == 200, r.text[:200]
+    assert r.json()["model"] is None
+
+
+@pytest.mark.asyncio
 async def test_autoreply_config_update(client, channel_id):
     r = client.put(
         f"/api/v1/channels/{channel_id}/autoreply",

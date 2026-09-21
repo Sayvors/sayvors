@@ -102,6 +102,9 @@ class ReviewEngineRequest(BaseModel):
     dialect: str | None = Field(default=None, max_length=30)
     # Optional explicit language policy: match the review, or force en/ar.
     reply_language: str | None = Field(default=None, pattern="^(match|en|ar)$")
+    # Optional explicit databank override (playground/tests): honored only
+    # when the tenant owns the bank, else the channel-linked bank is used.
+    databank_id: str | None = Field(default=None, max_length=36)
 
 
 class ReviewEngineResponse(BaseModel):

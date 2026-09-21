@@ -2294,3 +2294,186 @@ def test_build_requirements_question_without_context_bans_invention():
     joined_ctx = "\n".join(reqs_ctx)
     assert "answer it directly" in joined_ctx.lower()
     assert "not thank the reviewer" in joined_ctx.lower()
+
+
+# ── model resolution: explicit > channel > tenant default, never hardcoded ──
+
+async def _enable_model(db, model_id="groq:oss-120b"):
+    from app.modules.channels.service import encrypt_token
+    from app.modules.llm.models import ModelConfig, ProviderConfig
+
+    db.add(ProviderConfig(
+        provider="groq", key_encrypted=encrypt_token("gsk_test"), enabled=True,
+    ))
+    db.add(ModelConfig(model_id=model_id, enabled=True))
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_engine_model_explicit_validated(db, user_id, channel_id):
+    """Explicit request model must be admin-enabled, else loud ValueError."""
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from app.modules.review_engine.service import _resolve_engine_model
+
+    await _enable_model(db)
+    req = ReviewEngineRequest(review_text="Hi", rating=5, model="groq:oss-120b")
+    model, source = await _resolve_engine_model(req, user_id, db)
+    assert (model, source) == ("groq:oss-120b", "request")
+
+    req = ReviewEngineRequest(review_text="Hi", rating=5, model="openai:nope")
+    with pytest.raises(ValueError, match="not enabled"):
+        await _resolve_engine_model(req, user_id, db)
+
+
+@pytest.mark.asyncio
+async def test_engine_model_channel_then_tenant_default(db, user_id):
+    """Channel explicit choice wins when enabled; NULL falls to tenant default."""
+    from sqlalchemy import select as _select
+
+    from app.modules.channels.models import AutoReplyConfig, Channel
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from app.modules.review_engine.service import _resolve_engine_model
+
+    await _enable_model(db, "groq:oss-120b")
+    db.add(Channel(id="ch-model-1", user_id=user_id, platform="google_reviews",
+                   platform_user_id="x", display_name="M", status="active"))
+    db.add(AutoReplyConfig(id="cfg-model-1", channel_id="ch-model-1",
+                           model="groq:oss-120b"))
+    await db.commit()
+    req = ReviewEngineRequest(review_text="Hi", rating=5, channel_id="ch-model-1")
+    # Explicit channel choice → channel source.
+    model, source = await _resolve_engine_model(req, user_id, db)
+    assert (model, source) == ("groq:oss-120b", "channel")
+
+    # NULL = tenant default: first enabled model, no hardcode.
+    config = (await db.execute(
+        _select(AutoReplyConfig).where(AutoReplyConfig.id == "cfg-model-1")
+    )).scalar_one()
+    config.model = None
+    await db.commit()
+    model, source = await _resolve_engine_model(req, user_id, db)
+    assert (model, source) == ("groq:oss-120b", "tenant-default")
+
+
+@pytest.mark.asyncio
+async def test_engine_model_none_enabled_raises(db, user_id):
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from app.modules.review_engine.service import _resolve_engine_model
+
+    req = ReviewEngineRequest(review_text="Hi", rating=5)
+    with pytest.raises(ValueError, match="No AI model is enabled"):
+        await _resolve_engine_model(req, user_id, db)
+
+
+# ── databank override: owned banks only ──
+
+@pytest.mark.asyncio
+async def test_bank_override_ownership(db, user_id):
+    import uuid
+
+    from app.modules.rag.models import Databank
+    from app.modules.review_engine.service import _resolve_bank_override
+
+    mine = f"bank-{uuid.uuid4().hex[:8]}"
+    db.add(Databank(id=mine, user_id=user_id, name="Mine"))
+    await db.commit()
+
+    assert await _resolve_bank_override(db, user_id, mine) == mine
+    assert await _resolve_bank_override(db, user_id, "bank-foreign") is None
+    assert await _resolve_bank_override(db, user_id, None) is None
+    assert await _resolve_bank_override(db, None, mine) is None
+
+
+@pytest.mark.asyncio
+async def test_engine_run_uses_override_bank(monkeypatch, tmp_path, db, user_id):
+    """End-to-end: databank_id override feeds CSV evidence into generation."""
+    import json as _json
+    import uuid
+    from types import SimpleNamespace
+
+    from app.config import settings as _settings
+    from app.core.storage import put_doc
+    from app.modules.rag.models import Databank, Document
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    import app.modules.review_engine.service as eng
+    import app.modules.review_engine.understanding as und
+    import app.modules.review_engine.generator as gen
+
+    monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(_settings, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(eng, "_async_session",
+                        _shim_test_session_factory(db))
+
+    bank_id = f"bank-{uuid.uuid4().hex[:8]}"
+    doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+    db.add(Databank(id=bank_id, user_id=user_id, name="Menu"))
+    db.add(Document(id=doc_id, databank_id=bank_id, user_id=user_id,
+                    filename="menu.csv", source_type="upload",
+                    file_type="csv", status="completed"))
+    from app.modules.review_engine.models import ResponseStrategy
+
+    db.add(ResponseStrategy(
+        id="recommend_related_product", name="Recommend",
+        description="Recommend", category="recommend", priority=40,
+        conditions={"sentiments": ["positive", "very_positive"],
+                    "has_product_reference": True},
+        enabled=True,
+    ))
+    await db.commit()
+    put_doc(bank_id, f"{doc_id}.csv",
+            b"name,record_type,category\nTruffle Pasta,product,Mains\n")
+
+    analysis = _json.dumps({"sentiment": "positive", "emotion": "joy",
+                            "intent": ["praise"], "issue_type": None,
+                            "product_reference": "truffle pasta",
+                            "urgency": "low", "customer_request": None,
+                            "language": "en"})
+
+    def _usage():
+        return SimpleNamespace(prompt_tokens=10, completion_tokens=20,
+                               total_tokens=30)
+
+    class _Analysis:
+        async def complete(self, req):
+            return SimpleNamespace(content=analysis, finish_reason="stop",
+                                   usage=_usage())
+
+    seen = {}
+
+    class _Gen:
+        async def complete(self, req):
+            seen["prompt"] = "\n".join(m.content for m in req.messages)
+            return SimpleNamespace(
+                content=_json.dumps({"response_text": "Our truffle pasta, glad you loved it!"}),
+                finish_reason="stop", usage=_usage())
+
+    async def _models(db):
+        return [(SimpleNamespace(id="custom:model"), None)]
+
+    monkeypatch.setattr(und, "get_provider_for_model", lambda mid: _Analysis())
+    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "groq"))
+    monkeypatch.setattr(gen, "get_provider_for_model", lambda mid: _Gen())
+    monkeypatch.setattr(gen, "_resolve_model", lambda mid: ("api-x", "groq"))
+    monkeypatch.setattr(
+        "app.modules.llm.providers.registry.list_tenant_models", _models)
+
+    req = ReviewEngineRequest(
+        review_text="Loved the truffle pasta!", rating=5,
+        reviewer_name="Sam", model="custom:model", databank_id=bank_id)
+    resp = await eng.process_review(req, user_id, db)
+    assert "truffle pasta" in resp.response_text.lower()
+    assert "Truffle Pasta" in seen["prompt"]
+
+
+def _shim_test_session_factory(session):
+    class _Factory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *args):
+            return False
+
+    return _Factory()
