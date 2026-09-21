@@ -764,9 +764,7 @@ function PostsInner() {
                   {activePost.images.length > 0 && (
                     <div className="grid grid-cols-3 gap-1 bg-ink/[0.03] p-2 dark:bg-fog/[0.03]">
                       {activePost.images.map((img) => (
-                        <div key={img} className="flex aspect-video items-center justify-center rounded-lg bg-gradient-to-br from-violet-soft/40 to-sky/20 px-2 text-center">
-                          <span className="truncate text-[10px] font-medium text-ink/50">{img}</span>
-                        </div>
+                        <PostThumb key={img} src={img} />
                       ))}
                     </div>
                   )}
@@ -863,8 +861,35 @@ function PostsInner() {
   );
 }
 
-function StatusBadge({ status }: { status: PostStatus }) {
-  const cls =
+function PostThumb({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false);
+  const isUrl = /^https?:\/\//i.test(src);
+  if (!isUrl || failed) {
+    // Bare filename (never hosted) or unreachable URL: identifier tile.
+    return (
+      <div
+        className="flex aspect-video items-center justify-center rounded-lg bg-gradient-to-br from-violet-soft/40 to-sky/20 px-2 text-center"
+        title={src}
+      >
+        <span className="truncate text-[10px] font-medium text-ink/50">{src}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-lg bg-ink/[0.03]">
+      {/* plain img: arbitrary remote hosts need no next.config allowlist */}
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        onError={() => setFailed(true)}
+        className="aspect-video h-full w-full object-cover"
+      />
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: PostStatus }) {  const cls =
     status === "LIVE"
       ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
       : status === "SCHEDULED"
