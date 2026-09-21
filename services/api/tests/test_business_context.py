@@ -178,22 +178,32 @@ async def test_post_draft_prompt_carries_identity(monkeypatch, db, user_id):
 
 
 @pytest.mark.asyncio
-async def test_post_draft_prompt_layers_databank_facts(monkeypatch, db, user_id):
+async def test_post_draft_prompt_layers_databank_facts(monkeypatch, tmp_path, db, user_id):
+    """Post drafts pull structured Data Bank facts through the layer —
+    exercising the real mechanism (CSV on disk), not a mocked search."""
     import json as _json
+    import uuid
     from types import SimpleNamespace
 
+    from app.config import settings as _settings
+    from app.core.storage import put_doc
     from app.modules.posts import service as _svc
-    from app.modules.rag.models import Databank
+    from app.modules.rag.models import Databank, Document
 
+    monkeypatch.setattr(_settings, "UPLOAD_DIR", str(tmp_path))
     await _make_user(db, user_id, business_type="Food & Restaurant",
                      business_sells="shawarma")
-    db.add(Databank(id="bank-1", user_id=user_id, name="Menu"))
+    bank_id = f"bank-{uuid.uuid4().hex[:8]}"
+    doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+    db.add(Databank(id=bank_id, user_id=user_id, name="Menu"))
+    db.add(Document(id=doc_id, databank_id=bank_id, user_id=user_id,
+                    filename="menu.csv", source_type="upload",
+                    file_type="csv", status="completed"))
     await db.commit()
+    put_doc(bank_id, f"{doc_id}.csv",
+            b"name,record_type,category,description\n"
+            b"Family platter,product,Grill,SAR 89 serves four\n")
     seen = {}
-
-    async def _fake_search(bank_id, req, user, session):
-        assert bank_id == "bank-1"
-        return [{"content": "Family platter SAR 89, serves four"}], False
 
     class _Provider:
         async def complete(self, req):
@@ -206,7 +216,6 @@ async def test_post_draft_prompt_layers_databank_facts(monkeypatch, db, user_id)
     async def _models(db):
         return [(SimpleNamespace(id="custom:model"), None)]
 
-    monkeypatch.setattr("app.modules.rag.service.search", _fake_search)
     monkeypatch.setattr(
         "app.modules.llm.providers.registry.get_provider_for_model",
         lambda mid: _Provider(),
@@ -216,25 +225,19 @@ async def test_post_draft_prompt_layers_databank_facts(monkeypatch, db, user_id)
     monkeypatch.setattr(
         "app.modules.llm.providers.registry.list_tenant_models", _models)
     await _svc.draft_post_content(db, user_id, "Family deal", "offer", None)
-    assert "Family platter SAR 89" in seen["msg"]
+    assert "Family platter" in seen["msg"]
+    assert "SAR 89" in seen["msg"]
 
 
 @pytest.mark.asyncio
-async def test_review_reply_context_has_identity_without_databank(
-        db, user_id, config_id):
-    from sqlalchemy import select as _select
-
-    from app.modules.channels.models import AutoReplyConfig
-    from app.modules.channels.review_reply import _build_context
+async def test_layer_identity_without_databank(db, user_id):
+    """Identity facts flow through the Retrieval Layer even with no bank."""
+    from app.modules.retrieval.layer import identity as layer_identity
 
     await _make_user(db, user_id, business_type="Food & Restaurant",
                      business_sells="shawarma, mixed grill",
                      business_doesnt_sell="shampoo")
-    config = (await db.execute(
-        _select(AutoReplyConfig).where(AutoReplyConfig.id == config_id)
-    )).scalar_one()
-    assert not config.databank_id
-    text = await _build_context(config, "do you sell shawarma?", db)
+    text = await layer_identity(db, user_id)
     assert "Food & Restaurant" in text
     assert "shawarma" in text
     assert "Does NOT sell" in text
@@ -293,18 +296,12 @@ def test_identity_includes_services_line():
 
 
 @pytest.mark.asyncio
-async def test_review_reply_context_includes_service(db, user_id, config_id, channel_id):
-    from sqlalchemy import select as _select
-
-    from app.modules.channels.models import AutoReplyConfig
-    from app.modules.channels.review_reply import _build_context
+async def test_layer_identity_includes_service(db, user_id, channel_id):
+    from app.modules.retrieval.layer import identity as layer_identity
 
     await _make_user(db, user_id, business_type="Food & Restaurant")
     await _make_service(db, channel_id, "Charcoal Grill", "Dine-in", True)
-    config = (await db.execute(
-        _select(AutoReplyConfig).where(AutoReplyConfig.id == config_id)
-    )).scalar_one()
-    text = await _build_context(config, "do you have grilled food?", db)
+    text = await layer_identity(db, user_id, channel_id)
     assert "Services offered" in text
     assert "Charcoal Grill" in text
 

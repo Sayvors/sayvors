@@ -1,4 +1,4 @@
-"""Review engine orchestrator — the agent loop with tool calling."""
+"""Review engine orchestrator — strategy selection, evidence retrieval, generation."""
 import json
 import logging
 import time
@@ -11,6 +11,8 @@ from ...database import async_session as _async_session
 from ..llm.providers.base import LLMMessage, LLMRequest, ProviderError
 from ..llm.providers.registry import get_provider_for_model
 from ..llm.service import _resolve_model
+from ..retrieval.layer import identity as _layer_identity
+from ..retrieval.layer import retrieve_evidence
 from .generator import generate_response
 from .issues import extract_issues
 from .models import ReviewResponseLog
@@ -35,12 +37,12 @@ from .strategies import (
     BEST_EFFORT,
     CHANNEL_POLICIES,
     DEFAULT_BRAND_VOICE,
+    evidence_needs_for,
     prune_unsatisfiable,
     resolve_strategy_conflicts,
     search_strategies,
     select_execution_set,
 )
-from .tools import TOOL_DEFINITIONS, TOOL_MAP
 from .understanding import analyze_review
 from .validator import select_tier, validate_response
 
@@ -279,116 +281,43 @@ async def _channel_databank_id(channel_id: str | None, tenant_id: str, db: Async
         return None
 
 
-async def _call_tool(
-    tool_name: str,
-    args: dict,
-    tenant_id: str,
-    db: AsyncSession,
-    databank_id: str | None = None,
-) -> str:
-    """Execute a tool and return its result as a JSON string."""
-    tool_fn = TOOL_MAP.get(tool_name)
-    if not tool_fn:
-        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+async def _gather_evidence(needs, tenant_id: str | None, channel_id: str | None,
+                     db: AsyncSession, bank_id: str | None = None):
+    """Fulfill evidence needs via the Retrieval Layer.
 
-    try:
-        result = await tool_fn(**args, tenant_id=tenant_id, db=db, databank_id=databank_id)
-        return json.dumps(result, default=str)
-    except TypeError as e:
-        # Some tools don't need tenant_id/db — try without
-        try:
-            clean_args = {k: v for k, v in args.items() if k not in ("tenant_id", "db")}
-            result = await tool_fn(**clean_args)
-            return json.dumps(result, default=str)
-        except Exception:
-            return json.dumps({"error": str(e)})
-    except Exception as e:
-        logger.error("Tool %s failed: %s", tool_name, e)
-        return json.dumps({"error": str(e)})
-
-
-def _tools_prompt() -> str:
-    """Render the full tool schemas for the decision prompt.
-
-    The model sees exact parameter names/types — it must never invent args.
+    Returns (context_parts, has_offer_data, offer_texts, has_product_data,
+    calls). context_parts are rendered facts-only strings — no mechanism
+    names, no origins. calls are audit entries (need kind + fact count).
     """
-    import json as _json
+    from ..retrieval.evidence import NEED_OFFER, NEED_PRODUCT
 
-    lines = []
-    for t in TOOL_DEFINITIONS:
-        lines.append(f"- {t['name']}: {t['description']}\n  args: {_json.dumps(t['parameters'])}")
-    return "\n".join(lines)
-
-
-async def _decide_tools(
-    analysis: ReviewAnalysis,
-    strategies: list,
-    model: str,
-    tenant_id: str | None = None,
-    channel_id: str | None = None,
-) -> list[dict]:
-    """Deterministic tool selection — zero LLM cost.
-
-    Rules mirror the old LLM prompt but run locally. Saves ~40% of
-    review_engine tokens (the entire review_engine.tools bucket).
-    Falls back to NO tools if nothing matches.
-    """
-    calls: list[dict] = []
-    product_ref = (getattr(analysis, "product_reference", None) or "").strip()
-    text = " ".join(getattr(analysis, "intent", []) or []) + " " + (getattr(analysis, "customer_request", None) or "")
-    text_lower = text.lower()
-    has_product_strategy = any(getattr(s, "strategy_id", "") == "recommend_related_product" for s in strategies)
-    has_offer_strategy = any(getattr(s, "strategy_id", "") == "mention_relevant_offer" for s in strategies)
-    is_pricing = (getattr(analysis, "issue_type", None) == "pricing")
-    wants_deal = any(k in text_lower for k in ("discount", "coupon", "voucher", "compensation", "promo", "deal"))
-
-    if product_ref and has_product_strategy:
-        calls.append({"tool": "search_products", "args": {"query": product_ref}})
-    elif product_ref and analysis.sentiment in ("positive", "very_positive"):
-        # Happy customer mentioning a product — still verify complementary products
-        # (previous LLM would sometimes skip; this deterministic path guarantees the check)
-        if any(getattr(s, "strategy_id", "") in ("recommend_related_product", "show_appreciation") for s in strategies):
-            calls.append({"tool": "search_products", "args": {"query": product_ref}})
-
-    if has_offer_strategy and (wants_deal or is_pricing):
-        if product_ref:
-            calls.append({"tool": "find_offers", "args": {"product_id": product_ref}})
-        else:
-            calls.append({"tool": "find_offers", "args": {}})
-
-    # Business profile only when the review is an explicit question about the business
-    if "question" in (getattr(analysis, "intent", []) or []) and any(
-        k in (analysis.customer_request or "").lower() for k in ("hour", "open", "location", "address", "phone", "price")
-    ):
-        calls.append({"tool": "get_business_profile", "args": {}})
-
-    # De-duplicate (keep first per tool name) and cap
-    seen: set[str] = set()
-    deduped: list[dict] = []
-    for c in calls:
-        if c["tool"] in seen:
-            continue
-        seen.add(c["tool"])
-        deduped.append(c)
-    calls = deduped[:2]
-
-    # Deterministic fallback: positive mention with conditional recommend must verify inventory.
-    # The LLM sometimes skips tools for happy reviews — ensure we look up the product.
-    product_ref = (analysis.product_reference or "").strip() if hasattr(analysis, "product_reference") else ""
-    is_positive = getattr(analysis, "sentiment", "") in ("positive", "very_positive")
-    needs_product_check = is_positive and product_ref and any(
-        getattr(s, "strategy_id", "") == "recommend_related_product" for s in strategies
+    context_parts: list[str] = []
+    calls: list[ToolCall] = []
+    has_offer_data = False
+    has_product_data = False
+    offer_texts: list[str] = []
+    if not needs or not tenant_id:
+        return context_parts, has_offer_data, offer_texts, has_product_data, calls
+    results = await retrieve_evidence(
+        needs, tenant_id=tenant_id, channel_id=channel_id, db=db,
+        bank_id=bank_id,
     )
-    if needs_product_check and not any(c.get("tool") == "search_products" for c in calls):
-        # Also handle stale arg name "keyword" → correct to "query"
-        calls.append({"tool": "search_products", "args": {"query": product_ref}})
-    # Normalize any stale "keyword" arg the model might still emit
-    for c in calls:
-        if c.get("tool") == "search_products" and "keyword" in (c.get("args") or {}):
-            args = dict(c["args"])
-            args["query"] = args.pop("keyword")
-            c["args"] = args
-    return calls
+    for need in needs:
+        res = results.get(need.kind)
+        if res is None or not res.has_data:
+            continue
+        context_parts.append(res.rendered)
+        calls.append(ToolCall(
+            tool=f"evidence:{need.kind}",
+            args={"query": need.query},
+            result_summary=f"{len(res.items)} fact(s)",
+        ))
+        if need.kind == NEED_OFFER:
+            has_offer_data = True
+            offer_texts.extend(res.facts[:5])
+        if need.kind == NEED_PRODUCT:
+            has_product_data = True
+    return context_parts, has_offer_data, offer_texts, has_product_data, calls
 
 
 async def process_review(
@@ -429,57 +358,19 @@ async def process_review(
     matched = await search_strategies(analysis, req.channel, db)
     strategies, suppressed = resolve_strategy_conflicts(matched, analysis, req.review_text)
 
-    # Step 4: Decide + call tools (the AI decides what data it needs)
-    all_tool_calls: list[ToolCall] = []
-    # Owner identity FIRST — tool retrieval corroborates it, never replaces it.
+    # Step 4: Strategy-declared evidence, fulfilled by the Retrieval Layer.
+    # Owner identity first — retrieved evidence corroborates it.
     try:
-        from ..profile.service import (
-            format_business_identity,
-            get_business_context,
-            get_offered_services,
-        )
-
-        _identity = format_business_identity(
-            await get_business_context(tenant_id, db),
-            services=await get_offered_services(
-                tenant_id, db, channel_id=req.channel_id
-            ),
-        )
+        _identity = await _layer_identity(db, tenant_id, req.channel_id)
     except Exception:
         _identity = ""
-    business_context_parts: list[str] = [_identity] if _identity else []
-    has_offer_data = False
-    has_product_data = False
-    offer_texts: list[str] = []
-
-    tool_decisions = await _decide_tools(analysis, strategies, model,
-                                         tenant_id=tenant_id, channel_id=req.channel_id)
-
-    for td in tool_decisions[:MAX_TOOL_ROUNDS]:
-        tool_name = td["tool"]
-        args = td.get("args", {})
-        result_json = await _call_tool(tool_name, args, tenant_id, db, databank_id=channel_bank)
-
-        all_tool_calls.append(ToolCall(
-            tool=tool_name,
-            args=args,
-            result_summary=result_json[:500],
-        ))
-
-        # Parse result for context
-        try:
-            result_data = json.loads(result_json)
-            if result_data.get("results"):
-                business_context_parts.append(
-                    f"[{tool_name}] {json.dumps(result_data['results'][:3], default=str)}"
-                )
-                if tool_name == "find_offers":
-                    has_offer_data = True
-                    offer_texts.extend(str(r) for r in result_data["results"][:5])
-                if tool_name in ("search_products", "get_product"):
-                    has_product_data = True
-        except json.JSONDecodeError:
-            pass
+    needs = evidence_needs_for(analysis, strategies)
+    (evidence_parts, has_offer_data, offer_texts, has_product_data,
+     evidence_calls) = await _gather_evidence(
+        needs, tenant_id, req.channel_id, db, bank_id=channel_bank)
+    business_context_parts: list[str] = ([_identity] if _identity else []) + evidence_parts
+    all_tool_calls: list[ToolCall] = []
+    all_tool_calls.extend(evidence_calls)
 
     business_context = "\n".join(business_context_parts) if business_context_parts else None
 
@@ -683,50 +574,44 @@ async def process_review_stream(
     for sp in suppressed:
         yield {"step": "strategy_suppressed", "strategy": sp.model_dump(), "progress": 36}
 
-    # Step 4: Tools
-    yield {"step": "tools", "message": "Deciding which business data to retrieve...", "progress": 40}
-    tool_decisions = await _decide_tools(analysis, strategies, model,
-                                         tenant_id=tenant_id, channel_id=req.channel_id)
-    # Owner identity FIRST — tool retrieval corroborates it, never replaces it.
+    # Step 4: Strategy-declared evidence via the Retrieval Layer
+    yield {"step": "retrieval", "message": "Gathering business evidence for the selected strategies...", "progress": 40}
+    needs = evidence_needs_for(analysis, strategies)
+    # Owner identity first — retrieved evidence corroborates it.
     try:
-        from ..profile.service import (
-            format_business_identity,
-            get_business_context,
-            get_offered_services,
-        )
-
-        _identity = format_business_identity(
-            await get_business_context(tenant_id, db),
-            services=await get_offered_services(
-                tenant_id, db, channel_id=req.channel_id
-            ),
-        )
+        _identity = await _layer_identity(db, tenant_id, req.channel_id)
     except Exception:
         _identity = ""
     business_context_parts: list[str] = [_identity] if _identity else []
     all_tool_calls: list[ToolCall] = []
+
+    evidence_results = await retrieve_evidence(
+        needs, tenant_id=tenant_id, channel_id=req.channel_id, db=db,
+        bank_id=channel_bank,
+    )
+    from ..retrieval.evidence import NEED_OFFER, NEED_PRODUCT
+
     has_offer_data = False
     has_product_data = False
     offer_texts: list[str] = []
-
-    for td in tool_decisions[:MAX_TOOL_ROUNDS]:
-        tool_name = td["tool"]
-        args = td.get("args", {})
-        yield {"step": "tool_call", "tool": tool_name, "args": args, "progress": 50}
-        result_json = await _call_tool(tool_name, args, tenant_id, db, databank_id=channel_bank)
-        all_tool_calls.append(ToolCall(tool=tool_name, args=args, result_summary=result_json[:500]))
-        try:
-            result_data = json.loads(result_json)
-            if result_data.get("results"):
-                business_context_parts.append(f"[{tool_name}] {json.dumps(result_data['results'][:3], default=str)}")
-                if tool_name == "find_offers":
-                    has_offer_data = True
-                    offer_texts.extend(str(r) for r in result_data["results"][:5])
-                if tool_name in ("search_products", "get_product"):
-                    has_product_data = True
-        except json.JSONDecodeError:
-            pass
-        yield {"step": "tool_result", "tool": tool_name, "result": result_json[:300], "progress": 60}
+    for need in needs:
+        yield {"step": "evidence", "need": need.kind, "query": need.query, "progress": 50}
+        res = evidence_results.get(need.kind)
+        count = len(res.items) if res else 0
+        if res and res.has_data:
+            business_context_parts.append(res.rendered)
+            all_tool_calls.append(ToolCall(
+                tool=f"evidence:{need.kind}",
+                args={"query": need.query},
+                result_summary=f"{count} fact(s)",
+            ))
+            if need.kind == NEED_OFFER:
+                has_offer_data = True
+                offer_texts.extend(res.facts[:5])
+            if need.kind == NEED_PRODUCT:
+                has_product_data = True
+        yield {"step": "evidence_result", "need": need.kind,
+               "result": json.dumps({"count": count}), "progress": 60}
 
     business_context = "\n".join(business_context_parts) if business_context_parts else None
 

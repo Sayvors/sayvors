@@ -579,48 +579,26 @@ async def draft_post_content(
         "event": "an event announcement post",
     }[post_type]
     model_id = await resolve_tenant_model(db)
-    # Ground the draft in the tenant's own facts: owner identity (category,
-    # sells, does-not-sell) + top databank chunks for the title. Without this
-    # the model invents products a shawarma place never sold.
+    # Ground the draft in the tenant's own facts via the Retrieval Layer:
+    # owner identity (category, sells, services) + business-profile evidence
+    # from the Data Bank (structured, hybrid — never invented specifics).
+    from ..retrieval.evidence import EvidenceNeed
+    from ..retrieval.layer import identity as _layer_identity
+    from ..retrieval.layer import retrieve_evidence
+
     identity_block = ""
     bank_facts = ""
     try:
-        from ..profile.service import (
-            format_business_identity,
-            get_business_context,
-            get_offered_services,
-        )
-
-        identity_block = format_business_identity(
-            await get_business_context(user_id, db),
-            services=await get_offered_services(user_id, db),
-        )
+        identity_block = await _layer_identity(db, user_id)
     except Exception as e:
         logger.warning("Business identity unavailable for post draft: %s", e)
     try:
-        from sqlalchemy import select as _select
-
-        from ..rag.models import Databank
-        from ..rag.schemas import SearchRequest
-        from ..rag.service import search as rag_search
-
-        bank_id = (
-            await db.execute(
-                _select(Databank.id)
-                .where(Databank.user_id == user_id)
-                .order_by(Databank.created_at)
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        if bank_id:
-            results, _degraded = await rag_search(
-                bank_id,
-                SearchRequest(query=title[:500], top_k=3),
-                None,  # type: ignore[arg-type]
-                db,
-            )
-            if results:
-                bank_facts = "\n".join(f"- {r['content'][:300]}" for r in results)
+        res = await retrieve_evidence(
+            [EvidenceNeed(kind="business_profile", query=title)],
+            tenant_id=user_id, db=db,
+        )
+        bank_facts = (res.get("business_profile").rendered
+                      if res.get("business_profile") else "")
     except Exception as e:
         logger.warning("Databank facts unavailable for post draft: %s", e)
     system = (

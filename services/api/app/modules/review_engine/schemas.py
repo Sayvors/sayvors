@@ -84,7 +84,9 @@ class ValidationResult(BaseModel):
 
 
 class ReviewEngineRequest(BaseModel):
-    review_text: str = Field(..., min_length=1, max_length=5000)
+    # Empty text allowed: star-only ratings flow through the engine with no
+    # product reference (no evidence needed, strategies still apply).
+    review_text: str = Field(default="", max_length=5000)
     rating: int = Field(..., ge=1, le=5)
     reviewer_name: str | None = Field(default=None, max_length=200)
     review_id: str | None = Field(default=None, max_length=120)
