@@ -74,15 +74,26 @@ def _local_doc_path(databank_id: str, filename: str) -> Path:
 # ── media (public) ────────────────────────────────────────────────
 
 def put_media(user_id: str, filename: str, data: bytes, content_type: str | None) -> tuple[str, str]:
-    """Store a media file. Returns (storage_key, public_url)."""
+    """Store a media file. Returns (storage_key, public_url).
+
+    Public-bucket objects are only ever served as image/* or video/*; a
+    caller-supplied type outside that set (or a missing one) degrades to
+    application/octet-stream so an attacker can never store renderable
+    HTML/SVG on a public URL.
+    """
     ext = Path(filename or "").suffix.lower()
     stored = f"{uuid.uuid4().hex}{ext}"
+    safe_type = (
+        content_type
+        if content_type and (content_type.startswith("image/") or content_type.startswith("video/"))
+        else "application/octet-stream"
+    )
     if media_configured():
         settings = _settings()
         key = f"media/{user_id}/{stored}"
         client = _gcs_client()
         blob = client.bucket(settings.GCS_PUBLIC_BUCKET.strip()).blob(key)
-        blob.upload_from_string(data, content_type=content_type or "application/octet-stream")
+        blob.upload_from_string(data, content_type=safe_type)
         try:
             blob.make_public()
         except Exception as e:

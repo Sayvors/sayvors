@@ -58,12 +58,39 @@ async def _release_media_lock(db: AsyncSession, media_id: str) -> None:
 UPLOAD_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov")
 VIDEO_EXTENSIONS = (".mp4", ".mov")
 
+# Content type is DERIVED from the validated extension, never from the
+# client's Content-Type header: that header is attacker-controlled, and
+# storing e.g. text/html under a public URL is stored XSS.
+_CONTENT_TYPES = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".webp": "image/webp", ".gif": "image/gif",
+    ".mp4": "video/mp4", ".mov": "video/quicktime",
+}
+
+_MAGIC_SIGNATURES = {
+    ".jpg": (b"\xff\xd8",),   # JPEG SOI marker
+    ".jpeg": (b"\xff\xd8",),
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".gif": (b"GIF87a", b"GIF89a"),
+}
+
 
 def detect_media_type(filename: str, content_type: str | None) -> str:
     name = (filename or "").lower()
     if name.endswith(VIDEO_EXTENSIONS) or (content_type or "").startswith("video/"):
         return "VIDEO"
     return "PHOTO"
+
+
+def _magic_matches(ext: str, data: bytes) -> bool:
+    """Verify the file's leading bytes match its declared extension."""
+    if ext in (".mp4", ".mov"):
+        # ISO base media: 'ftyp' box at offset 4 (covers both MP4 and MOV/QT).
+        return len(data) >= 12 and data[4:8] == b"ftyp"
+    sigs = _MAGIC_SIGNATURES.get(ext)
+    if not sigs:
+        return False
+    return any(data.startswith(s) for s in sigs)
 
 
 async def save_upload(
@@ -83,14 +110,19 @@ async def save_upload(
     ctype = content_type or ""
     if ctype and not (ctype.startswith("image/") or ctype.startswith("video/")):
         raise ValueError("Only image or video files.")
-    storage_key, public_url = put_media(user_id, filename, data, ctype or None)
+    # Content must match the extension (polyglot guard), and the stored
+    # content type is always derived from the extension, never the header.
+    if not _magic_matches(ext, data):
+        raise ValueError("File content doesn't look like the file type it claims.")
+    expected_type = _CONTENT_TYPES[ext]
+    storage_key, public_url = put_media(user_id, filename, data, expected_type)
     if not public_url:
         public_url = local_media_url(base_url, user_id, storage_key)
     return {
         "image_url": public_url,
-        "type": detect_media_type(filename, content_type),
+        "type": detect_media_type(filename, expected_type),
         "size": len(data),
-        "content_type": ctype or None,
+        "content_type": expected_type,
     }
 
 

@@ -13,6 +13,10 @@ from .csv_schemas import CSVSearchResult, CSVUploadResponse
 
 logger = logging.getLogger(__name__)
 
+# DoS guard: each row becomes a DB insert; a 50MB CSV would otherwise
+# fan out into hundreds of thousands of inserts in one request.
+MAX_CSV_ROWS = 50_000
+
 
 async def upload_csv(
     file_content: bytes,
@@ -30,6 +34,8 @@ async def upload_csv(
 
     if not rows:
         raise ValueError("CSV file is empty or has no data rows")
+    if len(rows) > MAX_CSV_ROWS:
+        raise ValueError(f"CSV too large — maximum {MAX_CSV_ROWS} rows per upload.")
 
     column_names = list(rows[0].keys())
 
