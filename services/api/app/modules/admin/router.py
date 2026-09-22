@@ -5,7 +5,9 @@ GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from ...config import settings
@@ -44,7 +46,9 @@ class AdminLoginRequest(BaseModel):
 
 
 class AdminLoginResponse(BaseModel):
-    access_token: str
+    """No token in the body: the session lives in an httpOnly cookie so
+    XSS cannot read it. The frontend only needs the TTL for its countdown."""
+
     expires_in_minutes: int
 
 
@@ -80,7 +84,7 @@ async def _admin_locked_out() -> bool:
 
 
 @router.post("/login", response_model=AdminLoginResponse)
-async def admin_login(body: AdminLoginRequest, request: Request):
+async def admin_login(body: AdminLoginRequest, request: Request, response: Response):
     if not settings.ADMIN_PASSWORD_HASH:
         raise HTTPException(status_code=503, detail="Admin access is not configured.")
     from ..auth.rate_limit import rate_limit
@@ -107,10 +111,47 @@ async def admin_login(body: AdminLoginRequest, request: Request):
         await redis.delete(_ADMIN_FAIL_KEY)
     except Exception:
         pass
-    return AdminLoginResponse(
-        access_token=create_admin_token(),
-        expires_in_minutes=settings.ADMIN_SESSION_MINUTES,
+    token = create_admin_token()
+    secure = (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto", "") == "https"
     )
+    response.set_cookie(
+        settings.ADMIN_COOKIE_NAME,
+        token,
+        max_age=settings.ADMIN_SESSION_MINUTES * 60,
+        httponly=True,
+        samesite="strict",
+        secure=secure,
+        path="/api/v1/admin",
+    )
+    return AdminLoginResponse(expires_in_minutes=settings.ADMIN_SESSION_MINUTES)
+
+
+@router.post("/logout")
+async def admin_logout(
+    request: Request,
+    response: Response,
+    credentials: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
+):
+    """Revoke the admin session: blacklist the token (Bearer or cookie) and
+    clear the cookie. Fails open on decode errors — cookie is cleared anyway."""
+    import time
+
+    token = credentials.credentials if credentials else request.cookies.get(settings.ADMIN_COOKIE_NAME, "")
+    if token:
+        try:
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+            jti = payload.get("jti", "")
+            if jti:
+                from ..auth.rate_limit import blacklist_token
+
+                ttl = int(payload.get("exp", 0) - time.time()) or settings.ADMIN_SESSION_MINUTES * 60
+                await blacklist_token(jti, max(ttl, 60))
+        except Exception:
+            pass
+    response.delete_cookie(settings.ADMIN_COOKIE_NAME, path="/api/v1/admin")
+    return {"ok": True}
 
 
 async def admin_rate_limit(request: Request):

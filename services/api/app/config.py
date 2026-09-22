@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_EXPIRATION_MINUTES: int = 15
     JWT_REFRESH_EXPIRATION_DAYS: int = 7
+    # "production" arms the fail-closed startup validation below.
+    ENVIRONMENT: str = "development"
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     REDIS_URL: str = "redis://localhost:6379/0"
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
@@ -140,6 +142,9 @@ class Settings(BaseSettings):
     # Global (IP-independent) consecutive-failure lockout for the admin login,
     # so per-IP rate limits are not the only brute-force control.
     ADMIN_MAX_CONSECUTIVE_FAILURES: int = 10
+    # httpOnly cookie the admin login sets; sessionStorage must never hold
+    # the admin token (XSS-readable storage).
+    ADMIN_COOKIE_NAME: str = "sayvors_admin_token"
 
     model_config = {"env_file": ".env"}
 
@@ -151,3 +156,40 @@ if settings.JWT_SECRET == "change-me-in-production":
     print("FATAL: JWT_SECRET must be set to a strong random value in .env", file=sys.stderr)
     print("  Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\"", file=sys.stderr)
     sys.exit(1)
+
+
+def validate_production_settings() -> None:
+    """Fail-closed startup gate for ENVIRONMENT=production.
+
+    Dev-tolerant defaults become boot-time fatal errors in production, so a
+    half-configured deploy can never serve traffic insecurely by accident.
+    """
+    import sys
+
+    errors: list[str] = []
+    if len(settings.JWT_SECRET) < 32:
+        errors.append("JWT_SECRET must be >= 32 chars (looks like a placeholder)")
+    if not settings.CHANNEL_ENCRYPTION_KEY:
+        errors.append(
+            "CHANNEL_ENCRYPTION_KEY must be set explicitly "
+            "(the JWT_SECRET fallback is not acceptable for stored channel tokens)"
+        )
+    if not settings.ADMIN_PASSWORD_HASH:
+        errors.append("ADMIN_PASSWORD_HASH must be set (admin panel must be intentional)")
+    if not settings.ALLOWED_HOSTS or "*" in settings.ALLOWED_HOSTS:
+        errors.append("ALLOWED_HOSTS must list explicit production hosts (no wildcard)")
+    if not settings.CORS_ORIGINS or any("localhost" in o for o in settings.CORS_ORIGINS):
+        errors.append("CORS_ORIGINS must list the real frontend origin(s), not localhost")
+    if settings.EMAIL_SEND_ALLOW_ANY_RECIPIENT:
+        errors.append("EMAIL_SEND_ALLOW_ANY_RECIPIENT must stay off (open-relay guard)")
+    if settings.RAG_DB_ALLOW_PRIVATE_HOSTS:
+        errors.append("RAG_DB_ALLOW_PRIVATE_HOSTS must stay off (SSRF guard)")
+    if errors:
+        print("FATAL: production configuration validation failed:", file=sys.stderr)
+        for e in errors:
+            print(f"  - {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if settings.ENVIRONMENT == "production":
+    validate_production_settings()

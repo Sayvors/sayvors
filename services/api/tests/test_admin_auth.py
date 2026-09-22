@@ -70,16 +70,51 @@ async def test_admin_login_and_me(client, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["expires_in_minutes"] == settings.ADMIN_SESSION_MINUTES
-    payload = decode_token(body["access_token"])
+    assert "access_token" not in body  # token never exposed to JS
+    cookie = r.cookies.get(settings.ADMIN_COOKIE_NAME)
+    assert cookie
+    payload = decode_token(cookie)
     assert payload["type"] == "admin"
     assert payload["sub"] == "admin"
 
+    # Cookie auth without the CSRF header is refused (admin paths are
+    # exempt from the global CSRF middleware, so the header is the guard).
+    me = client.get("/api/v1/admin/me", headers=_HOST)
+    assert me.status_code == 403
+    # With the header, the httpOnly-cookie session works.
     me = client.get(
         "/api/v1/admin/me",
-        headers={**_HOST, "Authorization": f"Bearer {body['access_token']}"},
+        headers={**_HOST, "X-Requested-With": "XMLHttpRequest"},
     )
     assert me.status_code == 200
     assert me.json() == {"admin": True}
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_revokes_and_clears(client, monkeypatch):
+    """Logout blacklists the session token and clears the cookie (B1)."""
+    from app.security import create_admin_token
+
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
+    login = client.post(
+        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+    )
+    assert login.status_code == 200
+    csrf = {**_HOST, "X-Requested-With": "XMLHttpRequest"}
+    assert client.get("/api/v1/admin/me", headers=csrf).status_code == 200
+
+    out = client.post("/api/v1/admin/logout", headers=csrf)
+    assert out.status_code == 200
+    # Cookie cleared — same-jar request is now unauthenticated.
+    assert client.get("/api/v1/admin/me", headers=csrf).status_code == 401
+
+    # A stolen copy of the same token is blacklisted too, even via Bearer.
+    stale = login.cookies.get(settings.ADMIN_COOKIE_NAME)
+    r = client.get(
+        "/api/v1/admin/me",
+        headers={**_HOST, "Authorization": f"Bearer {stale}"},
+    )
+    assert r.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -110,6 +145,10 @@ def test_every_admin_route_is_gated_except_login():
         path = getattr(route, "path", "")
         methods = getattr(route, "methods", set()) or set()
         if path == "/api/v1/admin/login" and methods == {"POST"}:
+            continue
+        if path == "/api/v1/admin/logout" and methods == {"POST"}:
+            # Logout is intentionally ungated: it revokes whatever token is
+            # presented and clears the cookie. No data is exposed.
             continue
         dependant = getattr(route, "dependant", None)
         calls = [getattr(d, "call", None) for d in (dependant.dependencies if dependant else [])]
@@ -161,7 +200,9 @@ async def test_admin_token_rejected_on_tenant_routes(client, monkeypatch):
         "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
     )
     assert login.status_code == 200
-    headers = {**_HOST, "Authorization": f"Bearer {login.json()['access_token']}"}
+    from app.security import create_admin_token
+
+    headers = {**_HOST, "Authorization": f"Bearer {create_admin_token()}"}
 
     key = core_deps.get_current_user
     saved = main_module.app.dependency_overrides.pop(key, None)
@@ -226,17 +267,8 @@ async def test_admin_overview_counts(db, user_id, channel_id):
 
 @pytest.mark.asyncio
 async def test_admin_overview_http(client, monkeypatch):
-    from app.modules.admin import service as admin_service
-
-    monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
-    login = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
-    )
-    token = login.json()["access_token"]
-    r = client.get(
-        "/api/v1/admin/overview",
-        headers={**_HOST, "Authorization": f"Bearer {token}"},
-    )
+    headers = _admin_headers(client, monkeypatch)
+    r = client.get("/api/v1/admin/overview", headers=headers)
     assert r.status_code == 200
     body = r.json()
     assert "users_total" in body
@@ -262,16 +294,9 @@ async def test_admin_health_structure(db):
 
 @pytest.mark.asyncio
 async def test_admin_health_http(client, monkeypatch):
-    monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
-    login = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
-    )
-    token = login.json()["access_token"]
+    headers = _admin_headers(client, monkeypatch)
     for url in ("/api/v1/admin/health", "/api/v1/admin/health?probe=false"):
-        r = client.get(
-            url,
-            headers={**_HOST, "Authorization": f"Bearer {token}"},
-        )
+        r = client.get(url, headers=headers)
         assert r.status_code == 200, url
         body = r.json()
         assert body["probe"] is False
@@ -284,7 +309,10 @@ def _admin_headers(client, monkeypatch):
         "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
     )
     assert login.status_code == 200
-    return {**_HOST, "Authorization": f"Bearer {login.json()['access_token']}"}
+    # Session is an httpOnly cookie; cookie-auth requests must carry the
+    # CSRF header. The TestClient jar stores the cookie (path-scoped to
+    # /api/v1/admin) and replays it automatically.
+    return {**_HOST, "X-Requested-With": "XMLHttpRequest"}
 
 
 @pytest.mark.asyncio
