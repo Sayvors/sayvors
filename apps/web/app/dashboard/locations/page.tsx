@@ -1020,9 +1020,18 @@ function CategoriesTab({ initial, onSave, bulk }: {
         <SourceBadge google={false} />
       </div>
       <Field label="Primary Category" varies={bulk?.varies.has("primary") ?? false}>
-        <input value={primary} onChange={(e) => setPrimary(e.target.value)} className="input-field" />
+        <input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder="e.g. Software company" className="input-field" />
+        <p className="mt-1 text-[11px] text-ink/40 dark:text-fog/40">One main category — this is how Google classifies and shows your business.</p>
       </Field>
       <Field label="Additional Categories" varies={bulk?.varies.has("additional") ?? false}>
+        <p className="mb-2 text-[11px] text-ink/40 dark:text-fog/40">Other categories you also fit. Tap an example to add it:</p>
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {["Restaurant", "Cafe", "Dental clinic", "Pharmacy", "Beauty salon", "Car wash"].filter((c) => !additional.includes(c)).map((c) => (
+            <button key={c} onClick={() => setAdditional([...additional, c])} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-medium text-ink/60 transition hover:bg-deep-violet/10 hover:text-deep-violet dark:bg-fog/[0.06] dark:text-fog/60">
+              + {c}
+            </button>
+          ))}
+        </div>
         <div className="flex flex-wrap gap-2 mb-2">
           {additional.map((cat) => (
             <span key={cat} className="inline-flex items-center gap-1 rounded-full bg-deep-violet/10 px-2.5 py-1 text-[12px] font-medium text-deep-violet">
@@ -1086,6 +1095,7 @@ function HoursTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Untick Open for closed days. Overnight ranges (e.g. 20:00–02:00) roll over to the next day.</p>
       <div className="space-y-2">
         {HOURS_DAYS.map((day) => (
           <div key={day} className="flex items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
@@ -1159,6 +1169,7 @@ function SpecialHoursTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. 2026-09-23, hours “closed” for a full-day closure, or “09:00 - 13:00” for a short day.</p>
       {entries.map((entry, i) => (
         <div key={i} className="flex items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
           <input type="date" value={entry.date} onChange={(e) => updateEntry(i, "date", e.target.value)} className="input-field w-40" />
@@ -1220,6 +1231,7 @@ function MoreHoursTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. Delivery 10:00–22:00, Drive-through 08:00–23:00 — pick the service type, then its hours.</p>
       {entries.length === 0 && (
         <p className="text-[12px] text-ink/35 dark:text-fog/35">No additional hours set. Add entries for services like delivery or drive-through.</p>
       )}
@@ -1286,6 +1298,7 @@ function ServiceAreaTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Cities, districts or regions — e.g. Riyadh, Jeddah, Al Malqa district.</p>
       <div className="flex flex-wrap gap-2 mb-3">
         {areas.map((area) => (
           <span key={area} className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[12px] font-medium text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">
@@ -1297,7 +1310,7 @@ function ServiceAreaTab({ initial, onSave, bulk }: {
         ))}
       </div>
       <div className="flex gap-2">
-        <input value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addArea()} placeholder="Add area..." className="input-field flex-1" />
+        <input value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addArea()} placeholder="e.g. Riyadh, Jeddah, Al Malqa district" className="input-field flex-1" />
         <button onClick={addArea} className="btn-secondary">Add</button>
       </div>
       <div className="flex justify-end pt-2">
@@ -1352,6 +1365,14 @@ function AttributesTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Only well-known Google attributes sync (accessibility, parking, Wi-Fi…). Unknown names are stored but skipped on sync. Tap an example to fill the row:</p>
+      <div className="flex flex-wrap gap-1.5">
+        {[["Wheelchair accessible entrance", "yes"], ["Free WiFi", "yes"], ["Outdoor seating", "yes"], ["Accepts credit cards", "yes"]].filter(([k]) => !(k in attrs)).map(([k, v]) => (
+          <button key={k} onClick={() => { setNewKey(k); setNewValue(v); }} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-medium text-ink/60 transition hover:bg-deep-violet/10 hover:text-deep-violet dark:bg-fog/[0.06] dark:text-fog/60">
+            + {k}: {v}
+          </button>
+        ))}
+      </div>
       <div className="space-y-3">
         {Object.entries(attrs).length === 0 && <p className="text-[12px] text-ink/35 dark:text-fog/35">No attributes stored yet.</p>}
         {Object.entries(attrs).map(([key, value]) => (
@@ -1373,8 +1394,8 @@ function AttributesTab({ initial, onSave, bulk }: {
         ))}
       </div>
       <div className="flex gap-2">
-        <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="Attribute name..." className="input-field w-40" />
-        <input value={newValue} onChange={(e) => setNewValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="Value..." className="input-field flex-1" />
+        <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. Wheelchair accessible entrance" className="input-field w-40" />
+        <input value={newValue} onChange={(e) => setNewValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. yes" className="input-field flex-1" />
         <button onClick={addAttr} className="btn-secondary">Add</button>
       </div>
       <div className="flex justify-end pt-2">
@@ -1426,9 +1447,10 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk }: {
         onChange={(e) => setDesc(e.target.value)}
         rows={6}
         maxLength={750}
+        placeholder="Example: Bright dental clinic in Riyadh — checkups, whitening and braces. Open Mon–Sat 9–6, emergency slots daily."
         className="w-full resize-y rounded-xl border border-ink/[0.08] bg-white p-3 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
       />
-      <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">{desc.length}/750</p>
+      <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">{desc.length}/750 · first ~250 characters show in the Knowledge panel — put the essentials first</p>
       <div>
         <label className="mb-1 block text-[12px] font-medium text-ink/60 dark:text-fog/60">
           Opening date
@@ -1454,8 +1476,9 @@ function GoogleUpdatesTab() {
   const [updates, setUpdates] = useState<{ id: string; field: string; current: string; proposed: string; status: string }[]>([]);
 
   return (
-    <div className="space-y-5">
-      <SectionTitle title="Google Updates" subtitle="Review changes proposed by Google based on external sources." />
+      <div className="space-y-5">
+        <SectionTitle title="Google Updates" subtitle="Review changes proposed by Google based on external sources." />
+        <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. Google may propose new hours, a different category, or a corrected address — accept or reject each one here.</p>
       {updates.length === 0 ? (
         <div className="flex flex-col items-center py-10">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 h-8 w-8 text-ink/20 dark:text-fog/20">
