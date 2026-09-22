@@ -55,8 +55,54 @@ export async function addPaymentMethod(data: {
   exp_year: number;
   holder_name?: string;
   is_default?: boolean;
+  provider?: string;
+  provider_token?: string;
 }): Promise<PaymentMethod> {
   return apiFetch("/api/v1/billing/methods", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export interface GatewayToken {
+  token: string;
+  provider: string;
+  brand: string;
+  last4: string;
+  exp_month: number;
+  exp_year: number;
+  holder_name: string | null;
+}
+
+export async function tokenizeCard(data: {
+  brand: string;
+  last4: string;
+  exp_month: number;
+  exp_year: number;
+  holder_name?: string;
+}): Promise<GatewayToken> {
+  return apiFetch("/api/v1/billing/gateway/tokenize", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export interface GatewayCharge {
+  id: string;
+  provider: string;
+  status: string;
+  amount_cents: number;
+  currency: string;
+  description: string | null;
+}
+
+export async function chargeCard(data: {
+  token: string;
+  amount_cents: number;
+  currency?: string;
+  description?: string;
+}): Promise<GatewayCharge> {
+  return apiFetch("/api/v1/billing/gateway/charge", {
     method: "POST",
     body: JSON.stringify(data),
   });

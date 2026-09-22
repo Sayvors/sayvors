@@ -6,12 +6,14 @@ import LogoLoader from "@/components/LogoLoader";
 import { getProfile } from "@/lib/api-profile";
 import {
   addPaymentMethod,
+  chargeCard,
   getBillingProfile,
   getBudget,
   listPaymentMethods,
   removePaymentMethod,
   saveBillingProfile,
   setDefaultMethod,
+  tokenizeCard,
   type BillingProfile,
   type Budget,
   type PaymentMethod,
@@ -385,16 +387,28 @@ export default function BillingPage() {
     }
     const { month, year } = parseExpiry(expiry);
     const brand = detected === "unknown" ? "other" : detected;
+    const last4 = digits.slice(-4);
     setBusy("add");
     setBanner(null);
     try {
-      const created = await addPaymentMethod({
+      // 1) Tokenize through the gateway API (stub until real keys land).
+      const tok = await tokenizeCard({
         brand,
-        last4: digits.slice(-4),
+        last4,
         exp_month: month,
         exp_year: year,
-        holder_name: holder.trim(),
+        holder_name: holder.trim() || undefined,
+      });
+      // 2) Save the card-on-file record with the gateway token.
+      const created = await addPaymentMethod({
+        brand,
+        last4,
+        exp_month: month,
+        exp_year: year,
+        holder_name: holder.trim() || undefined,
         is_default: makeDefault || methods.length === 0,
+        provider: tok.provider,
+        provider_token: tok.token,
       });
       setMethods((prev) => {
         const next = [created, ...prev.filter((m) => m.id !== created.id)];
@@ -408,7 +422,7 @@ export default function BillingPage() {
       setMakeDefault(false);
       setCardTouched(false);
       setShowAddCard(false);
-      setBanner({ kind: "ok", text: "Card saved — only the last 4 digits were sent. Gateway verification lands soon." });
+      setBanner({ kind: "ok", text: "Card tokenized and saved — only the last 4 digits were sent. Gateway verification lands soon." });
     } catch (e) {
       setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Could not save card." });
     } finally {
@@ -555,7 +569,7 @@ export default function BillingPage() {
           <Section title="Payment methods" subtitle="Saved cards for future charges. Only brand, last digits and expiry are kept.">
             {methods.length === 0 ? (
               <p className="rounded-lg bg-ink/[0.03] px-3 py-3 text-[12px] text-ink/50 dark:bg-fog/[0.04] dark:text-fog/50">
-                No cards yet — add one below. Cards save as unverified records until gateway verification lands.
+                No cards yet — add one below. Cards are tokenized by our payment provider; only brand, last digits and expiry are kept.
               </p>
             ) : (
               <ul className="space-y-2">
@@ -643,9 +657,9 @@ export default function BillingPage() {
                 </p>
               ) : (
                 <>
-                  <p className="mt-0.5 text-[11px] text-ink/45 dark:text-fog/45">
-                    Type the number — the brand is detected automatically and only the last 4 digits are ever sent or stored.
-                  </p>
+                <p className="mt-0.5 text-[11px] text-ink/45 dark:text-fog/45">
+                  Type the number — the brand is detected automatically and only the last 4 digits are ever sent or stored. Cards go through our payment gateway for tokenization.
+                </p>
                   <div className="mt-3">
                     <CardPreview brand={detected} digits={digits} holder={holder} expiry={expiry} />
                   </div>

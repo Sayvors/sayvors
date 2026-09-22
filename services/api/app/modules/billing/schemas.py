@@ -27,9 +27,46 @@ class PaymentMethodIn(BaseModel):
     exp_year: int = Field(..., ge=2000, le=2100)
     holder_name: str | None = Field(default=None, max_length=200)
     is_default: bool = False
-    # Gateway provider id. Only "manual" is accepted until a gateway is
-    # wired (see providers.py) — anything else is a loud 422.
+    # Gateway provider id. "manual" = unverified local record; "stub" =
+    # local stub gateway (tokenized, verified). Anything else 422s until
+    # real keys are configured (see providers.py).
     provider: str = Field(default="manual", max_length=30)
+    # Opaque token from POST /billing/gateway/tokenize (stub: pm_stub_*).
+    provider_token: str | None = Field(default=None, max_length=255)
+
+
+class GatewayTokenizeIn(BaseModel):
+    brand: str = Field(..., min_length=1, max_length=20)
+    last4: str = Field(..., min_length=4, max_length=4, pattern=r"^[0-9]{4}$")
+    exp_month: int = Field(..., ge=1, le=12)
+    exp_year: int = Field(..., ge=2000, le=2100)
+    holder_name: str | None = Field(default=None, max_length=200)
+
+
+class GatewayTokenizeOut(BaseModel):
+    token: str
+    provider: str
+    brand: str
+    last4: str
+    exp_month: int
+    exp_year: int
+    holder_name: str | None = None
+
+
+class GatewayChargeIn(BaseModel):
+    token: str = Field(..., min_length=1, max_length=255)
+    amount_cents: int = Field(..., ge=1, le=100_000_000)
+    currency: str = Field(default="usd", max_length=8)
+    description: str | None = Field(default=None, max_length=200)
+
+
+class GatewayChargeOut(BaseModel):
+    id: str
+    provider: str
+    status: str
+    amount_cents: int
+    currency: str
+    description: str | None = None
 
 
 class PaymentMethodOut(BaseModel):

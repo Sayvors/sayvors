@@ -93,6 +93,67 @@ async def test_gateway_provider_rejected_loudly(db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_stub_tokenize_and_charge_endpoints(client, db, user_id):
+    host = {"host": "localhost"}
+    r = client.post(
+        "/api/v1/billing/gateway/tokenize",
+        json={"brand": "visa", "last4": "4242", "exp_month": 12,
+              "exp_year": 2030, "holder_name": "Sara"},
+        headers=host,
+    )
+    assert r.status_code == 200, r.text[:200]
+    tok = r.json()
+    assert tok["token"].startswith("pm_stub_")
+    assert tok["provider"] == "stub"
+    assert tok["last4"] == "4242"
+
+    r = client.post(
+        "/api/v1/billing/gateway/charge",
+        json={"token": tok["token"], "amount_cents": 500,
+              "description": "test top-up"},
+        headers=host,
+    )
+    assert r.status_code == 200, r.text[:200]
+    ch = r.json()
+    assert ch["status"] == "succeeded"
+    assert ch["id"].startswith("ch_stub_")
+    assert ch["amount_cents"] == 500
+
+    r = client.post(
+        "/api/v1/billing/gateway/charge",
+        json={"token": "pm_evil_not_stub", "amount_cents": 100},
+        headers=host,
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_stub_tokenized_card_is_verified(db, user_id):
+    from app.modules.billing.providers import get_payment_provider
+
+    tok = get_payment_provider("stub").tokenize(
+        brand="visa", last4="4242", exp_month=12, exp_year=2030)
+    row = await service.add_method(
+        user_id, _card(provider="stub", provider_token=tok["token"]), db)
+    assert row["provider"] == "stub"
+    assert row["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_stub_without_token_auto_tokenizes(db, user_id):
+    row = await service.add_method(user_id, _card(provider="stub"), db)
+    assert row["provider"] == "stub"
+    assert row["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_stub_bad_token_rejected(db, user_id):
+    with pytest.raises(ValueError, match="Invalid stub"):
+        await service.add_method(
+            user_id, _card(provider="stub", provider_token="pm_evil"), db)
+
+
+@pytest.mark.asyncio
 async def test_billing_endpoints_roundtrip(client, db, user_id):
     host = {"host": "localhost"}
     r = client.get("/api/v1/billing/profile", headers=host)

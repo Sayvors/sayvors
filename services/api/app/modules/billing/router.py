@@ -7,6 +7,10 @@ from .schemas import (
     BillingProfileIn,
     BillingProfileOut,
     BudgetOut,
+    GatewayChargeIn,
+    GatewayChargeOut,
+    GatewayTokenizeIn,
+    GatewayTokenizeOut,
     PaymentMethodIn,
     PaymentMethodOut,
 )
@@ -40,6 +44,50 @@ async def write_profile(
 @router.get("/methods", response_model=list[PaymentMethodOut])
 async def read_methods(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     return await service.list_methods(user.id, db)
+
+
+@router.post("/gateway/tokenize", response_model=GatewayTokenizeOut)
+async def gateway_tokenize(body: GatewayTokenizeIn, user=Depends(get_current_user)):
+    """Stub-gateway tokenize: card metadata in, opaque token out.
+
+    Never accepts a full PAN or CVC (see providers.py / models.py).
+    """
+    from datetime import datetime, timezone
+
+    from .providers import get_payment_provider
+
+    now = datetime.now(timezone.utc)
+    if (body.exp_year, body.exp_month) < (now.year, now.month):
+        raise HTTPException(status_code=400, detail="Card is already expired.")
+    gw = get_payment_provider("stub")
+    return gw.tokenize(
+        brand=body.brand,
+        last4=body.last4,
+        exp_month=body.exp_month,
+        exp_year=body.exp_year,
+        holder_name=body.holder_name,
+    )
+
+
+@router.post("/gateway/charge", response_model=GatewayChargeOut)
+async def gateway_charge(body: GatewayChargeIn, user=Depends(get_current_user)):
+    """Stub-gateway charge: always succeeds for a valid stub token.
+
+    Pure stub — no money moves and no credits are granted yet; real
+    processor + top-up wiring lands with gateway keys.
+    """
+    from .providers import get_payment_provider
+
+    gw = get_payment_provider("stub")
+    try:
+        return gw.charge(
+            token=body.token,
+            amount_cents=body.amount_cents,
+            currency=body.currency,
+            description=body.description,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/methods", response_model=PaymentMethodOut)

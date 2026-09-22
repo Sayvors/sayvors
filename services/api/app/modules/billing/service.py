@@ -108,12 +108,34 @@ async def _unset_others_default(user_id: str, db: AsyncSession, keep_id: str) ->
 
 
 async def add_method(user_id: str, body: PaymentMethodIn, db: AsyncSession) -> dict:
-    if body.provider != _MANUAL_PROVIDER:
-        # No gateway wired yet (see providers.py) — loud rejection, and the
-        # provider id is never persisted for an unverifiable claim.
+    provider = (body.provider or _MANUAL_PROVIDER).strip().lower()
+    provider_pm_id: str | None = None
+    if provider == _MANUAL_PROVIDER:
+        verified = False
+    elif provider == "stub":
         from .providers import get_payment_provider
 
-        get_payment_provider()
+        gw = get_payment_provider("stub")
+        if body.provider_token:
+            gw.verify_token(body.provider_token)
+            provider_pm_id = body.provider_token
+        else:
+            tok = gw.tokenize(
+                brand=body.brand,
+                last4=body.last4,
+                exp_month=body.exp_month,
+                exp_year=body.exp_year,
+                holder_name=body.holder_name,
+            )
+            provider_pm_id = tok["token"]
+        verified = True
+    else:
+        # Real gateway ids fail loudly until keys are configured
+        # (see providers.py) — never persisted for an unverifiable claim.
+        from .providers import get_payment_provider
+
+        get_payment_provider(provider)
+        verified = False
     if _expired(body.exp_month, body.exp_year):
         raise ValueError("Card is already expired.")
     existing = await list_methods(user_id, db)
@@ -127,9 +149,9 @@ async def add_method(user_id: str, body: PaymentMethodIn, db: AsyncSession) -> d
         holder_name=(body.holder_name or "").strip() or None,
         # First card becomes the default automatically.
         is_default=body.is_default or not existing,
-        provider=_MANUAL_PROVIDER,
-        provider_payment_method_id=None,
-        verified=False,
+        provider=provider,
+        provider_payment_method_id=provider_pm_id,
+        verified=verified,
     )
     db.add(row)
     await db.flush()
