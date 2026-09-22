@@ -48,7 +48,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
       { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
-      { key: "autoReply", icon: <AutoReplyIcon />, href: "/dashboard/automations" },
       { key: "outbox", icon: <OutboxIcon />, href: "/dashboard/outbox" },
       { key: "usage", icon: <ChartIcon />, href: "/dashboard/usage" },
     ],
@@ -343,15 +342,6 @@ function LinkIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
       <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
-    </svg>
-  );
-}
-
-function AutoReplyIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-      <path d="M8 10h8M8 14h4" />
     </svg>
   );
 }

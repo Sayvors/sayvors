@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
@@ -127,6 +128,7 @@ function AiReplyControls({
   onTone,
   onVoice,
   onSave,
+  pendingCount,
 }: {
   channel: ApiChannel;
   cfg: AutoReply | null;
@@ -142,6 +144,7 @@ function AiReplyControls({
   onTone: (v: string) => void;
   onVoice: (v: string) => void;
   onSave: (channelId: string) => void;
+  pendingCount: number;
 }) {
   const enabled = cfg?.enabled ?? false;
   return (
@@ -155,6 +158,14 @@ function AiReplyControls({
                 : "AI replies on ★4–5 · ★1–3 need your approval"
               : "Auto-reply off"}
           </p>
+          {pendingCount > 0 && (
+            <Link
+              href="/dashboard/outbox"
+              className="mt-1 inline-block rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 outline-none transition hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+            >
+              {pendingCount} awaiting approval →
+            </Link>
+          )}
         </div>
         <button
           onClick={() => onToggleExpand(channel.id)}
@@ -286,7 +297,7 @@ function LocalithListingRow({
   onEnable: (listingId: string) => void;
   onDisable: (listingId: string) => void;
   onResync: (listingId: string) => void;
-  ai: { channel: ApiChannel; cfg: AutoReply | null; busy: boolean; open: boolean } | null;
+  ai: { channel: ApiChannel; cfg: AutoReply | null; busy: boolean; open: boolean; pending: number } | null;
   approvalDraft: "auto" | "approval";
   toneDraft: string;
   voiceDraft: string;
@@ -441,6 +452,7 @@ function LocalithListingRow({
             toneDraft={toneDraft}
             voiceDraft={voiceDraft}
             saving={savingConfig}
+            pendingCount={ai.pending}
             onToggle={onToggleAi}
             onToggleExpand={onOpenAi}
             onApproval={onApprovalAi}
@@ -473,6 +485,7 @@ function ConnectHub() {
   const params = useSearchParams();
   const [channels, setChannels] = useState<ApiChannel[]>([]);
   const [autoreply, setAutoreply] = useState<Record<string, AutoReply>>({});
+  const [pending, setPending] = useState<Record<string, number>>({});
   const [expandedConfig, setExpandedConfig] = useState<string | null>(null);
   const [voiceDraft, setVoiceDraft] = useState("");
   const [approvalDraft, setApprovalDraft] = useState<"auto" | "approval">("auto");
@@ -622,6 +635,7 @@ function ConnectHub() {
         if (cancelled) return;
         setChannels(data.channels ?? []);
         const configs: Record<string, AutoReply> = {};
+        const pend: Record<string, number> = {};
         await Promise.all(
           (data.channels ?? [])
             .filter((c: ApiChannel) => c.platform === "google_reviews")
@@ -632,9 +646,16 @@ function ConnectHub() {
               } catch {
                 /* config endpoint creates default on first GET; ignore errors */
               }
+              try {
+                const r = await apiFetch(`/api/v1/channels/${c.id}/reviews?status=pending_approval&limit=1`);
+                pend[c.id] = r.pending ?? 0;
+              } catch {
+                pend[c.id] = 0;
+              }
             })
         );
         if (!cancelled) setAutoreply(configs);
+        if (!cancelled) setPending(pend);
       } catch {
         /* not logged in yet or backend down — cards still render */
       } finally {
@@ -819,9 +840,10 @@ function ConnectHub() {
         cfg: autoreply[ch.id] ?? null,
         busy: busy === ch.id,
         open: expandedConfig === ch.id,
+        pending: pending[ch.id] ?? 0,
       };
     },
-    [localithChannelByKey, autoreply, busy, expandedConfig]
+    [localithChannelByKey, autoreply, busy, expandedConfig, pending]
   );
 
   // Every listing on the Localith account, joined with connection state.
@@ -986,6 +1008,7 @@ function ConnectHub() {
                 toneDraft={toneDraft}
                 voiceDraft={voiceDraft}
                 saving={savingConfig}
+                pendingCount={pending[c.id] ?? 0}
                 onToggle={(id, enable) => void toggleAutoReply(id, enable)}
                 onToggleExpand={openConfig}
                 onApproval={setApprovalDraft}

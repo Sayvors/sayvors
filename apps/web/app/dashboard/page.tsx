@@ -13,7 +13,7 @@ import { MetricChart, RatingDistribution, Sparkline } from "@/components/analyti
 const checklistDefs = [
   { id: "channel", labelKey: "stepConnect", href: "/dashboard/channels" },
   { id: "databank", labelKey: "stepDatabank", href: "/dashboard/databank" },
-  { id: "auto-reply", labelKey: "stepAutoReply", href: "/dashboard/automations" },
+  { id: "auto-reply", labelKey: "stepAutoReply", href: "/dashboard/channels" },
 ] as const;
 
 const CHECKLIST_KEY = "sayvors.onboarding.checklist";

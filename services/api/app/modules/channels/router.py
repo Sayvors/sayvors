@@ -1079,6 +1079,29 @@ async def _notify_reply_failed(db, user_id: str, channel, reply, reason: str) ->
     )
 
 
+async def _clear_edited_flag(db, channel_id: str, review_id: str) -> None:
+    """Posting an updated reply answers the edit: clear the flag so the
+    'edited' card stops lingering (the dismiss endpoint promises this).
+    Snapshots are kept as history of what was answered. Never raises."""
+    try:
+        from ..analytics.models import ReviewInsight
+
+        ins = (
+            await db.execute(
+                select(ReviewInsight).where(
+                    ReviewInsight.channel_id == channel_id,
+                    ReviewInsight.review_id == review_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if ins is not None and ins.edited:
+            ins.edited = False
+            ins.edited_at = None
+            db.add(ins)
+    except Exception:
+        pass
+
+
 @router.post("/{channel_id}/reviews/{reply_id}/approve", response_model=ReviewReplyResponse)
 async def approve_review_reply(
     channel_id: str,
@@ -1132,6 +1155,8 @@ async def approve_review_reply(
         reply.status = "posted"
         reply.error = None
         await db.commit()
+        await _clear_edited_flag(db, channel.id, reply.review_id)
+        await db.commit()
         await _notify_reply_posted(db, user.id, channel, reply)
     else:
         access_token = decrypt_token(channel.access_token) if channel.access_token else None
@@ -1161,6 +1186,8 @@ async def approve_review_reply(
                 raise HTTPException(status_code=502, detail=reply.error)
             reply.status = "posted"
             reply.error = None
+            await db.commit()
+            await _clear_edited_flag(db, channel.id, reply.review_id)
             await db.commit()
             await _notify_reply_posted(db, user.id, channel, reply)
         except GoogleReviewsError as e:

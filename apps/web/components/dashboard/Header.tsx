@@ -228,7 +228,6 @@ export default function Header() {
               </p>
               <MenuLink label={t.header.newDatabank} href="/dashboard/databank/new" onNavigate={closeMenu} />
               <MenuLink label={t.header.newChannel} href="/dashboard/channels" onNavigate={closeMenu} />
-              <MenuLink label={t.header.newAutomation} href="/dashboard/automations" onNavigate={closeMenu} />
             </div>
 
             {/* Appearance + language */}
