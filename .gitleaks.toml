@@ -1,0 +1,16 @@
+# Extends the gitleaks defaults; quiets known-benign patterns so the
+# staging secrets-scan only fails on real leaks.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "API docs use placeholder tokens in curl/JSON examples"
+regexTarget = "line"
+paths = ['''docs/api/.*\.md''']
+rules = ["generic-api-key", "curl-auth-header"]
+
+[[allowlists]]
+description = "Meta webhook tests use fake message IDs (wamid.secret.*)"
+regexTarget = "line"
+paths = ['''services/api/tests/test_meta_webhooks\.py''']
+regexes = ['''wamid\.secret''']
