@@ -1460,6 +1460,24 @@ async def reject_reply(
         raise HTTPException(status_code=400, detail="Only pending or failed replies can be rejected")
     reply.status = "rejected"
     reply.error = None
+    # Dismissal sticks: auto-pipelines must not draft again for this review
+    # until the reviewer edits it or the merchant regenerates manually.
+    try:
+        from ..analytics.models import ReviewInsight
+
+        insight = (
+            await db.execute(
+                select(ReviewInsight).where(
+                    ReviewInsight.channel_id == reply.channel_id,
+                    ReviewInsight.review_id == reply.review_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if insight is not None and not insight.draft_dismissed:
+            insight.draft_dismissed = True
+            db.add(insight)
+    except Exception as e:
+        logger.debug("Draft-dismissal marker not set for %s: %s", reply_id, e)
     await db.commit()
     await db.refresh(reply)
     return _reply_response(reply)

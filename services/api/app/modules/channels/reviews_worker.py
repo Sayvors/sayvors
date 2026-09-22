@@ -90,6 +90,50 @@ async def _already_replied(db: AsyncSession, review_id: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+async def _draft_dismissed(db: AsyncSession, channel_id: str, review_id: str) -> bool:
+    """True if the merchant rejected the draft for this review.
+
+    The analytics consumer owns ReviewInsight rows and may not have created
+    this one yet — missing row means "not dismissed", never an error.
+    """
+    from ..analytics.models import ReviewInsight
+
+    try:
+        row = (
+            await db.execute(
+                select(ReviewInsight.draft_dismissed).where(
+                    ReviewInsight.channel_id == channel_id,
+                    ReviewInsight.review_id == review_id,
+                )
+            )
+        ).scalar_one_or_none()
+    except Exception:
+        return False
+    return bool(row)
+
+
+async def _clear_dismissal(db: AsyncSession, channel_id: str, review_id: str) -> None:
+    """New review content re-arms drafting after a dismissal."""
+    from ..analytics.models import ReviewInsight
+
+    try:
+        async with db.begin_nested():
+            row = (
+                await db.execute(
+                    select(ReviewInsight).where(
+                        ReviewInsight.channel_id == channel_id,
+                        ReviewInsight.review_id == review_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is not None and row.draft_dismissed:
+                row.draft_dismissed = False
+                db.add(row)
+                await db.flush()
+    except Exception:
+        pass
+
+
 async def _resume_failed_row(
     db: AsyncSession, channel_id: str, review_id: str
 ) -> ReviewReply | None:
@@ -195,21 +239,27 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
 async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review) -> None:
     """Emit review.discovered (outbox → Kafka) for the analytics pipeline.
 
-    Idempotent: skips reviews already enriched by the analytics consumer.
+    Idempotent: skips reviews already enriched by the analytics consumer —
+    unless the content changed, which means the reviewer edited it and the
+    consumer must re-enrich and flag the edit.
     """
     from ..analytics.models import ReviewInsight
 
-    existing = await db.execute(
-        select(ReviewInsight.id)
-        .where(
-            ReviewInsight.channel_id == channel.id,
-            ReviewInsight.review_id == review.review_id,
-            ReviewInsight.enrichment_status == "done",
+    existing = (
+        await db.execute(
+            select(ReviewInsight).where(
+                ReviewInsight.channel_id == channel.id,
+                ReviewInsight.review_id == review.review_id,
+            )
         )
-        .limit(1)
-    )
-    if existing.scalar_one_or_none():
-        return
+    ).scalar_one_or_none()
+    if existing is not None:
+        same_content = (
+            existing.rating == review.rating
+            and (existing.review_text or None) == (review.text or None)
+        )
+        if same_content and existing.enrichment_status == "done":
+            return
     await enqueue_event(
         "review.discovered",
         {
@@ -238,6 +288,82 @@ async def _enqueue_review_replied(channel: Channel, review, status: str) -> None
         },
         topic=REVIEW_EVENTS_TOPIC,
     )
+
+
+async def _refresh_edited_review_reply(
+    db: AsyncSession, channel: Channel, config: AutoReplyConfig, review
+) -> None:
+    """Bring a queued/live response back in step with an edited review.
+
+    Google polls return reviews updated since the last pass. When the text
+    or rating changed after a reply was queued or posted, the response on
+    file answers content that no longer exists: a still-pending draft is
+    regenerated in place, and a posted reply gets a follow-up draft queued
+    behind it. An edit follow-up never auto-posts — it always waits for
+    approval (the same rule as the Localith sync path).
+    """
+    latest = (
+        await db.execute(
+            select(ReviewReply)
+            .where(
+                ReviewReply.channel_id == channel.id,
+                ReviewReply.review_id == review.review_id,
+                ReviewReply.status.in_(["pending_approval", "posted", "approved"]),
+            )
+            .order_by(ReviewReply.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if latest is None:
+        return
+    # Missing stored text (legacy rows, stars-only replies) gives no
+    # baseline to compare — leave those alone.
+    content_matches = (
+        latest.rating == review.rating
+        and (
+            not latest.review_text
+            or (latest.review_text or None) == (review.text or None)
+        )
+    )
+    if content_matches:
+        return  # reply already reflects the current content
+    # New content re-arms drafting after a past dismissal.
+    await _clear_dismissal(db, channel.id, review.review_id)
+    is_pending = latest.status == "pending_approval"
+    failed_row = None
+    if is_pending:
+        attempt = (latest.generation_attempt or 1) + 1
+        previous_draft = latest.reply_text
+    else:
+        # posted/approved: a fresh follow-up draft cycle (resume a failed row if present).
+        failed_row = await _resume_failed_row(db, channel.id, review.review_id)
+        attempt = (failed_row.generation_attempt or 1) + 1 if failed_row else 1
+        previous_draft = failed_row.reply_text if failed_row else None
+    try:
+        reply_text = await generate_auto_reply(
+            config, channel, review.rating, review.text, review.reviewer_name, db,
+            review_id=review.review_id,
+            attempt=attempt,
+            previous_draft=previous_draft,
+        )
+    except Exception as e:
+        # Keep whatever is on file; the next poll retries the refresh.
+        logger.warning("Edit follow-up draft failed for %s: %s", review.review_id, e)
+        return
+    if is_pending:
+        latest.reply_text = reply_text
+        latest.rating = review.rating
+        latest.review_text = review.text
+        latest.reviewer_name = review.reviewer_name
+        latest.generation_attempt = attempt
+        latest.error = None
+    else:
+        _save_reply_row(
+            db, failed_row, channel.id, review.review_id,
+            review.rating, review.text, review.reviewer_name,
+            reply_text, "pending_approval",
+        )
+    await db.commit()
 
 
 async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyConfig) -> dict:
@@ -297,17 +423,29 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
         for review in reviews:
             stats["reviews"] += 1
             await _store_inbound_review(db, channel.id, review)
-            if await _already_replied(db, review.review_id):
-                # Idempotency: a draft is already queued (or posted) for
-                # this review — polling it again must not create a duplicate.
-                stats["skipped"] += 1
-                continue
+            # Analytics events run before the replied-check so content
+            # changes on already-answered reviews (reviewer edits) still
+            # reach the consumer. The enqueue is content-gated, so
+            # steady-state polls stay quiet.
             try:
                 await _enqueue_review_discovered(db, channel, review)
             except Exception as e:
                 # Analytics events must never break auto-reply
                 logger.warning("review.discovered enqueue failed for %s: %s", review.review_id, e)
-
+            if await _already_replied(db, review.review_id):
+                # Idempotency: a draft is already queued (or posted) for
+                # this review — polling it again must not create a duplicate.
+                # But if the reviewer edited the review since we replied or
+                # queued a draft, first bring that response up to date.
+                await _refresh_edited_review_reply(db, channel, config, review)
+                stats["skipped"] += 1
+                continue
+            if await _draft_dismissed(db, channel.id, review.review_id):
+                # The merchant rejected the draft: don't auto-draft again.
+                # A reviewer edit clears the marker; manual regenerate
+                # bypasses it.
+                stats["skipped"] += 1
+                continue
             failed_row = await _resume_failed_row(db, channel.id, review.review_id)
 
             try:

@@ -435,6 +435,37 @@ async def test_edit_rejected_still_refused(db, user_id, channel_id, client):
 
 
 @pytest.mark.asyncio
+async def test_reject_marks_draft_dismissed(db, user_id, channel_id, client):
+    """Rejecting a draft marks the insight so auto-pipelines stop drafting."""
+    from app.modules.analytics.models import ReviewInsight
+
+    db.add(ReviewInsight(
+        channel_id=channel_id, review_id="localith:edit-1", user_id=user_id,
+        rating=5, review_text="Great", reviewer_name="Ali",
+    ))
+    db.add(_reply("rr-reject-1", channel_id, "pending_approval"))
+    await db.commit()
+
+    r = client.delete(
+        f"/api/v1/channels/{channel_id}/reviews/rr-reject-1",
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "rejected"
+
+    from sqlalchemy import select as _select
+
+    db.expunge_all()  # endpoint committed via its own session
+    insight = (await db.execute(
+        _select(ReviewInsight).where(
+            ReviewInsight.channel_id == channel_id,
+            ReviewInsight.review_id == "localith:edit-1",
+        )
+    )).scalar_one()
+    assert insight.draft_dismissed is True
+
+
+@pytest.mark.asyncio
 async def test_insights_carry_latest_response(db, user_id, channel_id, client):
     """The review list carries each review's response for inline editing."""
     from datetime import datetime, timezone

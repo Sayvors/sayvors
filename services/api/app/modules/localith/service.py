@@ -510,6 +510,9 @@ async def _sync_single_connection(
                 insight.review_text = review.text
                 insight.edited = True
                 insight.edited_at = datetime.now(timezone.utc)
+                # New content re-arms drafting: a past dismissal answered
+                # the old text, not this one.
+                insight.draft_dismissed = False
                 # Re-run enrichment on the new content — the re-enqueued
                 # review.discovered event below picks this up.
                 insight.enrichment_status = "pending"
@@ -624,6 +627,11 @@ async def _sync_single_connection(
             )
         )).scalar_one_or_none()
         if insight and insight.skipped:
+            continue
+        # Dismissal sticks: the merchant rejected the draft (rejected rows
+        # are invisible to the latest-reply lookup by design). A reviewer
+        # edit clears the marker above, manual regenerate bypasses it.
+        if insight is not None and insight.draft_dismissed:
             continue
         latest_reply = (
             await db.execute(

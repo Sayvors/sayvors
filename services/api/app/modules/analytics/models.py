@@ -72,6 +72,10 @@ class ReviewInsight(Base):
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     previous_review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     previous_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Merchant dismissed the draft (rejected in Outbox): sync/worker must
+    # not auto-draft again. Cleared when the reviewer edits the review
+    # (new content) — manual regenerate/retry bypass it regardless.
+    draft_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     # Link to the review on Google (Localith `reviewLink`), for "View on Google".
     review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # When Google last updated the review (bucket date for daily rollups)
