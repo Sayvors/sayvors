@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
-import GoogleReviewCard, { GoogleStars } from "@/components/reviews/GoogleReviewCard";
+import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
 import { approveReply, dismissReviewEdit, editReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
 
@@ -17,6 +17,7 @@ interface ReviewItem {
   review_id: string;
   locationName: string;
   reviewer: string;
+  reviewerPhoto?: string;
   rating: number;
   comment: string;
   createdAt: string;
@@ -1003,6 +1004,7 @@ function ReviewsInner() {
                               review={{
                                 id: r.id,
                                 reviewer: r.reviewer,
+                                reviewerPhoto: r.reviewerPhoto,
                                 rating: r.rating,
                                 comment: r.comment,
                                 createdAt: r.createdAt,
@@ -1104,11 +1106,7 @@ function ReviewsInner() {
               <div className="rounded-lg border border-[#DADCE0] bg-white">
                 {/* Top bar: avatar + identity + status + Google mark */}
                 <div className="flex items-start gap-3 px-4 pt-4">
-                  <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F1F3F4] text-[11px] font-medium text-[#5F6368] ring-1 ring-[#E8EAED]">
-                    {active.reviewer.trim().split(/\s+/).filter(Boolean).length > 1
-                      ? (active.reviewer.trim().split(/\s+/)[0][0] + active.reviewer.trim().split(/\s+/).slice(-1)[0][0]).toUpperCase()
-                      : active.reviewer.slice(0, 2).toUpperCase()}
-                  </span>
+                  <ReviewAvatar name={active.reviewer} photoUrl={active.reviewerPhoto} />
                   <div className="min-w-0 flex-1">
                     <h2 className="truncate text-[14px] font-medium leading-5 text-[#202124]">{active.reviewer}</h2>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] leading-4 text-[#5F6368]">
@@ -1517,6 +1515,7 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       locationId: channelId,
       locationName: channelNames[channelId] ?? fallbackName,
       reviewer: String(r.reviewer_name ?? "Google user"),
+      reviewerPhoto: typeof r.reviewer_photo_url === "string" ? r.reviewer_photo_url : undefined,
       rating: Number(r.rating ?? 0),
       comment: String(r.review_text ?? "(star rating only)"),
       createdAt: String(r.review_updated_at ?? r.created_at ?? "").slice(0, 10),

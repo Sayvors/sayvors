@@ -124,6 +124,35 @@ def test_to_internal_review_flat_reviewer_fallback():
     assert review.reviewer == "Omar"
 
 
+def test_to_internal_review_reviewer_photo_variants():
+    review = embedsocial.to_internal_review(
+        {"id": "r3", "reviewer": {"name": "Sara", "photoUrl": "https://x/y.jpg"}}
+    )
+    assert review.reviewer_photo == "https://x/y.jpg"
+    review = embedsocial.to_internal_review(
+        {"id": "r4", "reviewer": {"displayName": "Omar"}, "authorPhoto": "https://x/z.jpg"}
+    )
+    assert review.reviewer_photo == "https://x/z.jpg"
+    # Non-URL and missing values stay None — UI falls back to initials.
+    review = embedsocial.to_internal_review({"id": "r5", "reviewer": {"name": "A"}})
+    assert review.reviewer_photo is None
+    review = embedsocial.to_internal_review(
+        {"id": "r6", "reviewer": {"name": "B", "avatar": "not-a-url"}}
+    )
+    assert review.reviewer_photo is None
+
+
+def test_google_reviewer_photo_url_helper():
+    from app.modules.channels.google_reviews import GoogleReview, _photo_url
+
+    assert _photo_url("https://lh3.googleusercontent.com/a-/x") == "https://lh3.googleusercontent.com/a-/x"
+    assert _photo_url(None) is None
+    assert _photo_url("not-a-url") is None
+    r = GoogleReview(review_id="a/b/c", rating=5, text="t",
+                     reviewer_name="N", updated_at=None, has_reply=False)
+    assert r.reviewer_photo_url is None
+
+
 def test_apply_listing_snapshot_copies_everything():
     conn = SimpleNamespace(listing_name="old", listing_google_id=None)
     service.apply_listing_snapshot(conn, _listing_payload())

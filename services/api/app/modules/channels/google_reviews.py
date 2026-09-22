@@ -104,8 +104,9 @@ class GoogleReview:
     rating: int             # 1..5
     text: str | None
     reviewer_name: str | None
-    updated_at: datetime | None
-    has_reply: bool
+    reviewer_photo_url: str | None = None
+    updated_at: datetime | None = None
+    has_reply: bool = False
 
 
 _STAR_RATINGS = {
@@ -121,6 +122,13 @@ def _parse_rating(raw) -> int:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):
         return 5
+
+
+def _photo_url(value) -> str | None:
+    """Reviewer profile photo from the GBP reviewer object (when present)."""
+    if isinstance(value, str) and value.startswith("http"):
+        return value
+    return None
 
 
 class GoogleReviewsClient:
@@ -296,6 +304,7 @@ class GoogleReviewsClient:
                     reviewer_name=(r.get("reviewer") or {}).get("displayName"),
                     updated_at=updated,
                     has_reply=bool(r.get("reviewReply")),
+                    reviewer_photo_url=_photo_url((r.get("reviewer") or {}).get("profilePhotoUrl")),
                 )
             )
         return reviews

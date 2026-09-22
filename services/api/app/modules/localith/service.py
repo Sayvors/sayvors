@@ -452,6 +452,7 @@ async def _sync_single_connection(
                 rating=review.rating,
                 review_text=review.text,
                 reviewer_name=review.reviewer,
+                reviewer_photo_url=review.reviewer_photo,
                 enrichment_status="pending",
                 review_updated_at=datetime.now(timezone.utc),
             )
@@ -483,6 +484,9 @@ async def _sync_single_connection(
                 touched = True
             if not insight.reviewer_name and review.reviewer:
                 insight.reviewer_name = review.reviewer
+                touched = True
+            if not insight.reviewer_photo_url and review.reviewer_photo:
+                insight.reviewer_photo_url = review.reviewer_photo
                 touched = True
             if not insight.review_url and review.review_url:
                 insight.review_url = review.review_url
@@ -834,6 +838,7 @@ async def _sync_single_connection(
                     "rating": review.rating,
                     "text": review.text,
                     "reviewer_name": review.reviewer,
+                    "reviewer_photo_url": review.reviewer_photo,
                     "review_updated_at": review.published_at,
                 },
                 topic="review-events",

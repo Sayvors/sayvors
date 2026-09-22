@@ -50,11 +50,18 @@ class InternalReview:
     rating: int = 5
     text: str | None = None
     reviewer: str | None = None
+    reviewer_photo: str | None = None
     published_at: str | None = None
     source_name: str | None = None
     review_url: str | None = None
     has_replies: bool = False
     raw: dict = field(default_factory=dict)
+
+
+def _photo_http_url(value) -> str | None:
+    if isinstance(value, str) and value.startswith("http"):
+        return value
+    return None
 
 
 def _config() -> tuple[str, str, str]:
@@ -505,6 +512,7 @@ def to_internal_review(item: dict) -> InternalReview:
     tighten the picks.
     """
     reviewer = item.get("reviewer") or item.get("author") or {}
+    reviewer_photo = None
     if isinstance(reviewer, dict):
         reviewer_name = (
             reviewer.get("name")
@@ -513,6 +521,14 @@ def to_internal_review(item: dict) -> InternalReview:
             or reviewer.get("full_name")
             or reviewer.get("author_name")
         )
+        # Localith reviewer photos (when the upstream payload carries one).
+        for key in ("photo", "photoUrl", "photo_url", "avatar",
+                    "avatarUrl", "avatar_url", "profilePhoto",
+                    "profile_photo", "profilePhotoUrl",
+                    "profile_photo_url"):
+            reviewer_photo = _photo_http_url(reviewer.get(key))
+            if reviewer_photo:
+                break
     else:
         reviewer_name = reviewer or None
     if not reviewer_name:
@@ -522,6 +538,12 @@ def to_internal_review(item: dict) -> InternalReview:
             or item.get("author_name")
             or item.get("authorName")
         )
+    if reviewer_photo is None:
+        for key in ("reviewer_photo", "reviewerPhoto", "author_photo",
+                    "authorPhoto"):
+            reviewer_photo = _photo_http_url(item.get(key))
+            if reviewer_photo:
+                break
 
     published_at = (
         item.get("created_at")
@@ -555,6 +577,7 @@ def to_internal_review(item: dict) -> InternalReview:
             or item.get("content")
         ),
         reviewer=reviewer_name,
+        reviewer_photo=reviewer_photo,
         published_at=published_at,
         source_name=item.get("location") or item.get("page") or item.get("account"),
         review_url=(

@@ -6,6 +6,7 @@ import { useState } from "react";
 export interface GoogleReview {
   id: string;
   reviewer: string;
+  reviewerPhoto?: string;
   rating: number;
   comment: string;
   createdAt: string;
@@ -76,6 +77,30 @@ export function GoogleStars({ rating, size = "h-3.5 w-3.5" }: { rating: number; 
   );
 }
 
+export function ReviewAvatar({ name, photoUrl }: { name: string; photoUrl?: string | null }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  if (photoUrl && !imgFailed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={photoUrl}
+        alt=""
+        aria-hidden
+        className="h-8 w-8 shrink-0 rounded-full bg-[#F1F3F4] object-cover ring-1 ring-[#E8EAED]"
+        onError={() => setImgFailed(true)}
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F1F3F4] text-[11px] font-medium text-[#5F6368] ring-1 ring-[#E8EAED]"
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
 function EnvelopeIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
@@ -129,13 +154,7 @@ export default function GoogleReviewCard({
     >
       {/* Top row — reviewer + Google mark */}
       <div className="flex items-start gap-3 px-4 pt-4">
-        {/* Avatar — neutral Material style */}
-        <span
-          aria-hidden
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F1F3F4] text-[11px] font-medium text-[#5F6368] ring-1 ring-[#E8EAED]"
-        >
-          {initials(review.reviewer)}
-        </span>
+        <ReviewAvatar name={review.reviewer} photoUrl={review.reviewerPhoto} />
 
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[14px] font-medium leading-5 text-[#202124]">{review.reviewer}</h3>

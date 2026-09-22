@@ -71,6 +71,7 @@ class ReviewInsightItem(BaseModel):
     rating: int
     review_text: str | None = None
     reviewer_name: str | None = None
+    reviewer_photo_url: str | None = None
     sentiment: str
     sentiment_score: float
     topics: list[Any]

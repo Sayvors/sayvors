@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchInsights, type ReviewInsight } from "@/lib/api-analytics";
 import { ReplyComposer } from "./ReplyComposer";
+import { ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 
 const PAGE_SIZE = 20;
 
@@ -39,22 +40,6 @@ function Stars({ rating }: { rating: number }) {
   );
 }
 
-const AVATAR_COLORS = ["#4285F4", "#EA4335", "#FBBC05", "#34A853", "#8E24AA", "#0097A7"];
-
-function avatarColor(name: string | null): string {
-  const s = (name ?? "").trim() || "?";
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return AVATAR_COLORS[h % AVATAR_COLORS.length];
-}
-
-function initialsOf(name: string | null): string {
-  const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
 function relativeDate(iso: string | null) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -73,13 +58,7 @@ function ReviewCard({ review, onReplied }: { review: ReviewInsight; onReplied: (
     >
       {/* Header — avatar + name + time */}
       <div className="flex items-start gap-3 px-4 pt-4">
-        <span
-          aria-hidden
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-medium text-white"
-          style={{ backgroundColor: avatarColor(review.reviewer_name) }}
-        >
-          {initialsOf(review.reviewer_name)}
-        </span>
+        <ReviewAvatar name={review.reviewer_name ?? "Anonymous"} photoUrl={review.reviewer_photo_url} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14px] font-medium leading-5 text-[#202124]">
             {review.reviewer_name ?? "Anonymous"}

@@ -269,6 +269,7 @@ async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review)
             "rating": review.rating,
             "text": review.text,
             "reviewer_name": review.reviewer_name,
+            "reviewer_photo_url": getattr(review, "reviewer_photo_url", None),
             "review_updated_at": review.updated_at.isoformat() if review.updated_at else None,
         },
         topic=REVIEW_EVENTS_TOPIC,

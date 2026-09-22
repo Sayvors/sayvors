@@ -64,6 +64,7 @@ export interface ReviewInsight {
   rating: number;
   review_text: string | null;
   reviewer_name: string | null;
+  reviewer_photo_url: string | null;
   sentiment: "positive" | "neutral" | "negative";
   sentiment_score: number;
   topics: { name: string; sentiment: string }[];
