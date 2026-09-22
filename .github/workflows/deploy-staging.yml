@@ -28,7 +28,7 @@ jobs:
           set -e
           tag=$(curl -sSL -o /dev/null -w '%{url_effective}' https://github.com/gitleaks/gitleaks/releases/latest | grep -o '[^/]*$')
           curl -sSL --fail "https://github.com/gitleaks/gitleaks/releases/download/${tag}/gitleaks_${tag#v}_linux_x64.tar.gz" | tar xz -C /tmp gitleaks
-          /tmp/gitleaks detect --no-git --source . -v --redact
+          /tmp/gitleaks detect --no-git --source . -v --redact --config .gitleaks.toml
 
   build:
     runs-on: ubuntu-latest
