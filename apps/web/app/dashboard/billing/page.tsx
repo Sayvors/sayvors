@@ -17,32 +17,25 @@ import {
   type PaymentMethod,
 } from "@/lib/api-billing";
 
-const BRANDS = ["visa", "mastercard", "mada", "amex", "applepay", "other"];
-
-const BRAND_STYLE: Record<string, string> = {
-  visa: "bg-[#1A1F71] text-white",
-  mastercard: "bg-[#EB001B] text-white",
-  mada: "bg-emerald-600 text-white",
-  amex: "bg-[#2E77BC] text-white",
-  applepay: "bg-ink text-white dark:bg-fog dark:text-ink",
-  other: "bg-ink/[0.06] text-ink/60 dark:bg-fog/[0.08] dark:text-fog/60",
-};
-
-function brandStyle(brand: string): string {
-  return BRAND_STYLE[brand.toLowerCase()] ?? BRAND_STYLE.other;
-}
-
 const inputCls =
   "w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog";
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function fieldInput(hasError: boolean): string {
+  return hasError
+    ? `${inputCls} border-coral/70 focus:border-coral`
+    : inputCls;
+}
+
+function Field({ label, hint, required, error, children }: { label: string; hint?: string; required?: boolean; error?: string | null; children: React.ReactNode }) {
   return (
     <div>
       <label className="mb-1 block text-[12px] font-medium text-ink/60 dark:text-fog/60">
         {label}
+        {required && <span className="ml-0.5 font-bold text-coral">*</span>}
         {hint && <span className="ml-1.5 font-normal text-ink/40 dark:text-fog/40">{hint}</span>}
       </label>
       {children}
+      {error && <p className="mt-1 text-[11px] font-medium text-coral">{error}</p>}
     </div>
   );
 }
@@ -54,6 +47,121 @@ function Section({ title, subtitle, children }: { title: string; subtitle: strin
       <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">{subtitle}</p>
       <div className="mt-4 space-y-4">{children}</div>
     </section>
+  );
+}
+
+// ── Card brand detection (BIN ranges, runs locally in the browser) ──
+
+function detectBrand(digits: string): string {
+  if (digits.length < 2) return "unknown";
+  if (/^(4576|5888|6361|6054)/.test(digits)) return "mada";
+  if (/^3[47]/.test(digits)) return "amex";
+  if (/^(51|52|53|54|55)/.test(digits)) return "mastercard";
+  if (/^2(?:22[1-9]|2[3-9]|[3-6]\d|7[01]|720)/.test(digits)) return "mastercard";
+  if (/^4/.test(digits)) return "visa";
+  if (/^6(?:011|5)/.test(digits)) return "discover";
+  if (/^62/.test(digits)) return "unionpay";
+  return digits.length >= 6 ? "other" : "unknown";
+}
+
+function luhnValid(digits: string): boolean {
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = Number(digits[i]);
+    if (alt) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+}
+
+const BRAND_GRADIENT: Record<string, string> = {
+  visa: "from-[#1A1F71] to-[#3B4BD8]",
+  mastercard: "from-[#EB001B] to-[#F79E1B]",
+  amex: "from-[#2E77BC] to-[#5EB3E4]",
+  mada: "from-[#007A53] to-[#00A651]",
+  discover: "from-[#F48120] to-[#B85C00]",
+  unionpay: "from-[#DE1F26] to-[#007D8A]",
+  applepay: "from-[#2A2440] to-[#6D28D9]",
+  other: "from-[#2A2440] to-[#6D28D9]",
+  unknown: "from-[#2A2440] to-[#6D28D9]",
+};
+
+function brandGradient(brand: string): string {
+  return BRAND_GRADIENT[brand.toLowerCase()] ?? BRAND_GRADIENT.other;
+}
+
+const BRAND_LABEL: Record<string, string> = {
+  visa: "VISA",
+  mastercard: "Mastercard",
+  amex: "AMEX",
+  mada: "mada",
+  discover: "Discover",
+  unionpay: "UnionPay",
+  applepay: "Apple Pay",
+};
+
+function brandLabel(brand: string): string {
+  return BRAND_LABEL[brand.toLowerCase()] ?? (brand.slice(0, 8).toUpperCase() || "Card");
+}
+
+function formatCardGroups(digits: string): string {
+  const padded = (digits + "•".repeat(16)).slice(0, 16);
+  return padded.replace(/(.{4})/g, "$1 ").trim();
+}
+
+function formatExpiryInput(v: string): string {
+  const d = v.replace(/[^0-9]/g, "").slice(0, 4);
+  if (d.length <= 2) return d;
+  return `${d.slice(0, 2)}/${d.slice(2)}`;
+}
+
+function expiryError(v: string): string | null {
+  const d = v.replace(/[^0-9]/g, "");
+  if (d.length < 4) return "Use MM/YY.";
+  const mm = Number(d.slice(0, 2));
+  const yy = Number(d.slice(2, 4));
+  if (mm < 1 || mm > 12) return "Month must be 01–12.";
+  const now = new Date();
+  const lastDay = new Date(2000 + yy, mm, 0);
+  if (lastDay.getTime() < now.getTime()) return "This card is expired.";
+  if (2000 + yy > now.getFullYear() + 15) return "That year looks too far ahead.";
+  return null;
+}
+
+function parseExpiry(v: string): { month: number; year: number } {
+  const d = v.replace(/[^0-9]/g, "");
+  return { month: Number(d.slice(0, 2)), year: 2000 + Number(d.slice(2, 4)) };
+}
+
+function CardPreview({ brand, digits, holder, expiry }: { brand: string; digits: string; holder: string; expiry: string }) {
+  return (
+    <div className={`relative overflow-hidden rounded-2xl bg-gradient-to-br p-4 text-white shadow-lg ${brandGradient(brand)}`}>
+      <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10" aria-hidden />
+      <div className="pointer-events-none absolute -bottom-14 -left-6 h-40 w-40 rounded-full bg-black/10" aria-hidden />
+      <div className="relative flex items-start justify-between">
+        <div className="flex h-8 w-11 items-center justify-center rounded-md bg-white/25" aria-hidden>
+          <div className="h-4 w-6 rounded-[3px] border border-white/50" />
+        </div>
+        <span className="text-[15px] font-black tracking-wide">{brandLabel(brand)}</span>
+      </div>
+      <p className="relative mt-4 text-[16px] font-semibold tabular-nums tracking-[0.08em]">
+        {formatCardGroups(digits)}
+      </p>
+      <div className="relative mt-3 flex items-end justify-between gap-2">
+        <p className="truncate text-[11px] font-medium uppercase tracking-wide text-white/85">
+          {holder.trim() || "YOUR NAME"}
+        </p>
+        <p className="shrink-0 text-[11px] font-semibold tabular-nums text-white/85">
+          {expiry.replace(/[^0-9/]/g, "") || "MM/YY"}
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -72,9 +180,7 @@ const EMPTY_PROFILE: BillingProfile = {
   tax_id: null,
 };
 
-function thisYear(): number {
-  return new Date().getFullYear();
-}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function BillingPage() {
   const [plan, setPlan] = useState("free");
@@ -86,13 +192,46 @@ export default function BillingPage() {
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  // Add-card form
+  // Add-card form (full PAN never leaves the browser — only last4 is saved)
+  const [cardNumber, setCardNumber] = useState("");
+  const [expiry, setExpiry] = useState("");
   const [holder, setHolder] = useState("");
-  const [brand, setBrand] = useState("visa");
-  const [last4, setLast4] = useState("");
-  const [expMonth, setExpMonth] = useState("1");
-  const [expYear, setExpYear] = useState(String(thisYear() + 2));
   const [makeDefault, setMakeDefault] = useState(false);
+  const [cardTouched, setCardTouched] = useState(false);
+
+  // Billing details (trimmed to the essentials)
+  const [detailsTouched, setDetailsTouched] = useState(false);
+
+  const digits = cardNumber.replace(/[^0-9]/g, "");
+  const detected = detectBrand(digits);
+
+  const numberError: string | null =
+    digits.length === 0
+      ? null
+      : digits.length < 13
+        ? `Too short — card numbers have 13–19 digits (${digits.length} typed).`
+        : !luhnValid(digits)
+          ? "This number doesn't pass the checksum — check and retry."
+          : null;
+  const expiryErr = expiry ? expiryError(expiry) : null;
+  const holderError: string | null =
+    holder === "" ? null : holder.trim().length < 2 ? "Enter the name printed on the card." : null;
+
+  const nameError: string | null =
+    (profile.full_name ?? "").trim() === "" ? "Full name is required." : null;
+  const emailError: string | null =
+    (profile.email ?? "").trim() === ""
+      ? "Billing email is required."
+      : !EMAIL_RE.test((profile.email ?? "").trim())
+        ? "That email doesn't look valid."
+        : null;
+  const countryVal = (profile.country ?? "").trim().toUpperCase();
+  const countryError: string | null =
+    countryVal === ""
+      ? "Country is required."
+      : countryVal.length !== 2
+        ? "Use the 2-letter code (e.g. SA)."
+        : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -125,22 +264,29 @@ export default function BillingPage() {
     setProfile((p) => ({ ...p, ...patch }));
 
   async function saveDetails() {
+    setDetailsTouched(true);
+    if (nameError || emailError || countryError) {
+      setBanner({ kind: "err", text: "Fix the highlighted billing fields first." });
+      return;
+    }
     setBusy("profile");
     setBanner(null);
     try {
+      // Unmanaged fields (phone, address…) ride along untouched so nothing is wiped.
       const updated = await saveBillingProfile({
-        full_name: profile.full_name || null,
-        email: profile.email || null,
+        full_name: (profile.full_name ?? "").trim() || null,
+        email: (profile.email ?? "").trim() || null,
         phone: profile.phone || null,
         address_line1: profile.address_line1 || null,
         address_line2: profile.address_line2 || null,
-        city: profile.city || null,
+        city: (profile.city ?? "").trim() || null,
         region: profile.region || null,
         postal_code: profile.postal_code || null,
-        country: profile.country || null,
-        tax_id: profile.tax_id || null,
+        country: countryVal || null,
+        tax_id: (profile.tax_id ?? "").trim() || null,
       });
       setProfile(updated);
+      setDetailsTouched(false);
       setBanner({ kind: "ok", text: "Billing details saved." });
     } catch (e) {
       setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Could not save." });
@@ -150,20 +296,33 @@ export default function BillingPage() {
   }
 
   async function handleAddCard() {
-    if (!/^[0-9]{4}$/.test(last4)) {
-      setBanner({ kind: "err", text: "Last 4 digits must be exactly 4 numbers — we never ask for the full card number." });
+    setCardTouched(true);
+    const numErr =
+      digits.length === 0
+        ? "Enter the card number."
+        : digits.length < 13
+          ? "Card numbers have 13–19 digits."
+          : !luhnValid(digits)
+            ? "This number doesn't pass the checksum — check and retry."
+            : null;
+    const expErr = expiry === "" ? "Enter the expiry." : expiryError(expiry);
+    const holdErr = holder.trim().length < 2 ? "Enter the name printed on the card." : null;
+    if (numErr || expErr || holdErr) {
+      setBanner({ kind: "err", text: numErr ?? expErr ?? holdErr ?? "Check the card fields." });
       return;
     }
+    const { month, year } = parseExpiry(expiry);
+    const brand = detected === "unknown" ? "other" : detected;
     setBusy("add");
     setBanner(null);
     try {
       const created = await addPaymentMethod({
         brand,
-        last4,
-        exp_month: Number(expMonth),
-        exp_year: Number(expYear),
-        holder_name: holder.trim() || undefined,
-        is_default: makeDefault,
+        last4: digits.slice(-4),
+        exp_month: month,
+        exp_year: year,
+        holder_name: holder.trim(),
+        is_default: makeDefault || methods.length === 0,
       });
       setMethods((prev) => {
         const next = [created, ...prev.filter((m) => m.id !== created.id)];
@@ -171,10 +330,12 @@ export default function BillingPage() {
           ? next.map((m) => (m.id === created.id ? m : { ...m, is_default: false }))
           : next;
       });
+      setCardNumber("");
+      setExpiry("");
       setHolder("");
-      setLast4("");
       setMakeDefault(false);
-      setBanner({ kind: "ok", text: "Card saved as an unverified record — gateway verification lands soon." });
+      setCardTouched(false);
+      setBanner({ kind: "ok", text: "Card saved — only the last 4 digits were sent. Gateway verification lands soon." });
     } catch (e) {
       setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Could not save card." });
     } finally {
@@ -213,7 +374,7 @@ export default function BillingPage() {
     }
   }
 
-  const years = Array.from({ length: 12 }, (_, i) => thisYear() + i);
+  const lowBalance = budget !== null && budget.balance_cents < 200;
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-5">
@@ -249,69 +410,56 @@ export default function BillingPage() {
         </div>
       ) : (
         <>
-          <Section title="Current plan" subtitle="Your subscription tier.">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="rounded-lg bg-deep-violet px-3 py-1.5 text-[13px] font-bold capitalize text-white">
-                {plan}
-              </span>
-              <p className="text-[12px] text-ink/50 dark:text-fog/50">
-                Plan changes and invoices arrive with subscriptions.
-              </p>
-            </div>
-            <div className="rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.04]">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-[12px] font-medium text-ink/60 dark:text-fog/60">
-                  AI credits remaining
-                </span>
-                <span className="text-[15px] font-bold text-ink dark:text-fog">
-                  {budget ? `$${budget.balance_dollars.toFixed(2)}` : "—"}
-                </span>
-              </div>
-              <p className="mt-1 text-[12px] text-ink/50 dark:text-fog/50">
-                Every AI reply, analysis and chat message spends from this balance.
-                When it runs out, AI features pause until you top up.
-              </p>
-              {budget && budget.balance_cents < 200 && (
-                <p className="mt-1.5 text-[12px] font-medium text-amber-600 dark:text-amber-400">
-                  Balance is low — contact support to top up your AI credits.
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-deep-violet via-[#4C1D95] to-ink p-5 text-white shadow-lg sm:p-6">
+            <div className="pointer-events-none absolute -right-12 -top-12 h-44 w-44 rounded-full bg-white/10" aria-hidden />
+            <div className="pointer-events-none absolute -bottom-16 -left-8 h-48 w-48 rounded-full bg-black/20" aria-hidden />
+            <div className="relative flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">Current plan</p>
+                <p className="mt-1 text-[30px] font-black capitalize leading-none">{plan}</p>
+                <p className="mt-2 max-w-md text-[12px] text-white/70">
+                  {plan === "pro"
+                    ? "Pro includes a $20 AI credit wallet — every AI reply, analysis and chat message spends from it."
+                    : "Free has no AI credits — upgrade to Pro to unlock AI replies, analyses and chat."}
                 </p>
-              )}
+              </div>
+              <div className="text-right">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">AI credits left</p>
+                <p className="mt-1 text-[30px] font-black tabular-nums leading-none">
+                  {budget ? `$${budget.balance_dollars.toFixed(2)}` : "—"}
+                </p>
+                {lowBalance ? (
+                  <p className="mt-2 text-[12px] font-bold text-amber-300">
+                    Balance is low — contact support to top up.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-[12px] text-white/70">Top-ups arrive with subscriptions.</p>
+                )}
+              </div>
             </div>
-          </Section>
+          </div>
 
-          <Section title="Billing details" subtitle="Used on invoices and receipts, including VAT records.">
+          <Section title="Billing details" subtitle="Only the essentials — used on invoices and receipts.">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Full name">
-                <input value={profile.full_name ?? ""} onChange={(e) => set({ full_name: e.target.value })} disabled={busy !== null} placeholder="Sara Ahmed" className={inputCls} />
+              <Field label="Full name" required error={detailsTouched ? nameError : null}>
+                <input value={profile.full_name ?? ""} onChange={(e) => set({ full_name: e.target.value })} disabled={busy !== null} placeholder="Sara Ahmed" className={fieldInput(detailsTouched && !!nameError)} />
               </Field>
-              <Field label="Billing email">
-                <input value={profile.email ?? ""} onChange={(e) => set({ email: e.target.value })} disabled={busy !== null} placeholder="billing@company.com" className={inputCls} />
+              <Field label="Billing email" required error={detailsTouched ? emailError : null}>
+                <input value={profile.email ?? ""} onChange={(e) => set({ email: e.target.value })} disabled={busy !== null} placeholder="billing@company.com" inputMode="email" className={fieldInput(detailsTouched && !!emailError)} />
               </Field>
-              <Field label="Phone">
-                <input value={profile.phone ?? ""} onChange={(e) => set({ phone: e.target.value })} disabled={busy !== null} placeholder="+966 55 000 0000" className={inputCls} />
-              </Field>
-              <Field label="VAT / tax number" hint="e.g. Saudi ZATCA VAT">
-                <input value={profile.tax_id ?? ""} onChange={(e) => set({ tax_id: e.target.value })} disabled={busy !== null} placeholder="300123456700003" className={inputCls} />
-              </Field>
-              <Field label="Address line 1">
-                <input value={profile.address_line1 ?? ""} onChange={(e) => set({ address_line1: e.target.value })} disabled={busy !== null} placeholder="King Fahd Rd, Building 12" className={inputCls} />
-              </Field>
-              <Field label="Address line 2">
-                <input value={profile.address_line2 ?? ""} onChange={(e) => set({ address_line2: e.target.value })} disabled={busy !== null} placeholder="Office 4 (optional)" className={inputCls} />
+              <Field label="Country" required hint="2-letter code" error={detailsTouched ? countryError : null}>
+                <input value={profile.country ?? ""} onChange={(e) => set({ country: e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2) })} disabled={busy !== null} placeholder="SA" maxLength={2} className={`${fieldInput(detailsTouched && !!countryError)} uppercase`} />
               </Field>
               <Field label="City">
                 <input value={profile.city ?? ""} onChange={(e) => set({ city: e.target.value })} disabled={busy !== null} placeholder="Riyadh" className={inputCls} />
               </Field>
-              <Field label="Region">
-                <input value={profile.region ?? ""} onChange={(e) => set({ region: e.target.value })} disabled={busy !== null} placeholder="Riyadh Province" className={inputCls} />
-              </Field>
-              <Field label="Postal code">
-                <input value={profile.postal_code ?? ""} onChange={(e) => set({ postal_code: e.target.value })} disabled={busy !== null} placeholder="11432" className={inputCls} />
-              </Field>
-              <Field label="Country" hint="ISO code">
-                <input value={profile.country ?? ""} onChange={(e) => set({ country: e.target.value })} disabled={busy !== null} placeholder="SA" maxLength={8} className={inputCls} />
-              </Field>
+              <div className="sm:col-span-2">
+                <Field label="VAT / tax number" hint="optional — e.g. Saudi ZATCA VAT">
+                  <input value={profile.tax_id ?? ""} onChange={(e) => set({ tax_id: e.target.value })} disabled={busy !== null} placeholder="300123456700003" className={inputCls} />
+                </Field>
+              </div>
             </div>
+            <p className="text-[11px] text-ink/40 dark:text-fog/40"><span className="font-bold text-coral">*</span> required</p>
             <button
               onClick={() => void saveDetails()}
               disabled={busy !== null}
@@ -329,26 +477,32 @@ export default function BillingPage() {
             ) : (
               <ul className="space-y-2">
                 {methods.map((m) => (
-                  <li key={m.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-ink/[0.06] bg-white px-3.5 py-3 dark:border-fog/[0.06] dark:bg-ink">
-                    <span aria-hidden className={`flex h-9 w-14 shrink-0 items-center justify-center rounded-md text-[10px] font-black uppercase tracking-wide ${brandStyle(m.brand)}`}>
-                      {m.brand.slice(0, 6)}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[13px] font-bold tabular-nums text-ink dark:text-fog">
+                  <li key={m.id} className="flex items-stretch gap-0 overflow-hidden rounded-xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
+                    <div className={`flex w-24 shrink-0 flex-col justify-between bg-gradient-to-br p-2.5 text-white ${brandGradient(m.brand)}`}>
+                      <span className="text-[11px] font-black tracking-wide">{brandLabel(m.brand)}</span>
+                      <span className="text-[10px] font-semibold tabular-nums text-white/85">
+                        {String(m.exp_month).padStart(2, "0")}/{m.exp_year}
+                      </span>
+                    </div>
+                    <div className="min-w-0 flex-1 px-3.5 py-3">
+                      <p className="flex flex-wrap items-center gap-2 text-[14px] font-bold tabular-nums tracking-[0.06em] text-ink dark:text-fog">
                         •••• {m.last4}
-                        <span className="ml-2 font-medium text-ink/45 dark:text-fog/45">
-                          {String(m.exp_month).padStart(2, "0")}/{m.exp_year}
-                        </span>
+                        {m.is_default && (
+                          <span className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-bold tracking-normal text-deep-violet">★ Default</span>
+                        )}
+                        {!m.verified && (
+                          <span title="Gateway verification lands soon" className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold tracking-normal text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                            Unverified
+                          </span>
+                        )}
                       </p>
-                      <p className="truncate text-[11px] text-ink/45 dark:text-fog/45">
+                      <p className="mt-0.5 truncate text-[11px] text-ink/45 dark:text-fog/45">
                         {m.holder_name ?? "No holder name"}
                         {m.expired && <span className="ml-1.5 font-bold text-coral">· Expired</span>}
                       </p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      {m.is_default ? (
-                        <span className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-bold text-deep-violet">Default</span>
-                      ) : (
+                    <div className="flex shrink-0 items-center gap-1.5 px-2.5">
+                      {!m.is_default && (
                         <button
                           onClick={() => void handleSetDefault(m.id)}
                           disabled={busy !== null}
@@ -356,11 +510,6 @@ export default function BillingPage() {
                         >
                           {busy === `default-${m.id}` ? "…" : "Set default"}
                         </button>
-                      )}
-                      {!m.verified && (
-                        <span title="Gateway verification lands soon" className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                          Unverified
-                        </span>
                       )}
                       {confirmDelete === m.id ? (
                         <>
@@ -393,42 +542,48 @@ export default function BillingPage() {
             <div className="rounded-xl border border-dashed border-ink/[0.1] p-4 dark:border-fog/[0.1]">
               <h3 className="text-[13px] font-bold text-ink dark:text-fog">Add a card</h3>
               <p className="mt-0.5 text-[11px] text-ink/45 dark:text-fog/45">
-                Last digits and expiry only — never type a full card number or CVC here.
+                Type the number — the brand is detected automatically and only the last 4 digits are ever sent or stored.
               </p>
+              <div className="mt-3">
+                <CardPreview brand={detected} digits={digits} holder={holder} expiry={expiry} />
+              </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <Field label="Cardholder name">
-                  <input value={holder} onChange={(e) => setHolder(e.target.value)} disabled={busy !== null} placeholder="Sara Ahmed" className={inputCls} />
-                </Field>
-                <Field label="Brand">
-                  <select value={brand} onChange={(e) => setBrand(e.target.value)} disabled={busy !== null} className={inputCls}>
-                    {BRANDS.map((b) => (
-                      <option key={b} value={b}>{b === "applepay" ? "Apple Pay" : b.charAt(0).toUpperCase() + b.slice(1)}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Last 4 digits" hint="exactly 4 numbers">
-                  <input value={last4} onChange={(e) => setLast4(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))} disabled={busy !== null} placeholder="4242" inputMode="numeric" className={`${inputCls} tabular-nums`} />
-                </Field>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Exp. month">
-                    <select value={expMonth} onChange={(e) => setExpMonth(e.target.value)} disabled={busy !== null} className={inputCls}>
-                      {Array.from({ length: 12 }, (_, i) => i + 1).map((mm) => (
-                        <option key={mm} value={mm}>{String(mm).padStart(2, "0")}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Exp. year">
-                    <select value={expYear} onChange={(e) => setExpYear(e.target.value)} disabled={busy !== null} className={inputCls}>
-                      {years.map((yy) => (
-                        <option key={yy} value={yy}>{yy}</option>
-                      ))}
-                    </select>
+                <div className="sm:col-span-2">
+                  <Field
+                    label="Card number"
+                    required
+                    hint={detected !== "unknown" && detected !== "other" ? `Detected: ${brandLabel(detected)}` : undefined}
+                    error={cardTouched ? numberError : null}
+                  >
+                    <input
+                      value={cardNumber}
+                      onChange={(e) => setCardNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 19).replace(/(\d{4})(?=\d)/g, "$1 "))}
+                      disabled={busy !== null}
+                      placeholder="4242 4242 4242 4242"
+                      inputMode="numeric"
+                      autoComplete="cc-number"
+                      className={`${fieldInput(cardTouched && !!numberError)} tabular-nums tracking-[0.06em]`}
+                    />
                   </Field>
                 </div>
+                <Field label="Name on card" required error={cardTouched ? holderError : null}>
+                  <input value={holder} onChange={(e) => setHolder(e.target.value)} disabled={busy !== null} placeholder="SARA AHMED" autoComplete="cc-name" className={fieldInput(cardTouched && !!holderError)} />
+                </Field>
+                <Field label="Expiry" required hint="MM/YY" error={cardTouched ? expiryErr : null}>
+                  <input
+                    value={expiry}
+                    onChange={(e) => setExpiry(formatExpiryInput(e.target.value))}
+                    disabled={busy !== null}
+                    placeholder="08/27"
+                    inputMode="numeric"
+                    autoComplete="cc-exp"
+                    className={`${fieldInput(cardTouched && !!expiryErr)} tabular-nums`}
+                  />
+                </Field>
               </div>
               <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12px] font-medium text-ink/60 dark:text-fog/60">
                 <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} disabled={busy !== null} className="h-4 w-4 rounded border-ink/20 text-deep-violet focus:ring-deep-violet/40" />
-                Make default
+                Make default{methods.length === 0 ? " (first card is default automatically)" : ""}
               </label>
               <button
                 onClick={() => void handleAddCard()}
