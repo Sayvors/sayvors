@@ -1042,8 +1042,8 @@ function CategoriesTab({ initial, onSave, bulk }: {
             </span>
           ))}
         </div>
-        <div className="flex gap-2">
-          <input value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCategory()} placeholder="Add category..." className="input-field flex-1" />
+        <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+          <input value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCategory()} placeholder="Add category..." className="input-field" />
           <button onClick={addCategory} className="btn-secondary">Add</button>
         </div>
       </Field>
@@ -1171,10 +1171,10 @@ function SpecialHoursTab({ initial, onSave, bulk }: {
       </div>
       <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. 2026-09-23, hours “closed” for a full-day closure, or “09:00 - 13:00” for a short day.</p>
       {entries.map((entry, i) => (
-        <div key={i} className="flex items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
-          <input type="date" value={entry.date} onChange={(e) => updateEntry(i, "date", e.target.value)} className="input-field w-40" />
-          <input value={entry.hours} onChange={(e) => updateEntry(i, "hours", e.target.value)} placeholder="09:00 - 17:00" className="input-field w-40" />
-          <input value={entry.reason} onChange={(e) => updateEntry(i, "reason", e.target.value)} placeholder="Reason (e.g. Holiday)" className="input-field flex-1" />
+        <div key={i} className="grid grid-cols-[150px_150px_1fr_auto] items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+          <input type="date" value={entry.date} onChange={(e) => updateEntry(i, "date", e.target.value)} className="input-field" />
+          <input value={entry.hours} onChange={(e) => updateEntry(i, "hours", e.target.value)} placeholder="09:00 - 17:00" className="input-field" />
+          <input value={entry.reason} onChange={(e) => updateEntry(i, "reason", e.target.value)} placeholder="Reason (e.g. Holiday)" className="input-field" />
           <button onClick={() => removeEntry(i)} className="mt-1 text-ink/30 transition hover:text-red-500 dark:text-fog/30">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
@@ -1236,13 +1236,13 @@ function MoreHoursTab({ initial, onSave, bulk }: {
         <p className="text-[12px] text-ink/35 dark:text-fog/35">No additional hours set. Add entries for services like delivery or drive-through.</p>
       )}
       {entries.map((entry, i) => (
-        <div key={i} className="flex items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
-          <select value={entry.type} onChange={(e) => updateEntry(i, "type", e.target.value)} className="input-field w-40">
+        <div key={i} className="grid grid-cols-[150px_120px_auto_120px_auto] items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+          <select value={entry.type} onChange={(e) => updateEntry(i, "type", e.target.value)} className="input-field">
             {MORE_HOURS_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
           </select>
-          <input type="time" value={entry.open} onChange={(e) => updateEntry(i, "open", e.target.value)} className="input-field w-28" />
+          <input type="time" value={entry.open} onChange={(e) => updateEntry(i, "open", e.target.value)} className="input-field" />
           <span className="text-[12px] text-ink/40">to</span>
-          <input type="time" value={entry.close} onChange={(e) => updateEntry(i, "close", e.target.value)} className="input-field w-28" />
+          <input type="time" value={entry.close} onChange={(e) => updateEntry(i, "close", e.target.value)} className="input-field" />
           <button onClick={() => removeEntry(i)} className="text-ink/30 transition hover:text-red-500 dark:text-fog/30">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
@@ -1309,8 +1309,8 @@ function ServiceAreaTab({ initial, onSave, bulk }: {
           </span>
         ))}
       </div>
-      <div className="flex gap-2">
-        <input value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addArea()} placeholder="e.g. Riyadh, Jeddah, Al Malqa district" className="input-field flex-1" />
+      <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+        <input value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addArea()} placeholder="e.g. Riyadh, Jeddah, Al Malqa district" className="input-field" />
         <button onClick={addArea} className="btn-secondary">Add</button>
       </div>
       <div className="flex justify-end pt-2">
@@ -1393,9 +1393,9 @@ function AttributesTab({ initial, onSave, bulk }: {
           </div>
         ))}
       </div>
-      <div className="flex gap-2">
-        <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. Wheelchair accessible entrance" className="input-field w-40" />
-        <input value={newValue} onChange={(e) => setNewValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. yes" className="input-field flex-1" />
+      <div className="grid grid-cols-[160px_1fr_auto] items-center gap-3">
+        <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. Wheelchair accessible entrance" className="input-field" />
+        <input value={newValue} onChange={(e) => setNewValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. yes" className="input-field" />
         <button onClick={addAttr} className="btn-secondary">Add</button>
       </div>
       <div className="flex justify-end pt-2">
