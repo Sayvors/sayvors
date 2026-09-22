@@ -182,6 +182,74 @@ const EMPTY_PROFILE: BillingProfile = {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const COUNTRIES: { code: string; name: string }[] = [
+  { code: "SA", name: "Saudi Arabia" },
+  { code: "AE", name: "United Arab Emirates" },
+  { code: "US", name: "United States" },
+  { code: "GB", name: "United Kingdom" },
+  { code: "CA", name: "Canada" },
+  { code: "AU", name: "Australia" },
+  { code: "DE", name: "Germany" },
+  { code: "FR", name: "France" },
+  { code: "EG", name: "Egypt" },
+  { code: "JO", name: "Jordan" },
+  { code: "KW", name: "Kuwait" },
+  { code: "QA", name: "Qatar" },
+  { code: "BH", name: "Bahrain" },
+  { code: "OM", name: "Oman" },
+  { code: "IQ", name: "Iraq" },
+  { code: "LB", name: "Lebanon" },
+  { code: "TR", name: "Turkey" },
+  { code: "IN", name: "India" },
+  { code: "PK", name: "Pakistan" },
+  { code: "BD", name: "Bangladesh" },
+  { code: "MY", name: "Malaysia" },
+  { code: "SG", name: "Singapore" },
+  { code: "ID", name: "Indonesia" },
+  { code: "PH", name: "Philippines" },
+  { code: "TH", name: "Thailand" },
+  { code: "JP", name: "Japan" },
+  { code: "KR", name: "South Korea" },
+  { code: "CN", name: "China" },
+  { code: "IT", name: "Italy" },
+  { code: "ES", name: "Spain" },
+  { code: "NL", name: "Netherlands" },
+  { code: "SE", name: "Sweden" },
+  { code: "NO", name: "Norway" },
+  { code: "DK", name: "Denmark" },
+  { code: "FI", name: "Finland" },
+  { code: "BE", name: "Belgium" },
+  { code: "CH", name: "Switzerland" },
+  { code: "AT", name: "Austria" },
+  { code: "IE", name: "Ireland" },
+  { code: "PT", name: "Portugal" },
+  { code: "GR", name: "Greece" },
+  { code: "PL", name: "Poland" },
+  { code: "CZ", name: "Czech Republic" },
+  { code: "RO", name: "Romania" },
+  { code: "RU", name: "Russia" },
+  { code: "UA", name: "Ukraine" },
+  { code: "IL", name: "Israel" },
+  { code: "MA", name: "Morocco" },
+  { code: "DZ", name: "Algeria" },
+  { code: "TN", name: "Tunisia" },
+  { code: "LY", name: "Libya" },
+  { code: "SD", name: "Sudan" },
+  { code: "YE", name: "Yemen" },
+  { code: "SY", name: "Syria" },
+  { code: "ZA", name: "South Africa" },
+  { code: "NG", name: "Nigeria" },
+  { code: "KE", name: "Kenya" },
+  { code: "GH", name: "Ghana" },
+  { code: "BR", name: "Brazil" },
+  { code: "MX", name: "Mexico" },
+  { code: "AR", name: "Argentina" },
+  { code: "CL", name: "Chile" },
+  { code: "CO", name: "Colombia" },
+  { code: "NZ", name: "New Zealand" },
+  { code: "OTHER", name: "Other" },
+];
+
 export default function BillingPage() {
   const [plan, setPlan] = useState("free");
   const [budget, setBudget] = useState<Budget | null>(null);
@@ -201,6 +269,7 @@ export default function BillingPage() {
 
   // Billing details (trimmed to the essentials)
   const [detailsTouched, setDetailsTouched] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
 
   const digits = cardNumber.replace(/[^0-9]/g, "");
   const detected = detectBrand(digits);
@@ -220,18 +289,14 @@ export default function BillingPage() {
   const nameError: string | null =
     (profile.full_name ?? "").trim() === "" ? "Full name is required." : null;
   const emailError: string | null =
-    (profile.email ?? "").trim() === ""
-      ? "Billing email is required."
-      : !EMAIL_RE.test((profile.email ?? "").trim())
+    authEmail.trim() === ""
+      ? "Your sign-in email is missing — re-login."
+      : !EMAIL_RE.test(authEmail.trim())
         ? "That email doesn't look valid."
         : null;
   const countryVal = (profile.country ?? "").trim().toUpperCase();
   const countryError: string | null =
-    countryVal === ""
-      ? "Country is required."
-      : countryVal.length !== 2
-        ? "Use the 2-letter code (e.g. SA)."
-        : null;
+    countryVal === "" ? "Country is required." : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -248,7 +313,13 @@ export default function BillingPage() {
           setBudget(wallet);
           setPlan(wallet.plan);
         } else if (prof?.plan) setPlan(prof.plan);
-        if (profBilling) setProfile(profBilling);
+        const signedInEmail = prof?.email ?? "";
+        setAuthEmail(signedInEmail);
+        if (profBilling) {
+          setProfile({ ...profBilling, email: signedInEmail || profBilling.email });
+        } else {
+          setProfile({ ...EMPTY_PROFILE, email: signedInEmail });
+        }
         setMethods(Array.isArray(meths) ? meths : []);
       } catch {
         /* empty states render */
@@ -275,7 +346,7 @@ export default function BillingPage() {
       // Unmanaged fields (phone, address…) ride along untouched so nothing is wiped.
       const updated = await saveBillingProfile({
         full_name: (profile.full_name ?? "").trim() || null,
-        email: (profile.email ?? "").trim() || null,
+        email: authEmail.trim() || null,
         phone: profile.phone || null,
         address_line1: profile.address_line1 || null,
         address_line2: profile.address_line2 || null,
@@ -444,18 +515,28 @@ export default function BillingPage() {
               <Field label="Full name" required error={detailsTouched ? nameError : null}>
                 <input value={profile.full_name ?? ""} onChange={(e) => set({ full_name: e.target.value })} disabled={busy !== null} placeholder="Sara Ahmed" className={fieldInput(detailsTouched && !!nameError)} />
               </Field>
-              <Field label="Billing email" required error={detailsTouched ? emailError : null}>
-                <input value={profile.email ?? ""} onChange={(e) => set({ email: e.target.value })} disabled={busy !== null} placeholder="billing@company.com" inputMode="email" className={fieldInput(detailsTouched && !!emailError)} />
+              <Field label="Billing email" required hint="your sign-in email" error={detailsTouched ? emailError : null}>
+                <input value={authEmail} disabled placeholder="you@example.com" inputMode="email" readOnly className={`${inputCls} cursor-not-allowed opacity-70`} />
               </Field>
-              <Field label="Country" required hint="2-letter code" error={detailsTouched ? countryError : null}>
-                <input value={profile.country ?? ""} onChange={(e) => set({ country: e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2) })} disabled={busy !== null} placeholder="SA" maxLength={2} className={`${fieldInput(detailsTouched && !!countryError)} uppercase`} />
+              <Field label="Country" required error={detailsTouched ? countryError : null}>
+                <select
+                  value={countryVal}
+                  onChange={(e) => set({ country: e.target.value })}
+                  disabled={busy !== null}
+                  className={fieldInput(detailsTouched && !!countryError)}
+                >
+                  <option value="">Select country…</option>
+                  {COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.code}>{c.name}</option>
+                  ))}
+                </select>
               </Field>
               <Field label="City">
                 <input value={profile.city ?? ""} onChange={(e) => set({ city: e.target.value })} disabled={busy !== null} placeholder="Riyadh" className={inputCls} />
               </Field>
               <div className="sm:col-span-2">
-                <Field label="VAT / tax number" hint="optional — e.g. Saudi ZATCA VAT">
-                  <input value={profile.tax_id ?? ""} onChange={(e) => set({ tax_id: e.target.value })} disabled={busy !== null} placeholder="300123456700003" className={inputCls} />
+                <Field label="Business tax ID (optional)" hint="VAT/GST number for company invoices — leave blank if none">
+                  <input value={profile.tax_id ?? ""} onChange={(e) => set({ tax_id: e.target.value })} disabled={busy !== null} placeholder="e.g. 300123456700003" className={inputCls} />
                 </Field>
               </div>
             </div>
