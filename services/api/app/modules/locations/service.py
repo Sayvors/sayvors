@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.providers import GOOGLE, google_not_ready, locations_write_provider
 from ..localith.models import LocalithConnection
 from .models import LocationProfile
 
@@ -143,6 +144,13 @@ async def update_profile(
     if description is not None:
         description = description[:750]
         if connection is not None and connection.listing_id == listing_id:
+            # Provider seam: Localith today; the google branch lands with
+            # GBP API access (see app/core/providers.py). Checked BEFORE the
+            # try below so a premature flip fails loudly, never as a
+            # wrapped "Google update failed".
+            provider = locations_write_provider()
+            if provider == GOOGLE:
+                raise google_not_ready("locations write-back")
             try:
                 await asyncio.to_thread(
                     localith_service.embedsocial.update_listing,

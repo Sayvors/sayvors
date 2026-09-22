@@ -5,6 +5,11 @@ Localith's content_publishing_media endpoint right away (publish now) or
 when its time comes (background worker over due scheduled rows). Localith
 exposes no read/update/delete for posts, so edits and deletes apply to
 our stored copy only.
+
+Posts stay on Localith permanently by decision (Google's Posts API is
+hotel-only, so there is no native provider to seam to) — unlike locations
+write-back and media publishing, which have provider seams in
+app/core/providers.py for the GBP-API cutover.
 """
 import asyncio
 import logging

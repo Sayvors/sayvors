@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
+from ...core.providers import GOOGLE, google_not_ready, media_publish_provider
 from ..localith.models import LocalithConnection
 from ..notifications.service import notify
 from ..scheduling import (
@@ -322,6 +323,13 @@ async def _publish_media_inner(
     ).scalar_one_or_none()
     if conn is None:
         raise ValueError("Connect that branch in Localith before publishing media.")
+
+    # Provider seam: Localith today; the google branch lands with GBP API
+    # access (see app/core/providers.py). Checked BEFORE the try below so
+    # a premature flip fails loudly — never registered as a publish
+    # failure, never notified, never retried.
+    if media_publish_provider() == GOOGLE:
+        raise google_not_ready("media publishing")
 
     try:
         response = await asyncio.to_thread(
