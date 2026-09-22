@@ -485,8 +485,8 @@ export default function ReviewPlaygroundPage() {
                       <span className="font-bold text-ink">{iss.label}</span>
                       <span className="ml-2 text-ink/60">{iss.detail}</span>
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {iss.keywords.slice(0, 6).map((k) => (
-                          <span key={k} className="rounded bg-ink/[0.05] px-1.5 py-0.5 font-mono text-[10px] text-ink/50">
+                        {iss.keywords.slice(0, 6).map((k, ki) => (
+                          <span key={`${k}-${ki}`} className="rounded bg-ink/[0.05] px-1.5 py-0.5 font-mono text-[10px] text-ink/50">
                             {k}
                           </span>
                         ))}
