@@ -96,7 +96,12 @@ async def get_local_listings(
     try:
         listings = await service.list_local_listings()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Localith listings request failed: {type(e).__name__}: {e}")
+        # Log the cause, return an opaque message — provider errors can
+        # leak account/topology details to clients.
+        import logging
+
+        logging.getLogger(__name__).warning("Localith listings failed: %s", e)
+        raise HTTPException(status_code=502, detail="Localith listings request failed")
     return {"listings": listings}
 
 
@@ -109,7 +114,10 @@ async def test_listing(
     try:
         items = await service.list_local_items(body.listing_id, limit=1)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Localith rejected listing: {e}")
+        import logging
+
+        logging.getLogger(__name__).warning("Localith listing probe failed: %s", e)
+        raise HTTPException(status_code=502, detail="Localith rejected the listing")
     return {"ok": True, "sample_count": len(items)}
 
 
