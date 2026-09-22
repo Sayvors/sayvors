@@ -337,7 +337,10 @@ async def _publish_post_inner(
         raise ValueError("Post not found.")
     if post.status not in PUBLISHABLE_FROM:
         raise ValueError(f"Cannot publish a {post.status} post.")
-    await _require_localith_listing(db, user_id, post.listing_id)
+    connection = await _require_localith_listing(db, user_id, post.listing_id)
+    from ..localith.service import _connection_api_key
+
+    api_key = _connection_api_key(connection)
 
     sent = [u for u in (post.image_urls or []) if u.startswith("http")]
     skipped = len(post.image_urls or []) - len(sent)
@@ -355,6 +358,7 @@ async def _publish_post_inner(
             start_date=post.start_date.isoformat() if post.start_date else None,
             end_date=effective_end.isoformat() if effective_end else None,
             voucher_code=post.coupon_code or None,
+            api_key=api_key,
         )
     except Exception as e:
         _register_publish_failure(post, str(e)[:500])

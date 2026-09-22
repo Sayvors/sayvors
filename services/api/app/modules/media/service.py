@@ -355,6 +355,9 @@ async def _publish_media_inner(
     ).scalar_one_or_none()
     if conn is None:
         raise ValueError("Connect that branch in Localith before publishing media.")
+    from ..localith.service import _connection_api_key
+
+    api_key = _connection_api_key(conn)
 
     # Provider seam: Localith today; the google branch lands with GBP API
     # access (see app/core/providers.py). Checked BEFORE the try below so
@@ -370,6 +373,7 @@ async def _publish_media_inner(
             post_type="update",
             caption=item.caption or item.category.replace("_", " ").title(),
             image_urls=[item.image_url],
+            api_key=api_key,
         )
     except Exception as e:
         _register_publish_failure(item, str(e)[:500])

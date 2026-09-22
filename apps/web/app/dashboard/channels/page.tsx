@@ -49,6 +49,7 @@ interface LocalithConnection {
   listing_name: string;
   listing_google_id: string | null;
   last_synced_at: string | null;
+  has_api_key?: boolean;
   created_at: string;
   address?: string | null;
   phone_number?: string | null;
@@ -768,6 +769,48 @@ function ConnectHub() {
   // ── Localith: disconnect one branch (with destructive-data confirmation) ──
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
 
+  // ── Localith: tenant API key (account-wide, encrypted at rest) ──
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [showKeyForm, setShowKeyForm] = useState(false);
+  const [keyBusy, setKeyBusy] = useState(false);
+  const hasOwnKey = localithConns.some((c) => c.has_api_key);
+
+  const saveApiKey = async () => {
+    if (apiKeyDraft.trim().length < 8) {
+      setBanner({ kind: "err", text: "That API key looks too short — paste the full key." });
+      return;
+    }
+    setKeyBusy(true);
+    try {
+      await apiFetch("/api/v1/integrations/localith/connection/api-key", {
+        method: "PUT",
+        body: JSON.stringify({ api_key: apiKeyDraft.trim() }),
+      });
+      setLocalithConns((prev) => prev.map((c) => ({ ...c, has_api_key: true })));
+      setApiKeyDraft("");
+      setShowKeyForm(false);
+      setBanner({ kind: "ok", text: "Your Localith API key is saved (encrypted) — syncs and publishes now use it." });
+    } catch (e) {
+      setBanner({ kind: "err", text: errDetail(e, "Could not save the API key.") });
+    } finally {
+      setKeyBusy(false);
+    }
+  };
+
+  const removeApiKey = async () => {
+    setKeyBusy(true);
+    try {
+      await apiFetch("/api/v1/integrations/localith/connection/api-key", { method: "DELETE" });
+      setLocalithConns((prev) => prev.map((c) => ({ ...c, has_api_key: false })));
+      setShowKeyForm(false);
+      setBanner({ kind: "ok", text: "Own API key removed — back to the shared server key." });
+    } catch (e) {
+      setBanner({ kind: "err", text: errDetail(e, "Could not remove the API key.") });
+    } finally {
+      setKeyBusy(false);
+    }
+  };
+
   const disconnectLocalith = async () => {
     const listingId = confirmDisconnect;
     if (!listingId) return;
@@ -925,6 +968,69 @@ function ConnectHub() {
             >
               {busyBranch === "all" ? <LogoLoader size={14} /> : "Sync all"}
             </button>
+          </div>
+          <div className="mt-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] px-3 py-2 dark:border-fog/[0.08] dark:bg-fog/[0.03]">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[12px] font-semibold text-ink dark:text-fog">API key</span>
+              {hasOwnKey ? (
+                <span className="rounded-full bg-emerald-600/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                  own key in use
+                </span>
+              ) : (
+                <span className="text-[11px] text-ink/45 dark:text-fog/45">
+                  using the shared server key
+                </span>
+              )}
+              <span className="flex-1" />
+              {!showKeyForm && (
+                <button
+                  onClick={() => setShowKeyForm(true)}
+                  disabled={keyBusy || localithConns.length === 0}
+                  title={localithConns.length === 0 ? "Connect a listing first" : hasOwnKey ? "Rotate your key" : "Use your own Localith key"}
+                  className="shrink-0 rounded-lg border border-ink/10 px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-emerald-500/40 hover:text-emerald-700 disabled:opacity-50 dark:border-fog/10 dark:text-fog/60"
+                >
+                  {hasOwnKey ? "Rotate" : "Set key"}
+                </button>
+              )}
+              {hasOwnKey && !showKeyForm && (
+                <button
+                  onClick={() => void removeApiKey()}
+                  disabled={keyBusy}
+                  className="shrink-0 rounded-lg border border-ink/10 px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-red-400/50 hover:text-red-600 disabled:opacity-50 dark:border-fog/10 dark:text-fog/60"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            {showKeyForm && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  type="password"
+                  value={apiKeyDraft}
+                  onChange={(e) => setApiKeyDraft(e.target.value)}
+                  placeholder="Paste your Localith API key"
+                  autoComplete="off"
+                  className="min-w-0 flex-1 rounded-lg border border-ink/10 bg-white px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-emerald-500/50 dark:border-fog/10 dark:bg-ink dark:text-fog"
+                />
+                <button
+                  onClick={() => void saveApiKey()}
+                  disabled={keyBusy}
+                  className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {keyBusy ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => { setShowKeyForm(false); setApiKeyDraft(""); }}
+                  disabled={keyBusy}
+                  className="shrink-0 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink/50 disabled:opacity-50 dark:text-fog/50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            <p className="mt-1.5 text-[11px] leading-snug text-ink/40 dark:text-fog/40">
+              Optional. Your key is encrypted on our server and never shown again — it applies to every connected listing on your account.
+            </p>
           </div>
           <div className="mt-3 space-y-2">
             {listingRows.map((row) => (

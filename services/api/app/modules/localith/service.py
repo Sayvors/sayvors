@@ -50,37 +50,56 @@ def _key_present() -> bool:
     return bool(settings.LOCALITH_API_KEY.strip())
 
 
-async def list_local_listings() -> list[dict]:
+def _connection_api_key(connection) -> str | None:
+    """Decrypted per-connection key, or None → shared env key fallback.
+
+    The stored value is Fernet ciphertext from channels.service.encrypt_token;
+    a row that predates per-tenant keys (or a broken key) degrades to the
+    shared env key instead of failing the sync.
+    """
+    encrypted = getattr(connection, "api_key_encrypted", None)
+    if not encrypted:
+        return None
+    try:
+        from ..channels.service import decrypt_token
+
+        return decrypt_token(encrypted) or None
+    except Exception:
+        logger.warning("Failed to decrypt Localith connection key; using shared key")
+        return None
+
+
+async def list_local_listings(api_key: str | None = None) -> list[dict]:
     """List Localith listings for the configured account. Raises on failure."""
-    if not _key_present():
+    if not (api_key or _key_present()):
         raise RuntimeError("Server is missing LOCALITH_API_KEY in .env.")
-    return await asyncio.to_thread(embedsocial.fetch_listings)
+    return await asyncio.to_thread(embedsocial.fetch_listings, api_key)
 
 
-async def list_local_items(listing_id: str, limit: int = 50) -> list[dict]:
+async def list_local_items(listing_id: str, limit: int = 50, api_key: str | None = None) -> list[dict]:
     """List Localith review items for one listing."""
-    if not _key_present():
+    if not (api_key or _key_present()):
         raise RuntimeError("Server is missing LOCALITH_API_KEY in .env.")
-    return await asyncio.to_thread(embedsocial.fetch_items, limit, listing_id)
+    return await asyncio.to_thread(embedsocial.fetch_items, limit, listing_id, api_key)
 
 
-async def get_listing_detail(listing_id: str) -> dict:
+async def get_listing_detail(listing_id: str, api_key: str | None = None) -> dict:
     """Fetch the full profile snapshot for one listing."""
-    if not _key_present():
+    if not (api_key or _key_present()):
         raise RuntimeError("Server is missing LOCALITH_API_KEY in .env.")
-    return await asyncio.to_thread(embedsocial.fetch_listing_detail, listing_id)
+    return await asyncio.to_thread(embedsocial.fetch_listing_detail, listing_id, api_key)
 
 
-async def post_reply(item_id: str, text: str) -> dict:
+async def post_reply(item_id: str, text: str, api_key: str | None = None) -> dict:
     """Publish a reply to a review item through Localith.
 
     Their `POST /rest/v1/items/{id}/replies` posts the reply live on the
     connected Google Business Profile — this is how Localith-sourced
     drafts reach Google without native OAuth.
     """
-    if not _key_present():
+    if not (api_key or _key_present()):
         raise RuntimeError("Server is missing LOCALITH_API_KEY in .env.")
-    return await asyncio.to_thread(embedsocial.post_item_reply, item_id, text)
+    return await asyncio.to_thread(embedsocial.post_item_reply, item_id, text, 30, api_key)
 
 
 def _parse_dt(value: object) -> datetime | None:
@@ -418,7 +437,8 @@ async def _sync_single_connection(
                 raise RuntimeError("Channel vanished mid-sync — retry the sync.")
 
     # 1. Profile snapshot — every field the detail endpoint returns.
-    detail = await get_listing_detail(connection.listing_id)
+    api_key = _connection_api_key(connection)
+    detail = await get_listing_detail(connection.listing_id, api_key=api_key)
     if detail:
         apply_listing_snapshot(connection, detail)
         channel.display_name = connection.listing_name
@@ -426,7 +446,7 @@ async def _sync_single_connection(
 
     # 2. All review items, paginated (100/page, newest first).
     items = await asyncio.to_thread(
-        embedsocial.fetch_all_items, connection.listing_id
+        embedsocial.fetch_all_items, connection.listing_id, 50, api_key
     )
     synced = 0
     pulled: list = []
@@ -762,7 +782,7 @@ async def _sync_single_connection(
         )
         if auto_post:
             try:
-                await post_reply(review_id, reply_text)
+                await post_reply(review_id, reply_text, api_key=api_key)
             except Exception as e:
                 logger.warning("Localith auto-post failed review=%s item=%s: %s", review_id, review_id, e)
                 _save_reply_row(

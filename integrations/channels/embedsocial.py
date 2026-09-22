@@ -64,8 +64,9 @@ def _photo_http_url(value) -> str | None:
     return None
 
 
-def _config() -> tuple[str, str, str]:
-    key = os.environ.get("LOCALITH_API_KEY", "")
+def _config(key_override: str | None = None) -> tuple[str, str, str]:
+    # key_override: per-connection key (decrypted) — wins over env/settings.
+    key = key_override or os.environ.get("LOCALITH_API_KEY", "")
     base = os.environ.get("LOCALITH_BASE_URL", "")
     items_path = os.environ.get("LOCALITH_ITEMS_PATH", "")
     if not key or not base or not items_path:
@@ -96,8 +97,8 @@ def _http_url(url: str) -> str:
     return url
 
 
-def _get(path: str, params: dict | None = None, timeout: int = 30) -> dict | list:
-    base, key, _ = _config()
+def _get(path: str, params: dict | None = None, timeout: int = 30, api_key: str | None = None) -> dict | list:
+    base, key, _ = _config(api_key)
     url = _http_url(f"{base}/{path.lstrip('/')}")
     resp = httpx.get(
         url,
@@ -109,7 +110,7 @@ def _get(path: str, params: dict | None = None, timeout: int = 30) -> dict | lis
     return resp.json()
 
 
-def post_item_reply(item_id: str, text: str, timeout: int = 30) -> dict:
+def post_item_reply(item_id: str, text: str, timeout: int = 30, api_key: str | None = None) -> dict:
     """Create a reply for a review item: POST /rest/v1/items/{id}/replies.
 
     Localith is a Google Business Profile partner, so this reply goes
@@ -117,7 +118,7 @@ def post_item_reply(item_id: str, text: str, timeout: int = 30) -> dict:
     the API and per the official docs): {"comment": "<reply text>"}.
     Returns the created reply: {id, comment, updateTime}.
     """
-    base, key, _ = _config()
+    base, key, _ = _config(api_key)
     url = _http_url(f"{base}/rest/v1/items/{urllib.parse.quote(str(item_id), safe='')}/replies")
     headers = {**_HEADERS, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     resp = httpx.post(url, content=json.dumps({"comment": text}).encode("utf-8"), headers=headers, timeout=timeout)
@@ -145,13 +146,13 @@ def post_item_reply(item_id: str, text: str, timeout: int = 30) -> dict:
     return {}
 
 
-def fetch_items(limit: int = 50, listing_id: str | None = None) -> list[dict]:
+def fetch_items(limit: int = 50, listing_id: str | None = None, api_key: str | None = None) -> list[dict]:
     """Pull synced review items. Returns raw items as returned by Localith.
 
     Uses the official query params (page/pageSize/sourceId/sort). ``limit``
     is split across pages of at most 100.
     """
-    _base, _key, items_path = _config()
+    _base, _key, items_path = _config(api_key)
     out: list[dict] = []
     page = 1
     remaining = max(1, limit)
@@ -177,9 +178,9 @@ def fetch_items(limit: int = 50, listing_id: str | None = None) -> list[dict]:
     return out
 
 
-def fetch_all_items(listing_id: str | None = None, max_pages: int = 50) -> list[dict]:
+def fetch_all_items(listing_id: str | None = None, max_pages: int = 50, api_key: str | None = None) -> list[dict]:
     """Pull every review item, following pages until a short/empty page."""
-    _base, _key, items_path = _config()
+    _base, _key, items_path = _config(api_key)
     out: list[dict] = []
     for page in range(1, max_pages + 1):
         params: dict = {"page": page, "pageSize": 100, "sort": "-originalCreatedOn"}
@@ -204,8 +205,8 @@ def _unwrap_list(payload: dict | list) -> list[dict]:
     return []
 
 
-def _post(path: str, body: dict, timeout: int = 60) -> dict | list:
-    base, key, _ = _config()
+def _post(path: str, body: dict, timeout: int = 60, api_key: str | None = None) -> dict | list:
+    base, key, _ = _config(api_key)
     url = _http_url(f"{base}/{path.lstrip('/')}")
     resp = httpx.post(
         url,
@@ -241,6 +242,7 @@ def publish_media_post(
     end_date: str | None = None,
     voucher_code: str | None = None,
     extra: dict | None = None,
+    api_key: str | None = None,
 ) -> dict:
     """Publish (or schedule) a Google post through Localith.
 
@@ -278,7 +280,7 @@ def publish_media_post(
         body["voucherCode"] = voucher_code
     if extra:
         body.update(extra)
-    payload = _post("rest/v1/content_publishing_media", body)
+    payload = _post("rest/v1/content_publishing_media", body, api_key=api_key)
     return payload if isinstance(payload, dict) else {"result": payload}
 
 
@@ -332,10 +334,10 @@ def update_listing(listing_id: str, fields: dict) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def fetch_listings() -> list[dict]:
+def fetch_listings(api_key: str | None = None) -> list[dict]:
     """Pull connected locations / listings."""
-    base, key, _ = _config()
-    payload = _get("rest/v1/listings", {})
+    base, key, _ = _config(api_key)
+    payload = _get("rest/v1/listings", {}, api_key=api_key)
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict) and isinstance(payload.get("data"), list):
@@ -343,14 +345,14 @@ def fetch_listings() -> list[dict]:
     return []
 
 
-def fetch_listing_detail(listing_id: str) -> dict:
+def fetch_listing_detail(listing_id: str, api_key: str | None = None) -> dict:
     """Pull one listing with the full profile snapshot.
 
     Live shape (2026-09): id, googleId, name, storeCode, url, isVerified,
     isDisabled, isSuspended, phoneNumber, address, websiteUrl, totalReviews,
     averageRating, lastReviewOn, lastReplyOn.
     """
-    payload = _get(f"rest/v1/listings/{urllib.parse.quote(listing_id, safe='')}", {})
+    payload = _get(f"rest/v1/listings/{urllib.parse.quote(listing_id, safe='')}", {}, api_key=api_key)
     if isinstance(payload, dict):
         return payload
     return {}
