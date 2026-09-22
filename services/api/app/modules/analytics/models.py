@@ -39,6 +39,10 @@ class ReviewInsight(Base):
     rating: Mapped[int] = mapped_column(Integer)
     review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Reviewer profile photo (Google profilePhotoUrl on the native path;
+    # upstream photo field on Localith when present). UI falls back to
+    # initials when null.
+    reviewer_photo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # positive / neutral / negative (LLM or heuristic)
     sentiment: Mapped[str] = mapped_column(
         Enum("positive", "neutral", "negative", name="review_sentiment"),
@@ -72,6 +76,10 @@ class ReviewInsight(Base):
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     previous_review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     previous_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Merchant dismissed the draft (rejected in Outbox): sync/worker must
+    # not auto-draft again. Cleared when the reviewer edits the review
+    # (new content) — manual regenerate/retry bypass it regardless.
+    draft_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     # Link to the review on Google (Localith `reviewLink`), for "View on Google".
     review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # When Google last updated the review (bucket date for daily rollups)

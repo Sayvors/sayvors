@@ -252,6 +252,40 @@ def _photo_for_upload(url: str) -> dict:
     }
 
 
+@pytest.mark.asyncio
+async def test_upload_rejects_polyglot_html_as_jpg(monkeypatch, tmp_path, client):
+    """HTML bytes under a .jpg name (lying image/ header) must be refused."""
+    from pathlib import Path as _Path
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    r = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("x.jpg", b"<html><script>alert(1)</script></html>", "image/jpeg")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 400
+    # Nothing was written to the public media dir.
+    assert list(_Path(tmp_path).rglob("*")) == []
+
+
+@pytest.mark.asyncio
+async def test_upload_stores_content_type_derived_from_extension(monkeypatch, tmp_path, client):
+    """The stored content type comes from the extension, never the header."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    png_magic = b"\x89PNG\r\n\x1a\n" + b"rest-of-png"
+    r = client.post(
+        "/api/v1/media/upload",
+        files={"file": ("pic.png", png_magic, "image/x-attacker-chosen")},
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200
+    assert r.json()["content_type"] == "image/png"
+
+
 async def _notif_types(db, user_id):
     from sqlalchemy import select as _select
 
@@ -314,3 +348,11 @@ async def test_media_schedule_create_notifies(db, user_id):
     res = await media.create_media(db, user_id, _photo(action="schedule", scheduled_on=future))
     assert res["media"]["status"] == "scheduled"
     assert await _notif_types(db, user_id) == ["media_scheduled"]
+
+
+@pytest.mark.asyncio
+async def test_sync_endpoint_admin_only(client):
+    """C1: /sync triggers a GLOBAL publish/delete pass — only admins may call
+    it. The real worker runs its own loop (posts/worker.py)."""
+    r = client.post("/api/v1/media/sync", headers={"host": "localhost"})
+    assert r.status_code == 401

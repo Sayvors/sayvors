@@ -7,7 +7,6 @@ from sqlalchemy import select
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
-from ...config import settings
 from . import benchmark, growth, intelligence, service, summary
 from .models import ReviewInsight
 from .schemas import (
@@ -34,22 +33,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
 
-from ...config import settings
-
-DEMO_USER_ID_FALLBACK = "ce2fc147"
-DEMO_USER_ID = DEMO_USER_ID_FALLBACK
-
-
-def _resolve_uid(db: AsyncSession, user) -> str:
-    if settings.DEMO_MODE:
-        # Demo mode MUST only ever run on an isolated demo deployment with a
-        # seeded demo account. It substitutes a fixed demo user id — never a
-        # dynamically resolved tenant (an earlier "user with most rows"
-        # resolver was a cross-tenant leak and has been removed).
-        return DEMO_USER_ID_FALLBACK
-    return user.id
-
-
 @router.get("/overview", response_model=OverviewResponse)
 async def get_overview(
     channel_id: str | None = Query(None),
@@ -58,7 +41,7 @@ async def get_overview(
     db: AsyncSession = Depends(get_db),
 ):
     """KPI block: ratings, sentiment, response metrics, scores, Google performance."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     return await service.get_overview(db, uid, channel_id, days)
 
 
@@ -70,7 +53,7 @@ async def get_timeseries(
     db: AsyncSession = Depends(get_db),
 ):
     """Daily rollup series for charts (reviews, sentiment, impressions, actions)."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     rows = await service.get_timeseries(db, uid, channel_id, days)
     return TimeseriesResponse(
         points=[
@@ -107,7 +90,6 @@ async def list_review_insights(
     db: AsyncSession = Depends(get_db),
 ):
     """Enriched reviews for the AI Review Inbox (filter/sort/paginate)."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
     items, total = await service.list_insights(
         db,
         user.id,
@@ -137,15 +119,11 @@ async def skip_review(
     The cached insight stays visible but is treated as unavailable:
     it no longer counts toward "unanswered" and cannot be replied to.
     """
-    if settings.DEMO_MODE:
-        # Demo data belongs to the demo tenant: never let a demo viewer
-        # mutate another account's rows.
-        raise HTTPException(status_code=403, detail="Demo mode is read-only")
     row = await db.execute(select(ReviewInsight).where(ReviewInsight.id == insight_id))
     insight = row.scalar_one_or_none()
     if insight is None:
         raise HTTPException(status_code=404, detail="Review insight not found")
-    if insight.user_id != (DEMO_USER_ID if settings.DEMO_MODE else user.id):
+    if insight.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not your review")
     insight.skipped = True
     db.add(insight)
@@ -165,13 +143,11 @@ async def dismiss_review_edit(
     Sync-time content comparison flags edited reviews; this endpoint is the
     manual acknowledge path (posting an updated reply clears it too).
     """
-    if settings.DEMO_MODE:
-        raise HTTPException(status_code=403, detail="Demo mode is read-only")
     row = await db.execute(select(ReviewInsight).where(ReviewInsight.id == insight_id))
     insight = row.scalar_one_or_none()
     if insight is None:
         raise HTTPException(status_code=404, detail="Review insight not found")
-    if insight.user_id != (DEMO_USER_ID if settings.DEMO_MODE else user.id):
+    if insight.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not your review")
     insight.edited = False
     insight.edited_at = None
@@ -228,7 +204,7 @@ async def get_topics(
     db: AsyncSession = Depends(get_db),
 ):
     """What customers talk about: frequency, sentiment, trend, emerging topics."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     return await intelligence.get_topics(db, uid, channel_id, days)
 
 
@@ -240,7 +216,7 @@ async def get_problems(
     db: AsyncSession = Depends(get_db),
 ):
     """Most common problems, AI-prioritized by impact (volume x severity x growth)."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     return await intelligence.get_problems(db, uid, channel_id, days)
 
 
@@ -252,7 +228,7 @@ async def get_products(
     db: AsyncSession = Depends(get_db),
 ):
     """Product/service intelligence: mentions, sentiment, loved vs criticized."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     return await intelligence.get_products(db, uid, channel_id, days)
 
 
@@ -266,7 +242,7 @@ async def get_visibility(
     db: AsyncSession = Depends(get_db),
 ):
     """Google visibility: impressions and conversion into customer actions."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     return await growth.get_visibility(db, uid, channel_id, days)
 
 
@@ -289,7 +265,7 @@ async def get_opportunities(
     db: AsyncSession = Depends(get_db),
 ):
     """Prioritized growth actions derived from live business data."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     return await growth.get_opportunities(db, uid, channel_id, days)
 
 
@@ -301,7 +277,7 @@ async def get_keywords(
     db: AsyncSession = Depends(get_db),
 ):
     """Search keywords tenants were found by (native Google only)."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     return await growth.get_keywords(db, uid, channel_id, days)
 
 
@@ -313,7 +289,7 @@ async def get_benchmark_comparison(
     db: AsyncSession = Depends(get_db),
 ):
     """Benchmark the tenant against the second demo business profile (stand-in for comparable businesses)."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     return await benchmark.get_benchmark(db, uid, channel_id, days)
 
 
@@ -325,5 +301,5 @@ async def get_executive_summary(
     db: AsyncSession = Depends(get_db),
 ):
     """AI-composed business briefing pinned to the top of the dashboard."""
-    uid = DEMO_USER_ID if settings.DEMO_MODE else user.id
+    uid = user.id
     return await summary.get_executive_summary(db, uid, channel_id, days)

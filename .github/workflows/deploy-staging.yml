@@ -16,6 +16,20 @@ env:
   IMAGE: ghcr.io/sayvors/sayvors-api
 
 jobs:
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Working-tree scan only (--no-git): catches newly committed secrets
+      # without failing on historical audit-doc mentions of old findings.
+      - name: Gitleaks secret scan
+        run: |
+          set -e
+          tag=$(curl -sSL -o /dev/null -w '%{url_effective}' https://github.com/gitleaks/gitleaks/releases/latest | grep -o '[^/]*$')
+          curl -sSL --fail "https://github.com/gitleaks/gitleaks/releases/download/${tag}/gitleaks_${tag#v}_linux_x64.tar.gz" | tar xz -C /tmp gitleaks
+          /tmp/gitleaks detect --no-git --source . -v --redact
+
   build:
     runs-on: ubuntu-latest
     steps:

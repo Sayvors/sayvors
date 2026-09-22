@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { formatMs, formatTokens, getUsageSummary, type UsageSummary } from "@/lib/api-usage";
 
-const DAY_OPTIONS = [7, 30, 90];
+const DAY_OPTIONS = [
+  { days: 1, label: "1d" },
+  { days: 7, label: "7d" },
+  { days: 30, label: "30d" },
+  { days: 90, label: "90d" },
+  { days: 365, label: "All" },
+];
 
 function AreaChart({ points }: { points: { x: string; y: number }[] }) {
   const W = 560;
@@ -120,17 +126,17 @@ export default function UsagePage() {
             </p>
           </div>
           <div className="flex gap-1.5">
-            {DAY_OPTIONS.map((d) => (
+            {DAY_OPTIONS.map((o) => (
               <button
-                key={d}
+                key={o.days}
                 type="button"
-                onClick={() => setDays(d)}
+                onClick={() => setDays(o.days)}
                 className={[
                   "rounded-lg px-3 py-1.5 text-[12px] font-semibold transition",
-                  days === d ? "bg-deep-violet text-white" : "bg-white text-ink/60 hover:bg-ink/[0.04]",
+                  days === o.days ? "bg-deep-violet text-white" : "bg-white text-ink/60 hover:bg-ink/[0.04]",
                 ].join(" ")}
               >
-                {d}d
+                {o.label}
               </button>
             ))}
           </div>
@@ -222,6 +228,42 @@ export default function UsagePage() {
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Per day usage */}
+            <div className="rounded-2xl border-2 border-white bg-white/80 p-4">
+              <h2 className="text-[16px] font-bold text-ink">Per day usage</h2>
+              <p className="text-[12px] text-ink/50">Day-by-day calls, tokens, and latency.</p>
+              {daily.length === 0 ? (
+                <p className="mt-3 text-[12px] text-ink/40">No data.</p>
+              ) : (
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-left text-[12px]">
+                    <thead>
+                      <tr className="border-b border-ink/[0.08] text-[10px] uppercase tracking-[0.12em] text-ink/45">
+                        <th className="py-2 pr-3 font-bold">Day</th>
+                        <th className="py-2 pr-3 text-right font-bold">Calls</th>
+                        <th className="py-2 pr-3 text-right font-bold">Prompt</th>
+                        <th className="py-2 pr-3 text-right font-bold">Completion</th>
+                        <th className="py-2 pr-3 text-right font-bold">Avg latency</th>
+                        <th className="py-2 text-right font-bold">Total tokens</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...daily].reverse().map((d) => (
+                        <tr key={d.day} className="border-b border-ink/[0.04] last:border-0">
+                          <td className="py-2 pr-3 font-semibold text-ink">{d.day.slice(5)}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55">{d.calls}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55">{formatTokens(d.prompt_tokens ?? 0)}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55">{formatTokens(d.completion_tokens ?? 0)}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-ink/55">{formatMs(d.avg_latency_ms ?? 0)}</td>
+                          <td className="py-2 text-right font-bold tabular-nums text-ink">{formatTokens(d.total_tokens)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </>
         ) : null}

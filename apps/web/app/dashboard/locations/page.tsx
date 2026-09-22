@@ -74,6 +74,7 @@ interface FullProfile {
   hours: { regular?: Record<string, { open: string; close: string; closed: boolean }>; special?: { date: string; hours: string; reason: string }[]; more?: { type: string; open: string; close: string }[] };
   service_area: string[];
   attributes: Record<string, string>;
+  opening_date?: string | null;
   google_synced: string[];
   updated_at?: string | null;
 }
@@ -168,7 +169,8 @@ export default function LocationsPage() {
         body: JSON.stringify(patch),
       });
       setFullProfile(updated as FullProfile);
-      showBanner("ok", okText);
+      const synced = (updated as FullProfile)?.google_synced ?? [];
+      showBanner("ok", synced.length > 0 ? `${okText} · Synced to Google (${synced.join(", ")}).` : okText);
     } catch (e) {
       showBanner("err", e instanceof Error ? e.message.slice(0, 160) : "Could not save.");
     }
@@ -836,13 +838,14 @@ export default function LocationsPage() {
             {activeTab === "description" && (
               <DescriptionTab
                 initial={isBulk ? "" : fullProfile?.description ?? ""}
+                initialOpeningDate={isBulk ? null : fullProfile?.opening_date ?? null}
                 bulk={bulk}
-                onSave={(description) =>
+                onSave={(description, openingDate) =>
                   isBulk
-                    ? bulkSaveProfile("description", { description }, [
+                    ? bulkSaveProfile("description", { description, opening_date: openingDate }, [
                         `Description → ${description.slice(0, 120)}${description.length > 120 ? "…" : ""}`,
                       ])
-                    : saveProfile({ description }, "Description saved to Google via Localith.")
+                    : saveProfile({ description, opening_date: openingDate }, "Description saved.")
                 }
               />
             )}
@@ -1017,9 +1020,18 @@ function CategoriesTab({ initial, onSave, bulk }: {
         <SourceBadge google={false} />
       </div>
       <Field label="Primary Category" varies={bulk?.varies.has("primary") ?? false}>
-        <input value={primary} onChange={(e) => setPrimary(e.target.value)} className="input-field" />
+        <input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder="e.g. Software company" className="input-field" />
+        <p className="mt-1 text-[11px] text-ink/40 dark:text-fog/40">One main category — this is how Google classifies and shows your business.</p>
       </Field>
       <Field label="Additional Categories" varies={bulk?.varies.has("additional") ?? false}>
+        <p className="mb-2 text-[11px] text-ink/40 dark:text-fog/40">Other categories you also fit. Tap an example to add it:</p>
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {["Restaurant", "Cafe", "Dental clinic", "Pharmacy", "Beauty salon", "Car wash"].filter((c) => !additional.includes(c)).map((c) => (
+            <button key={c} onClick={() => setAdditional([...additional, c])} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-medium text-ink/60 transition hover:bg-deep-violet/10 hover:text-deep-violet dark:bg-fog/[0.06] dark:text-fog/60">
+              + {c}
+            </button>
+          ))}
+        </div>
         <div className="flex flex-wrap gap-2 mb-2">
           {additional.map((cat) => (
             <span key={cat} className="inline-flex items-center gap-1 rounded-full bg-deep-violet/10 px-2.5 py-1 text-[12px] font-medium text-deep-violet">
@@ -1030,8 +1042,8 @@ function CategoriesTab({ initial, onSave, bulk }: {
             </span>
           ))}
         </div>
-        <div className="flex gap-2">
-          <input value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCategory()} placeholder="Add category..." className="input-field flex-1" />
+        <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+          <input value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCategory()} placeholder="Add category..." className="input-field" />
           <button onClick={addCategory} className="btn-secondary">Add</button>
         </div>
       </Field>
@@ -1083,6 +1095,7 @@ function HoursTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Untick Open for closed days. Overnight ranges (e.g. 20:00–02:00) roll over to the next day.</p>
       <div className="space-y-2">
         {HOURS_DAYS.map((day) => (
           <div key={day} className="flex items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
@@ -1156,11 +1169,12 @@ function SpecialHoursTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. 2026-09-23, hours “closed” for a full-day closure, or “09:00 - 13:00” for a short day.</p>
       {entries.map((entry, i) => (
-        <div key={i} className="flex items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
-          <input type="date" value={entry.date} onChange={(e) => updateEntry(i, "date", e.target.value)} className="input-field w-40" />
-          <input value={entry.hours} onChange={(e) => updateEntry(i, "hours", e.target.value)} placeholder="09:00 - 17:00" className="input-field w-40" />
-          <input value={entry.reason} onChange={(e) => updateEntry(i, "reason", e.target.value)} placeholder="Reason (e.g. Holiday)" className="input-field flex-1" />
+        <div key={i} className="grid grid-cols-[150px_150px_1fr_auto] items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+          <input type="date" value={entry.date} onChange={(e) => updateEntry(i, "date", e.target.value)} className="input-field" />
+          <input value={entry.hours} onChange={(e) => updateEntry(i, "hours", e.target.value)} placeholder="09:00 - 17:00" className="input-field" />
+          <input value={entry.reason} onChange={(e) => updateEntry(i, "reason", e.target.value)} placeholder="Reason (e.g. Holiday)" className="input-field" />
           <button onClick={() => removeEntry(i)} className="mt-1 text-ink/30 transition hover:text-red-500 dark:text-fog/30">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
@@ -1217,17 +1231,18 @@ function MoreHoursTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. Delivery 10:00–22:00, Drive-through 08:00–23:00 — pick the service type, then its hours.</p>
       {entries.length === 0 && (
         <p className="text-[12px] text-ink/35 dark:text-fog/35">No additional hours set. Add entries for services like delivery or drive-through.</p>
       )}
       {entries.map((entry, i) => (
-        <div key={i} className="flex items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
-          <select value={entry.type} onChange={(e) => updateEntry(i, "type", e.target.value)} className="input-field w-40">
+        <div key={i} className="grid grid-cols-[150px_120px_auto_120px_auto] items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+          <select value={entry.type} onChange={(e) => updateEntry(i, "type", e.target.value)} className="input-field">
             {MORE_HOURS_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
           </select>
-          <input type="time" value={entry.open} onChange={(e) => updateEntry(i, "open", e.target.value)} className="input-field w-28" />
+          <input type="time" value={entry.open} onChange={(e) => updateEntry(i, "open", e.target.value)} className="input-field" />
           <span className="text-[12px] text-ink/40">to</span>
-          <input type="time" value={entry.close} onChange={(e) => updateEntry(i, "close", e.target.value)} className="input-field w-28" />
+          <input type="time" value={entry.close} onChange={(e) => updateEntry(i, "close", e.target.value)} className="input-field" />
           <button onClick={() => removeEntry(i)} className="text-ink/30 transition hover:text-red-500 dark:text-fog/30">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
@@ -1283,6 +1298,7 @@ function ServiceAreaTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Cities, districts or regions — e.g. Riyadh, Jeddah, Al Malqa district.</p>
       <div className="flex flex-wrap gap-2 mb-3">
         {areas.map((area) => (
           <span key={area} className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[12px] font-medium text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">
@@ -1293,8 +1309,8 @@ function ServiceAreaTab({ initial, onSave, bulk }: {
           </span>
         ))}
       </div>
-      <div className="flex gap-2">
-        <input value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addArea()} placeholder="Add area..." className="input-field flex-1" />
+      <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+        <input value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addArea()} placeholder="e.g. Riyadh, Jeddah, Al Malqa district" className="input-field" />
         <button onClick={addArea} className="btn-secondary">Add</button>
       </div>
       <div className="flex justify-end pt-2">
@@ -1313,7 +1329,7 @@ function AttributesTab({ initial, onSave, bulk }: {
 }) {
   const [attrs, setAttrs] = useState<Record<string, string>>(initial ?? {});
   const [newKey, setNewKey] = useState("");
-  const [newValue, setNewValue] = useState("");
+  const [newValue, setNewValue] = useState("yes");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -1325,9 +1341,9 @@ function AttributesTab({ initial, onSave, bulk }: {
   const addAttr = () => {
     const k = newKey.trim();
     if (k && !(k in attrs)) {
-      setAttrs({ ...attrs, [k]: newValue.trim() });
+      setAttrs({ ...attrs, [k]: newValue.trim() || "yes" });
       setNewKey("");
-      setNewValue("");
+      setNewValue("yes");
     }
   };
 
@@ -1349,11 +1365,19 @@ function AttributesTab({ initial, onSave, bulk }: {
           <SourceBadge google={false} />
         </div>
       </div>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Only well-known Google attributes sync (accessibility, parking, Wi-Fi…). Unknown names are stored but skipped on sync. Tap an example to fill the row:</p>
+      <div className="flex flex-wrap gap-1.5">
+        {[["Wheelchair accessible entrance", "yes"], ["Free WiFi", "yes"], ["Outdoor seating", "yes"], ["Accepts credit cards", "yes"]].filter(([k]) => !(k in attrs)).map(([k, v]) => (
+          <button key={k} onClick={() => { setNewKey(k); setNewValue(v); }} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-medium text-ink/60 transition hover:bg-deep-violet/10 hover:text-deep-violet dark:bg-fog/[0.06] dark:text-fog/60">
+            + {k}: {v}
+          </button>
+        ))}
+      </div>
       <div className="space-y-3">
         {Object.entries(attrs).length === 0 && <p className="text-[12px] text-ink/35 dark:text-fog/35">No attributes stored yet.</p>}
         {Object.entries(attrs).map(([key, value]) => (
-          <div key={key} className="grid grid-cols-[160px_1fr_auto] items-center gap-3">
-            <span className="text-[13px] font-medium text-ink dark:text-fog">{key}</span>
+          <div key={key} className="grid grid-cols-[1fr_160px_auto] items-center gap-3">
+            <span className="truncate text-[13px] font-medium text-ink dark:text-fog" title={key}>{key}</span>
             <input
               value={value}
               onChange={(e) => setAttrs({ ...attrs, [key]: e.target.value })}
@@ -1369,10 +1393,14 @@ function AttributesTab({ initial, onSave, bulk }: {
           </div>
         ))}
       </div>
-      <div className="flex gap-2">
-        <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="Attribute name..." className="input-field w-40" />
-        <input value={newValue} onChange={(e) => setNewValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="Value..." className="input-field flex-1" />
-        <button onClick={addAttr} className="btn-secondary">Add</button>
+      <div className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[1fr_140px_auto]">
+        <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. Wheelchair accessible entrance" className="input-field" />
+        <select value={newValue} onChange={(e) => setNewValue(e.target.value)} aria-label="Attribute value" className="input-field cursor-pointer text-center text-[12px] font-bold">
+          {["yes", "no", "limited"].map((v) => (
+            <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</option>
+          ))}
+        </select>
+        <button onClick={addAttr} className="btn-secondary justify-self-start sm:justify-self-auto">Add</button>
       </div>
       <div className="flex justify-end pt-2">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
@@ -1383,24 +1411,27 @@ function AttributesTab({ initial, onSave, bulk }: {
   );
 }
 
-function DescriptionTab({ initial, onSave, bulk }: {
+function DescriptionTab({ initial, initialOpeningDate, onSave, bulk }: {
   initial?: string;
-  onSave: (description: string) => Promise<void>;
+  initialOpeningDate?: string | null;
+  onSave: (description: string, openingDate: string | null) => Promise<void>;
   bulk?: BulkScope | null;
 }) {
   const [desc, setDesc] = useState(initial ?? "");
+  const [openingDate, setOpeningDate] = useState(initialOpeningDate ?? "");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
     setDesc(initial ?? "");
+    setOpeningDate(initialOpeningDate ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(initial)]);
+  }, [JSON.stringify(initial), initialOpeningDate]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await onSave(desc.trim());
+      await onSave(desc.trim(), openingDate || null);
     } finally {
       setSaving(false);
     }
@@ -1420,9 +1451,22 @@ function DescriptionTab({ initial, onSave, bulk }: {
         onChange={(e) => setDesc(e.target.value)}
         rows={6}
         maxLength={750}
+        placeholder="Example: Bright dental clinic in Riyadh — checkups, whitening and braces. Open Mon–Sat 9–6, emergency slots daily."
         className="w-full resize-y rounded-xl border border-ink/[0.08] bg-white p-3 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
       />
-      <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">{desc.length}/750</p>
+      <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">{desc.length}/750 · first ~250 characters show in the Knowledge panel — put the essentials first</p>
+      <div>
+        <label className="mb-1 block text-[12px] font-medium text-ink/60 dark:text-fog/60">
+          Opening date
+          <span className="ml-1.5 font-normal text-ink/40 dark:text-fog/40">when the business opened — shown on Google</span>
+        </label>
+        <input
+          type="date"
+          value={openingDate}
+          onChange={(e) => setOpeningDate(e.target.value)}
+          className="w-full max-w-xs rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+        />
+      </div>
       <div className="flex justify-end pt-2">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
           {saving ? "Saving..." : bulk ? `Apply to ${bulk.branches.length} branches` : "Save Description"}
@@ -1436,8 +1480,9 @@ function GoogleUpdatesTab() {
   const [updates, setUpdates] = useState<{ id: string; field: string; current: string; proposed: string; status: string }[]>([]);
 
   return (
-    <div className="space-y-5">
-      <SectionTitle title="Google Updates" subtitle="Review changes proposed by Google based on external sources." />
+      <div className="space-y-5">
+        <SectionTitle title="Google Updates" subtitle="Review changes proposed by Google based on external sources." />
+        <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. Google may propose new hours, a different category, or a corrected address — accept or reject each one here.</p>
       {updates.length === 0 ? (
         <div className="flex flex-col items-center py-10">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 h-8 w-8 text-ink/20 dark:text-fog/20">

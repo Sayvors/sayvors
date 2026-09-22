@@ -28,8 +28,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from ...database import async_session
-from ..channels.models import ReviewReply
+from ..channels.models import Channel, ReviewReply
 from ..kafka.client import create_consumer
+from ..notifications.service import notify
 from ..outbox.service import enqueue_event
 from .enrichment import enrich_review
 from .models import LocationDailyMetric, ReviewInsight
@@ -38,6 +39,16 @@ logger = logging.getLogger(__name__)
 
 TOPIC = "review-events"
 GROUP_ID = "analytics-enricher"
+
+
+async def _channel_owner(db, channel_id: str) -> str | None:
+    """Authoritative tenant for a channel. Kafka payloads are untrusted —
+    anyone with topic access can forge user_id, so consumers re-resolve
+    ownership from the DB and ignore the payload claim on mismatch."""
+    row = (
+        await db.execute(select(Channel.user_id).where(Channel.id == channel_id))
+    ).scalar_one_or_none()
+    return row
 
 
 def _iso_to_dt(value) -> datetime | None:
@@ -57,6 +68,16 @@ async def _handle_discovered(payload: dict) -> None:
         return
 
     async with async_session() as db:
+        # B3: the channel row — not the event payload — decides the tenant.
+        # Unknown channel → drop (cannot attribute). Forged user_id → DB wins.
+        owner = await _channel_owner(db, channel_id)
+        if not owner:
+            logger.warning("Dropping review.discovered for unknown channel %s", channel_id)
+            return
+        if payload.get("user_id") and payload["user_id"] != owner:
+            logger.warning("Tenant mismatch on review.discovered: payload claims %s, "
+                           "channel %s belongs to %s — using channel owner",
+                           payload.get("user_id"), channel_id, owner)
         existing = (
             await db.execute(
                 select(ReviewInsight).where(
@@ -66,19 +87,63 @@ async def _handle_discovered(payload: dict) -> None:
             )
         ).scalar_one_or_none()
 
-        if existing and existing.enrichment_status == "done":
-            return  # idempotent replay
+        # Reviewers can edit their review after the first sync. The pollers
+        # send no "edited" marker, so content comparison is the detector:
+        # a rating change or a non-empty text change means an edit.
+        new_rating = int(payload.get("rating") or 1)
+        new_text = payload.get("text")
+        content_changed = False
+        already_edited = False
+        if existing is not None:
+            already_edited = bool(existing.edited)
+            content_changed = (
+                new_rating != existing.rating
+                or (bool(existing.review_text) and (new_text or None) != (existing.review_text or None))
+            )
+            if existing.enrichment_status == "done" and not content_changed:
+                return  # idempotent replay
+            if content_changed and not existing.edited:
+                # First detection — snapshot what we had on file.
+                existing.previous_rating = existing.rating
+                existing.previous_review_text = existing.review_text
 
         insight = existing or ReviewInsight(
             id=str(uuid.uuid4()),
             channel_id=channel_id,
             review_id=review_id,
         )
-        insight.user_id = payload.get("user_id", insight.user_id or "")
-        insight.rating = int(payload.get("rating") or 1)
-        insight.review_text = payload.get("text")
+        insight.user_id = owner
+        insight.rating = new_rating
+        insight.review_text = new_text
         insight.reviewer_name = payload.get("reviewer_name")
+        if not insight.reviewer_photo_url and payload.get("reviewer_photo_url"):
+            insight.reviewer_photo_url = payload.get("reviewer_photo_url")
         insight.review_updated_at = _iso_to_dt(payload.get("review_updated_at"))
+
+        if content_changed:
+            insight.edited = True
+            insight.edited_at = datetime.now(timezone.utc)
+            if not already_edited and insight.user_id:
+                reviewer = insight.reviewer_name or "A customer"
+                if (
+                    insight.previous_rating is not None
+                    and insight.previous_rating != insight.rating
+                ):
+                    title = (
+                        f"{reviewer} changed their rating "
+                        f"★{insight.previous_rating} → ★{insight.rating}"
+                    )
+                else:
+                    title = f"{reviewer} edited their ★{insight.rating} review"
+                await notify(
+                    db, insight.user_id, "review_edited",
+                    title,
+                    (insight.review_text or "(text removed)")[:160],
+                    data={"review_id": review_id, "channel_id": channel_id,
+                          "rating": insight.rating,
+                          "previous_rating": insight.previous_rating},
+                    href="/dashboard/reviews?tab=edited",
+                )
 
         result = await enrich_review(
             insight.rating, insight.review_text, insight.reviewer_name,
@@ -119,6 +184,8 @@ async def _handle_replied(payload: dict) -> None:
 
     replied_at = _iso_to_dt(payload.get("replied_at")) or datetime.now(timezone.utc)
     async with async_session() as db:
+        # B3: attribute the rollup to the channel owner, never the payload.
+        owner = await _channel_owner(db, channel_id)
         insight = (
             await db.execute(
                 select(ReviewInsight).where(
@@ -130,12 +197,20 @@ async def _handle_replied(payload: dict) -> None:
         if insight:
             insight.replied = True
             insight.replied_at = replied_at
+            if payload.get("status") == "posted":
+                # A reply went live on Google — if it was generated after a
+                # reviewer edit, the edit has been addressed. Pending drafts
+                # keep the flag until the merchant actually publishes.
+                insight.edited = False
+                insight.edited_at = None
+                insight.previous_rating = None
+                insight.previous_review_text = None
             insight.enrichment_status = insight.enrichment_status or "pending"
             db.add(insight)
             await db.commit()
             bucket_date = (insight.review_updated_at or insight.created_at).date()
     if insight:
-        await recompute_daily_rollup(channel_id, payload.get("user_id", ""), bucket_date)
+        await recompute_daily_rollup(channel_id, owner or insight.user_id, bucket_date)
 
 
 async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> None:
@@ -243,8 +318,12 @@ async def _process_message(value: bytes | None) -> None:
                 from datetime import date as date_cls
 
                 year, month, day = (int(p) for p in bucket.split("-"))
+                # B3: resolve the owner from the channel; payload claim ignored.
+                async with async_session() as _db:
+                    _owner = await _channel_owner(_db, data.get("channel_id", ""))
                 await recompute_daily_rollup(
-                    data.get("channel_id", ""), data.get("user_id", ""), date_cls(year, month, day)
+                    data.get("channel_id", ""), _owner or data.get("user_id", ""),
+                    date_cls(year, month, day)
                 )
         elif event_type == "review.replied":
             await _handle_replied(payload)

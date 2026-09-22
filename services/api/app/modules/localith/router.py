@@ -1,9 +1,9 @@
-"""Localith connect flow — single-shared-key mode.
+"""Localith connect flow — per-tenant API keys (Fernet-encrypted on the
+connection rows) with the shared LOCALITH_API_KEY env as fallback.
 
-The API key is configured server-side (LOCALITH_API_KEY). Each Sayvors user
-saves *one* location_id chosen from their Localith account. Per-tenant
-keys can be added later by extending LocalithConnection with an encrypted
-key column.
+Each Sayvors user saves *one* location_id chosen from their Localith
+account. The tenant's API key is account-wide, so setting it writes the
+same ciphertext to every connection row the user owns.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_current_user, get_db
 from ..analytics.models import ReviewInsight
 from ..channels.models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
+from ..channels.service import encrypt_token as _encrypt_localith_key
 from ..locations.models import LocationProfile
 from ..users.models import User
 from . import service
@@ -53,6 +54,8 @@ class ConnectionResponse(BaseModel):
     metrics_start: str | None = None
     metrics_end: str | None = None
     metrics_synced_at: str | None = None
+    # Per-tenant key present (account-wide for this user's rows). Never the key itself.
+    has_api_key: bool = False
 
 
 def _serialize(c: LocalithConnection) -> ConnectionResponse:
@@ -79,6 +82,7 @@ def _serialize(c: LocalithConnection) -> ConnectionResponse:
         metrics_start=c.metrics_start.isoformat() if c.metrics_start else None,
         metrics_end=c.metrics_end.isoformat() if c.metrics_end else None,
         metrics_synced_at=c.metrics_synced_at.isoformat() if c.metrics_synced_at else None,
+        has_api_key=bool(getattr(c, "api_key_encrypted", None)),
     )
 
 
@@ -96,7 +100,12 @@ async def get_local_listings(
     try:
         listings = await service.list_local_listings()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Localith listings request failed: {type(e).__name__}: {e}")
+        # Log the cause, return an opaque message — provider errors can
+        # leak account/topology details to clients.
+        import logging
+
+        logging.getLogger(__name__).warning("Localith listings failed: %s", e)
+        raise HTTPException(status_code=502, detail="Localith listings request failed")
     return {"listings": listings}
 
 
@@ -109,7 +118,10 @@ async def test_listing(
     try:
         items = await service.list_local_items(body.listing_id, limit=1)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Localith rejected listing: {e}")
+        import logging
+
+        logging.getLogger(__name__).warning("Localith listing probe failed: %s", e)
+        raise HTTPException(status_code=502, detail="Localith rejected the listing")
     return {"ok": True, "sample_count": len(items)}
 
 
@@ -205,6 +217,53 @@ async def save_connection(
     await db.commit()
     await db.refresh(c)
     return _serialize(c)
+
+
+class ApiKeyUpdate(BaseModel):
+    api_key: str = Field(..., min_length=8, max_length=512)
+
+
+@router.put("/connection/api-key", response_model=ConnectionResponse | None)
+async def set_connection_api_key(
+    body: ApiKeyUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set (or rotate) this tenant's Localith API key.
+
+    The key is Fernet-encrypted at rest and written to every connection row
+    the user owns (the key is account-wide, not per-listing). It overrides
+    the shared LOCALITH_API_KEY env for this tenant's syncs and publishes.
+    The plaintext is never returned or logged.
+    """
+    connections = await service.list_connections(db, user.id)
+    if not connections:
+        raise HTTPException(status_code=400, detail="Connect a Localith listing first.")
+    encrypted = _encrypt_localith_key(body.api_key.strip())
+    for c in connections:
+        c.api_key_encrypted = encrypted
+    await db.commit()
+    first = connections[0]
+    await db.refresh(first)
+    return _serialize(first)
+
+
+@router.delete("/connection/api-key", response_model=ConnectionResponse | None)
+async def remove_connection_api_key(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove the tenant's key from every owned connection row; the tenant
+    falls back to the shared LOCALITH_API_KEY env."""
+    connections = await service.list_connections(db, user.id)
+    if not connections:
+        raise HTTPException(status_code=400, detail="Connect a Localith listing first.")
+    for c in connections:
+        c.api_key_encrypted = None
+    await db.commit()
+    first = connections[0]
+    await db.refresh(first)
+    return _serialize(first)
 
 
 class ListingUpdate(BaseModel):

@@ -206,11 +206,29 @@ async def refresh_endpoint(
 @router.post("/logout")
 async def logout_endpoint(
     body: LogoutRequest,
+    request: Request,
     response: Response,
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await logout(body.refresh_token, user.id, body.all_devices, db)
+    # G1: extract the presented access token's jti + remaining TTL so
+    # logout blacklists it — a stolen access token must not survive logout.
+    # Never fail the logout itself because of this best-effort step.
+    _jti, _ttl = None, 0
+    try:
+        from datetime import datetime, timezone as _tz
+        from ...security import decode_token as _decode
+
+        _auth = request.headers.get("authorization", "")
+        if _auth.lower().startswith("bearer "):
+            _payload = _decode(_auth[7:].strip())
+            if _payload.get("type") == "access" and _payload.get("sub") == user.id:
+                _jti = _payload.get("jti")
+                _ttl = max(0, int(_payload.get("exp", 0)) - int(datetime.now(_tz.utc).timestamp()))
+    except Exception:
+        pass
+    await logout(body.refresh_token, user.id, body.all_devices, db,
+                 access_jti=_jti, access_ttl=_ttl)
     _clear_session_cookies(response)
     return {"message": "Logged out"}
 

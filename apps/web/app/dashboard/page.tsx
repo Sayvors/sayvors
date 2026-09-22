@@ -13,13 +13,21 @@ import { MetricChart, RatingDistribution, Sparkline } from "@/components/analyti
 const checklistDefs = [
   { id: "channel", labelKey: "stepConnect", href: "/dashboard/channels" },
   { id: "databank", labelKey: "stepDatabank", href: "/dashboard/databank" },
-  { id: "auto-reply", labelKey: "stepAutoReply", href: "/dashboard/automations" },
+  { id: "auto-reply", labelKey: "stepAutoReply", href: "/dashboard/channels" },
 ] as const;
 
 const CHECKLIST_KEY = "sayvors.onboarding.checklist";
 
 type DashboardChannel = { id: string; platform: string; display_name: string | null; listing_id?: string | null; source?: string | null };
 type DashboardService = { is_offered: boolean };
+
+interface IntelSnapshot {
+  source: string;
+  summary: string;
+  stats: { positive: number; neutral: number; negative: number; total: number };
+  themes: { name: string; mentions: number; avg_rating: number; positive_pct: number }[];
+  stale?: boolean;
+}
 
 interface AttentionItem {
   severity: "high" | "medium";
@@ -1080,6 +1088,7 @@ function BusinessPulse() {
     open: null, label: "--", detail: "Not configured yet",
   });
   const [marketRank, setMarketRank] = useState<{ rank: number; total: number; label: string } | null>(null);
+  const [intel, setIntel] = useState<IntelSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1091,17 +1100,19 @@ function BusinessPulse() {
           (channel: DashboardChannel) => channel.platform === "google_reviews"
         );
         const googleChannels = dedupeBusinesses(rawChannels);
-        const [nextOverview, nextPoints, serviceResults, bench] = await Promise.all([
+        const [nextOverview, nextPoints, serviceResults, bench, nextIntel] = await Promise.all([
           fetchOverview(30, channelId || null),
           fetchTimeseries(30, channelId || null),
           Promise.all((channelId ? googleChannels.filter((channel: DashboardChannel) => channel.id === channelId) : googleChannels).map((channel: DashboardChannel) => apiFetch(`/api/v1/channels/${channel.id}/services`))),
           fetchBenchmark(30, null).catch(() => null),
+          apiFetch(`/api/v1/analytics/review-intelligence?days=90${channelId ? `&channel_id=${encodeURIComponent(channelId)}` : ""}`).catch(() => null),
         ]);
         if (cancelled) return;
         const allServices = serviceResults.flatMap((result) => (result.services ?? []) as DashboardService[]);
         setChannels(googleChannels);
         setOverview(nextOverview);
         setPoints(nextPoints);
+        setIntel(nextIntel);
         setServiceCount(allServices.length);
         setOfferedCount(allServices.filter((service) => service.is_offered).length);
         if (bench?.my_rank && (bench.market ?? []).length > 0 && bench.cohort) {
@@ -1114,6 +1125,7 @@ function BusinessPulse() {
           setOverview(null);
           setPoints([]);
           setChannels([]);
+          setIntel(null);
           setServiceCount(0);
           setOfferedCount(0);
           setMarketRank(null);
@@ -1200,6 +1212,8 @@ function BusinessPulse() {
         />
       </div>
 
+      <CustomerVoice intel={intel} loading={loading} />
+
       <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr]">
         <Link href="/dashboard/analytics" aria-label="Open analytics" className="group block rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40">
           {loading ? <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" /> : <span className="block rounded-2xl transition duration-200 group-hover:-translate-y-0.5 group-hover:shadow-lg group-hover:shadow-deep-violet/[0.08]"><MetricChart points={points} /></span>}
@@ -1243,6 +1257,82 @@ function PulseStat({ label, value, detail, color, href, delta, deltaSuffix = "",
     </>
   );
   return href ? <Link href={href} aria-label={label} className={cls}>{inner}</Link> : <div className={cls}>{inner}</div>;
+}
+
+function CustomerVoice({ intel, loading }: { intel: IntelSnapshot | null; loading: boolean }) {
+  if (loading) {
+    return <div className="h-36 animate-pulse rounded-2xl border-2 border-white bg-white/60" aria-hidden />;
+  }
+  if (!intel || (intel.stats.total === 0 && (intel.themes ?? []).length === 0)) {
+    return (
+      <Link href="/dashboard/reviews" aria-label="Open reviews" className="group block rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+        <h3 className="text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">Customer voice</h3>
+        <p className="mt-1 text-[12px] text-ink/50">No analysis yet — open Reviews to run your first AI analysis and see what customers love and what hurts your rating.</p>
+      </Link>
+    );
+  }
+  const themes = intel.themes ?? [];
+  const loves = themes.filter((t) => t.positive_pct >= 60).sort((a, b) => b.mentions - a.mentions).slice(0, 3);
+  const hurts = themes.filter((t) => t.positive_pct < 60).sort((a, b) => a.positive_pct - b.positive_pct).slice(0, 2);
+  const pos = intel.stats.positive;
+  const neu = intel.stats.neutral;
+  const neg = intel.stats.negative;
+  const total = Math.max(1, pos + neu + neg);
+  return (
+    <section aria-label="Customer voice" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-[14px] font-bold text-ink">Customer voice</h3>
+          <p className="text-[11px] text-ink/45">What customers praise — and what costs you stars.</p>
+        </div>
+        <Link href="/dashboard/reviews" className="text-[11px] font-semibold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+          Full intelligence →
+        </Link>
+      </div>
+      {intel.summary ? <p className="mt-2 line-clamp-2 text-[12.5px] leading-snug text-ink/70">{intel.summary}</p> : null}
+      <div className="mt-3 flex h-2.5 overflow-hidden rounded-full" role="img" aria-label={`${pos} positive, ${neu} neutral, ${neg} negative`}>
+        <div className="bg-emerald-500" style={{ width: `${(pos / total) * 100}%` }} />
+        <div className="bg-amber-400" style={{ width: `${(neu / total) * 100}%` }} />
+        <div className="bg-coral" style={{ width: `${(neg / total) * 100}%` }} />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink/55">
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Positive {pos}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-400" /> Neutral {neu}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-coral" /> Negative {neg}</span>
+        {intel.stale ? <span className="text-amber-600">Stale — re-run analysis in Reviews</span> : null}
+      </div>
+      {(loves.length > 0 || hurts.length > 0) && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {loves.length > 0 && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Loved</p>
+              <ul className="mt-1.5 space-y-1">
+                {loves.map((t) => (
+                  <li key={t.name} className="flex items-center justify-between gap-2 text-[12.5px]">
+                    <span className="truncate font-medium text-ink">{t.name}</span>
+                    <span className="shrink-0 tabular-nums text-ink/45">{t.mentions}× · {t.avg_rating.toFixed(1)}★</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {hurts.length > 0 && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-coral">Hurting</p>
+              <ul className="mt-1.5 space-y-1">
+                {hurts.map((t) => (
+                  <li key={t.name} className="flex items-center justify-between gap-2 text-[12.5px]">
+                    <span className="truncate font-medium text-ink">{t.name}</span>
+                    <span className="shrink-0 tabular-nums text-ink/45">{t.mentions}× · {t.avg_rating.toFixed(1)}★</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
 }
 
 const EMPTY_CHECKLIST: Record<string, boolean> = {};

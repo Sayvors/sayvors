@@ -18,6 +18,7 @@ const en = {
     autoReply: "Auto-Reply",
     outbox: "Outbox",
     usage: "Usage",
+    billing: "Billing",
     locations: "Locations",
     verification: "Verification",
     services: "Services",

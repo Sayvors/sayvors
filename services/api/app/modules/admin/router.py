@@ -4,15 +4,17 @@ POST   /api/v1/admin/login   exchange the admin password for a short token
 GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
-import sys
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from ...config import settings
 from ...core.deps import get_db, require_admin
 from ...security import create_admin_token, verify_password
 from ..auth.rate_limit import rate_limit
+from ..auth.router import get_client_ip
 from . import service as admin_service
 from .schemas import (
     AdminHealth,
@@ -44,40 +46,118 @@ class AdminLoginRequest(BaseModel):
 
 
 class AdminLoginResponse(BaseModel):
-    access_token: str
+    """No token in the body: the session lives in an httpOnly cookie so
+    XSS cannot read it. The frontend only needs the TTL for its countdown."""
+
     expires_in_minutes: int
 
 
-def _get_client_ip(request: Request) -> str:
-    peer = request.client.host if request.client else ""
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[-1].strip()
-    return peer or "unknown"
+_ADMIN_FAIL_KEY = "admin-login:failures:global"
+
+
+async def _register_admin_failure() -> int:
+    """Increment the global failure counter; returns the new count.
+
+    Keyed on the credential, not the source IP, so a distributed attacker
+    rotating XFF addresses cannot reset their progress. Window: 15 minutes.
+    """
+    try:
+        from ..redis.client import get_redis
+
+        redis = await get_redis()
+        count = await redis.incr(_ADMIN_FAIL_KEY)
+        await redis.expire(_ADMIN_FAIL_KEY, 900)
+        return int(count)
+    except Exception:
+        return 0
+
+
+async def _admin_locked_out() -> bool:
+    try:
+        from ..redis.client import get_redis
+
+        redis = await get_redis()
+        count = int(await redis.get(_ADMIN_FAIL_KEY) or 0)
+        return count >= settings.ADMIN_MAX_CONSECUTIVE_FAILURES
+    except Exception:
+        return False
 
 
 @router.post("/login", response_model=AdminLoginResponse)
-async def admin_login(body: AdminLoginRequest, request: Request):
+async def admin_login(body: AdminLoginRequest, request: Request, response: Response):
     if not settings.ADMIN_PASSWORD_HASH:
         raise HTTPException(status_code=503, detail="Admin access is not configured.")
     from ..auth.rate_limit import rate_limit
 
-    ip = _get_client_ip(request)
+    ip = get_client_ip(request)
     if not await rate_limit(f"admin-login:{ip}", 5, 300):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    if await _admin_locked_out():
+        logger.error("Admin login globally locked out (repeated failures), ip=%s", ip)
+        raise HTTPException(
+            status_code=429,
+            detail="Admin access temporarily locked. Try again later.",
+        )
     if not verify_password(body.password, settings.ADMIN_PASSWORD_HASH):
-        logger.warning("Failed admin login from %s", ip)
+        failures = await _register_admin_failure()
+        logger.warning(
+            "Failed admin login from %s (global failures=%d)", ip, failures
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong password.")
-    return AdminLoginResponse(
-        access_token=create_admin_token(),
-        expires_in_minutes=settings.ADMIN_SESSION_MINUTES,
+    try:
+        from ..redis.client import get_redis
+
+        redis = await get_redis()
+        await redis.delete(_ADMIN_FAIL_KEY)
+    except Exception:
+        pass
+    token = create_admin_token()
+    secure = (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto", "") == "https"
     )
+    response.set_cookie(
+        settings.ADMIN_COOKIE_NAME,
+        token,
+        max_age=settings.ADMIN_SESSION_MINUTES * 60,
+        httponly=True,
+        samesite="strict",
+        secure=secure,
+        path="/api/v1/admin",
+    )
+    return AdminLoginResponse(expires_in_minutes=settings.ADMIN_SESSION_MINUTES)
+
+
+@router.post("/logout")
+async def admin_logout(
+    request: Request,
+    response: Response,
+    credentials: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
+):
+    """Revoke the admin session: blacklist the token (Bearer or cookie) and
+    clear the cookie. Fails open on decode errors — cookie is cleared anyway."""
+    import time
+
+    token = credentials.credentials if credentials else request.cookies.get(settings.ADMIN_COOKIE_NAME, "")
+    if token:
+        try:
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+            jti = payload.get("jti", "")
+            if jti:
+                from ..auth.rate_limit import blacklist_token
+
+                ttl = int(payload.get("exp", 0) - time.time()) or settings.ADMIN_SESSION_MINUTES * 60
+                await blacklist_token(jti, max(ttl, 60))
+        except Exception:
+            pass
+    response.delete_cookie(settings.ADMIN_COOKIE_NAME, path="/api/v1/admin")
+    return {"ok": True}
 
 
 async def admin_rate_limit(request: Request):
-    if sys.modules.get("pytest"):
+    if settings.TESTING:
         return
-    ip = _get_client_ip(request)
+    ip = get_client_ip(request)
     if not await rate_limit(f"admin:{ip}:{request.url.path}", 10000, 60):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
@@ -134,6 +214,42 @@ async def admin_tenant_detail(
     if detail is None:
         raise HTTPException(status_code=404, detail="Tenant not found.")
     return AdminTenantDetail(**detail)
+
+
+class PlanGrantRequest(BaseModel):
+    plan: str = Field(..., pattern=r"^(free|pro)$")
+    add_credit_cents: int = Field(default=0, ge=0, le=1_000_000)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class PlanGrantResponse(BaseModel):
+    plan: str
+    balance_cents: int
+    balance_dollars: float
+    currency: str = "usd"
+
+
+@router.post("/tenants/{user_id}/plan", response_model=PlanGrantResponse)
+async def admin_grant_plan(
+    user_id: str,
+    body: PlanGrantRequest,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a plan purchase: set plan, add AI credits, ledger + sync.
+
+    A first-time Pro grant bundles $20 of AI credits automatically. This is
+    the endpoint behind "when people buy a plan, the admin sees it and the
+    DB updates the user to pro with $20 of AI tokens".
+    """
+    from ..billing import service as billing_service
+
+    try:
+        return await billing_service.grant_plan(
+            user_id, body.plan, body.add_credit_cents, body.note, "admin", db
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
 
 
 @router.get("/health", response_model=AdminHealth)

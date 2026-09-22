@@ -32,6 +32,8 @@ class AdminTenant(BaseModel):
     reviews: int = 0
     posts: int = 0
     databanks: int = 0
+    plan: str = "free"
+    ai_credit_cents: int = 0
 
 
 class AdminTenantList(BaseModel):
@@ -42,6 +44,8 @@ class AdminTenantList(BaseModel):
 class AdminTenantDetail(AdminTenant):
     recent_reviews: list[dict] = []
     recent_posts: list[dict] = []
+    ai_balance_cents: int | None = None
+    ai_spent_30d_cents: int = 0
 
 
 class UsageTenantRow(BaseModel):

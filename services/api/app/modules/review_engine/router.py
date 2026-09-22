@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.deps import get_current_user, get_db
+from ...core.deps import get_current_user, get_db, require_admin
 from ..users.models import User
 from .models import ResponseStrategy, ReviewResponseLog
 from .schemas import (
@@ -139,10 +139,15 @@ async def get_strategy(
 async def update_strategy(
     strategy_id: str,
     body: ReviewStrategyUpdate,
-    user: User = Depends(get_current_user),
+    _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update strategy settings (enable/disable, priority, instructions)."""
+    """Update strategy settings (enable/disable, priority, instructions).
+
+    PLATFORM-ADMIN ONLY: strategies are a shared global playbook — every
+    tenant's generation reads the same rows. Tenant writes here would let
+    one tenant poison replies for all others (P0 cross-tenant fix).
+    """
     result = await db.execute(
         select(ResponseStrategy).where(ResponseStrategy.id == strategy_id)
     )

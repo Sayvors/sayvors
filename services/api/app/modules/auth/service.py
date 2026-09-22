@@ -74,7 +74,7 @@ async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str
     db.add(refresh)
     await db.commit()
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(user.id, user.token_version or 0)
 
     # Store session in Redis
     import json
@@ -145,7 +145,7 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
     user.failed_login_attempts = 0
     user.locked_until = None
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(user.id, user.token_version or 0)
     refresh_raw = create_refresh_token(user.id)
     refresh = RefreshToken(
         user_id=user.id,
@@ -259,7 +259,8 @@ async def refresh_tokens(
 
     # Create new tokens
     user_id = payload["sub"]
-    access_token = create_access_token(user_id)
+    _ver = (await db.execute(select(User.token_version).where(User.id == user_id))).scalar_one_or_none()
+    access_token = create_access_token(user_id, _ver or 0)
     new_refresh_raw = create_refresh_token(user_id)
     new_refresh = RefreshToken(
         user_id=user_id,
@@ -280,10 +281,25 @@ async def refresh_tokens(
     }
 
 
-async def logout(refresh_token: str | None, user_id: str, all_devices: bool, db: AsyncSession):
+async def logout(refresh_token: str | None, user_id: str, all_devices: bool, db: AsyncSession,
+               access_jti: str | None = None, access_ttl: int = 0):
+    # G1: the presented access token dies with the session — blacklist its
+    # jti for its remaining lifetime so it cannot outlive logout.
+    if access_jti and access_ttl > 0:
+        try:
+            await blacklist_token(access_jti, access_ttl)
+        except Exception:
+            pass
     if all_devices:
         await db.execute(
             delete(RefreshToken).where(RefreshToken.user_id == user_id)
+        )
+        # Bump the token generation: every access token issued before this
+        # moment is rejected by get_current_user, Redis or not.
+        await db.execute(
+            update(User).where(User.id == user_id).values(
+                token_version=User.token_version + 1
+            )
         )
         try:
             from ...modules.redis.client import get_redis
@@ -369,6 +385,8 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession) -> bool:
     user.password_hash = hash_password(body.password)
     user.failed_login_attempts = 0
     user.locked_until = None
+    # G1: password change kills every prior access token generation.
+    user.token_version = (user.token_version or 0) + 1
 
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
     await db.commit()
@@ -442,7 +460,7 @@ async def verify_signup_otp(
         just_verified = True
         await log_email_verified(user.id, user.email)
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(user.id, user.token_version or 0)
     refresh_raw = create_refresh_token(user.id)
     refresh = RefreshToken(
         user_id=user.id,

@@ -34,6 +34,13 @@ class User(Base):
     language: Mapped[str] = mapped_column(String(10), default="en")
     # Account-wide country (ISO code) — display/defaults only, never listings.
     country: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # Plan + AI credit balance (P0 billing gate): plan ∈ {free, pro};
+    # ai_credit_cents is a USD-cent balance spent by every AI task.
+    plan: Mapped[str] = mapped_column(String(16), default="free")
+    ai_credit_cents: Mapped[int] = mapped_column(Integer, default=0)
+    # Access-token generation: bumped on password change / logout-all so
+    # previously issued access tokens are rejected (G1 revocation).
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

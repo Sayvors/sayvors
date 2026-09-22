@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.providers import GOOGLE, locations_write_provider
 from ..localith.models import LocalithConnection
 from .models import LocationProfile
 
@@ -107,6 +108,7 @@ async def get_profile(
         "hours": dict(profile.hours or {}),
         "service_area": list(profile.service_area or []),
         "attributes": dict(profile.attributes or {}),
+        "opening_date": profile.opening_date.isoformat() if profile.opening_date else None,
         "google_synced": [],
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
     }
@@ -124,6 +126,91 @@ async def get_profile(
     return merged
 
 
+async def _native_channel_for_listing(
+    db: AsyncSession, user_id: str, listing_id: str
+):
+    """The tenant's native Google channel for this listing (OAuth tokens),
+    or None. Matched on channel metadata location_id / platform_user_id."""
+    import json as _json
+
+    from sqlalchemy import select as _select
+
+    from ..channels.models import Channel
+
+    rows = (
+        await db.execute(
+            _select(Channel).where(
+                Channel.user_id == user_id,
+                Channel.platform == "google_reviews",
+                Channel.status == "active",
+            )
+        )
+    ).scalars().all()
+    for ch in rows:
+        try:
+            meta = ch.metadata_json
+            meta = _json.loads(meta) if isinstance(meta, str) else (meta or {})
+        except Exception:
+            meta = {}
+        if meta.get("location_id") == listing_id or ch.platform_user_id == listing_id:
+            return ch
+    return None
+
+
+async def _push_profile_native(
+    db: AsyncSession, user_id: str, listing_id: str, profile: LocationProfile
+) -> list[str]:
+    """Best-effort native push of all stored sections. Returns pushed names.
+
+    Local storage stays the source of truth regardless — a rejected section
+    is logged (never raised), so one bad section can't fail the save.
+    """
+    from ..channels.google_business import GoogleBusinessClient
+    from ..channels.service import decrypt_token
+
+    channel = await _native_channel_for_listing(db, user_id, listing_id)
+    if channel is None:
+        logger.warning(
+            "Native locations push skipped for %s: no Google channel connected",
+            listing_id)
+        return []
+    access = decrypt_token(channel.access_token) if channel.access_token else None
+    refresh = decrypt_token(channel.refresh_token) if channel.refresh_token else None
+    if not access and not refresh:
+        logger.warning(
+            "Native locations push skipped for %s: channel has no tokens",
+            listing_id)
+        return []
+    # Google location id: metadata location_id, else the listing id itself.
+    import json as _json
+
+    try:
+        meta = channel.metadata_json
+        meta = _json.loads(meta) if isinstance(meta, str) else (meta or {})
+    except Exception:
+        meta = {}
+    google_id = meta.get("location_id") or listing_id
+    client = GoogleBusinessClient(access or "", refresh)
+    try:
+        report = await client.push_profile(
+            google_id,
+            description=profile.description,
+            categories=dict(profile.categories or {}),
+            hours=dict(profile.hours or {}),
+            opening_date=profile.opening_date.isoformat() if profile.opening_date else None,
+            attributes=dict(profile.attributes or {}),
+        )
+    except Exception as e:
+        logger.warning("Native locations push failed for %s: %s", listing_id, e)
+        return []
+    finally:
+        await client.close()
+    for section, reason in (report.get("skipped") or {}).items():
+        logger.warning("Native locations push skipped %s for %s: %s",
+                       section, listing_id, reason)
+    return report.get("pushed", [])
+
+
 async def update_profile(
     db: AsyncSession,
     user_id: str,
@@ -133,16 +220,28 @@ async def update_profile(
     hours: dict | None,
     service_area: list | None,
     attributes: dict | None,
+    opening_date: str | None = None,
 ) -> dict:
-    """Update a profile. Description pushes to Google when connected."""
+    """Update a profile. Description pushes to Google when connected
+    (Localith path, legacy behavior: push failure aborts the save).
+
+    Native path (LOCATIONS_WRITE_PROVIDER=google): local save always
+    lands first, then every stored section pushes best-effort; per-section
+    results land in `google_synced` and failures only log.
+    """
+    import datetime as _dt
+
     from ..localith import service as localith_service
 
     connection = await _connection(db, user_id, listing_id)
     profile = await _profile(db, user_id, listing_id)
 
+    provider = locations_write_provider()
     if description is not None:
         description = description[:750]
-        if connection is not None and connection.listing_id == listing_id:
+        if provider == GOOGLE:
+            pass  # pushed natively after the local save below
+        elif connection is not None and connection.listing_id == listing_id:
             try:
                 await asyncio.to_thread(
                     localith_service.embedsocial.update_listing,
@@ -176,6 +275,19 @@ async def update_profile(
         profile.attributes = {
             str(k)[:120]: str(v)[:500] for k, v in list(attributes.items())[:100]
         }
+    if opening_date is not None:
+        try:
+            profile.opening_date = _dt.date.fromisoformat(str(opening_date))
+        except ValueError:
+            raise ValueError(f"Invalid opening_date {opening_date!r}, use YYYY-MM-DD")
     profile.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    return await get_profile(db, user_id, listing_id)
+
+    pushed: list[str] = []
+    if provider == GOOGLE:
+        pushed = await _push_profile_native(db, user_id, listing_id, profile)
+    elif description is not None and connection is not None and connection.listing_id == listing_id:
+        pushed = ["description"]
+    out = await get_profile(db, user_id, listing_id)
+    out["google_synced"] = pushed
+    return out

@@ -1981,11 +1981,13 @@ def test_marketing_requirements_permission_lines():
 @pytest.mark.asyncio
 async def test_resolve_reply_prefs_channel_config(db, user_id):
     """Channel config wins; explicit request fields override it."""
-    from app.modules.channels.models import AutoReplyConfig
+    from app.modules.channels.models import AutoReplyConfig, Channel
     from app.modules.review_engine.schemas import ReviewEngineRequest
     from app.modules.review_engine.service import _resolve_reply_prefs
 
     _seed_dialects(db)
+    db.add(Channel(id="pref-ch-1", user_id=user_id, platform="google_reviews",
+                   platform_user_id="pref-acc-1"))
     db.add(AutoReplyConfig(
         channel_id="pref-ch-1", dialect="egyptian", reply_language="ar",
         promo_product_mentions=True, promo_links=True,
@@ -2528,3 +2530,48 @@ def _shim_test_session_factory(session):
             return False
 
     return _Factory()
+
+
+# ── P0 cross-tenant hardening ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_resolve_reply_prefs_unowned_channel_uses_defaults(db, user_id):
+    """Another tenant's channel_id must NOT leak their dialect/promo prefs."""
+    from app.modules.channels.models import AutoReplyConfig, Channel
+    from app.modules.review_engine.schemas import ReviewEngineRequest
+    from app.modules.review_engine.service import _resolve_reply_prefs
+
+    _seed_dialects(db)
+    db.add(Channel(id="other-ch-1", user_id="someone-else", platform="google_reviews",
+                   platform_user_id="other-acc-1"))
+    db.add(AutoReplyConfig(
+        channel_id="other-ch-1", dialect="egyptian", reply_language="ar",
+        promo_product_mentions=True, promo_links=True,
+        promo_only_relevant=False, promo_max_ctas=2,
+    ))
+    await db.commit()
+
+    req = ReviewEngineRequest(review_text="good", rating=5, channel_id="other-ch-1")
+    prefs = await _resolve_reply_prefs(req, user_id, db)
+    assert prefs["dialect"] == "auto"
+    assert prefs["reply_language"] == "match"
+    assert prefs["promo_product_mentions"] is False
+    assert prefs["promo_links"] is False
+    assert prefs["promo_max_ctas"] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_strategy_requires_admin(client, db):
+    """Tenant PUT on the shared strategy playbook → 403; admin token → 200."""
+    await _seed_strategies(db)
+
+    r = client.put("/api/v1/review-engine/strategies/show_appreciation",
+                   json={"enabled": False})
+    assert r.status_code in (401, 403)
+
+    from app.security import create_admin_token
+    admin_headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    r2 = client.put("/api/v1/review-engine/strategies/show_appreciation",
+                    json={"enabled": False}, headers=admin_headers)
+    assert r2.status_code == 200
+    assert r2.json()["enabled"] is False

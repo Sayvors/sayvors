@@ -232,10 +232,11 @@ function AddServiceForm({ name, category, description, onName, onCategory, onDes
         </div>
       )}
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <input value={name} onChange={(event) => onName(event.target.value)} placeholder="Service name" className="input-field" />
-        <input value={category} onChange={(event) => onCategory(event.target.value)} placeholder="Category" className="input-field" />
-        <input value={description} onChange={(event) => onDescription(event.target.value)} placeholder="Description" className="input-field" />
+        <input value={name} onChange={(event) => onName(event.target.value)} placeholder="e.g. Oil change" className="input-field" />
+        <input value={category} onChange={(event) => onCategory(event.target.value)} placeholder="e.g. Maintenance" className="input-field" />
+        <input value={description} onChange={(event) => onDescription(event.target.value)} placeholder="e.g. Full synthetic oil change in ~30 minutes" className="input-field" />
       </div>
+      <p className="mt-2 text-[11px] text-ink/40">Offered services feed the AI — it answers “do you sell X?” from this list.</p>
       <button onClick={onAdd} disabled={saving || !canSave} className="mt-4 rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white disabled:opacity-40">
         {saving ? "Saving..." : selectedIds.length > 1 ? `Add to ${selectedIds.length} branches` : "Add service"}
       </button>

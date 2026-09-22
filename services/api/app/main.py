@@ -28,6 +28,7 @@ from .modules.review_engine.router import router as review_engine_router
 from .modules.review_engine.csv_router import router as csv_router
 from .modules.assistant.router import router as assistant_router
 from .modules.notifications.router import router as notifications_router
+from .modules.billing.router import router as billing_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
 
@@ -210,6 +211,7 @@ app.include_router(review_engine_router)
 app.include_router(csv_router)
 app.include_router(assistant_router)
 app.include_router(notifications_router)
+app.include_router(billing_router)
 
 # Public media files: owner uploads that go to Google by URL. Served here
 # (Caddy proxies the whole API host, so this path is public) from a

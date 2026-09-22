@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchInsights, type ReviewInsight } from "@/lib/api-analytics";
 import { ReplyComposer } from "./ReplyComposer";
+import { ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 
 const PAGE_SIZE = 20;
 
@@ -29,7 +30,7 @@ function Stars({ rating }: { rating: number }) {
           key={s}
           viewBox="0 0 24 24"
           fill="currentColor"
-          className={`h-3 w-3 ${s <= rating ? "text-amber" : "text-ink/15"}`}
+          className={`h-3.5 w-3.5 ${s <= Math.round(rating) ? "text-[#FBBC05]" : "text-[#E8EAED]"}`}
           aria-hidden
         >
           <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
@@ -51,62 +52,87 @@ function relativeDate(iso: string | null) {
 
 function ReviewCard({ review, onReplied }: { review: ReviewInsight; onReplied: () => void }) {
   return (
-    <article className="group rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm transition hover:border-deep-violet/15 hover:shadow-md hover:shadow-deep-violet/[0.06]">
-      <div className="flex flex-wrap items-center gap-2">
-        <Stars rating={review.rating} />
+    <article
+      className="rounded-lg border border-[#DADCE0] bg-white text-left transition hover:bg-[#F8F9FA]"
+      style={{ fontFamily: "Roboto, Arial, sans-serif" }}
+    >
+      {/* Header — avatar + name + time */}
+      <div className="flex items-start gap-3 px-4 pt-4">
+        <ReviewAvatar name={review.reviewer_name ?? "Anonymous"} photoUrl={review.reviewer_photo_url} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[14px] font-medium leading-5 text-[#202124]">
+            {review.reviewer_name ?? "Anonymous"}
+          </p>
+          <p className="mt-0.5 text-[12px] leading-4 text-[#5F6368]">
+            {relativeDate(review.review_updated_at ?? review.created_at)}
+          </p>
+        </div>
         <span
-          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${SENTIMENT_STYLES[review.sentiment] ?? SENTIMENT_STYLES.neutral}`}
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${SENTIMENT_STYLES[review.sentiment] ?? SENTIMENT_STYLES.neutral}`}
         >
           {review.sentiment}
         </span>
-        {review.replied ? (
-          <span className="flex items-center gap-1 rounded-full bg-deep-violet/[0.07] px-2 py-0.5 text-[10px] font-semibold text-deep-violet">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-2.5 w-2.5" aria-hidden>
-              <polyline points="20 6 9 17 4 12" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Replied
-          </span>
-        ) : (
-          <span className="rounded-full bg-amber/10 px-2 py-0.5 text-[10px] font-semibold text-amber-600">Awaiting reply</span>
-        )}
-        <span className="ml-auto text-[10px] text-ink/35">
-          {review.reviewer_name ?? "Anonymous"} · {relativeDate(review.review_updated_at ?? review.created_at)}
-        </span>
       </div>
 
+      {/* Stars */}
+      <div className="px-4 pt-2.5">
+        <Stars rating={review.rating} />
+      </div>
+
+      {/* Comment */}
       {review.review_text && (
-        <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-ink/70">{review.review_text}</p>
+        <p className="whitespace-pre-wrap break-words px-4 pt-2 text-[13px] leading-[20px] text-[#202124]">
+          {review.review_text}
+        </p>
       )}
 
+      {/* Topics / problems / products */}
       {(review.topics.length > 0 || review.problems.length > 0 || review.products.length > 0) && (
-        <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {(review.problems ?? []).map((p) => (
-            <span key={`pr-${p.name}`} className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_STYLES[p.severity] ?? SEVERITY_STYLES.low}`}>
+        <div className="flex flex-wrap gap-1.5 px-4 pt-2.5">
+          {(review.problems ?? []).map((p, i) => (
+            <span key={`pr-${p.name}-${i}`} className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_STYLES[p.severity] ?? SEVERITY_STYLES.low}`}>
               {p.name}
             </span>
           ))}
-          {(review.topics ?? []).map((t) => (
-            <span key={`t-${t.name}`} className="rounded-md bg-deep-violet/[0.05] px-1.5 py-0.5 text-[10px] text-ink/50">
+          {(review.topics ?? []).map((t, i) => (
+            <span key={`t-${t.name}-${i}`} className="rounded-md bg-deep-violet/[0.05] px-1.5 py-0.5 text-[10px] text-ink/50">
               {t.name}
             </span>
           ))}
-          {(review.products ?? []).map((p) => (
-            <span key={`p-${p.name}`} className="rounded-md bg-magenta/[0.07] px-1.5 py-0.5 text-[10px] text-magenta">
+          {(review.products ?? []).map((p, i) => (
+            <span key={`p-${p.name}-${i}`} className="rounded-md bg-magenta/[0.07] px-1.5 py-0.5 text-[10px] text-magenta">
               {p.name}
             </span>
           ))}
         </div>
       )}
 
+      {/* Footer — status */}
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#E8EAED] px-4 py-3">
+        {review.replied ? (
+          <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[#137333]">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#34A853]" />
+            Replied
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-[12px] font-medium leading-4 text-[#5F6368]">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[#FABB05]" />
+            Needs reply
+          </span>
+        )}
+      </div>
+
       {!review.replied && (
-        <ReplyComposer
-          channelId={review.channel_id}
-          reviewId={review.review_id}
-          rating={review.rating}
-          reviewText={review.review_text}
-          reviewerName={review.reviewer_name}
-          onPublished={onReplied}
-        />
+        <div className="px-4 pb-4">
+          <ReplyComposer
+            channelId={review.channel_id}
+            reviewId={review.review_id}
+            rating={review.rating}
+            reviewText={review.review_text}
+            reviewerName={review.reviewer_name}
+            onPublished={onReplied}
+          />
+        </div>
       )}
     </article>
   );
@@ -225,11 +251,14 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
 
       {/* Content */}
       {loading ? (
-        <div className="space-y-2.5" role="status" aria-label="Loading reviews">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="rounded-2xl border-2 border-white bg-white/60 p-4">
-              <div className="h-3 w-40 animate-pulse rounded bg-ink/[0.07]" />
-              <div className="mt-2 h-3 w-full animate-pulse rounded bg-ink/[0.05]" />
+        <div className="grid items-start gap-3 md:grid-cols-2" role="status" aria-label="Loading reviews">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="rounded-lg border border-[#DADCE0] bg-white p-4">
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 animate-pulse rounded-full bg-ink/[0.07]" />
+                <div className="h-3 w-40 animate-pulse rounded bg-ink/[0.07]" />
+              </div>
+              <div className="mt-3 h-3 w-full animate-pulse rounded bg-ink/[0.05]" />
               <div className="mt-1.5 h-3 w-2/3 animate-pulse rounded bg-ink/[0.05]" />
             </div>
           ))}
@@ -247,7 +276,7 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
           <p className="text-[11px] text-ink/35">Try clearing filters or connecting a channel to start collecting reviews.</p>
         </div>
       ) : (
-        <div className="space-y-2.5">
+        <div className="grid items-start gap-3 md:grid-cols-2">
           {items.map((r) => (
             <ReviewCard key={r.id} review={r} onReplied={onReplied} />
           ))}

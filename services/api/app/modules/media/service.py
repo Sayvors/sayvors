@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
+from ...core.providers import GOOGLE, google_not_ready, media_publish_provider
 from ..localith.models import LocalithConnection
 from ..notifications.service import notify
 from ..scheduling import (
@@ -57,12 +58,39 @@ async def _release_media_lock(db: AsyncSession, media_id: str) -> None:
 UPLOAD_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov")
 VIDEO_EXTENSIONS = (".mp4", ".mov")
 
+# Content type is DERIVED from the validated extension, never from the
+# client's Content-Type header: that header is attacker-controlled, and
+# storing e.g. text/html under a public URL is stored XSS.
+_CONTENT_TYPES = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".webp": "image/webp", ".gif": "image/gif",
+    ".mp4": "video/mp4", ".mov": "video/quicktime",
+}
+
+_MAGIC_SIGNATURES = {
+    ".jpg": (b"\xff\xd8",),   # JPEG SOI marker
+    ".jpeg": (b"\xff\xd8",),
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".gif": (b"GIF87a", b"GIF89a"),
+}
+
 
 def detect_media_type(filename: str, content_type: str | None) -> str:
     name = (filename or "").lower()
     if name.endswith(VIDEO_EXTENSIONS) or (content_type or "").startswith("video/"):
         return "VIDEO"
     return "PHOTO"
+
+
+def _magic_matches(ext: str, data: bytes) -> bool:
+    """Verify the file's leading bytes match its declared extension."""
+    if ext in (".mp4", ".mov"):
+        # ISO base media: 'ftyp' box at offset 4 (covers both MP4 and MOV/QT).
+        return len(data) >= 12 and data[4:8] == b"ftyp"
+    sigs = _MAGIC_SIGNATURES.get(ext)
+    if not sigs:
+        return False
+    return any(data.startswith(s) for s in sigs)
 
 
 async def save_upload(
@@ -82,14 +110,19 @@ async def save_upload(
     ctype = content_type or ""
     if ctype and not (ctype.startswith("image/") or ctype.startswith("video/")):
         raise ValueError("Only image or video files.")
-    storage_key, public_url = put_media(user_id, filename, data, ctype or None)
+    # Content must match the extension (polyglot guard), and the stored
+    # content type is always derived from the extension, never the header.
+    if not _magic_matches(ext, data):
+        raise ValueError("File content doesn't look like the file type it claims.")
+    expected_type = _CONTENT_TYPES[ext]
+    storage_key, public_url = put_media(user_id, filename, data, expected_type)
     if not public_url:
         public_url = local_media_url(base_url, user_id, storage_key)
     return {
         "image_url": public_url,
-        "type": detect_media_type(filename, content_type),
+        "type": detect_media_type(filename, expected_type),
         "size": len(data),
-        "content_type": ctype or None,
+        "content_type": expected_type,
     }
 
 
@@ -322,6 +355,16 @@ async def _publish_media_inner(
     ).scalar_one_or_none()
     if conn is None:
         raise ValueError("Connect that branch in Localith before publishing media.")
+    from ..localith.service import _connection_api_key
+
+    api_key = _connection_api_key(conn)
+
+    # Provider seam: Localith today; the google branch lands with GBP API
+    # access (see app/core/providers.py). Checked BEFORE the try below so
+    # a premature flip fails loudly — never registered as a publish
+    # failure, never notified, never retried.
+    if media_publish_provider() == GOOGLE:
+        raise google_not_ready("media publishing")
 
     try:
         response = await asyncio.to_thread(
@@ -330,6 +373,7 @@ async def _publish_media_inner(
             post_type="update",
             caption=item.caption or item.category.replace("_", " ").title(),
             image_urls=[item.image_url],
+            api_key=api_key,
         )
     except Exception as e:
         _register_publish_failure(item, str(e)[:500])

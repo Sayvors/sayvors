@@ -155,6 +155,8 @@ async def list_tenants(
             "reviews": review_counts.get(u.id, 0),
             "posts": post_counts.get(u.id, 0),
             "databanks": bank_counts.get(u.id, 0),
+            "plan": u.plan or "free",
+            "ai_credit_cents": u.ai_credit_cents or 0,
         })
     return items, total
 
@@ -186,6 +188,8 @@ async def get_tenant(db: AsyncSession, user_id: str) -> dict | None:
         "reviews": review_counts.get(user.id, 0),
         "posts": post_counts.get(user.id, 0),
         "databanks": bank_counts.get(user.id, 0),
+        "plan": user.plan or "free",
+        "ai_credit_cents": user.ai_credit_cents or 0,
     }
     recent_reviews = (
         await db.execute(
@@ -220,6 +224,25 @@ async def get_tenant(db: AsyncSession, user_id: str) -> dict | None:
         }
         for p in recent_posts
     ]
+    # AI wallet: live Redis balance + estimated 30d spend (upper bound —
+    # by_model rows carry totals only, priced at the completion rate).
+    from ..billing.budget import TOKEN_PRICES, get_balance
+
+    base["ai_balance_cents"] = await get_balance(user_id)
+    try:
+        from ..llm.usage import get_tenant_summary
+
+        summary = await get_tenant_summary(db, user_id, 30)
+        spent = 0
+        for row in summary.get("by_model", []):
+            fam = (row.get("model") or "").split(":", 1)[0].lower() or "unknown"
+            _, completion_p = TOKEN_PRICES.get(fam, TOKEN_PRICES["unknown"])
+            spent += (row.get("total_tokens", 0) / 1_000_000) * completion_p
+        import math
+
+        base["ai_spent_30d_cents"] = math.ceil(spent)
+    except Exception:
+        base["ai_spent_30d_cents"] = 0
     return base
 
 

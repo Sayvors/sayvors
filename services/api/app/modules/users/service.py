@@ -22,7 +22,7 @@ async def create_user(body: SignupRequest, db: AsyncSession) -> str:
     )
     db.add(user)
     await db.commit()
-    return create_access_token(user.id)
+    return create_access_token(user.id, user.token_version or 0)
 
 
 async def authenticate_user(body: LoginRequest, db: AsyncSession) -> str:
@@ -30,4 +30,4 @@ async def authenticate_user(body: LoginRequest, db: AsyncSession) -> str:
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise ValueError("Invalid email or password")
-    return create_access_token(user.id)
+    return create_access_token(user.id, user.token_version or 0)

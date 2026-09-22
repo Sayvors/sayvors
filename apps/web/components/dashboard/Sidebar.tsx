@@ -48,9 +48,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
       { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
-      { key: "autoReply", icon: <AutoReplyIcon />, href: "/dashboard/automations" },
       { key: "outbox", icon: <OutboxIcon />, href: "/dashboard/outbox" },
       { key: "usage", icon: <ChartIcon />, href: "/dashboard/usage" },
+      { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
     ],
   },
 ];
@@ -347,21 +347,21 @@ function LinkIcon() {
   );
 }
 
-function AutoReplyIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-      <path d="M8 10h8M8 14h4" />
-    </svg>
-  );
-}
-
 function OutboxIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6" />
       <path d="M12 3v12" />
       <path d="M8 7l4-4 4 4" />
+    </svg>
+  );
+}
+
+function CardIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M2 10h20" />
     </svg>
   );
 }

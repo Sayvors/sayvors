@@ -244,3 +244,109 @@ async def test_posted_review_still_skipped(db, channel_id, config_id, monkeypatc
     rows = await _reply_rows(db, channel_id, "ggreview-1")
     assert len(rows) == 1
     assert rows[0].status == "posted"
+
+
+@pytest.mark.asyncio
+async def test_edited_review_regenerates_pending_draft(db, channel_id, config_id, monkeypatch):
+    """Reviewer changed the review while a draft was queued: the draft is
+    regenerated from the new content in place — same row, no auto-post."""
+    await _active_channel(db, channel_id)
+    db.add(
+        ReviewReply(
+            channel_id=channel_id, review_id="ggreview-1", rating=2,
+            review_text="Old complaint text", reviewer_name="Angry Customer",
+            reply_text="old draft", status="pending_approval",
+        )
+    )
+    await db.commit()
+
+    _install_fakes(monkeypatch, [_review(rating=2)])
+    stats = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    assert stats["skipped"] == 1
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.status == "pending_approval"
+    assert row.review_text == "Terrible service, never again."
+    assert row.reply_text == "fresh AI draft (try 2)"
+    assert row.generation_attempt == 2
+    assert FakeGoogleClient.posted == []
+
+
+@pytest.mark.asyncio
+async def test_edited_review_after_posted_reply_queues_followup(db, channel_id, config_id, monkeypatch):
+    """Reviewer changed the review after our reply went live: a follow-up
+    draft is queued for approval — the posted reply is never re-posted."""
+    await _active_channel(db, channel_id)
+    db.add(
+        ReviewReply(
+            channel_id=channel_id, review_id="ggreview-1", rating=2,
+            review_text="Old complaint text", reviewer_name="Angry Customer",
+            reply_text="live reply", status="posted",
+        )
+    )
+    await db.commit()
+
+    _install_fakes(monkeypatch, [_review(rating=1)])
+    stats = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    assert stats["skipped"] == 1
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    assert len(rows) == 2
+    posted = [r for r in rows if r.status == "posted"]
+    pending = [r for r in rows if r.status == "pending_approval"]
+    assert len(posted) == 1 and posted[0].reply_text == "live reply"
+    assert len(pending) == 1
+    assert pending[0].review_text == "Terrible service, never again."
+    assert pending[0].reply_text == "fresh AI draft (try 1)"
+    # Follow-ups wait for approval — never posted automatically.
+    assert FakeGoogleClient.posted == []
+
+
+@pytest.mark.asyncio
+async def test_dismissed_review_not_redrafted(db, channel_id, config_id, monkeypatch):
+    """A rejected draft stays rejected: the poll must not draft again for
+    a dismissed review (the merchant answered elsewhere or wants silence)."""
+    from app.modules.analytics.models import ReviewInsight
+
+    await _active_channel(db, channel_id)
+    db.add(ReviewInsight(
+        channel_id=channel_id, review_id="ggreview-1", user_id="u-dismiss-1",
+        rating=2, review_text="Terrible service, never again.",
+        reviewer_name="Angry Customer", draft_dismissed=True,
+    ))
+    db.add(
+        ReviewReply(
+            channel_id=channel_id, review_id="ggreview-1", rating=2,
+            review_text="Terrible service, never again.",
+            reviewer_name="Angry Customer", reply_text="old draft",
+            status="rejected",
+        )
+    )
+    await db.commit()
+
+    calls = []
+
+    async def _counting_generate(config, channel, rating, text, reviewer, db_,
+                                 review_id=None, attempt=1, previous_draft=None):
+        calls.append(review_id)
+        return "should never be called"
+
+    _install_fakes(monkeypatch, [_review(rating=2)], generate=_counting_generate)
+    stats = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    assert calls == []
+    assert stats["skipped"] == 1
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    assert len(rows) == 1
+    assert rows[0].status == "rejected"

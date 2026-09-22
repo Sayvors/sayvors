@@ -213,6 +213,15 @@ async def stream_message(
     api_model, provider_key = _resolve_model(conv.model)
     provider = get_provider_for_model(conv.model)
 
+    # D1: streamed chat bills a flat reservation (no usage report on the
+    # stream path) — empty wallet raises 402 before any provider call.
+    from ..billing.budget import BudgetExhausted, reserve
+
+    try:
+        await reserve(user.id)
+    except BudgetExhausted as e:
+        raise ProviderError("budget", str(e), 402) from e
+
     req = LLMRequest(
         model=api_model,
         messages=history,
@@ -220,6 +229,9 @@ async def stream_message(
         temperature=0.7,
         max_tokens=1000,
         stream=True,
+        tenant_id=user.id,
+        model_id=conv.model,
+        purpose="assistant.chat",
     )
 
     full_content = []

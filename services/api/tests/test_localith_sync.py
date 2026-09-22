@@ -124,6 +124,35 @@ def test_to_internal_review_flat_reviewer_fallback():
     assert review.reviewer == "Omar"
 
 
+def test_to_internal_review_reviewer_photo_variants():
+    review = embedsocial.to_internal_review(
+        {"id": "r3", "reviewer": {"name": "Sara", "photoUrl": "https://x/y.jpg"}}
+    )
+    assert review.reviewer_photo == "https://x/y.jpg"
+    review = embedsocial.to_internal_review(
+        {"id": "r4", "reviewer": {"displayName": "Omar"}, "authorPhoto": "https://x/z.jpg"}
+    )
+    assert review.reviewer_photo == "https://x/z.jpg"
+    # Non-URL and missing values stay None — UI falls back to initials.
+    review = embedsocial.to_internal_review({"id": "r5", "reviewer": {"name": "A"}})
+    assert review.reviewer_photo is None
+    review = embedsocial.to_internal_review(
+        {"id": "r6", "reviewer": {"name": "B", "avatar": "not-a-url"}}
+    )
+    assert review.reviewer_photo is None
+
+
+def test_google_reviewer_photo_url_helper():
+    from app.modules.channels.google_reviews import GoogleReview, _photo_url
+
+    assert _photo_url("https://lh3.googleusercontent.com/a-/x") == "https://lh3.googleusercontent.com/a-/x"
+    assert _photo_url(None) is None
+    assert _photo_url("not-a-url") is None
+    r = GoogleReview(review_id="a/b/c", rating=5, text="t",
+                     reviewer_name="N", updated_at=None, has_reply=False)
+    assert r.reviewer_photo_url is None
+
+
 def test_apply_listing_snapshot_copies_everything():
     conn = SimpleNamespace(listing_name="old", listing_google_id=None)
     service.apply_listing_snapshot(conn, _listing_payload())
@@ -395,11 +424,11 @@ async def test_autopilot_auto_posts_high_and_queues_low(db, user_id, channel_id,
     monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", False)
     monkeypatch.setattr(service, "_key_present", lambda: True)
 
-    async def _detail(listing_id):
+    async def _detail(listing_id, api_key=None):
         return {}
 
     monkeypatch.setattr(service, "get_listing_detail", _detail)
-    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id, *a, **k: items)
     monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
     monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
 
@@ -411,7 +440,7 @@ async def test_autopilot_auto_posts_high_and_queues_low(db, user_id, channel_id,
 
     posted = []
 
-    async def _post(item_id, text):
+    async def _post(item_id, text, api_key=None):
         posted.append((item_id, text))
         return {"ok": True}
 
@@ -472,7 +501,7 @@ async def test_sync_flags_edited_review_and_notifies_once(db, user_id, channel_i
     monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", True)
     monkeypatch.setattr(service, "_key_present", lambda: True)
 
-    async def _detail(listing_id):
+    async def _detail(listing_id, api_key=None):
         return {}
 
     async def _no_events(event_type, payload, topic="review-events"):
@@ -480,7 +509,7 @@ async def test_sync_flags_edited_review_and_notifies_once(db, user_id, channel_i
 
     monkeypatch.setattr(service, "get_listing_detail", _detail)
     monkeypatch.setattr(service, "enqueue_event", _no_events)
-    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id, *a, **k: items)
     monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
     monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
 
@@ -564,7 +593,7 @@ async def test_sync_backfill_is_not_an_edit(db, user_id, channel_id, monkeypatch
     monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", True)
     monkeypatch.setattr(service, "_key_present", lambda: True)
 
-    async def _detail(listing_id):
+    async def _detail(listing_id, api_key=None):
         return {}
 
     async def _no_events(event_type, payload, topic="review-events"):
@@ -572,7 +601,7 @@ async def test_sync_backfill_is_not_an_edit(db, user_id, channel_id, monkeypatch
 
     monkeypatch.setattr(service, "get_listing_detail", _detail)
     monkeypatch.setattr(service, "enqueue_event", _no_events)
-    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id, *a, **k: items)
     monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
     monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
 
@@ -630,7 +659,7 @@ async def test_edited_review_regenerates_pending_draft_in_place(db, user_id, cha
     monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", True)
     monkeypatch.setattr(service, "_key_present", lambda: True)
 
-    async def _detail(listing_id):
+    async def _detail(listing_id, api_key=None):
         return {}
 
     async def _no_events(event_type, payload, topic="review-events"):
@@ -638,7 +667,7 @@ async def test_edited_review_regenerates_pending_draft_in_place(db, user_id, cha
 
     monkeypatch.setattr(service, "get_listing_detail", _detail)
     monkeypatch.setattr(service, "enqueue_event", _no_events)
-    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id, *a, **k: items)
     monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
     monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
 
@@ -699,7 +728,7 @@ async def test_edited_review_after_posted_reply_queues_followup(db, user_id, cha
     monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", True)
     monkeypatch.setattr(service, "_key_present", lambda: True)
 
-    async def _detail(listing_id):
+    async def _detail(listing_id, api_key=None):
         return {}
 
     async def _no_events(event_type, payload, topic="review-events"):
@@ -707,13 +736,13 @@ async def test_edited_review_after_posted_reply_queues_followup(db, user_id, cha
 
     monkeypatch.setattr(service, "get_listing_detail", _detail)
     monkeypatch.setattr(service, "enqueue_event", _no_events)
-    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: items)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id, *a, **k: items)
     monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
     monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
 
     posted_via_api: list[tuple[str, str]] = []
 
-    async def _post(item_id, text):
+    async def _post(item_id, text, api_key=None):
         posted_via_api.append((item_id, text))
         return {"ok": True}
 
@@ -826,7 +855,7 @@ async def test_truly_quiet_sync_stays_silent(db, user_id, channel_id, monkeypatc
     monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", False)
     monkeypatch.setattr(service, "_key_present", lambda: True)
 
-    async def _detail(listing_id):
+    async def _detail(listing_id, api_key=None):
         return {}
 
     async def _no_events(event_type, payload, topic="review-events"):
@@ -834,7 +863,7 @@ async def test_truly_quiet_sync_stays_silent(db, user_id, channel_id, monkeypatc
 
     monkeypatch.setattr(service, "get_listing_detail", _detail)
     monkeypatch.setattr(service, "enqueue_event", _no_events)
-    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: [])
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id, *a, **k: [])
     monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
     monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
 
@@ -875,7 +904,7 @@ async def test_metrics_movement_notifies(db, user_id, channel_id, monkeypatch):
     monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", False)
     monkeypatch.setattr(service, "_key_present", lambda: True)
 
-    async def _detail(listing_id):
+    async def _detail(listing_id, api_key=None):
         return {}
 
     async def _no_events(event_type, payload, topic="review-events"):
@@ -883,7 +912,7 @@ async def test_metrics_movement_notifies(db, user_id, channel_id, monkeypatch):
 
     monkeypatch.setattr(service, "get_listing_detail", _detail)
     monkeypatch.setattr(service, "enqueue_event", _no_events)
-    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id: [])
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id, *a, **k: [])
     monkeypatch.setattr(
         embedsocial, "fetch_listing_metrics",
         lambda *a, **k: _metrics_payload(googleSearchMobile=8, directions=3),
@@ -953,3 +982,84 @@ async def test_branch_failure_notifies(db, user_id, monkeypatch):
     assert len(failed) == 1
     assert "Ghost Branch" in failed[0].title
     assert failed[0].href == "/dashboard/channels"
+
+
+@pytest.mark.asyncio
+async def test_dismissed_insight_skips_drafting(db, user_id, channel_id, monkeypatch):
+    """A rejected draft stays rejected: the sync must not draft again for
+    a dismissed review (the merchant answered elsewhere or wants silence).
+    A reviewer edit re-arms drafting."""
+    from sqlalchemy import select
+
+    from app.modules.analytics.models import ReviewInsight
+    from app.modules.channels.models import AutoReplyConfig, ReviewReply
+    from app.modules.localith.models import LocalithConnection
+
+    db.add(LocalithConnection(
+        id="lc-dismiss-1", user_id=user_id, listing_id="demo-loc-456",
+        listing_name="Dismiss Listing",
+    ))
+    db.add(AutoReplyConfig(
+        id="cfg-dismiss-1", channel_id=channel_id, enabled=True,
+        approval_mode="approval",
+    ))
+    db.add(ReviewInsight(
+        channel_id=channel_id, review_id="localith:qp1", user_id=user_id,
+        rating=5, review_text="Do you sell shawarma?",
+        reviewer_name="Saeed", draft_dismissed=True,
+    ))
+    db.add(ReviewReply(
+        channel_id=channel_id, review_id="localith:qp1", rating=5,
+        review_text="Do you sell shawarma?", reviewer_name="Saeed",
+        reply_text="old draft", status="rejected",
+    ))
+    await db.commit()
+
+    items = [{"id": "qp1", "rating": 5, "captionText": "Do you sell shawarma?",
+              "authorName": "Saeed"}]
+    monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _detail(listing_id, api_key=None):
+        return {}
+
+    monkeypatch.setattr(service, "get_listing_detail", _detail)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id, *a, **k: items)
+    monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
+    monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
+
+    calls = []
+
+    async def _gen(config, channel, rating, text, reviewer, db_,
+                   review_id=None, attempt=1, previous_draft=None):
+        calls.append(review_id)
+        return "engine draft"
+
+    monkeypatch.setattr(service, "generate_auto_reply", _gen)
+
+    async def _no_events(*a, **k):
+        return "evt"
+
+    monkeypatch.setattr(service, "enqueue_event", _no_events)
+
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    assert calls == []
+    rows = (await db.execute(
+        select(ReviewReply).where(ReviewReply.review_id == "localith:qp1")
+    )).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == "rejected"
+
+    # Reviewer edits the review → new content re-arms drafting.
+    items[0]["captionText"] = "Do you sell shawarma?? Edited!"
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    assert calls == ["localith:qp1"]
+    rows = (await db.execute(
+        select(ReviewReply).where(ReviewReply.review_id == "localith:qp1")
+        .order_by(ReviewReply.created_at.asc())
+    )).scalars().all()
+    pending = [r for r in rows if r.status == "pending_approval"]
+    assert len(pending) == 1
+    assert pending[0].review_text == "Do you sell shawarma?? Edited!"

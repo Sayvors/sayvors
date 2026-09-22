@@ -31,15 +31,14 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
       { label: t.nav.reviews, hint: "", keywords: "ratings replies comments stars feedback respond", href: "/dashboard/reviews", section: "pages" },
       { label: t.nav.verification, hint: "", keywords: "verify business verification badge", href: "/dashboard/verification", section: "pages" },
       { label: t.nav.databank, hint: "", keywords: "knowledge docs documents upload brain faq", href: "/dashboard/databank", section: "pages" },
-      { label: t.nav.connect, hint: "", keywords: "channels google facebook instagram connect link", href: "/dashboard/channels", section: "pages" },
-      { label: t.nav.autoReply, hint: "", keywords: "automations automatic replies autopilot approval queue tone model", href: "/dashboard/automations", section: "pages" },
+      { label: t.nav.connect, hint: "", keywords: "channels google facebook instagram connect link automations automatic replies autopilot approval queue tone model", href: "/dashboard/channels", section: "pages" },
       { label: t.nav.outbox, hint: "", keywords: "drafts approve pending failed outbox publish queue", href: "/dashboard/outbox", section: "pages" },
       { label: t.nav.usage, hint: "", keywords: "tokens billing costs limits usage", href: "/dashboard/usage", section: "pages" },
+      { label: t.nav.billing, hint: "", keywords: "billing payment cards invoices plan subscription vat", href: "/dashboard/billing", section: "pages" },
       { label: t.account.myProfile, hint: "", keywords: "account profile user personal", href: "/dashboard/profile", section: "pages" },
       { label: t.header.settings, hint: "", keywords: "settings preferences configuration", href: "/dashboard/settings", section: "pages" },
       { label: t.header.newDatabank, hint: "", keywords: "create new databank knowledge", href: "/dashboard/databank/new", section: "actions" },
-      { label: t.header.newChannel, hint: "", keywords: "create connect new channel", href: "/dashboard/channels", section: "actions" },
-      { label: t.header.newAutomation, hint: "", keywords: "create new automation auto-reply", href: "/dashboard/automations", section: "actions" },
+      { label: t.header.newChannel, hint: "", keywords: "create connect new channel automation auto-reply", href: "/dashboard/channels", section: "actions" },
     ],
     [t]
   );

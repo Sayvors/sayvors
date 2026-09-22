@@ -1,18 +1,17 @@
-"""Localith connections (single-shared-key mode v1).
+"""Localith connections: one row per (user_id, listing_id).
 
 Each Sayvors user can save ANY number of Localith listings — one row per
 (user_id, listing_id). Every connected branch is stored, synced, and kept;
 pages filter per branch instead of assuming one location.
-The API key itself is shared (LOCALITH_API_KEY env) until we ship
-per-tenant keys; only the listing choice is per-tenant here. Same
-table + model will work for the per-tenant-key upgrade — just add an
-encrypted key column.
+Each row may carry the tenant's own Fernet-encrypted API key
+(`api_key_encrypted`); rows without one fall back to the shared
+LOCALITH_API_KEY env.
 """
 
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -32,6 +31,10 @@ class LocalithConnection(Base):
     listing_name: Mapped[str] = mapped_column(String(255))
     listing_google_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Per-tenant Localith API key (Fernet via channels.service.encrypt_token).
+    # Empty → shared LOCALITH_API_KEY env fallback. Never serialized to clients.
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # ── Business profile snapshot (from GET /rest/v1/listings/{id}) ──
     address: Mapped[str | None] = mapped_column(String(500), nullable=True)

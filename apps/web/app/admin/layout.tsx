@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { adminClearToken, adminGetToken } from "@/lib/admin-api";
+import { adminClearSession, adminHasSession, adminLogout } from "@/lib/admin-api";
 
 const TABS = [
   { href: "/admin/overview", label: "Overview" },
@@ -17,23 +17,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const router = useRouter();
   const [ready, setReady] = useState(false);
-  const [hasToken, setHasToken] = useState(false);
+  const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
-    setHasToken(!!adminGetToken());
+    setHasSession(adminHasSession());
     setReady(true);
   }, []);
 
-  // Re-check on every navigation (login page sets the token).
+  // Re-check on every navigation (login page sets the session).
   useEffect(() => {
-    setHasToken(!!adminGetToken());
+    setHasSession(adminHasSession());
   }, [pathname]);
 
   if (!ready) {
     return <div className="flex min-h-screen items-center justify-center bg-[#f4f1ff] text-[13px] text-ink/40">Loading…</div>;
   }
 
-  if (!hasToken) {
+  if (!hasSession) {
     // The login form lives at /admin; every other admin page redirects there.
     if (pathname === "/admin") return <>{children}</>;
     router.replace("/admin");
@@ -62,9 +62,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             })}
           </nav>
           <button
-            onClick={() => {
-              adminClearToken();
-              setHasToken(false);
+            onClick={async () => {
+              await adminLogout();
+              setHasSession(false);
               router.replace("/admin");
             }}
             className="ml-auto rounded-lg border border-ink/10 px-3 py-1.5 text-[12px] font-semibold text-ink/50 outline-none transition hover:border-coral/40 hover:text-coral focus-visible:ring-2 focus-visible:ring-coral/30"

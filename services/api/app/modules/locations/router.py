@@ -87,6 +87,9 @@ async def update_location(
             hours=body.hours.model_dump() if body.hours else None,
             service_area=body.service_area,
             attributes=body.attributes,
+            opening_date=body.opening_date.isoformat() if body.opening_date else None,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))

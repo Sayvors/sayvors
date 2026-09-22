@@ -86,6 +86,9 @@ class UsageDayRow(BaseModel):
     day: str
     total_tokens: int = 0
     calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    avg_latency_ms: int = 0
 
 
 class UsageTotals(BaseModel):

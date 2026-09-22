@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { adminGetToken, adminLogin } from "@/lib/admin-api";
+import { adminHasSession, adminLogin } from "@/lib/admin-api";
 import LogoLoader from "@/components/LogoLoader";
 
 export default function AdminLoginPage() {
@@ -13,7 +13,7 @@ export default function AdminLoginPage() {
 
   useEffect(() => {
     // Already logged in → straight to the panel.
-    if (adminGetToken()) router.replace("/admin/overview");
+    if (adminHasSession()) router.replace("/admin/overview");
   }, [router]);
 
   async function submit() {

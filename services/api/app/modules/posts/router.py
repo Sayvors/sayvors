@@ -6,12 +6,12 @@ GET    /api/v1/posts/{post_id}       read one
 PUT    /api/v1/posts/{post_id}       update (status flips to published publish now)
 DELETE /api/v1/posts/{post_id}       delete permanently
 POST   /api/v1/posts/{post_id}/publish   publish a draft/scheduled/failed post now
-POST   /api/v1/posts/sync            publish all due scheduled posts
+POST   /api/v1/posts/sync            publish all due scheduled posts (admin/ops only)
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.deps import get_current_user, get_db
+from ...core.deps import get_current_user, get_db, require_admin
 from ..auth.rate_limit import rate_limit
 from ..users.models import User
 from . import service
@@ -159,13 +159,17 @@ async def publish_post_now(
 
 
 @router.post("/sync", response_model=SyncResult)
-async def sync_due_posts(    user: User = Depends(get_current_user),
+async def sync_due_posts(
+    request: Request,
+    _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run one worker pass on demand: publish due scheduled posts and
-    delete rows whose delete_at has passed. Per-post failures are
-    isolated and reported."""
-    _ = user
+    """Run one worker pass on demand (admin/ops only — the real worker runs
+    its own loop; any authenticated tenant must not be able to trigger a
+    GLOBAL publish/delete pass). Rate limited to 6/hour per IP."""
+    ip = request.client.host if request.client else "unknown"
+    if not await rate_limit(f"posts-sync:{ip}", 6, 3600):
+        raise HTTPException(status_code=429, detail="Sync rate limit exceeded. Try again later.")
     result = await service.publish_due(db)
     gone = await service.delete_due(db)
     result["deleted"] = gone["deleted"]

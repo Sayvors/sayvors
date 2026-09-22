@@ -435,6 +435,37 @@ async def test_edit_rejected_still_refused(db, user_id, channel_id, client):
 
 
 @pytest.mark.asyncio
+async def test_reject_marks_draft_dismissed(db, user_id, channel_id, client):
+    """Rejecting a draft marks the insight so auto-pipelines stop drafting."""
+    from app.modules.analytics.models import ReviewInsight
+
+    db.add(ReviewInsight(
+        channel_id=channel_id, review_id="localith:edit-1", user_id=user_id,
+        rating=5, review_text="Great", reviewer_name="Ali",
+    ))
+    db.add(_reply("rr-reject-1", channel_id, "pending_approval"))
+    await db.commit()
+
+    r = client.delete(
+        f"/api/v1/channels/{channel_id}/reviews/rr-reject-1",
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "rejected"
+
+    from sqlalchemy import select as _select
+
+    db.expunge_all()  # endpoint committed via its own session
+    insight = (await db.execute(
+        _select(ReviewInsight).where(
+            ReviewInsight.channel_id == channel_id,
+            ReviewInsight.review_id == "localith:edit-1",
+        )
+    )).scalar_one()
+    assert insight.draft_dismissed is True
+
+
+@pytest.mark.asyncio
 async def test_insights_carry_latest_response(db, user_id, channel_id, client):
     """The review list carries each review's response for inline editing."""
     from datetime import datetime, timezone
@@ -457,6 +488,51 @@ async def test_insights_carry_latest_response(db, user_id, channel_id, client):
     assert item["reply_id"] == "rr-edit-4"
     assert item["reply_text"] == "Live text"
     assert item["reply_status"] == "posted"
+
+
+@pytest.mark.asyncio
+async def test_approve_clears_edited_flag(db, user_id, channel_id, client, monkeypatch):
+    """Posting the follow-up answers the edit: the 'edited' card must go."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select as _select
+
+    from app.modules.analytics.models import ReviewInsight
+    from app.modules.channels import router as channels_router
+    from app.modules.localith import service as localith_service
+
+    monkeypatch.setattr(channels_router.settings, "GOOGLE_REVIEWS_MOCK", False)
+
+    async def _posted(item_id, text):
+        return {"ok": True}
+
+    monkeypatch.setattr(localith_service, "post_reply", _posted)
+    db.add(ReviewInsight(
+        channel_id=channel_id, review_id="localith:edit-9", user_id=user_id,
+        rating=5, review_text="New text", reviewer_name="Ali",
+        edited=True, edited_at=datetime.now(timezone.utc),
+        previous_review_text="Old text",
+    ))
+    db.add(_reply("rr-approve-9", channel_id, "pending_approval",
+                  **{"review_id": "localith:edit-9", "review_text": "New text"}))
+    await db.commit()
+
+    r = client.post(
+        f"/api/v1/channels/{channel_id}/reviews/rr-approve-9/approve",
+        headers={"host": "localhost"},
+    )
+    assert r.status_code == 200, r.text[:200]
+    assert r.json()["status"] == "posted"
+
+    db.expunge_all()  # endpoint committed via its own session
+    insight = (await db.execute(
+        _select(ReviewInsight).where(
+            ReviewInsight.channel_id == channel_id,
+            ReviewInsight.review_id == "localith:edit-9",
+        )
+    )).scalar_one()
+    assert insight.edited is False
+    assert insight.edited_at is None
 
 
 

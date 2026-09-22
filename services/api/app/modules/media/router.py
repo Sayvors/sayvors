@@ -9,12 +9,12 @@ GET    /api/v1/media/{media_id}     read one
 PUT    /api/v1/media/{media_id}     update (category/flags/schedule/delete_at)
 DELETE /api/v1/media/{media_id}     delete permanently
 POST   /api/v1/media/{media_id}/publish   publish a draft/scheduled/failed photo now
-POST   /api/v1/media/sync           publish due + delete expired (worker pass on demand)
+POST   /api/v1/media/sync           publish due + delete expired (admin/ops only)
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.deps import get_current_user, get_db
+from ...core.deps import get_current_user, get_db, require_admin
 from ..users.models import User
 from . import service
 from .schemas import MediaCreate, MediaOut, MediaPublishResult, MediaSyncResult, MediaUpdate
@@ -149,11 +149,18 @@ async def publish_media_now(
 
 @router.post("/sync", response_model=MediaSyncResult)
 async def sync_due_media(
-    user: User = Depends(get_current_user),
+    request: Request,
+    _admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run one worker pass on demand: publish due photos, delete expired."""
-    _ = user
+    """Run one worker pass on demand (admin/ops only — any authenticated
+    tenant must not be able to trigger a GLOBAL publish/delete pass).
+    Rate limited to 6/hour per IP."""
+    from ..auth.rate_limit import rate_limit
+
+    ip = request.client.host if request.client else "unknown"
+    if not await rate_limit(f"media-sync:{ip}", 6, 3600):
+        raise HTTPException(status_code=429, detail="Sync rate limit exceeded. Try again later.")
     result = await service.publish_due(db)
     gone = await service.delete_due(db)
     result["deleted"] = gone["deleted"]

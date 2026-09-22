@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic import BaseModel, Field
 
 
@@ -26,6 +28,7 @@ class LocationUpdate(BaseModel):
     hours: HoursIn | None = None
     service_area: list[str] | None = None
     attributes: dict[str, str] | None = None
+    opening_date: date | None = Field(None, description="Business opening date (YYYY-MM-DD)")
 
 
 class LocationProfileOut(BaseModel):
@@ -42,5 +45,6 @@ class LocationProfileOut(BaseModel):
     hours: dict = {}
     service_area: list[str] = []
     attributes: dict[str, str] = {}
+    opening_date: str | None = None
     google_synced: list[str] = []
     updated_at: str | None = None

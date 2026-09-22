@@ -420,3 +420,21 @@ async def test_notify_failure_does_not_poison_session(db, user_id):
         _select(User).where(User.id == user_id))).scalar_one()
     assert again.business_type == "Food & Restaurant"
     await db.rollback()
+
+
+@pytest.mark.asyncio
+async def test_insight_photo_roundtrip(client, db, user_id, channel_id):
+    """Stored reviewer photo surfaces through the insights endpoint."""
+    from app.modules.analytics.models import ReviewInsight
+
+    db.add(ReviewInsight(
+        channel_id=channel_id, review_id="localith:photo-1", user_id=user_id,
+        rating=5, review_text="Great", reviewer_name="Sara",
+        reviewer_photo_url="https://lh3.googleusercontent.com/a-/x",
+    ))
+    await db.commit()
+
+    r = client.get("/api/v1/analytics/reviews/insights", headers={"host": "localhost"})
+    assert r.status_code == 200
+    item = [i for i in r.json()["items"] if i["review_id"] == "localith:photo-1"][0]
+    assert item["reviewer_photo_url"] == "https://lh3.googleusercontent.com/a-/x"

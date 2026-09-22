@@ -36,8 +36,8 @@ def admin_headers(client, monkeypatch):
         "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
     )
     assert r.status_code == 200
-    token = r.json()["access_token"]
-    return {**_HOST, "Authorization": f"Bearer {token}"}
+    # Session is an httpOnly cookie; the jar replays it on /api/v1/admin/*.
+    return {**_HOST, "X-Requested-With": "XMLHttpRequest"}
 
 
 async def _tenant(db, uid="tenant-1", email="tenant1@example.com"):
