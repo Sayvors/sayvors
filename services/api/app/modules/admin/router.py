@@ -4,7 +4,6 @@ POST   /api/v1/admin/login   exchange the admin password for a short token
 GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
-import sys
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -13,6 +12,7 @@ from ...config import settings
 from ...core.deps import get_db, require_admin
 from ...security import create_admin_token, verify_password
 from ..auth.rate_limit import rate_limit
+from ..auth.router import get_client_ip
 from . import service as admin_service
 from .schemas import (
     AdminHealth,
@@ -48,12 +48,35 @@ class AdminLoginResponse(BaseModel):
     expires_in_minutes: int
 
 
-def _get_client_ip(request: Request) -> str:
-    peer = request.client.host if request.client else ""
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[-1].strip()
-    return peer or "unknown"
+_ADMIN_FAIL_KEY = "admin-login:failures:global"
+
+
+async def _register_admin_failure() -> int:
+    """Increment the global failure counter; returns the new count.
+
+    Keyed on the credential, not the source IP, so a distributed attacker
+    rotating XFF addresses cannot reset their progress. Window: 15 minutes.
+    """
+    try:
+        from ..redis.client import get_redis
+
+        redis = await get_redis()
+        count = await redis.incr(_ADMIN_FAIL_KEY)
+        await redis.expire(_ADMIN_FAIL_KEY, 900)
+        return int(count)
+    except Exception:
+        return 0
+
+
+async def _admin_locked_out() -> bool:
+    try:
+        from ..redis.client import get_redis
+
+        redis = await get_redis()
+        count = int(await redis.get(_ADMIN_FAIL_KEY) or 0)
+        return count >= settings.ADMIN_MAX_CONSECUTIVE_FAILURES
+    except Exception:
+        return False
 
 
 @router.post("/login", response_model=AdminLoginResponse)
@@ -62,12 +85,28 @@ async def admin_login(body: AdminLoginRequest, request: Request):
         raise HTTPException(status_code=503, detail="Admin access is not configured.")
     from ..auth.rate_limit import rate_limit
 
-    ip = _get_client_ip(request)
+    ip = get_client_ip(request)
     if not await rate_limit(f"admin-login:{ip}", 5, 300):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    if await _admin_locked_out():
+        logger.error("Admin login globally locked out (repeated failures), ip=%s", ip)
+        raise HTTPException(
+            status_code=429,
+            detail="Admin access temporarily locked. Try again later.",
+        )
     if not verify_password(body.password, settings.ADMIN_PASSWORD_HASH):
-        logger.warning("Failed admin login from %s", ip)
+        failures = await _register_admin_failure()
+        logger.warning(
+            "Failed admin login from %s (global failures=%d)", ip, failures
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong password.")
+    try:
+        from ..redis.client import get_redis
+
+        redis = await get_redis()
+        await redis.delete(_ADMIN_FAIL_KEY)
+    except Exception:
+        pass
     return AdminLoginResponse(
         access_token=create_admin_token(),
         expires_in_minutes=settings.ADMIN_SESSION_MINUTES,
@@ -75,9 +114,9 @@ async def admin_login(body: AdminLoginRequest, request: Request):
 
 
 async def admin_rate_limit(request: Request):
-    if sys.modules.get("pytest"):
+    if settings.TESTING:
         return
-    ip = _get_client_ip(request)
+    ip = get_client_ip(request)
     if not await rate_limit(f"admin:{ip}:{request.url.path}", 10000, 60):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 

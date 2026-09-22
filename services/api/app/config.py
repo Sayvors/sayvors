@@ -66,7 +66,19 @@ class Settings(BaseSettings):
     RESEND_URL: str = "https://api.resend.com/emails"
     RESEND_FROM: str = "Sayvors <noreply@sayvors.com>"
     EMAIL_FROM: str = "noreply@sayvors.com"
+    # Generic /email/send is restricted to the platform sending domain unless
+    # this is explicitly enabled (self-hosted relay use only).
+    EMAIL_SEND_ALLOW_ANY_RECIPIENT: bool = False
     FRONTEND_URL: str = "http://localhost:3000"
+
+    # Set by the test suite (conftest). Gates the rate-limit/LLM test bypasses
+    # so prod code paths can never be disarmed by an import accident.
+    TESTING: bool = False
+
+    # Live-database sources in RAG databanks normally must resolve to globally
+    # routable IPs (SSRF guard). Enable ONLY for self-hosted deployments that
+    # must reach private/VPN networks.
+    RAG_DB_ALLOW_PRIVATE_HOSTS: bool = False
 
     # ── Google Business Profile (Reviews) ────────────────
     GOOGLE_CLIENT_ID: str = ""
@@ -125,6 +137,9 @@ class Settings(BaseSettings):
 
     ADMIN_PASSWORD_HASH: str = ""
     ADMIN_SESSION_MINUTES: int = 120
+    # Global (IP-independent) consecutive-failure lockout for the admin login,
+    # so per-IP rate limits are not the only brute-force control.
+    ADMIN_MAX_CONSECUTIVE_FAILURES: int = 10
 
     model_config = {"env_file": ".env"}
 
