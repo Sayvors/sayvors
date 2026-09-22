@@ -1,0 +1,46 @@
+from pydantic import BaseModel, Field
+
+
+class BillingProfileIn(BaseModel):
+    full_name: str | None = Field(default=None, max_length=200)
+    email: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=50)
+    address_line1: str | None = Field(default=None, max_length=255)
+    address_line2: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=120)
+    region: str | None = Field(default=None, max_length=120)
+    postal_code: str | None = Field(default=None, max_length=20)
+    country: str | None = Field(default=None, max_length=8)
+    tax_id: str | None = Field(default=None, max_length=50)
+
+
+class BillingProfileOut(BillingProfileIn):
+    id: str
+    user_id: str
+
+
+class PaymentMethodIn(BaseModel):
+    brand: str = Field(..., min_length=1, max_length=20,
+                       description="Card brand: visa, mastercard, mada, amex, ...")
+    last4: str = Field(..., min_length=4, max_length=4, pattern=r"^[0-9]{4}$")
+    exp_month: int = Field(..., ge=1, le=12)
+    exp_year: int = Field(..., ge=2000, le=2100)
+    holder_name: str | None = Field(default=None, max_length=200)
+    is_default: bool = False
+    # Gateway provider id. Only "manual" is accepted until a gateway is
+    # wired (see providers.py) — anything else is a loud 422.
+    provider: str = Field(default="manual", max_length=30)
+
+
+class PaymentMethodOut(BaseModel):
+    id: str
+    user_id: str
+    brand: str
+    last4: str
+    exp_month: int
+    exp_year: int
+    holder_name: str | None = None
+    is_default: bool
+    provider: str
+    verified: bool
+    expired: bool = False

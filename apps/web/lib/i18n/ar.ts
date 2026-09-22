@@ -20,6 +20,7 @@ const ar: Dict = {
     autoReply: "الرد التلقائي",
     outbox: "صندوق الصادر",
     usage: "الاستخدام",
+    billing: "الفوترة",
     locations: "Locations",
     verification: "Verification",
     services: "Services",

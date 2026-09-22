@@ -34,6 +34,7 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
       { label: t.nav.connect, hint: "", keywords: "channels google facebook instagram connect link automations automatic replies autopilot approval queue tone model", href: "/dashboard/channels", section: "pages" },
       { label: t.nav.outbox, hint: "", keywords: "drafts approve pending failed outbox publish queue", href: "/dashboard/outbox", section: "pages" },
       { label: t.nav.usage, hint: "", keywords: "tokens billing costs limits usage", href: "/dashboard/usage", section: "pages" },
+      { label: t.nav.billing, hint: "", keywords: "billing payment cards invoices plan subscription vat", href: "/dashboard/billing", section: "pages" },
       { label: t.account.myProfile, hint: "", keywords: "account profile user personal", href: "/dashboard/profile", section: "pages" },
       { label: t.header.settings, hint: "", keywords: "settings preferences configuration", href: "/dashboard/settings", section: "pages" },
       { label: t.header.newDatabank, hint: "", keywords: "create new databank knowledge", href: "/dashboard/databank/new", section: "actions" },

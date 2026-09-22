@@ -1,0 +1,71 @@
+"use client";
+
+import { apiFetch } from "./api-rag";
+
+export interface BillingProfile {
+  id: string;
+  user_id: string;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  region: string | null;
+  postal_code: string | null;
+  country: string | null;
+  tax_id: string | null;
+}
+
+export interface PaymentMethod {
+  id: string;
+  user_id: string;
+  brand: string;
+  last4: string;
+  exp_month: number;
+  exp_year: number;
+  holder_name: string | null;
+  is_default: boolean;
+  provider: string;
+  verified: boolean;
+  expired: boolean;
+}
+
+export async function getBillingProfile(): Promise<BillingProfile | null> {
+  return apiFetch("/api/v1/billing/profile");
+}
+
+export async function saveBillingProfile(
+  data: Partial<Omit<BillingProfile, "id" | "user_id">>
+): Promise<BillingProfile> {
+  return apiFetch("/api/v1/billing/profile", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listPaymentMethods(): Promise<PaymentMethod[]> {
+  return apiFetch("/api/v1/billing/methods");
+}
+
+export async function addPaymentMethod(data: {
+  brand: string;
+  last4: string;
+  exp_month: number;
+  exp_year: number;
+  holder_name?: string;
+  is_default?: boolean;
+}): Promise<PaymentMethod> {
+  return apiFetch("/api/v1/billing/methods", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function setDefaultMethod(id: string): Promise<PaymentMethod> {
+  return apiFetch(`/api/v1/billing/methods/${id}/default`, { method: "POST" });
+}
+
+export async function removePaymentMethod(id: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/v1/billing/methods/${id}`, { method: "DELETE" });
+}
