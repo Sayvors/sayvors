@@ -266,6 +266,7 @@ export default function BillingPage() {
   const [holder, setHolder] = useState("");
   const [makeDefault, setMakeDefault] = useState(false);
   const [cardTouched, setCardTouched] = useState(false);
+  const [showAddCard, setShowAddCard] = useState(false);
 
   // Billing details (trimmed to the essentials)
   const [detailsTouched, setDetailsTouched] = useState(false);
@@ -406,6 +407,7 @@ export default function BillingPage() {
       setHolder("");
       setMakeDefault(false);
       setCardTouched(false);
+      setShowAddCard(false);
       setBanner({ kind: "ok", text: "Card saved — only the last 4 digits were sent. Gateway verification lands soon." });
     } catch (e) {
       setBanner({ kind: "err", text: e instanceof Error ? e.message.slice(0, 200) : "Could not save card." });
@@ -621,58 +623,96 @@ export default function BillingPage() {
             )}
 
             <div className="rounded-xl border border-dashed border-ink/[0.1] p-4 dark:border-fog/[0.1]">
-              <h3 className="text-[13px] font-bold text-ink dark:text-fog">Add a card</h3>
-              <p className="mt-0.5 text-[11px] text-ink/45 dark:text-fog/45">
-                Type the number — the brand is detected automatically and only the last 4 digits are ever sent or stored.
-              </p>
-              <div className="mt-3">
-                <CardPreview brand={detected} digits={digits} holder={holder} expiry={expiry} />
-              </div>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div className="sm:col-span-2">
-                  <Field
-                    label="Card number"
-                    required
-                    hint={detected !== "unknown" && detected !== "other" ? `Detected: ${brandLabel(detected)}` : undefined}
-                    error={cardTouched ? numberError : null}
-                  >
-                    <input
-                      value={cardNumber}
-                      onChange={(e) => setCardNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 19).replace(/(\d{4})(?=\d)/g, "$1 "))}
-                      disabled={busy !== null}
-                      placeholder="4242 4242 4242 4242"
-                      inputMode="numeric"
-                      autoComplete="cc-number"
-                      className={`${fieldInput(cardTouched && !!numberError)} tabular-nums tracking-[0.06em]`}
-                    />
-                  </Field>
-                </div>
-                <Field label="Name on card" required error={cardTouched ? holderError : null}>
-                  <input value={holder} onChange={(e) => setHolder(e.target.value)} disabled={busy !== null} placeholder="SARA AHMED" autoComplete="cc-name" className={fieldInput(cardTouched && !!holderError)} />
-                </Field>
-                <Field label="Expiry" required hint="MM/YY" error={cardTouched ? expiryErr : null}>
-                  <input
-                    value={expiry}
-                    onChange={(e) => setExpiry(formatExpiryInput(e.target.value))}
-                    disabled={busy !== null}
-                    placeholder="08/27"
-                    inputMode="numeric"
-                    autoComplete="cc-exp"
-                    className={`${fieldInput(cardTouched && !!expiryErr)} tabular-nums`}
-                  />
-                </Field>
-              </div>
-              <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12px] font-medium text-ink/60 dark:text-fog/60">
-                <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} disabled={busy !== null} className="h-4 w-4 rounded border-ink/20 text-deep-violet focus:ring-deep-violet/40" />
-                Make default{methods.length === 0 ? " (first card is default automatically)" : ""}
-              </label>
               <button
-                onClick={() => void handleAddCard()}
-                disabled={busy !== null}
-                className="mt-3 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                type="button"
+                onClick={() => setShowAddCard((v) => !v)}
+                aria-expanded={showAddCard}
+                className="flex w-full items-center justify-between gap-2 text-left"
               >
-                {busy === "add" ? "Saving…" : "Save card"}
+                <span className="text-[13px] font-bold text-ink dark:text-fog">Add a card</span>
+                <span
+                  aria-hidden
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[15px] font-bold leading-none text-deep-violet transition-transform duration-200 ${showAddCard ? "rotate-45" : ""}`}
+                >
+                  +
+                </span>
               </button>
+              {!showAddCard ? (
+                <p className="mt-1 text-[11px] text-ink/45 dark:text-fog/45">
+                  Brand is detected automatically — only the last 4 digits are ever sent or stored.
+                </p>
+              ) : (
+                <>
+                  <p className="mt-0.5 text-[11px] text-ink/45 dark:text-fog/45">
+                    Type the number — the brand is detected automatically and only the last 4 digits are ever sent or stored.
+                  </p>
+                  <div className="mt-3">
+                    <CardPreview brand={detected} digits={digits} holder={holder} expiry={expiry} />
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <Field
+                        label="Card number"
+                        required
+                        hint={detected !== "unknown" && detected !== "other" ? `Detected: ${brandLabel(detected)}` : undefined}
+                        error={cardTouched ? numberError : null}
+                      >
+                        <input
+                          value={cardNumber}
+                          onChange={(e) => setCardNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 19).replace(/(\d{4})(?=\d)/g, "$1 "))}
+                          disabled={busy !== null}
+                          placeholder="4242 4242 4242 4242"
+                          inputMode="numeric"
+                          autoComplete="cc-number"
+                          className={`${fieldInput(cardTouched && !!numberError)} tabular-nums tracking-[0.06em]`}
+                        />
+                      </Field>
+                    </div>
+                    <Field label="Name on card" required error={cardTouched ? holderError : null}>
+                      <input value={holder} onChange={(e) => setHolder(e.target.value)} disabled={busy !== null} placeholder="SARA AHMED" autoComplete="cc-name" className={fieldInput(cardTouched && !!holderError)} />
+                    </Field>
+                    <Field label="Expiry" required hint="MM/YY" error={cardTouched ? expiryErr : null}>
+                      <input
+                        value={expiry}
+                        onChange={(e) => setExpiry(formatExpiryInput(e.target.value))}
+                        disabled={busy !== null}
+                        placeholder="08/27"
+                        inputMode="numeric"
+                        autoComplete="cc-exp"
+                        className={`${fieldInput(cardTouched && !!expiryErr)} tabular-nums`}
+                      />
+                    </Field>
+                  </div>
+                  <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12px] font-medium text-ink/60 dark:text-fog/60">
+                    <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} disabled={busy !== null} className="h-4 w-4 rounded border-ink/20 text-deep-violet focus:ring-deep-violet/40" />
+                    Make default{methods.length === 0 ? " (first card is default automatically)" : ""}
+                  </label>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => void handleAddCard()}
+                      disabled={busy !== null}
+                      className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                    >
+                      {busy === "add" ? "Saving…" : "Save card"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAddCard(false);
+                        setCardTouched(false);
+                        setCardNumber("");
+                        setExpiry("");
+                        setHolder("");
+                        setMakeDefault(false);
+                      }}
+                      disabled={busy !== null}
+                      className="rounded-xl px-4 py-2 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-40 dark:text-fog/50 dark:hover:bg-fog/[0.06]"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </Section>
         </>
