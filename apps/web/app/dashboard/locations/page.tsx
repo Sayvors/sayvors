@@ -1329,7 +1329,7 @@ function AttributesTab({ initial, onSave, bulk }: {
 }) {
   const [attrs, setAttrs] = useState<Record<string, string>>(initial ?? {});
   const [newKey, setNewKey] = useState("");
-  const [newValue, setNewValue] = useState("");
+  const [newValue, setNewValue] = useState("yes");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -1341,9 +1341,9 @@ function AttributesTab({ initial, onSave, bulk }: {
   const addAttr = () => {
     const k = newKey.trim();
     if (k && !(k in attrs)) {
-      setAttrs({ ...attrs, [k]: newValue.trim() });
+      setAttrs({ ...attrs, [k]: newValue.trim() || "yes" });
       setNewKey("");
-      setNewValue("");
+      setNewValue("yes");
     }
   };
 
@@ -1395,7 +1395,11 @@ function AttributesTab({ initial, onSave, bulk }: {
       </div>
       <div className="grid grid-cols-[160px_1fr_auto] items-center gap-3">
         <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. Wheelchair accessible entrance" className="input-field" />
-        <input value={newValue} onChange={(e) => setNewValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. yes" className="input-field" />
+        <select value={newValue} onChange={(e) => setNewValue(e.target.value)} aria-label="Attribute value" className="input-field">
+          {["yes", "no", "limited"].map((v) => (
+            <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</option>
+          ))}
+        </select>
         <button onClick={addAttr} className="btn-secondary">Add</button>
       </div>
       <div className="flex justify-end pt-2">
