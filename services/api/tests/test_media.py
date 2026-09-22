@@ -348,3 +348,11 @@ async def test_media_schedule_create_notifies(db, user_id):
     res = await media.create_media(db, user_id, _photo(action="schedule", scheduled_on=future))
     assert res["media"]["status"] == "scheduled"
     assert await _notif_types(db, user_id) == ["media_scheduled"]
+
+
+@pytest.mark.asyncio
+async def test_sync_endpoint_admin_only(client):
+    """C1: /sync triggers a GLOBAL publish/delete pass — only admins may call
+    it. The real worker runs its own loop (posts/worker.py)."""
+    r = client.post("/api/v1/media/sync", headers={"host": "localhost"})
+    assert r.status_code == 401

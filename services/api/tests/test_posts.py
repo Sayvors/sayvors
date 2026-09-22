@@ -712,3 +712,11 @@ async def test_ai_draft_empty_twice_raises_without_model_name(monkeypatch, db, u
     )
     with pytest.raises(RuntimeError, match="AI drafting returned nothing"):
         await _svc.draft_post_content(db, user_id, "T", "update", None)
+
+
+@pytest.mark.asyncio
+async def test_sync_endpoint_admin_only(client):
+    """C1: /sync triggers a GLOBAL publish/delete pass — only admins may call
+    it. The real worker runs its own loop (posts/worker.py)."""
+    r = client.post("/api/v1/posts/sync", headers={"host": "localhost"})
+    assert r.status_code == 401
