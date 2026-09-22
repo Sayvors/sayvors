@@ -1376,8 +1376,8 @@ function AttributesTab({ initial, onSave, bulk }: {
       <div className="space-y-3">
         {Object.entries(attrs).length === 0 && <p className="text-[12px] text-ink/35 dark:text-fog/35">No attributes stored yet.</p>}
         {Object.entries(attrs).map(([key, value]) => (
-          <div key={key} className="grid grid-cols-[160px_1fr_auto] items-center gap-3">
-            <span className="text-[13px] font-medium text-ink dark:text-fog">{key}</span>
+          <div key={key} className="grid grid-cols-[1fr_160px_auto] items-center gap-3">
+            <span className="truncate text-[13px] font-medium text-ink dark:text-fog" title={key}>{key}</span>
             <input
               value={value}
               onChange={(e) => setAttrs({ ...attrs, [key]: e.target.value })}
@@ -1393,14 +1393,14 @@ function AttributesTab({ initial, onSave, bulk }: {
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-[160px_1fr_auto] items-center gap-3">
+      <div className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[1fr_140px_auto]">
         <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. Wheelchair accessible entrance" className="input-field" />
-        <select value={newValue} onChange={(e) => setNewValue(e.target.value)} aria-label="Attribute value" className="input-field">
+        <select value={newValue} onChange={(e) => setNewValue(e.target.value)} aria-label="Attribute value" className="input-field cursor-pointer text-center text-[12px] font-bold">
           {["yes", "no", "limited"].map((v) => (
             <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</option>
           ))}
         </select>
-        <button onClick={addAttr} className="btn-secondary">Add</button>
+        <button onClick={addAttr} className="btn-secondary justify-self-start sm:justify-self-auto">Add</button>
       </div>
       <div className="flex justify-end pt-2">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
