@@ -7,11 +7,13 @@ import { getProfile } from "@/lib/api-profile";
 import {
   addPaymentMethod,
   getBillingProfile,
+  getBudget,
   listPaymentMethods,
   removePaymentMethod,
   saveBillingProfile,
   setDefaultMethod,
   type BillingProfile,
+  type Budget,
   type PaymentMethod,
 } from "@/lib/api-billing";
 
@@ -75,7 +77,8 @@ function thisYear(): number {
 }
 
 export default function BillingPage() {
-  const [plan, setPlan] = useState("pro");
+  const [plan, setPlan] = useState("free");
+  const [budget, setBudget] = useState<Budget | null>(null);
   const [profile, setProfile] = useState<BillingProfile>(EMPTY_PROFILE);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,13 +98,17 @@ export default function BillingPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [prof, profBilling, meths] = await Promise.all([
+        const [prof, profBilling, meths, wallet] = await Promise.all([
           getProfile().catch(() => null),
           getBillingProfile().catch(() => null),
           listPaymentMethods().catch(() => []),
+          getBudget().catch(() => null),
         ]);
         if (cancelled) return;
-        if (prof?.plan) setPlan(prof.plan);
+        if (wallet) {
+          setBudget(wallet);
+          setPlan(wallet.plan);
+        } else if (prof?.plan) setPlan(prof.plan);
         if (profBilling) setProfile(profBilling);
         setMethods(Array.isArray(meths) ? meths : []);
       } catch {
@@ -250,6 +257,25 @@ export default function BillingPage() {
               <p className="text-[12px] text-ink/50 dark:text-fog/50">
                 Plan changes and invoices arrive with subscriptions.
               </p>
+            </div>
+            <div className="rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.04]">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[12px] font-medium text-ink/60 dark:text-fog/60">
+                  AI credits remaining
+                </span>
+                <span className="text-[15px] font-bold text-ink dark:text-fog">
+                  {budget ? `$${budget.balance_dollars.toFixed(2)}` : "—"}
+                </span>
+              </div>
+              <p className="mt-1 text-[12px] text-ink/50 dark:text-fog/50">
+                Every AI reply, analysis and chat message spends from this balance.
+                When it runs out, AI features pause until you top up.
+              </p>
+              {budget && budget.balance_cents < 200 && (
+                <p className="mt-1.5 text-[12px] font-medium text-amber-600 dark:text-amber-400">
+                  Balance is low — contact support to top up your AI credits.
+                </p>
+              )}
             </div>
           </Section>
 

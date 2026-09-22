@@ -69,3 +69,14 @@ export async function setDefaultMethod(id: string): Promise<PaymentMethod> {
 export async function removePaymentMethod(id: string): Promise<{ ok: boolean }> {
   return apiFetch(`/api/v1/billing/methods/${id}`, { method: "DELETE" });
 }
+
+export interface Budget {
+  plan: string;
+  balance_cents: number;
+  balance_dollars: number;
+  currency: string;
+}
+
+export async function getBudget(): Promise<Budget> {
+  return apiFetch("/api/v1/billing/budget");
+}

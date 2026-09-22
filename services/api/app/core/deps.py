@@ -42,6 +42,15 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    # G1 revocation: a blacklisted jti (logout / reuse detection) or a stale
+    # token version (password change / logout-all) must not authenticate.
+    # is_token_blacklisted fails closed when Redis is down.
+    from ..modules.auth.rate_limit import is_token_blacklisted
+
+    if await is_token_blacklisted(payload.get("jti", "")):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
+    if payload.get("ver", 0) != (user.token_version or 0):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
     return user
 
 
@@ -62,4 +71,8 @@ async def require_admin(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+    from ..modules.auth.rate_limit import is_token_blacklisted
+
+    if await is_token_blacklisted(payload.get("jti", "")):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin token revoked")
     return {"admin": True}

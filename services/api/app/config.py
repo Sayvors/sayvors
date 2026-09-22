@@ -75,9 +75,6 @@ class Settings(BaseSettings):
     GOOGLE_REVIEWS_REDIRECT_URI: str = "http://localhost:8000/api/v1/channels/google/callback"
     # Dev/test mode for Google Reviews: fabricate sample reviews.
     GOOGLE_REVIEWS_MOCK: bool = False
-    # Demo environment: analytics endpoints show the demo user's data
-    # regardless of the logged-in user (useful for presenting/test-driving).
-    DEMO_MODE: bool = False
 
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,

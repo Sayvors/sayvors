@@ -13,7 +13,6 @@ from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
-from ...config import settings
 from ..users.models import User
 from .models import Notification
 
@@ -21,11 +20,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/notifications", tags=["notifications"])
 
-DEMO_USER_ID = getattr(settings, "DEMO_USER_ID", None)
-
 
 def _uid(user: User) -> str:
-    return DEMO_USER_ID if settings.DEMO_MODE else user.id
+    return user.id
 
 
 class NotificationItem(BaseModel):

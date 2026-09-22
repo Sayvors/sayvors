@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import BillingProfile, PaymentMethod
+from .models import BillingEvent, BillingProfile, PaymentMethod
 from .schemas import BillingProfileIn, PaymentMethodIn
 
 logger = logging.getLogger(__name__)
@@ -184,3 +184,69 @@ async def set_default(method_id: str, user_id: str, db: AsyncSession) -> dict:
     await db.commit()
     await db.refresh(row)
     return _serialize_method(row)
+
+
+# ── Plan + AI credits (D1) ─────────────────────────────────
+
+async def get_budget(user_id: str, db: AsyncSession) -> dict:
+    """Tenant-facing wallet: plan + live balance.
+
+    The live balance is Redis when available, else the DB column (top-up
+    source of truth — may lag spend made since the last grant).
+    """
+    from ..users.models import User
+    from .budget import get_balance
+
+    user = await db.get(User, user_id)
+    if user is None:
+        raise ValueError("Tenant not found.")
+    live = await get_balance(user_id)
+    balance = live if live is not None else (user.ai_credit_cents or 0)
+    return {
+        "plan": user.plan or "free",
+        "balance_cents": balance,
+        "balance_dollars": round(balance / 100, 2),
+        "currency": "usd",
+    }
+
+
+async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
+                     note: str | None, created_by: str | None,
+                     db: AsyncSession) -> dict:
+    """Admin purchase flow: set the plan, add credits, ledger it, sync Redis.
+
+    A Pro purchase grants PLAN_INCLUDED_CENTS bundled credits on top of any
+    explicit top-up — the DB is updated as a pro user with a $20 AI budget.
+    """
+    from ..users.models import User
+    from .budget import PLAN_INCLUDED_CENTS, sync_balance
+
+    if plan not in ("free", "pro"):
+        raise ValueError("Unknown plan.")
+    user = await db.get(User, user_id)
+    if user is None:
+        raise ValueError("Tenant not found.")
+    old_plan = user.plan or "free"
+    plan_changed = old_plan != plan
+    bundled = PLAN_INCLUDED_CENTS.get(plan, 0) if plan_changed else 0
+    total_add = (add_credit_cents or 0) + bundled
+    user.plan = plan
+    user.ai_credit_cents = (user.ai_credit_cents or 0) + total_add
+    db.add(BillingEvent(
+        id=str(uuid.uuid4()),
+        tenant_id=user_id,
+        kind="plan_grant" if plan_changed else "credit_topup",
+        amount_cents=total_add,
+        balance_after_cents=user.ai_credit_cents,
+        note=note,
+        created_by=created_by,
+    ))
+    await db.commit()
+    await sync_balance(user_id, user.ai_credit_cents)
+    logger.info("Plan grant: tenant=%s plan=%s +%s¢ (by=%s)", user_id, plan, total_add, created_by)
+    return {
+        "plan": user.plan,
+        "balance_cents": user.ai_credit_cents,
+        "balance_dollars": round(user.ai_credit_cents / 100, 2),
+        "currency": "usd",
+    }

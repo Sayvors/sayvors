@@ -29,11 +29,11 @@ def create_admin_token() -> str:
     )
 
 
-def create_access_token(subject: str) -> str:
+def create_access_token(subject: str, version: int = 0) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_ACCESS_EXPIRATION_MINUTES)
     jti = secrets.token_hex(16)
     return jwt.encode(
-        {"sub": subject, "exp": expire, "jti": jti, "type": "access"},
+        {"sub": subject, "exp": expire, "jti": jti, "type": "access", "ver": version},
         settings.JWT_SECRET,
         algorithm=settings.JWT_ALGORITHM,
     )

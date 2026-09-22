@@ -136,6 +136,42 @@ async def admin_tenant_detail(
     return AdminTenantDetail(**detail)
 
 
+class PlanGrantRequest(BaseModel):
+    plan: str = Field(..., pattern=r"^(free|pro)$")
+    add_credit_cents: int = Field(default=0, ge=0, le=1_000_000)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class PlanGrantResponse(BaseModel):
+    plan: str
+    balance_cents: int
+    balance_dollars: float
+    currency: str = "usd"
+
+
+@router.post("/tenants/{user_id}/plan", response_model=PlanGrantResponse)
+async def admin_grant_plan(
+    user_id: str,
+    body: PlanGrantRequest,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a plan purchase: set plan, add AI credits, ledger + sync.
+
+    A first-time Pro grant bundles $20 of AI credits automatically. This is
+    the endpoint behind "when people buy a plan, the admin sees it and the
+    DB updates the user to pro with $20 of AI tokens".
+    """
+    from ..billing import service as billing_service
+
+    try:
+        return await billing_service.grant_plan(
+            user_id, body.plan, body.add_credit_cents, body.note, "admin", db
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
+
+
 @router.get("/health", response_model=AdminHealth)
 async def admin_health(
     probe: bool = Query(False),

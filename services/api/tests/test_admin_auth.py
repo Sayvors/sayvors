@@ -516,3 +516,103 @@ async def test_admin_remote_models_parses_shapes(client, monkeypatch):
         {"id": "groq:model-a", "name": "model-a"},
         {"id": "groq:model-b", "name": "model-b"},
     ]
+
+
+# ── G1 access-token revocation ─────────────────────────────
+
+def _real_auth_client(client):
+    """Drop the fake-user override so the real get_current_user runs."""
+    from app import main as main_module
+    from app.core import deps as core_deps
+
+    key = core_deps.get_current_user
+    saved = main_module.app.dependency_overrides.pop(key, None)
+    return key, saved
+
+
+@pytest.mark.asyncio
+async def test_access_token_blacklist_rejected(client, db, user_id):
+    """A blacklisted access jti must 401 even before expiry (G1)."""
+    from app import main as main_module
+    from app.modules.auth.rate_limit import blacklist_token
+    from app.modules.users.models import User
+    from app.security import create_access_token, decode_token
+
+    db.add(User(id=user_id, email="g1@sayvors.com", first_name="G",
+                last_name="One", password_hash="x", onboarded=True))
+    await db.commit()
+
+    key, saved = _real_auth_client(client)
+    try:
+        token = create_access_token(user_id, 0)
+        headers = {**_HOST, "Authorization": f"Bearer {token}"}
+        assert client.get("/api/v1/review-engine/strategies", headers=headers).status_code == 200
+
+        jti = decode_token(token)["jti"]
+        await blacklist_token(jti, 60)
+        r = client.get("/api/v1/review-engine/strategies", headers=headers)
+        assert r.status_code == 401
+    finally:
+        if saved is not None:
+            main_module.app.dependency_overrides[key] = saved
+
+
+@pytest.mark.asyncio
+async def test_access_token_stale_version_rejected(client, db, user_id):
+    """Bumping token_version (password change / logout-all) kills old tokens (G1)."""
+    from app import main as main_module
+    from app.modules.users.models import User
+    from app.security import create_access_token
+
+    db.add(User(id=user_id, email="g1v@sayvors.com", first_name="G",
+                last_name="One", password_hash="x", onboarded=True))
+    await db.commit()
+
+    key, saved = _real_auth_client(client)
+    try:
+        old = create_access_token(user_id, 0)
+        headers = {**_HOST, "Authorization": f"Bearer {old}"}
+        assert client.get("/api/v1/review-engine/strategies", headers=headers).status_code == 200
+
+        from sqlalchemy import update
+        await db.execute(update(User).where(User.id == user_id).values(token_version=1))
+        await db.commit()
+
+        assert client.get("/api/v1/review-engine/strategies", headers=headers).status_code == 401
+        fresh = create_access_token(user_id, 1)
+        fresh_headers = {**_HOST, "Authorization": f"Bearer {fresh}"}
+        assert client.get("/api/v1/review-engine/strategies", headers=fresh_headers).status_code == 200
+    finally:
+        if saved is not None:
+            main_module.app.dependency_overrides[key] = saved
+
+
+@pytest.mark.asyncio
+async def test_logout_kills_presented_access_token(client, db, user_id):
+    """Logout blacklists the presented access token; logout-all bumps version (G1)."""
+    from app import main as main_module
+    from app.modules.users.models import User
+    from app.security import create_access_token
+
+    db.add(User(id=user_id, email="g1l@sayvors.com", first_name="G",
+                last_name="One", password_hash="x", onboarded=True))
+    await db.commit()
+
+    key, saved = _real_auth_client(client)
+    try:
+        token = create_access_token(user_id, 0)
+        headers = {**_HOST, "Authorization": f"Bearer {token}"}
+        r = client.post("/api/v1/auth/logout", json={}, headers=headers)
+        assert r.status_code == 200
+        # Same access token is now dead.
+        assert client.get("/api/v1/review-engine/strategies", headers=headers).status_code == 401
+
+        token2 = create_access_token(user_id, 0)
+        headers2 = {**_HOST, "Authorization": f"Bearer {token2}"}
+        r2 = client.post("/api/v1/auth/logout", json={"all_devices": True}, headers=headers2)
+        assert r2.status_code == 200
+        # Version bumped → even a freshly minted ver-0 token is rejected.
+        assert client.get("/api/v1/review-engine/strategies", headers=headers2).status_code == 401
+    finally:
+        if saved is not None:
+            main_module.app.dependency_overrides[key] = saved

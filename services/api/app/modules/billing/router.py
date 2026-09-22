@@ -6,11 +6,21 @@ from . import service
 from .schemas import (
     BillingProfileIn,
     BillingProfileOut,
+    BudgetOut,
     PaymentMethodIn,
     PaymentMethodOut,
 )
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
+
+
+@router.get("/budget", response_model=BudgetOut)
+async def read_budget(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Tenant wallet: current plan + remaining AI credit balance."""
+    try:
+        return await service.get_budget(user.id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/profile", response_model=BillingProfileOut | None)

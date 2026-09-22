@@ -44,3 +44,16 @@ class PaymentMethodOut(BaseModel):
     provider: str
     verified: bool
     expired: bool = False
+
+
+class BudgetOut(BaseModel):
+    plan: str
+    balance_cents: int
+    balance_dollars: float
+    currency: str = "usd"
+
+
+class PlanGrantIn(BaseModel):
+    plan: str = Field(..., pattern=r"^(free|pro)$")
+    add_credit_cents: int = Field(default=0, ge=0, le=1_000_000)
+    note: str | None = Field(default=None, max_length=500)

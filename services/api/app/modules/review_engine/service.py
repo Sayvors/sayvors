@@ -152,16 +152,25 @@ async def _resolve_reply_prefs(req: ReviewEngineRequest, tenant_id: str, db: Asy
     if req.reply_language:
         prefs["reply_language"] = req.reply_language
     if req.channel_id:
-        from ..channels.models import AutoReplyConfig
+        from ..channels.models import AutoReplyConfig, Channel
 
+        # Ownership-checked: a tenant passing another tenant's channel_id
+        # must NOT inherit their dialect/promo settings (P0 cross-tenant
+        # fix). Unowned channel → safe defaults, loudly logged.
         cfg = (
             await db.execute(
-                select(AutoReplyConfig).where(
-                    AutoReplyConfig.channel_id == req.channel_id
+                select(AutoReplyConfig).join(
+                    Channel, Channel.id == AutoReplyConfig.channel_id
+                ).where(
+                    AutoReplyConfig.channel_id == req.channel_id,
+                    Channel.user_id == tenant_id,
                 )
             )
         ).scalar_one_or_none()
-        if cfg is not None:
+        if cfg is None:
+            logger.warning("Reply-prefs channel %s not owned by tenant; using defaults",
+                           req.channel_id)
+        else:
             if not req.dialect and (cfg.dialect or "auto") != "auto":
                 prefs["dialect"] = cfg.dialect
             if not req.reply_language and (cfg.reply_language or "match") != "match":

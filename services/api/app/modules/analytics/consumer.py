@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from ...database import async_session
-from ..channels.models import ReviewReply
+from ..channels.models import Channel, ReviewReply
 from ..kafka.client import create_consumer
 from ..notifications.service import notify
 from ..outbox.service import enqueue_event
@@ -39,6 +39,16 @@ logger = logging.getLogger(__name__)
 
 TOPIC = "review-events"
 GROUP_ID = "analytics-enricher"
+
+
+async def _channel_owner(db, channel_id: str) -> str | None:
+    """Authoritative tenant for a channel. Kafka payloads are untrusted —
+    anyone with topic access can forge user_id, so consumers re-resolve
+    ownership from the DB and ignore the payload claim on mismatch."""
+    row = (
+        await db.execute(select(Channel.user_id).where(Channel.id == channel_id))
+    ).scalar_one_or_none()
+    return row
 
 
 def _iso_to_dt(value) -> datetime | None:
@@ -58,6 +68,16 @@ async def _handle_discovered(payload: dict) -> None:
         return
 
     async with async_session() as db:
+        # B3: the channel row — not the event payload — decides the tenant.
+        # Unknown channel → drop (cannot attribute). Forged user_id → DB wins.
+        owner = await _channel_owner(db, channel_id)
+        if not owner:
+            logger.warning("Dropping review.discovered for unknown channel %s", channel_id)
+            return
+        if payload.get("user_id") and payload["user_id"] != owner:
+            logger.warning("Tenant mismatch on review.discovered: payload claims %s, "
+                           "channel %s belongs to %s — using channel owner",
+                           payload.get("user_id"), channel_id, owner)
         existing = (
             await db.execute(
                 select(ReviewInsight).where(
@@ -92,7 +112,7 @@ async def _handle_discovered(payload: dict) -> None:
             channel_id=channel_id,
             review_id=review_id,
         )
-        insight.user_id = payload.get("user_id", insight.user_id or "")
+        insight.user_id = owner
         insight.rating = new_rating
         insight.review_text = new_text
         insight.reviewer_name = payload.get("reviewer_name")
@@ -164,6 +184,8 @@ async def _handle_replied(payload: dict) -> None:
 
     replied_at = _iso_to_dt(payload.get("replied_at")) or datetime.now(timezone.utc)
     async with async_session() as db:
+        # B3: attribute the rollup to the channel owner, never the payload.
+        owner = await _channel_owner(db, channel_id)
         insight = (
             await db.execute(
                 select(ReviewInsight).where(
@@ -188,7 +210,7 @@ async def _handle_replied(payload: dict) -> None:
             await db.commit()
             bucket_date = (insight.review_updated_at or insight.created_at).date()
     if insight:
-        await recompute_daily_rollup(channel_id, payload.get("user_id", ""), bucket_date)
+        await recompute_daily_rollup(channel_id, owner or insight.user_id, bucket_date)
 
 
 async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> None:
@@ -296,8 +318,12 @@ async def _process_message(value: bytes | None) -> None:
                 from datetime import date as date_cls
 
                 year, month, day = (int(p) for p in bucket.split("-"))
+                # B3: resolve the owner from the channel; payload claim ignored.
+                async with async_session() as _db:
+                    _owner = await _channel_owner(_db, data.get("channel_id", ""))
                 await recompute_daily_rollup(
-                    data.get("channel_id", ""), data.get("user_id", ""), date_cls(year, month, day)
+                    data.get("channel_id", ""), _owner or data.get("user_id", ""),
+                    date_cls(year, month, day)
                 )
         elif event_type == "review.replied":
             await _handle_replied(payload)
