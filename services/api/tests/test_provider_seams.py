@@ -32,8 +32,9 @@ def test_invalid_value_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_locations_google_flag_fails_loudly(monkeypatch, db, user_id):
-    """Premature flip: NotImplementedError, never a wrapped RuntimeError."""
+async def test_locations_google_flag_saves_locally_without_channel(monkeypatch, db, user_id):
+    """Google provider with no native channel: local save lands, push is a
+    logged skip (google_synced empty) — never an error to the merchant."""
     from app.modules.locations import service as locations
     from app.modules.localith.models import LocalithConnection
 
@@ -43,11 +44,12 @@ async def test_locations_google_flag_fails_loudly(monkeypatch, db, user_id):
     ))
     await db.commit()
     monkeypatch.setenv("LOCATIONS_WRITE_PROVIDER", "google")
-    with pytest.raises(NotImplementedError, match="GBP API access"):
-        await locations.update_profile(
-            db, user_id, "loc-1", description="New blurb",
-            categories=None, hours=None, service_area=None, attributes=None,
-        )
+    out = await locations.update_profile(
+        db, user_id, "loc-1", description="New blurb",
+        categories=None, hours=None, service_area=None, attributes=None,
+    )
+    assert out["description"] == "New blurb"
+    assert out["google_synced"] == []
 
 
 @pytest.mark.asyncio

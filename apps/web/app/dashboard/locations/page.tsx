@@ -74,6 +74,7 @@ interface FullProfile {
   hours: { regular?: Record<string, { open: string; close: string; closed: boolean }>; special?: { date: string; hours: string; reason: string }[]; more?: { type: string; open: string; close: string }[] };
   service_area: string[];
   attributes: Record<string, string>;
+  opening_date?: string | null;
   google_synced: string[];
   updated_at?: string | null;
 }
@@ -168,7 +169,8 @@ export default function LocationsPage() {
         body: JSON.stringify(patch),
       });
       setFullProfile(updated as FullProfile);
-      showBanner("ok", okText);
+      const synced = (updated as FullProfile)?.google_synced ?? [];
+      showBanner("ok", synced.length > 0 ? `${okText} · Synced to Google (${synced.join(", ")}).` : okText);
     } catch (e) {
       showBanner("err", e instanceof Error ? e.message.slice(0, 160) : "Could not save.");
     }
@@ -836,13 +838,14 @@ export default function LocationsPage() {
             {activeTab === "description" && (
               <DescriptionTab
                 initial={isBulk ? "" : fullProfile?.description ?? ""}
+                initialOpeningDate={isBulk ? null : fullProfile?.opening_date ?? null}
                 bulk={bulk}
-                onSave={(description) =>
+                onSave={(description, openingDate) =>
                   isBulk
-                    ? bulkSaveProfile("description", { description }, [
+                    ? bulkSaveProfile("description", { description, opening_date: openingDate }, [
                         `Description → ${description.slice(0, 120)}${description.length > 120 ? "…" : ""}`,
                       ])
-                    : saveProfile({ description }, "Description saved to Google via Localith.")
+                    : saveProfile({ description, opening_date: openingDate }, "Description saved.")
                 }
               />
             )}
@@ -1383,24 +1386,27 @@ function AttributesTab({ initial, onSave, bulk }: {
   );
 }
 
-function DescriptionTab({ initial, onSave, bulk }: {
+function DescriptionTab({ initial, initialOpeningDate, onSave, bulk }: {
   initial?: string;
-  onSave: (description: string) => Promise<void>;
+  initialOpeningDate?: string | null;
+  onSave: (description: string, openingDate: string | null) => Promise<void>;
   bulk?: BulkScope | null;
 }) {
   const [desc, setDesc] = useState(initial ?? "");
+  const [openingDate, setOpeningDate] = useState(initialOpeningDate ?? "");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when switching locations
     setDesc(initial ?? "");
+    setOpeningDate(initialOpeningDate ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(initial)]);
+  }, [JSON.stringify(initial), initialOpeningDate]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await onSave(desc.trim());
+      await onSave(desc.trim(), openingDate || null);
     } finally {
       setSaving(false);
     }
@@ -1423,6 +1429,18 @@ function DescriptionTab({ initial, onSave, bulk }: {
         className="w-full resize-y rounded-xl border border-ink/[0.08] bg-white p-3 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
       />
       <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">{desc.length}/750</p>
+      <div>
+        <label className="mb-1 block text-[12px] font-medium text-ink/60 dark:text-fog/60">
+          Opening date
+          <span className="ml-1.5 font-normal text-ink/40 dark:text-fog/40">when the business opened — shown on Google</span>
+        </label>
+        <input
+          type="date"
+          value={openingDate}
+          onChange={(e) => setOpeningDate(e.target.value)}
+          className="w-full max-w-xs rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+        />
+      </div>
       <div className="flex justify-end pt-2">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
           {saving ? "Saving..." : bulk ? `Apply to ${bulk.branches.length} branches` : "Save Description"}

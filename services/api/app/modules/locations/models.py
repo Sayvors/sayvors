@@ -1,15 +1,15 @@
 """Location profiles — the Locations page backing store.
 
 Google-synced fields (name, phone, website, description) live on the
-Localith connection and are pushed to Google via the Localith API.
-Everything the API does NOT expose (categories, hours, service area,
-attributes) is stored here per user+listing, so every tab persists for
-real. The UI labels which is which — never presented as Google data.
+Localith connection and are pushed to Google via the Localith API —
+or natively when LOCATIONS_WRITE_PROVIDER=google. Everything Google
+exposes (categories, hours, service area, attributes, opening date) is
+stored here per user+listing, so every tab persists for real.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -32,6 +32,9 @@ class LocationProfile(Base):
     hours: Mapped[dict] = mapped_column(JSON, default=dict)
     service_area: Mapped[list] = mapped_column(JSON, default=list)
     attributes: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Business opening date (Google openInfo.openingDate). Nullable —
+    # older rows simply have none.
+    opening_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
