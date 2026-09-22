@@ -20,6 +20,9 @@ export interface UsageDayRow {
   day: string;
   total_tokens: number;
   calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  avg_latency_ms: number;
 }
 
 export interface UsageSummary {

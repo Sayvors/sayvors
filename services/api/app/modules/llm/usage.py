@@ -110,6 +110,9 @@ async def get_tenant_summary(db, tenant_id: str, days: int = 30) -> dict:
     daily = (await db.execute(
         select(func.date(LLMUsageEvent.created_at).label("day"),
                func.coalesce(func.sum(LLMUsageEvent.total_tokens), 0).label("total"),
+               func.coalesce(func.sum(LLMUsageEvent.prompt_tokens), 0).label("prompt"),
+               func.coalesce(func.sum(LLMUsageEvent.completion_tokens), 0).label("completion"),
+               func.coalesce(func.avg(LLMUsageEvent.latency_ms), 0).label("avg_ms"),
                func.count().label("calls"))
         .select_from(LLMUsageEvent).where(*base)
         .group_by(func.date(LLMUsageEvent.created_at))
@@ -128,7 +131,9 @@ async def get_tenant_summary(db, tenant_id: str, days: int = 30) -> dict:
                       "avg_latency_ms": int(m.avg_ms)} for m in by_model],
         "by_purpose": [{"purpose": p.purpose or "unknown", "calls": p.calls,
                         "total_tokens": int(p.total)} for p in by_purpose],
-        "daily": [{"day": str(d.day), "total_tokens": int(d.total), "calls": d.calls}
+        "daily": [{"day": str(d.day), "total_tokens": int(d.total),
+                   "prompt_tokens": int(d.prompt), "completion_tokens": int(d.completion),
+                   "avg_latency_ms": int(d.avg_ms), "calls": d.calls}
                   for d in daily],
     }
 
