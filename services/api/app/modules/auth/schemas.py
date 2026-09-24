@@ -20,6 +20,10 @@ class GoogleVerifyRequest(BaseModel):
     id_token: str = Field(..., min_length=10, max_length=20000)
 
 
+class FacebookVerifyRequest(BaseModel):
+    access_token: str = Field(..., min_length=10, max_length=8000)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

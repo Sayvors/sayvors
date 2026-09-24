@@ -48,6 +48,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password",
             "/api/v1/auth/verify-email", "/api/v1/auth/verify-otp", "/api/v1/auth/csrf-token",
             "/api/v1/auth/google/verify",
+            "/api/v1/auth/facebook/verify",
             "/api/v1/admin/",
             "/api/v1/email/otp/",
             "/api/v1/channels/webhook/",
