@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useAuth } from "@/lib/auth-context";
 import LogoLoader from "@/components/LogoLoader";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 type Mode = "login" | "signup";
 type FieldName = "firstName" | "lastName" | "email" | "password" | "confirm";
 
@@ -172,7 +174,7 @@ function Select({
 /* ── main component ────────────────────────────────── */
 
 export default function AuthForm({ mode }: { mode: Mode }) {
-  const { signup, login, googleLogin } = useAuth();
+  const { signup, login, googleLogin, facebookLogin } = useAuth();
   const router = useRouter();
   const isLogin = mode === "login";
   const [step, setStep] = useState(0);
@@ -235,6 +237,44 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const [fbStatus, setFbStatus] = useState<"loading" | "ready" | "blocked" | "hidden">(() =>
+    process.env.NEXT_PUBLIC_META_LOGIN_APP_ID ? "loading" : "hidden"
+  );
+
+  useEffect(() => {
+    const appId = process.env.NEXT_PUBLIC_META_LOGIN_APP_ID;
+    if (!appId) { setFbStatus("hidden"); return; }
+    const w = window as any;
+    const initFb = () => {
+      try {
+        w.FB.init({ appId, version: "v26.0", xfbml: false, cookie: false });
+        setFbStatus("ready");
+      } catch (e) {
+        console.error("Facebook SDK init failed:", e);
+        setFbStatus("blocked");
+      }
+    };
+    if (w.FB) { initFb(); return; }
+    const prevInit = w.fbAsyncInit;
+    w.fbAsyncInit = () => { try { prevInit?.(); } catch { /* ignore */ } initFb(); };
+    if (document.getElementById("facebook-jssdk-auth")) return;
+    const s = document.createElement("script");
+    s.id = "facebook-jssdk-auth";
+    s.src = `${API_URL}/api/v1/meta/connect-sdk`;
+    s.async = true;
+    const to = setTimeout(() => setFbStatus("blocked"), 8000);
+    const chained = w.fbAsyncInit;
+    w.fbAsyncInit = () => { clearTimeout(to); chained(); };
+    s.onerror = (e) => {
+      clearTimeout(to);
+      console.error("Failed to load Meta SDK for Facebook sign-in", e);
+      setFbStatus("blocked");
+    };
+    document.head.appendChild(s);
+    // Init once on mount; facebookLogin identity is stable enough for this use.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const pw = useMemo(() => strength(v.password), [v.password]);
   const totalSteps = 3;
   const stepTitle = ["Create your account", "Secure your account", "Almost done"];
@@ -255,6 +295,28 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   }, [step, v]);
 
   const back = useCallback(() => { setErrs({}); setStep((s) => Math.max(s - 1, 0)); }, []);
+
+  const continueWithFacebook = () => {
+    const w = window as any;
+    // NOTE: plain function — the SDK rejects async callbacks.
+    const onFbLogin = function (resp: { authResponse?: { accessToken?: string } | null }) {
+      const token = resp?.authResponse?.accessToken;
+      if (!token) { setNote("Facebook sign-in cancelled."); return; }
+      (async () => {
+        try {
+          const u = await facebookLogin(token);
+          window.location.href = u?.onboarded ? "/dashboard" : "/onboarding";
+        } catch {
+          setNote("Facebook sign-in failed. Try again or use your password.");
+        }
+      })();
+    };
+    try {
+      w.FB.login(onFbLogin, { scope: "email", auth_type: "rerequest" });
+    } catch {
+      setNote("Facebook couldn't start. Check your ad-blocker, or continue with password.");
+    }
+  };
 
   const submit = async (ev: FormEvent) => {
     ev.preventDefault();
@@ -378,11 +440,22 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         {!gisFailed && process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID && (
           <div ref={googleBtnRef} className="min-h-11 w-full [&>div]:!w-full" />
         )}
-        <button type="button" onClick={() => setNote("GitHub sign-in coming soon.")}
-          className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/70 transition-all duration-200 hover:border-ink/20 hover:bg-ink/[0.02] active:scale-[0.99]">
-          <Image src="/github.svg" alt="" width={18} height={18} className="h-[18px] w-[18px]" />
-          Continue with GitHub
-        </button>
+        {fbStatus === "loading" && (
+          <div aria-hidden className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/40">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-ink/20 border-t-ink/60" />
+            Loading Facebook...
+          </div>
+        )}
+        {fbStatus === "ready" && (
+          <button type="button" onClick={continueWithFacebook}
+            className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/70 transition-all duration-200 hover:border-ink/20 hover:bg-ink/[0.02] active:scale-[0.99]">
+            <Image src="/facebook.svg" alt="" width={18} height={18} className="h-[18px] w-[18px]" />
+            Continue with Facebook
+          </button>
+        )}
+        {fbStatus === "blocked" && (
+          <p className="rounded-lg border border-ink/[0.12] px-3 py-2.5 text-center text-[12px] text-ink/55 animate-in fade-in duration-200">Facebook couldn{"\u2019"}t load — check your ad-blocker, or continue with password below.</p>
+        )}
       </div>
       {note && (
         <div className="mt-3 rounded-lg bg-coral/[0.07] px-3 py-2.5 text-center text-[12px] font-medium text-coral animate-in fade-in duration-200">{note}</div>
