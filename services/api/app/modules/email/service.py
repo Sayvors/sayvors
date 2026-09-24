@@ -276,6 +276,61 @@ async def send_password_reset_email(email: str, name: str, reset_url: str) -> st
     )
 
 
+async def send_password_reset_success_email(
+    email: str,
+    name: str,
+    when: "datetime",
+    ip: str,
+    location: str,
+    device: str,
+) -> str:
+    """Security notice: password was just reset â€” time, IP, location, device."""
+    import html as _html
+
+    display = _html.escape(name or "there")
+    when_str = when.strftime("%Y-%m-%d %H:%M:%S UTC")
+    safe_ip = _html.escape(ip or "")
+    safe_location = _html.escape(location or "Unknown location")
+    safe_device = _html.escape(device or "Unknown device")
+
+    def _row(label: str, value: str) -> str:
+        return (
+            f"<tr>"
+            f"<td style=\"padding:8px 0;color:#71717A;font-size:13px;width:100px;vertical-align:top;\">{label}</td>"
+            f"<td style=\"padding:8px 0;color:#1F2937;font-size:13px;font-weight:600;\">{value}</td>"
+            f"</tr>"
+        )
+
+    details = "".join(
+        (
+            _row("Time", when_str),
+            _row("IP address", safe_ip),
+            _row("Location", safe_location),
+            _row("Device", safe_device),
+        )
+    )
+    forgot_url = f"{(settings.FRONTEND_URL or '').rstrip('/')}/forgot-password"
+    body = (
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Hi {display},</p>"
+        f"<p style=\"margin:0 0 8px;font-size:15px;line-height:24px;color:#52525B;\">Your Sayvors password was just changed successfully.</p>"
+        f"<p style=\"margin:0 0 4px;font-size:13px;line-height:20px;color:#71717A;\">Here are the details of that activity:</p>"
+        f"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;margin:12px 0;padding:4px 20px;background-color:#FAFAFA;border:1px solid #EEEEF0;border-radius:8px;\">{details}</table>"
+        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#52525B;\">If this was you, you're all set â€” no further action needed.</p>"
+        f"<p style=\"margin:12px 0 0;font-size:14px;line-height:22px;color:#52525B;\">If this <strong>wasn't you</strong>, someone else may have access to your account â€” reset your password immediately:</p>"
+        f"{_cta_button('Secure my account', forgot_url)}"
+    )
+    return await send_email(
+        email,
+        "Your Sayvors password was changed",
+        _shell("Password changed", body, _logo_url()),
+        text=(
+            f"Hi {display}, your Sayvors password was changed.\n"
+            f"Time: {when_str}\nIP: {safe_ip}\nLocation: {safe_location}\nDevice: {safe_device}\n"
+            f"If this wasn't you, secure your account: {forgot_url}"
+        ),
+    )
+
+
 async def send_welcome_email(email: str, name: str) -> str:
     """Send a branded onboarding email after account creation."""
     display = name or "there"

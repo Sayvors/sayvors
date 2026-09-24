@@ -264,9 +264,11 @@ async def reset_password_endpoint(
     ip = get_client_ip(request)
     if not await rate_limit(f"reset:{ip}", 10, 60):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
+    
+    ua = request.headers.get("user-agent", "")
 
     try:
-        await reset_password(body, db)
+        await reset_password(body, db, ip=ip, ua=ua)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"message": "Password reset successful"}

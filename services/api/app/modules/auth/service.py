@@ -353,7 +353,69 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession, ip: str
     return raw_token
 
 
-async def reset_password(body: ResetPasswordRequest, db: AsyncSession) -> bool:
+async def _geo_lookup(ip: str) -> str:
+    """Best-effort "City, Region, Country" for an IP; never raises, 5s cap."""
+    if not ip or ip in ("unknown", "testclient"):
+        return "Unknown location"
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"https://ipwho.is/{ip}")
+            data = resp.json()
+        if not data.get("success", True):
+            return "Unknown location"
+        loc = ", ".join(
+            p for p in (data.get("city"), data.get("region"), data.get("country")) if p
+        )
+        return loc or "Unknown location"
+    except Exception:
+        return "Unknown location"
+
+
+def _describe_device(user_agent: str) -> str:
+    """Human-readable device summary from a User-Agent (fixed strings only —
+    the raw UA is attacker-controlled and never echoed into the email)."""
+    ua = user_agent or ""
+    if not ua.strip():
+        return "Unknown device"
+
+    browser = "Unknown browser"
+    for needle, name in (
+        ("Edg/", "Edge"),
+        ("OPR/", "Opera"),
+        ("Firefox/", "Firefox"),
+        ("Chrome/", "Chrome"),
+        ("Safari/", "Safari"),
+    ):
+        if needle in ua:
+            browser = name
+            break
+
+    if "Windows" in ua:
+        os_name = "Windows"
+    elif "Android" in ua:
+        os_name = "Android"
+    elif "iPhone" in ua or "iPad" in ua:
+        os_name = "iOS"
+    elif "Mac OS X" in ua or "Macintosh" in ua:
+        os_name = "macOS"
+    elif "Linux" in ua:
+        os_name = "Linux"
+    else:
+        os_name = "Unknown OS"
+
+    if "iPad" in ua or "Tablet" in ua:
+        device_type = "Tablet"
+    elif "Mobile" in ua or "Android" in ua or "iPhone" in ua:
+        device_type = "Mobile"
+    else:
+        device_type = "Desktop"
+
+    return f"{browser} on {os_name} ({device_type})"
+
+
+async def reset_password(body: ResetPasswordRequest, db: AsyncSession, ip: str, ua: str) -> bool:
     try:
         payload = decode_token(body.token)
         if payload.get("type") != "password_reset":
@@ -372,7 +434,13 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession) -> bool:
     )
     db_reset = result.scalar_one_or_none()
 
-    if not db_reset or db_reset.expires_at < datetime.now(timezone.utc):
+    if not db_reset:
+        raise ValueError("Invalid or expired reset token")
+    expires_at = db_reset.expires_at
+    if expires_at.tzinfo is None:
+        # SQLite (tests) returns naive timestamps; Postgres returns aware.
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
         raise ValueError("Invalid or expired reset token")
 
     db_reset.used = True
@@ -398,7 +466,27 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession) -> bool:
     except Exception:
         pass
 
-    await log_password_reset(user.id, user.email)
+    await log_password_reset(user.id, user.email, ip=ip, ua=ua)
+
+    # Security confirmation: time + IP + location + device. A send failure
+    # must never undo or fail the reset that already committed above.
+    try:
+        from ...modules.email.service import send_password_reset_success_email
+
+        await send_password_reset_success_email(
+            user.email,
+            user.first_name or "there",
+            when=datetime.now(timezone.utc),
+            ip=ip,
+            location=await _geo_lookup(ip),
+            device=_describe_device(ua),
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Password-reset success email failed for %s", user.email
+        )
     return True
 
 
