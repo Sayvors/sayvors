@@ -184,6 +184,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   const [done, setDone] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [loginFailed, setLoginFailed] = useState(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
   const [gisFailed, setGisFailed] = useState(false);
 
@@ -212,7 +213,8 @@ export default function AuthForm({ mode }: { mode: Mode }) {
             width: Math.min(googleBtnRef.current.offsetWidth || 360, 400),
           });
         }
-      } catch {
+      } catch (e) {
+        console.error("Google Identity Services failed to initialize:", e);
         setGisFailed(true);
       }
     };
@@ -224,7 +226,10 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     s.src = "https://accounts.google.com/gsi/client";
     s.async = true;
     s.onload = init;
-    s.onerror = () => setGisFailed(true);
+    s.onerror = (e) => {
+      console.error("Failed to load https://accounts.google.com/gsi/client", e);
+      setGisFailed(true);
+    };
     document.head.appendChild(s);
     // Init once on mount; googleLogin identity is stable enough for this use.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -239,6 +244,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     setV((p) => ({ ...p, [f]: val }));
     setErrs((p) => ({ ...p, [f]: undefined }));
     setError("");
+    setLoginFailed(false);
   }, []);
 
   const next = useCallback(() => {
@@ -260,6 +266,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       if (Object.keys(e).length > 0) return;
 
       setBusy(true);
+      setLoginFailed(false);
       try {
         await login({ email: v.email.trim(), password: v.password });
         setDone(true);
@@ -269,6 +276,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           return;
         }
         setError(err.message || "Login failed");
+        if ((err.message || "") === "Invalid email or password") setLoginFailed(true);
       } finally {
         setBusy(false);
       }
@@ -476,6 +484,13 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           </button>
         </div>
         {error && <p className="mt-3 text-center text-[12px] font-medium text-coral animate-in fade-in duration-200">{error}</p>}
+        {isLogin && loginFailed && (
+          <p className="mt-2 text-center text-[12px] text-ink/55 animate-in fade-in duration-200">
+            New here?{" "}
+            <Link href="/signup" className="font-medium text-ink/70 underline underline-offset-2 transition-colors duration-150 hover:text-ink">Create an account</Link>
+            {" "}— you can Continue with Google.
+          </p>
+        )}
       </form>
 
       {/* footer links */}
