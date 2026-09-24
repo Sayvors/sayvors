@@ -36,6 +36,8 @@ class User(Base):
     # authenticates via Google; password_hash stays a random unusable value.
     google_sub: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Facebook identity (Continue with Facebook). Mirrors google_sub.
+    facebook_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     # Account-wide country (ISO code) — display/defaults only, never listings.
     country: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # Plan + AI credit balance (P0 billing gate): plan ∈ {free, pro};
