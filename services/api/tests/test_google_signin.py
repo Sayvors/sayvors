@@ -102,3 +102,59 @@ async def test_google_signin_refreshes_profile_snapshot(db):
     assert (u.first_name, u.last_name) == ("Fresh", "Name")
     assert result["user"]["onboarded"] is True
     mock_ev.assert_awaited_once()
+
+
+async def test_verify_endpoint_success(client, db, user_id):
+    with (
+        patch("app.modules.auth.router.rate_limit", new_callable=AsyncMock, return_value=True),
+        patch("app.modules.auth.router.verify_google_id_token", return_value=dict(GOOD_CLAIMS)),
+        patch("app.modules.auth.service.log_signup", new_callable=AsyncMock),
+    ):
+        resp = client.post(
+            "/api/v1/auth/google/verify",
+            json={"id_token": "test-id-token-abc123"},
+            headers={"User-Agent": "UA"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert "access_token" in data
+    assert "refresh_token" not in data          # refresh travels as httpOnly cookie
+    assert set(data["user"]) == {
+        "id", "first_name", "last_name", "email", "email_verified", "onboarded",
+    }
+    assert data["user"]["email"] == "guser@sayvors.com"
+    u = await db.get(User, data["user"]["id"])
+    assert u.google_sub == "google-sub-001"
+
+
+async def test_verify_endpoint_401_on_invalid_token(client):
+    with (
+        patch("app.modules.auth.router.rate_limit", new_callable=AsyncMock, return_value=True),
+        patch("app.modules.auth.router.verify_google_id_token",
+              side_effect=ValueError("invalid_token")),
+    ):
+        resp = client.post("/api/v1/auth/google/verify", json={"id_token": "test-id-token-bad"})
+    assert resp.status_code == 401
+    assert "Google sign-in failed" in resp.json()["detail"]
+
+
+async def test_verify_endpoint_400_on_unverified_email(client):
+    with (
+        patch("app.modules.auth.router.rate_limit", new_callable=AsyncMock, return_value=True),
+        patch("app.modules.auth.router.verify_google_id_token",
+              side_effect=ValueError("unverified_email")),
+    ):
+        resp = client.post("/api/v1/auth/google/verify", json={"id_token": "test-id-token-abc123"})
+    assert resp.status_code == 400
+
+
+async def test_verify_endpoint_503_without_config(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "")
+    with patch("app.modules.auth.router.rate_limit",
+               new_callable=AsyncMock, return_value=True):
+        resp = client.post("/api/v1/auth/google/verify", json={"id_token": "test-id-token-abc123"})
+    assert resp.status_code == 503
+    assert "GOOGLE_CLIENT_ID" in resp.json()["detail"]

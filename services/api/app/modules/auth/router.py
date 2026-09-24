@@ -3,11 +3,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ...core.deps import get_current_user, get_db
-from ...security import generate_csrf_token
+from ...security import generate_csrf_token, verify_google_id_token
 from ..auth.rate_limit import rate_limit
 from .schemas import (
     SignupRequest,
     LoginRequest,
+    GoogleVerifyRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
     VerifyEmailRequest,
@@ -17,6 +18,7 @@ from .schemas import (
 from .service import (
     signup,
     login,
+    google_login,
     refresh_tokens,
     logout,
     forgot_password,
@@ -272,6 +274,49 @@ async def reset_password_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"message": "Password reset successful"}
+
+
+@router.post("/google/verify")
+async def google_verify_endpoint(
+    body: GoogleVerifyRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """Sign in / sign up / link via a Google Identity Services ID token.
+
+    The token is verified server-side (signature, audience, expiry, verified
+    email); Google's tokens are discarded and only the profile snapshot is
+    stored. Session issuance is identical to password login."""
+    ip = get_client_ip(request)
+    user_agent = request.headers.get("user-agent", "")
+
+    if not await rate_limit(f"google:{ip}", 30, 60):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    if not settings.GOOGLE_CLIENT_ID:
+        raise HTTPException(
+            status_code=503,
+            detail="Google Sign-In not configured. Set GOOGLE_CLIENT_ID in .env",
+        )
+
+    try:
+        claims = verify_google_id_token(body.id_token)
+    except ValueError as e:
+        if str(e) == "unverified_email":
+            raise HTTPException(
+                status_code=400,
+                detail="Google account email is not verified.",
+            )
+        raise HTTPException(status_code=401, detail="Google sign-in failed")
+
+    try:
+        result = await google_login(claims, db, user_agent, ip)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    refresh_token = result.pop("refresh_token")
+    _set_session_cookies(response, refresh_token)
+    return result
 
 
 @router.post("/verify-email")
