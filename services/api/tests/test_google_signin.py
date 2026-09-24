@@ -128,6 +128,17 @@ async def test_verify_endpoint_success(client, db, user_id):
     assert u.google_sub == "google-sub-001"
 
 
+async def test_google_signup_sends_welcome_email(db):
+    from app.modules.auth.service import google_login
+
+    with (
+        patch("app.modules.auth.service.log_signup", new_callable=AsyncMock),
+        patch("app.modules.auth.service.send_welcome_email", new_callable=AsyncMock) as mock_mail,
+    ):
+        await google_login(dict(GOOD_CLAIMS), db, "UA", "1.2.3.4")
+    mock_mail.assert_awaited_once()
+
+
 async def test_verify_endpoint_401_on_invalid_token(client):
     with (
         patch("app.modules.auth.router.rate_limit", new_callable=AsyncMock, return_value=True),
