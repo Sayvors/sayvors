@@ -25,6 +25,7 @@ interface AuthContextType {
   signup: (data: SignupData) => Promise<{ verification_token?: string }>;
   login: (data: LoginData) => Promise<void>;
   googleLogin: (idToken: string) => Promise<User>;
+  facebookLogin: (accessToken: string) => Promise<User>;
   logout: (allDevices?: boolean) => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   resetPassword: (token: string, password: string) => Promise<void>;
@@ -199,6 +200,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return result.user as User;
   };
 
+  const facebookLogin = async (accessToken: string): Promise<User> => {
+    const res = await apiFetch("/api/v1/auth/facebook/verify", {
+      method: "POST",
+      body: JSON.stringify({ access_token: accessToken }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      const detail = (err as any).detail;
+      throw new Error(typeof detail === "string" ? detail : "Facebook sign-in failed");
+    }
+
+    const result = await res.json();
+    if (result.access_token) setAccessToken(result.access_token);
+    setUser(result.user);
+    return result.user as User;
+  };
+
   const logout = async (allDevices = false) => {
     await apiFetch("/api/v1/auth/logout", {
       method: "POST",
@@ -287,6 +306,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signup,
         login,
         googleLogin,
+        facebookLogin,
         logout,
         forgotPassword,
         resetPassword,
