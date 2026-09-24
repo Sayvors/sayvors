@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth-context";
 import LogoLoader from "@/components/LogoLoader";
 
@@ -172,7 +172,7 @@ function Select({
 /* ── main component ────────────────────────────────── */
 
 export default function AuthForm({ mode }: { mode: Mode }) {
-  const { signup, login } = useAuth();
+  const { signup, login, googleLogin } = useAuth();
   const router = useRouter();
   const isLogin = mode === "login";
   const [step, setStep] = useState(0);
@@ -184,6 +184,56 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   const [done, setDone] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [loginFailed, setLoginFailed] = useState(false);
+  const googleBtnRef = useRef<HTMLDivElement>(null);
+  const [gisFailed, setGisFailed] = useState(false);
+
+  useEffect(() => {
+    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    if (!clientId) return;
+    const w = window as any;
+    const init = () => {
+      try {
+        w.google.accounts.id.initialize({
+          client_id: clientId,
+          callback: async ({ credential }: { credential: string }) => {
+            try {
+              const u = await googleLogin(credential);
+              window.location.href = u?.onboarded ? "/dashboard" : "/onboarding";
+            } catch {
+              setNote("Google sign-in failed. Try again or use your password.");
+            }
+          },
+        });
+        if (googleBtnRef.current) {
+          w.google.accounts.id.renderButton(googleBtnRef.current, {
+            theme: "outline",
+            size: "large",
+            text: "continue_with",
+            width: Math.min(googleBtnRef.current.offsetWidth || 360, 400),
+          });
+        }
+      } catch (e) {
+        console.error("Google Identity Services failed to initialize:", e);
+        setGisFailed(true);
+      }
+    };
+    if (w.google?.accounts?.id) {
+      init();
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = "https://accounts.google.com/gsi/client";
+    s.async = true;
+    s.onload = init;
+    s.onerror = (e) => {
+      console.error("Failed to load https://accounts.google.com/gsi/client", e);
+      setGisFailed(true);
+    };
+    document.head.appendChild(s);
+    // Init once on mount; googleLogin identity is stable enough for this use.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pw = useMemo(() => strength(v.password), [v.password]);
   const totalSteps = 3;
@@ -194,6 +244,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     setV((p) => ({ ...p, [f]: val }));
     setErrs((p) => ({ ...p, [f]: undefined }));
     setError("");
+    setLoginFailed(false);
   }, []);
 
   const next = useCallback(() => {
@@ -215,6 +266,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       if (Object.keys(e).length > 0) return;
 
       setBusy(true);
+      setLoginFailed(false);
       try {
         await login({ email: v.email.trim(), password: v.password });
         setDone(true);
@@ -224,6 +276,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           return;
         }
         setError(err.message || "Login failed");
+        if ((err.message || "") === "Invalid email or password") setLoginFailed(true);
       } finally {
         setBusy(false);
       }
@@ -322,11 +375,9 @@ export default function AuthForm({ mode }: { mode: Mode }) {
 
       {/* social buttons */}
       <div className="space-y-2.5">
-        <button type="button" onClick={() => setNote("Google sign-in coming soon.")}
-          className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/70 transition-all duration-200 hover:border-ink/20 hover:bg-ink/[0.02] active:scale-[0.99]">
-          <Image src="/google.svg" alt="" width={18} height={18} className="h-[18px] w-[18px]" />
-          Continue with Google
-        </button>
+        {!gisFailed && process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID && (
+          <div ref={googleBtnRef} className="min-h-11 w-full [&>div]:!w-full" />
+        )}
         <button type="button" onClick={() => setNote("GitHub sign-in coming soon.")}
           className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/70 transition-all duration-200 hover:border-ink/20 hover:bg-ink/[0.02] active:scale-[0.99]">
           <Image src="/github.svg" alt="" width={18} height={18} className="h-[18px] w-[18px]" />
@@ -433,6 +484,13 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           </button>
         </div>
         {error && <p className="mt-3 text-center text-[12px] font-medium text-coral animate-in fade-in duration-200">{error}</p>}
+        {isLogin && loginFailed && (
+          <p className="mt-2 text-center text-[12px] text-ink/55 animate-in fade-in duration-200">
+            New here?{" "}
+            <Link href="/signup" className="font-medium text-ink/70 underline underline-offset-2 transition-colors duration-150 hover:text-ink">Create an account</Link>
+            {" "}— you can Continue with Google.
+          </p>
+        )}
       </form>
 
       {/* footer links */}

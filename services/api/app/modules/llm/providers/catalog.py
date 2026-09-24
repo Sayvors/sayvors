@@ -38,6 +38,7 @@ MODELS: list[ModelInfo] = [
     # ── GroqCloud (OpenAI-compatible, free tier, no card) ──
     ModelInfo("groq:oss-120b", "GPT OSS 120B (Groq)", "groq", "openai/gpt-oss-120b", 131_072, 65_536),
     ModelInfo("groq:oss-20b", "GPT OSS 20B (Groq)", "groq", "openai/gpt-oss-20b", 131_072, 65_536),
+    ModelInfo("groq:qwen3.8-27b", "Qwen3.8 27B (Groq)", "groq", "qwen/qwen3.8-27b", 131_042, 16_384),
     # ── Ollama (local) ──────────────────────────────────
     ModelInfo("ollama:llama3.1", "Llama 3.1 (local)", "ollama", "llama3.1", 128_000, 4_096),
     ModelInfo("ollama:mistral", "Mistral (local)", "ollama", "mistral", 32_000, 4_096),

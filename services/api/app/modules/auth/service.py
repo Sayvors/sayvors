@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, delete, update
+from sqlalchemy import select, delete, update, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
@@ -183,6 +184,120 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
     }
 
 
+async def _issue_session(user: User, db: AsyncSession, event: str,
+                         user_agent: str, ip: str,
+                         metadata: dict | None = None) -> dict:
+    """Access + refresh tokens, refresh row, Redis session, auth event.
+    The single session-issuance path shared by Google sign-in."""
+    access_token = create_access_token(user.id, user.token_version or 0)
+    refresh_raw = create_refresh_token(user.id)
+    db.add(RefreshToken(
+        user_id=user.id,
+        token_hash=hash_token(refresh_raw),
+        fingerprint=create_token_fingerprint(user_agent, ip),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRATION_DAYS),
+        user_agent=user_agent[:500],
+        ip_address=ip[:45],
+    ))
+    await db.commit()
+
+    try:
+        from ...modules.redis.client import get_redis
+        redis = await get_redis()
+        session_data = {"user_id": user.id, "ip": ip, "user_agent": user_agent[:200]}
+        await store_session(user.id, user.id, session_data,
+                            settings.JWT_REFRESH_EXPIRATION_DAYS * 86400)
+    except Exception:
+        pass
+
+    if event == "signup":
+        await log_signup(user.id, user.email, ip, user_agent[:200], metadata=metadata)
+    else:
+        await log_login(user.id, user.email, ip, user_agent[:200], metadata=metadata)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_raw,
+        "user": {
+            "id": user.id,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+            "email_verified": user.email_verified,
+            "onboarded": user.onboarded,
+        },
+    }
+
+
+async def google_login(claims: dict, db: AsyncSession,
+                       user_agent: str, ip: str) -> dict:
+    """Find-or-create from verified Google claims; issue a session.
+
+    Google's tokens are never stored — only the profile snapshot lands on the
+    user row (google_sub / name / avatar_url).
+    """
+    import secrets as _secrets
+
+    sub = claims["sub"]
+    email = claims["email"].strip().lower()
+    name = (claims.get("name") or "").strip()
+    picture = claims.get("picture")
+    first, _sep, last = name.partition(" ")
+    if not first:
+        first = email.split("@", 1)[0]
+        last = ""
+
+    try:
+        event = "login"
+        result = await db.execute(select(User).where(User.google_sub == sub))
+        user = result.scalar_one_or_none()
+
+        if user is None:
+            result = await db.execute(
+                select(User).where(func.lower(User.email) == email)
+            )
+            user = result.scalar_one_or_none()
+            if user is not None:
+                # Decision 1A: link — existing password account adopts Google.
+                if user.google_sub is None:
+                    user.google_sub = sub
+                if picture:
+                    user.avatar_url = picture
+            else:
+                user = User(
+                    first_name=first[:100],
+                    last_name=last[:100],
+                    email=email,
+                    password_hash=hash_password(_secrets.token_urlsafe(32)),
+                    email_verified=True,
+                    onboarded=False,
+                    google_sub=sub,
+                    avatar_url=picture,
+                )
+                db.add(user)
+                await db.flush()  # assign user.id before the refresh-token row
+                event = "signup"
+        else:
+            if first:
+                user.first_name = first[:100]
+            if last:
+                user.last_name = last[:100]
+            if picture:
+                user.avatar_url = picture
+
+        return await _issue_session(user, db, event, user_agent, ip,
+                                    metadata={"via": "google"})
+    except IntegrityError:
+        # Concurrent signup race: the row exists now — sign in with it.
+        await db.rollback()
+        result = await db.execute(select(User).where(User.google_sub == sub))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise ValueError("Could not create account")
+        return await _issue_session(user, db, "login", user_agent, ip,
+                                    metadata={"via": "google"})
+
+
 async def refresh_tokens(
     refresh_token: str, db: AsyncSession, user_agent: str = "", ip: str = ""
 ) -> dict:
@@ -353,7 +468,69 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession, ip: str
     return raw_token
 
 
-async def reset_password(body: ResetPasswordRequest, db: AsyncSession) -> bool:
+async def _geo_lookup(ip: str) -> str:
+    """Best-effort "City, Region, Country" for an IP; never raises, 5s cap."""
+    if not ip or ip in ("unknown", "testclient"):
+        return "Unknown location"
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"https://ipwho.is/{ip}")
+            data = resp.json()
+        if not data.get("success", True):
+            return "Unknown location"
+        loc = ", ".join(
+            p for p in (data.get("city"), data.get("region"), data.get("country")) if p
+        )
+        return loc or "Unknown location"
+    except Exception:
+        return "Unknown location"
+
+
+def _describe_device(user_agent: str) -> str:
+    """Human-readable device summary from a User-Agent (fixed strings only —
+    the raw UA is attacker-controlled and never echoed into the email)."""
+    ua = user_agent or ""
+    if not ua.strip():
+        return "Unknown device"
+
+    browser = "Unknown browser"
+    for needle, name in (
+        ("Edg/", "Edge"),
+        ("OPR/", "Opera"),
+        ("Firefox/", "Firefox"),
+        ("Chrome/", "Chrome"),
+        ("Safari/", "Safari"),
+    ):
+        if needle in ua:
+            browser = name
+            break
+
+    if "Windows" in ua:
+        os_name = "Windows"
+    elif "Android" in ua:
+        os_name = "Android"
+    elif "iPhone" in ua or "iPad" in ua:
+        os_name = "iOS"
+    elif "Mac OS X" in ua or "Macintosh" in ua:
+        os_name = "macOS"
+    elif "Linux" in ua:
+        os_name = "Linux"
+    else:
+        os_name = "Unknown OS"
+
+    if "iPad" in ua or "Tablet" in ua:
+        device_type = "Tablet"
+    elif "Mobile" in ua or "Android" in ua or "iPhone" in ua:
+        device_type = "Mobile"
+    else:
+        device_type = "Desktop"
+
+    return f"{browser} on {os_name} ({device_type})"
+
+
+async def reset_password(body: ResetPasswordRequest, db: AsyncSession, ip: str, ua: str) -> bool:
     try:
         payload = decode_token(body.token)
         if payload.get("type") != "password_reset":
@@ -372,7 +549,13 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession) -> bool:
     )
     db_reset = result.scalar_one_or_none()
 
-    if not db_reset or db_reset.expires_at < datetime.now(timezone.utc):
+    if not db_reset:
+        raise ValueError("Invalid or expired reset token")
+    expires_at = db_reset.expires_at
+    if expires_at.tzinfo is None:
+        # SQLite (tests) returns naive timestamps; Postgres returns aware.
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
         raise ValueError("Invalid or expired reset token")
 
     db_reset.used = True
@@ -398,7 +581,27 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession) -> bool:
     except Exception:
         pass
 
-    await log_password_reset(user.id, user.email)
+    await log_password_reset(user.id, user.email, ip=ip, ua=ua)
+
+    # Security confirmation: time + IP + location + device. A send failure
+    # must never undo or fail the reset that already committed above.
+    try:
+        from ...modules.email.service import send_password_reset_success_email
+
+        await send_password_reset_success_email(
+            user.email,
+            user.first_name or "there",
+            when=datetime.now(timezone.utc),
+            ip=ip,
+            location=await _geo_lookup(ip),
+            device=_describe_device(ua),
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Password-reset success email failed for %s", user.email
+        )
     return True
 
 

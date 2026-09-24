@@ -1,11 +1,16 @@
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
+from google.auth.transport import requests as google_auth_requests
+from google.oauth2.id_token import verify_oauth2_token
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def hash_password(password: str) -> str:
@@ -86,3 +91,26 @@ def create_password_reset_token(user_id: str) -> str:
 def create_token_fingerprint(user_agent: str, ip: str) -> str:
     raw = f"{user_agent}:{ip}"
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def verify_google_id_token(id_token: str) -> dict:
+    """Verify a Google Identity Services ID token and return its claims.
+
+    Checks signature (against Google's certs), audience, and expiry inside
+    verify_oauth2_token, then enforces our own claim requirements.
+    Raises ValueError("invalid_token") on cryptographic/audience failure and
+    ValueError("unverified_email") when the token is well-formed but unusable
+    for sign-in.
+    """
+    try:
+        claims = verify_oauth2_token(
+            id_token,
+            google_auth_requests.Request(),
+            audience=settings.GOOGLE_CLIENT_ID,
+        )
+    except Exception as e:
+        logger.warning("Google ID token verification failed: %s: %s", type(e).__name__, e)
+        raise ValueError("invalid_token")
+    if not claims.get("sub") or not claims.get("email") or claims.get("email_verified") is not True:
+        raise ValueError("unverified_email")
+    return claims

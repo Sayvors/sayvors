@@ -17,7 +17,11 @@ const nextConfig: NextConfig = {
         source: "/(.*)",
         headers: [
           { key: "X-DNS-Prefetch-Control", value: "on" },
-          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          // same-origin-allow-popups (not same-origin): Google Sign-In opens a
+          // cross-origin popup that must keep window.opener to postMessage the
+          // ID token back. same-origin severs the opener -> blank popup, no
+          // callback, no server request.
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
           { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
         ],
       },

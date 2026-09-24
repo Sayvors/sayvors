@@ -24,6 +24,7 @@ interface AuthContextType {
   loading: boolean;
   signup: (data: SignupData) => Promise<{ verification_token?: string }>;
   login: (data: LoginData) => Promise<void>;
+  googleLogin: (idToken: string) => Promise<User>;
   logout: (allDevices?: boolean) => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   resetPassword: (token: string, password: string) => Promise<void>;
@@ -180,6 +181,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(result.user);
   };
 
+  const googleLogin = async (idToken: string): Promise<User> => {
+    const res = await apiFetch("/api/v1/auth/google/verify", {
+      method: "POST",
+      body: JSON.stringify({ id_token: idToken }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      const detail = (err as any).detail;
+      throw new Error(typeof detail === "string" ? detail : "Google sign-in failed");
+    }
+
+    const result = await res.json();
+    if (result.access_token) setAccessToken(result.access_token);
+    setUser(result.user);
+    return result.user as User;
+  };
+
   const logout = async (allDevices = false) => {
     await apiFetch("/api/v1/auth/logout", {
       method: "POST",
@@ -267,6 +286,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         signup,
         login,
+        googleLogin,
         logout,
         forgotPassword,
         resetPassword,

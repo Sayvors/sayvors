@@ -32,6 +32,10 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     theme: Mapped[str] = mapped_column(String(20), default="light")
     language: Mapped[str] = mapped_column(String(10), default="en")
+    # Google identity (sign-in with Google). Non-NULL google_sub ⇒ the account
+    # authenticates via Google; password_hash stays a random unusable value.
+    google_sub: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Account-wide country (ISO code) — display/defaults only, never listings.
     country: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # Plan + AI credit balance (P0 billing gate): plan ∈ {free, pro};

@@ -67,16 +67,20 @@ async def log_auth_event(
         logger.exception("Failed to enqueue auth event: %s", event_type)
 
 
-async def log_signup(user_id: str, email: str, ip: str, ua: str) -> None:
+async def log_signup(user_id: str, email: str, ip: str, ua: str,
+                     metadata: dict | None = None) -> None:
     """Record a successful user registration event."""
 
-    await log_auth_event("signup", user_id=user_id, email=email, ip_address=ip, user_agent=ua)
+    await log_auth_event("signup", user_id=user_id, email=email, ip_address=ip,
+                         user_agent=ua, metadata=metadata)
 
 
-async def log_login(user_id: str, email: str, ip: str, ua: str) -> None:
+async def log_login(user_id: str, email: str, ip: str, ua: str,
+                    metadata: dict | None = None) -> None:
     """Record a successful authentication event for an existing user."""
 
-    await log_auth_event("login", user_id=user_id, email=email, ip_address=ip, user_agent=ua)
+    await log_auth_event("login", user_id=user_id, email=email, ip_address=ip,
+                         user_agent=ua, metadata=metadata)
 
 
 async def log_login_failed(email: str, ip: str, ua: str, reason: str) -> None:
@@ -98,10 +102,17 @@ async def log_logout(user_id: str, all_devices: bool) -> None:
     await log_auth_event("logout", user_id=user_id, metadata={"all_devices": all_devices})
 
 
-async def log_password_reset(user_id: str, email: str) -> None:
-    """Record a completed password reset for a user."""
+async def log_password_reset(user_id: str, email: str, ip: str | None = None,
+                             ua: str | None = None) -> None:
+    """Record a completed password reset for a user, with request context."""
 
-    await log_auth_event("password_reset", user_id=user_id, email=email)
+    await log_auth_event(
+        "password_reset",
+        user_id=user_id,
+        email=email,
+        ip_address=ip,
+        user_agent=ua,
+    )
 
 
 async def log_password_reset_request(email: str, ip: str) -> None:

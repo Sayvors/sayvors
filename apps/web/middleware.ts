@@ -42,17 +42,20 @@ export function middleware(request: NextRequest) {
   // Next.js injects inline bootstrap scripts and allows no per-request nonce
   // yet — without 'unsafe-inline', every production page renders with dead
   // JS (all inline scripts blocked). Nonce-based CSP is the proper follow-up.
+  // Google Identity Services: gsi/client script, sign-in button iframe,
+  // and its account/status fetches all live on accounts.google.com.
+  const gsi = "https://accounts.google.com";
   const scriptExtras = isProd ? " 'unsafe-inline'" : " 'unsafe-eval' 'unsafe-inline'";
   const csp = [
     "default-src 'self'",
     // API host: serves the proxied Meta SDK script (cross-origin script tag).
-    `script-src 'self' ${apiUrl}${scriptExtras}`,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    `script-src 'self' ${apiUrl} ${gsi}${scriptExtras}`,
+    `style-src 'self' 'unsafe-inline' ${gsi}`,
+    `img-src 'self' data: blob: ${gsi} https://www.gstatic.com`,
     "font-src 'self' data:",
     // Meta SDK subresources (graph calls, dialog/popup channel frames).
-    `connect-src 'self' ${apiUrl} https://graph.facebook.com https://connect.facebook.net`,
-    "frame-src 'self' https://www.facebook.com https://web.facebook.com",
+    `connect-src 'self' ${apiUrl} ${gsi} https://graph.facebook.com https://connect.facebook.net`,
+    `frame-src 'self' ${gsi} https://www.facebook.com https://web.facebook.com`,
     "frame-ancestors 'none'",
   ].join("; ");
   response.headers.set("Content-Security-Policy", csp);
