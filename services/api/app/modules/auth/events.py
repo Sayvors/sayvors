@@ -67,16 +67,20 @@ async def log_auth_event(
         logger.exception("Failed to enqueue auth event: %s", event_type)
 
 
-async def log_signup(user_id: str, email: str, ip: str, ua: str) -> None:
+async def log_signup(user_id: str, email: str, ip: str, ua: str,
+                     metadata: dict | None = None) -> None:
     """Record a successful user registration event."""
 
-    await log_auth_event("signup", user_id=user_id, email=email, ip_address=ip, user_agent=ua)
+    await log_auth_event("signup", user_id=user_id, email=email, ip_address=ip,
+                         user_agent=ua, metadata=metadata)
 
 
-async def log_login(user_id: str, email: str, ip: str, ua: str) -> None:
+async def log_login(user_id: str, email: str, ip: str, ua: str,
+                    metadata: dict | None = None) -> None:
     """Record a successful authentication event for an existing user."""
 
-    await log_auth_event("login", user_id=user_id, email=email, ip_address=ip, user_agent=ua)
+    await log_auth_event("login", user_id=user_id, email=email, ip_address=ip,
+                         user_agent=ua, metadata=metadata)
 
 
 async def log_login_failed(email: str, ip: str, ua: str, reason: str) -> None:
