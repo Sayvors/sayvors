@@ -113,7 +113,7 @@ async def _llm_headline(overview: dict, top_problem: dict | None, loved: str | N
     from ..llm.providers.registry import get_provider_for_model
     from ..llm.service import _resolve_model
 
-    model = "groq:oss-120b"
+    model = "groq:qwen3.8-27b"
     facts = {
         "avg_rating": overview["avg_rating"],
         "rating_delta": overview["period"]["rating_delta"],

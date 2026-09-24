@@ -33,7 +33,7 @@ from .models import ReviewInsight
 
 logger = logging.getLogger(__name__)
 
-MODELS_CHAIN = ["groq:oss-120b", "gemini:gemini-3.6-flash", "openai:gpt-4o-mini"]
+MODELS_CHAIN = ["groq:qwen3.8-27b", "gemini:gemini-3.6-flash", "openai:gpt-4o-mini"]
 MAX_REVIEWS = 50
 MAX_RAG_CHARS = 4000
 
