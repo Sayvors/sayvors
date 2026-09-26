@@ -279,6 +279,39 @@ function ReviewsInner() {
   } | null>(null);
   const [intelLoading, setIntelLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  // Analysis interval. Presets map to `days`; the month picker sends an
+  // explicit range so the backend scopes the review set and the LLM run to it.
+  const [intelDays, setIntelDays] = useState(90);
+  const [intelMonth, setIntelMonth] = useState("");
+
+  const intelInterval = useMemo(() => {
+    if (intelMonth) {
+      const [y, m] = intelMonth.split("-").map(Number);
+      const from = new Date(Date.UTC(y, m - 1, 1));
+      const to = new Date(Date.UTC(y, m, 1));
+      return {
+        days: 0,
+        date_from: from.toISOString().slice(0, 10),
+        date_to: to.toISOString().slice(0, 10),
+        label: from.toLocaleDateString("en", { month: "long", year: "numeric", timeZone: "UTC" }),
+      };
+    }
+    const labels: Record<number, string> = { 7: "Last 7 days", 30: "Last 30 days", 90: "Last 90 days", 365: "Last 12 months" };
+    return { days: intelDays, date_from: null as string | null, date_to: null as string | null, label: labels[intelDays] ?? `Last ${intelDays} days` };
+  }, [intelDays, intelMonth]);
+
+  const intelQuery = useMemo(() => {
+    const p = new URLSearchParams();
+    const loc = locations.find((l) => l.id === selectedId);
+    if (loc?.channelId) p.set("channel_id", loc.channelId);
+    if (intelInterval.date_from) {
+      p.set("date_from", intelInterval.date_from);
+      p.set("date_to", intelInterval.date_to!);
+    } else {
+      p.set("days", String(intelInterval.days));
+    }
+    return p.toString();
+  }, [intelInterval, locations, selectedId]);
 
   useEffect(() => {
     if (view.kind !== "intelligence") return;
@@ -286,9 +319,7 @@ function ReviewsInner() {
     setIntelLoading(true);
     (async () => {
       try {
-        const loc = locations.find((l) => l.id === selectedId);
-        const q = loc?.channelId ? `?channel_id=${encodeURIComponent(loc.channelId)}&days=90` : "?days=90";
-        const data = await apiFetch(`/api/v1/analytics/review-intelligence${q}`);
+        const data = await apiFetch(`/api/v1/analytics/review-intelligence?${intelQuery}`);
         if (!cancelled) setAiIntel(data ? mergeAiIntel(data, intelligence) : null);
       } catch {
         if (!cancelled) setAiIntel(null);
@@ -298,7 +329,7 @@ function ReviewsInner() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, selectedId]);
+  }, [view, selectedId, intelQuery]);
 
   const runAnalysis = async () => {
     setAnalyzing(true);
@@ -306,10 +337,15 @@ function ReviewsInner() {
       const loc = locations.find((l) => l.id === selectedId);
       const data = await apiFetch("/api/v1/analytics/review-intelligence/analyze", {
         method: "POST",
-        body: JSON.stringify({ channel_id: loc?.channelId ?? null, days: 90 }),
+        body: JSON.stringify({
+          channel_id: loc?.channelId ?? null,
+          days: intelInterval.days,
+          date_from: intelInterval.date_from,
+          date_to: intelInterval.date_to,
+        }),
       }, 180000); // LLM analysis can take a while on first run
       setAiIntel(mergeAiIntel(data, intelligence));
-      setBanner({ kind: "ok", text: "Analysis updated and stored." });
+      setBanner({ kind: "ok", text: `Analysis updated and stored for ${intelInterval.label.toLowerCase()}.` });
     } catch {
       setBanner({ kind: "err", text: "Analysis failed — try again in a minute." });
     } finally {
@@ -1496,6 +1532,11 @@ function ReviewsInner() {
               onAnalyze={() => runAnalysis()}
               onBack={() => setView({ kind: "list" })}
               onOpenStar={(s) => setView({ kind: "star", stars: s, from: "intelligence" })}
+              intelDays={intelDays}
+              intelMonth={intelMonth}
+              intelInterval={intelInterval}
+              setIntelDays={setIntelDays}
+              setIntelMonth={setIntelMonth}
             />
           )}
         </div>
@@ -1628,6 +1669,27 @@ interface IntelTheme {
   sampleIds: string[];
 }
 
+interface IntelDimension {
+  key: string;
+  label: string;
+  standard: boolean;
+  mentions: number;
+  positive: number;
+  negative: number;
+  avg_rating: number;
+  positive_pct: number;
+  signal: "strong" | "mixed" | "weak";
+  confidence: "low" | "medium" | "high";
+  verdict: string;
+  evidence: { quote: string; rating: number }[];
+}
+
+interface IntelCompetitive {
+  wins: string[];
+  gaps: string[];
+  scope: string | null;
+}
+
 interface Intelligence {
   avg: number;
   sentimentScore: number;
@@ -1642,18 +1704,31 @@ interface Intelligence {
   sentimentSplit: { positive: number; neutral: number; negative: number };
   topics: { name: string; count: number }[];
   actions: { title: string; detail: string }[];
+  /** Business Health Scorecard — only dimensions with mentions > 0 arrive. */
+  dimensions: IntelDimension[];
+  /** Where this business leads / trails the cohort. */
+  competitive: IntelCompetitive;
 }
 
-const THEME_DEFS: { name: string; keywords: string[] }[] = [
-  { name: "Staff & Service", keywords: ["staff", "service", "helpful", "professional", "friendly", "welcoming"] },
-  { name: "Quality", keywords: ["quality", "great", "excellent", "good"] },
-  { name: "Cleanliness", keywords: ["clean"] },
-  { name: "Speed", keywords: ["fast", "quick", "slow", "wait", "queue"] },
-  { name: "Value", keywords: ["price", "pricing", "expensive", "value", "cheap"] },
-  { name: "Communication", keywords: ["communication", "response", "support", "rude"] },
-  { name: "Availability", keywords: ["busy", "availability", "wait", "long"] },
-  { name: "Location", keywords: ["location", "parking", "area"] },
+// Local dimension set for the instant heuristic view. `key` matches the
+// backend taxonomy (analytics/dimensions.py) so AI and heuristic scorecards
+// line up; "Quality" and "Cleanliness" collapse into the canonical
+// Product/Service Quality and Cleanliness & Environment dimensions server-side.
+const THEME_DEFS: { name: string; keywords: string[]; key: string }[] = [
+  { key: "support", name: "Staff & Service", keywords: ["staff", "service", "helpful", "professional", "friendly", "welcoming"] },
+  { key: "quality", name: "Quality", keywords: ["quality", "great", "excellent", "good"] },
+  { key: "environment", name: "Cleanliness", keywords: ["clean"] },
+  { key: "speed", name: "Speed", keywords: ["fast", "quick", "slow", "wait", "queue"] },
+  { key: "value", name: "Value", keywords: ["price", "pricing", "expensive", "value", "cheap"] },
+  { key: "credibility", name: "Communication", keywords: ["communication", "response", "support", "rude"] },
+  { key: "availability", name: "Availability", keywords: ["busy", "availability", "wait", "long"] },
+  { key: "location", name: "Location", keywords: ["location", "parking", "area"] },
 ];
+
+/** Reviews touching a dimension's keywords — the basis for pos/neg counts. */
+function matchedRows(keywords: string[], reviews: ReviewItem[]): ReviewItem[] {
+  return reviews.filter((r) => keywords.some((k) => r.comment.toLowerCase().includes(k)));
+}
 
 function buildIntelligence(reviews: ReviewItem[]): Intelligence {
   const total = reviews.length;
@@ -1703,6 +1778,32 @@ function buildIntelligence(reviews: ReviewItem[]): Intelligence {
     strengths: love.slice(0, 3).map((t) => ({ title: t.name, mentions: t.mentions, avg: t.avgRating })),
     sentimentSplit: { positive: pos, neutral: neu, negative: neg },
     topics: themes.map((t) => ({ name: t.name, count: t.mentions })),
+    // Local scorecard so the heuristic view is as useful as the AI one — the
+    // same six dimensions, counted from the reviews already in memory.
+    dimensions: themes
+      .filter((t) => t.mentions > 0)
+      .map((t) => {
+        const m = matchedRows(t.keywords, reviews);
+        const posN = m.filter((r) => r.rating >= 4).length;
+        const negN = m.filter((r) => r.rating <= 2).length;
+        const judged = posN + negN;
+        const pct = judged ? Math.round((posN / judged) * 100) : 0;
+        return {
+          key: THEME_DEFS.find((d) => d.name === t.name)?.key ?? t.name.toLowerCase(),
+          label: t.name,
+          standard: true,
+          mentions: t.mentions,
+          positive: posN,
+          negative: negN,
+          avg_rating: t.avgRating,
+          positive_pct: pct,
+          signal: (negN === 0 && posN > 0 ? "strong" : posN === 0 && negN > 0 ? "weak" : pct >= 70 ? "strong" : pct <= 30 ? "weak" : "mixed") as IntelDimension["signal"],
+          confidence: (t.mentions >= 5 ? "high" : t.mentions >= 3 ? "medium" : "low") as IntelDimension["confidence"],
+          verdict: `${posN ? `${posN} review(s) praise it` : ""}${posN && negN ? " · " : ""}${negN ? `${negN} review(s) criticise it` : ""} (avg ${t.avgRating.toFixed(1)}★).`.replace(/^ · /, ""),
+          evidence: m.slice(0, 2).map((r) => ({ quote: r.comment.slice(0, 140), rating: r.rating })),
+        };
+      }),
+    competitive: { wins: [], gaps: [], scope: null },
     actions: [
       ...(waitTheme && waitTheme.mentions > 0 ? [{ title: "Fix waiting time", detail: `${waitTheme.mentions} reviews affected · HIGH impact` }] : []),
       { title: `Respond to ${reviews.filter((r) => !r.replied).length} unanswered reviews`, detail: "Immediate action" },
@@ -1718,6 +1819,8 @@ function mergeAiIntel(data: {
   opportunities: { level: "HIGH" | "MEDIUM" | "MAINTAIN"; title: string; detail: string; impact: string }[];
   strengths: { title: string; mentions: number; avg: number }[];
   actions: { title: string; detail: string }[];
+  dimensions: IntelDimension[];
+  competitive: IntelCompetitive;
   rag_used: boolean;
   analyzed_at: string | null;
   stale: boolean;
@@ -1746,6 +1849,10 @@ function mergeAiIntel(data: {
         : base.strengths,
       actions: data.actions.length ? data.actions : base.actions,
       topics: themes.map((t) => ({ name: t.name, count: t.mentions })),
+      // Backend scorecard wins when present (it is verified against the review
+      // rows server-side); otherwise keep the locally computed one.
+      dimensions: data.dimensions?.length ? data.dimensions : base.dimensions,
+      competitive: data.competitive ?? base.competitive,
     },
     source: data.source,
     model: data.model,
@@ -1774,13 +1881,23 @@ function ThemeBars({ topics }: { topics: { name: string; count: number }[] }) {
   );
 }
 
-function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, aiLoading, analyzing, onAnalyze, onBack, onOpenStar }: {
+const PERIOD_PRESETS = [
+  { days: 7, label: "7d" },
+  { days: 30, label: "30d" },
+  { days: 90, label: "90d" },
+  { days: 365, label: "12m" },
+];
+
+function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, aiLoading, analyzing, onAnalyze, onBack, onOpenStar, intelDays, intelMonth, intelInterval, setIntelDays, setIntelMonth }: {
   intelligence: Intelligence; total: number; locationName: string;
   aiMeta: { source: string; model: string | null; ragUsed: boolean; analyzedAt: string | null; stale: boolean; newCount: number } | null;
   aiLoading: boolean;
   analyzing: boolean;
   onAnalyze: () => void;
   onBack: () => void; onOpenStar: (s: number) => void;
+  intelDays: number; intelMonth: string;
+  intelInterval: { days: number; date_from: string | null; date_to: string | null; label: string };
+  setIntelDays: (d: number) => void; setIntelMonth: (m: string) => void;
 }) {
   const i = intel;
   const isAI = aiMeta?.source === "ai";
@@ -1824,6 +1941,8 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
             <p className="mt-1 text-[13px] leading-5 text-[#5F6368]">
               <span className="font-medium text-[#202124]">{locationName || "All locations"}</span>
               <span className="mx-1.5 text-[#DADCE0]">•</span>
+              <span className="font-medium text-[#202124]">{intelInterval.label}</span>
+              <span className="mx-1.5 text-[#DADCE0]">•</span>
               {total} reviews • {isAI ? `AI analysis${aiMeta?.model ? ` • ${aiMeta.model}` : ""}` : "Instant heuristic — AI adds deeper opportunities & citations"}
             </p>
             {analyzedLabel && <p className="mt-1 text-[12px] text-[#5F6368]">Updated {analyzedLabel}</p>}
@@ -1852,6 +1971,49 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
               ) : isAI ? "Re-analyze with AI" : "Analyze with AI"}
             </button>
           </div>
+        </div>
+
+        {/* INTERVAL — scopes every number on this page to the selected window */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#E8EAED] pt-3">
+          <span className="text-[12px] font-medium text-[#5F6368]">Period</span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {PERIOD_PRESETS.map((p) => {
+              const active = !intelMonth && intelDays === p.days;
+              return (
+                <button
+                  key={p.days}
+                  onClick={() => { setIntelDays(p.days); setIntelMonth(""); }}
+                  disabled={isLoading}
+                  className={`rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors disabled:opacity-50 ${
+                    active
+                      ? "border-[#1A73E8] bg-[#E8F0FE] text-[#1967D2]"
+                      : "border-[#DADCE0] bg-white text-[#5F6368] hover:bg-[#F8F9FA]"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+            <label className="ml-1 inline-flex items-center gap-1.5 text-[12px] text-[#5F6368]">
+              <span className="sr-only">Specific month</span>
+              <input
+                type="month"
+                value={intelMonth}
+                disabled={isLoading}
+                onChange={(e) => setIntelMonth(e.target.value)}
+                className="rounded-md border border-[#DADCE0] px-2 py-1 text-[12px] text-[#202124] disabled:opacity-50"
+              />
+            </label>
+            {intelMonth && (
+              <button
+                onClick={() => setIntelMonth("")}
+                className="rounded-full border border-[#DADCE0] bg-white px-2 py-1 text-[11px] font-medium text-[#5F6368] hover:bg-[#F8F9FA]"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          {isLoading && <span className="text-[12px] text-[#5F6368]">Loading {intelInterval.label.toLowerCase()}…</span>}
         </div>
 
         {/* Source transparency — makes AI vs heuristic crystal clear */}
@@ -1895,6 +2057,122 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
           <p className="mt-1 text-[12px] text-[#5F6368]">Fix top 1-sided theme first</p>
         </div>
       </div>
+
+      {/* BUSINESS HEALTH SCORECARD — standard dimensions, evidence-cited.
+          Only dimensions someone actually mentioned reach this view. */}
+      <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F1F3F4] text-[#5F6368]">▦</span>
+          <h3 className="text-[14px] font-medium text-[#202124]">Business Health Scorecard</h3>
+          <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[11px] font-medium text-[#5F6368]">
+            {i.dimensions.length} dimension{i.dimensions.length === 1 ? "" : "s"} in this period
+          </span>
+        </div>
+        {i.dimensions.length === 0 ? (
+          <p className="mt-3 text-[13px] text-[#5F6368]">
+            No review in this period mentions any tracked dimension yet. Collect a few more reviews
+            mentioning staff, speed, quality, value or cleanliness and the scorecard fills in.
+          </p>
+        ) : (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {i.dimensions.map((d) => {
+              const tone =
+                d.signal === "strong"
+                  ? { chip: "bg-[#E6F4EA] text-[#137333]", bar: "#34A853", word: "Strong" }
+                  : d.signal === "weak"
+                    ? { chip: "bg-[#FCE8E6] text-[#C5221F]", bar: "#EA4335", word: "Weak" }
+                    : { chip: "bg-[#FEF7E0] text-[#EA8600]", bar: "#FBBC05", word: "Mixed" };
+              return (
+                <div key={d.key} className="rounded-lg border border-[#E8EAED] p-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium leading-5 text-[#202124]">{d.label}</p>
+                      {!d.standard && (
+                        <span className="mt-0.5 inline-block rounded bg-[#E8F0FE] px-1.5 py-0.5 text-[10px] font-medium text-[#1967D2]">
+                          Discovered in your reviews
+                        </span>
+                      )}
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${tone.chip}`}>
+                      {tone.word}
+                    </span>
+                  </div>
+
+                  {d.verdict && <p className="mt-1.5 text-[12px] leading-5 text-[#5F6368]">{d.verdict}</p>}
+
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#5F6368]">
+                    <span className="inline-flex items-center gap-1">
+                      <span aria-hidden>👍</span> {d.positive} positive
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span aria-hidden>👎</span> {d.negative} negative
+                    </span>
+                    <span className="tabular-nums">avg {d.avg_rating.toFixed(1)}★</span>
+                    <span className="rounded bg-[#F1F3F4] px-1.5 py-0.5 font-medium">
+                      {d.confidence} confidence
+                    </span>
+                  </div>
+
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#E8EAED]">
+                    <span
+                      className="block h-full rounded-full"
+                      style={{ width: `${Math.max(3, d.positive_pct)}%`, backgroundColor: tone.bar }}
+                    />
+                  </div>
+
+                  {d.evidence.length > 0 && (
+                    <ul className="mt-2.5 space-y-1 border-t border-[#F1F3F4] pt-2">
+                      {d.evidence.map((e, idx) => (
+                        <li key={idx} className="flex gap-1.5 text-[11px] leading-4 text-[#5F6368]">
+                          <span aria-hidden className="shrink-0 tabular-nums">{e.rating}★</span>
+                          <span className="italic">“{e.quote}”</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* COMPETITIVE POSITION — where you lead / trail, vs the platform cohort */}
+      {(i.competitive.wins.length > 0 || i.competitive.gaps.length > 0) && (
+        <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F1F3F4] text-[#5F6368]">⚖</span>
+            <h3 className="text-[14px] font-medium text-[#202124]">Where you stand vs other businesses</h3>
+            {i.competitive.scope && (
+              <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[11px] font-medium text-[#5F6368]">
+                {i.competitive.scope}
+              </span>
+            )}
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {i.competitive.wins.length > 0 && (
+              <div className="rounded-lg border border-[#CEEAD6] bg-[#F6FEF8] p-3.5">
+                <p className="text-[12px] font-medium uppercase tracking-wide text-[#137333]">You lead on</p>
+                <ul className="mt-2 space-y-1.5">
+                  {i.competitive.wins.map((w, idx) => (
+                    <li key={idx} className="text-[12px] leading-5 text-[#202124]">• {w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {i.competitive.gaps.length > 0 && (
+              <div className="rounded-lg border border-[#F6C7C3] bg-[#FEF7F6] p-3.5">
+                <p className="text-[12px] font-medium uppercase tracking-wide text-[#C5221F]">You trail on</p>
+                <ul className="mt-2 space-y-1.5">
+                  {i.competitive.gaps.map((g, idx) => (
+                    <li key={idx} className="text-[12px] leading-5 text-[#202124]">• {g}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* AI EXEC SUMMARY — hero card, clearly AI when AI, muted when heuristic */}
       <div className={`rounded-lg border bg-white p-5 ${isAI ? "border-[#CEEAD6] shadow-sm" : "border-[#DADCE0]"}`}>
