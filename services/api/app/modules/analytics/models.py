@@ -146,14 +146,18 @@ class ReviewIntelligenceReport(Base):
 
     __tablename__ = "review_intelligence_reports"
     __table_args__ = (
-        UniqueConstraint("user_id", "channel_id", "days", name="uq_intel_report_scope"),
+        UniqueConstraint("user_id", "channel_id", "scope_key", name="uq_intel_report_scope"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(String(36), index=True)
     # "" means all channels; otherwise the channel id.
     channel_id: Mapped[str] = mapped_column(String(36), default="")
+    # Rolling-window length for preset intervals; 0 for an explicit date range.
     days: Mapped[int] = mapped_column(Integer, default=90)
+    # Cache identity for the interval: "7"/"30"/"90"/"365"/"all" for presets,
+    # or "2026-09-01..2026-09-30" for a custom month range.
+    scope_key: Mapped[str] = mapped_column(String(40), default="90")
 
     source: Mapped[str] = mapped_column(String(16), default="fallback")  # ai | fallback
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -163,6 +167,10 @@ class ReviewIntelligenceReport(Base):
     strengths: Mapped[list] = mapped_column(JSON, default=list)
     actions: Mapped[list] = mapped_column(JSON, default=list)
     stats: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Business Health Scorecard (standard dimensions + LLM-discovered extras).
+    dimensions: Mapped[list] = mapped_column(JSON, default=list)
+    # Where this business leads / trails the anonymised cohort.
+    competitive: Mapped[dict] = mapped_column(JSON, default=dict)
     rag_used: Mapped[bool] = mapped_column(Boolean, default=False)
     rag_chunks: Mapped[int] = mapped_column(Integer, default=0)
     rag_bank: Mapped[str | None] = mapped_column(String(36), nullable=True)

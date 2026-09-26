@@ -1,5 +1,6 @@
 """Analytics API: business overview, timeseries, enriched-review list."""
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -159,17 +160,50 @@ async def dismiss_review_edit(
     return insight
 
 
+def _parse_interval(
+    date_from: str | None, date_to: str | None, days: int
+) -> tuple[datetime | None, datetime | None, int]:
+    """Normalize a requested interval into (from, to, days).
+
+    Presets pass `days` only. The month picker passes ISO dates, which take
+    precedence; they also get their own cache slot so the owner pays for an
+    LLM run once per month, not once per click.
+    """
+    if not date_from and not date_to:
+        return None, None, days
+    start = None
+    end = None
+    try:
+        if date_from:
+            start = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc)
+        if date_to:
+            end = datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc)
+    except ValueError:
+        # Unparseable input falls back to the preset rather than erroring out a
+        # dashboard the owner is trying to read.
+        logger.warning("Bad intelligence interval %r..%r — using days=%s", date_from, date_to, days)
+        return None, None, days
+    return start, end, 0
+
+
 @router.get("/review-intelligence", response_model=ReviewIntelligenceResponse | None)
 async def get_review_intelligence(
     channel_id: str | None = Query(None),
     days: int = Query(90, ge=1, le=365),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Stored intelligence report (no re-analysis). Null when never analyzed."""
+    """Stored intelligence report for an interval (no re-analysis).
+
+    Null when this interval has never been analyzed — the UI then shows the
+    instant heuristic scorecard until the owner presses Analyze.
+    """
     from .intelligence_ai import get_stored_report
 
-    stored = await get_stored_report(db, user.id, channel_id, days)
+    start, end, window = _parse_interval(date_from, date_to, days)
+    stored = await get_stored_report(db, user.id, channel_id, window, start, end)
     if stored is None:
         return None
     stored["stats"]["distribution"] = {
@@ -184,10 +218,17 @@ async def analyze_review_intelligence(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run the AI analysis now and store it (replaces any previous report)."""
+    """Run the AI analysis now for the requested interval and store it.
+
+    Re-analyzing the same interval overwrites that interval's cached report;
+    other intervals keep theirs.
+    """
     from .intelligence_ai import analyze_and_store
 
-    result = await analyze_and_store(db, user, body.channel_id, body.days, body.databank_id)
+    start, end, window = _parse_interval(body.date_from, body.date_to, body.days)
+    result = await analyze_and_store(
+        db, user, body.channel_id, window, body.databank_id, start, end
+    )
     result["stats"]["distribution"] = {
         str(k): v for k, v in result["stats"]["distribution"].items()
     }

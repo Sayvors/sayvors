@@ -144,6 +144,40 @@ class IntelStatsOut(BaseModel):
     response_rate: int
 
 
+class IntelEvidenceOut(BaseModel):
+    quote: str
+    rating: int
+
+
+class IntelDimensionOut(BaseModel):
+    """One scored business dimension. Bidirectional: praise + complaints."""
+
+    key: str
+    label: str
+    standard: bool = True
+    mentions: int = 0
+    positive: int = 0
+    negative: int = 0
+    avg_rating: float = 0
+    positive_pct: int = 0
+    signal: str = "mixed"  # strong | mixed | weak
+    confidence: str = "low"  # low | medium | high
+    verdict: str = ""
+    evidence: list[IntelEvidenceOut] = []
+
+
+class IntelCompetitiveOut(BaseModel):
+    """Where this business leads / trails the anonymised cohort.
+
+    `scope` discloses what "competitors" means today: other businesses on the
+    platform, not tracked named rivals.
+    """
+
+    wins: list[str] = []
+    gaps: list[str] = []
+    scope: str | None = None
+
+
 class ReviewIntelligenceResponse(BaseModel):
     source: str  # "ai" | "fallback"
     model: str | None = None
@@ -153,6 +187,9 @@ class ReviewIntelligenceResponse(BaseModel):
     opportunities: list[IntelOpportunityOut] = []
     strengths: list[IntelStrengthOut] = []
     actions: list[IntelActionOut] = []
+    dimensions: list[IntelDimensionOut] = []
+    competitive: IntelCompetitiveOut = IntelCompetitiveOut()
+    scope_key: str = "90"
     rag_used: bool = False
     rag_chunks: int = 0
     rag_bank: str | None = None
@@ -167,6 +204,10 @@ class AnalyzeIntelligenceRequest(BaseModel):
     channel_id: str | None = None
     days: int = Field(90, ge=1, le=365)
     databank_id: str | None = None
+    # Explicit interval (month picker). When set, they win over `days` and get
+    # their own cache slot, so re-selecting a month is free.
+    date_from: str | None = None  # ISO date, inclusive
+    date_to: str | None = None    # ISO date, exclusive
 
 
 # ── Understand pillar ──────────────────────────────────────────────────
