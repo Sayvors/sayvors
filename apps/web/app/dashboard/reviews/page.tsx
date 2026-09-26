@@ -1568,7 +1568,7 @@ function ReviewsInner() {
                            <p className="text-[12px] font-medium text-[#137333]">Replied on Google</p>
                            <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">
                              {active.reply_text
-                               ? "This review already has a published reply. You can replace it below — the original stays in Google's edit history."
+                                ? "This review already has a published reply. You can replace it below — saving overwrites the current wording, so keep a copy if you need it."
                                : "Replied on Google, but the reply text wasn't returned to us, so there is nothing to edit yet. Type the reply you want live below."}
                            </p>
                          </div>
