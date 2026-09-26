@@ -22,21 +22,38 @@ const channels = [
   { name: "X / Twitter", slug: "x", icon: "X", color: "from-ink to-ink dark:from-fog dark:to-fog", soon: true },
 ];
 
+const CONFETTI_COLORS = ["#7C3AED", "#D946EF", "#F97316", "#10B981", "#3B82F6", "#EAB308"];
+
 function Confetti() {
+  // Random values must be generated client-side AFTER mount — Math.random()
+  // during render makes SSR HTML differ from the client render (hydration error).
+  const [pieces, setPieces] = useState<{ left: string; width: string; height: string; color: string; duration: string; delay: string }[]>([]);
+
+  useEffect(() => {
+    setPieces(Array.from({ length: 60 }).map((_, i) => ({
+      left: `${Math.random() * 100}%`,
+      width: `${6 + Math.random() * 6}px`,
+      height: `${6 + Math.random() * 6}px`,
+      color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+      duration: `${2 + Math.random() * 3}s`,
+      delay: `${Math.random() * 2}s`,
+    })));
+  }, []);
+
   return (
     <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
-      {Array.from({ length: 60 }).map((_, i) => (
+      {pieces.map((p, i) => (
         <div
           key={i}
           className="absolute animate-bounce rounded-sm"
           style={{
-            left: `${Math.random() * 100}%`,
+            left: p.left,
             top: `-5%`,
-            width: `${6 + Math.random() * 6}px`,
-            height: `${6 + Math.random() * 6}px`,
-            backgroundColor: ["#7C3AED", "#D946EF", "#F97316", "#10B981", "#3B82F6", "#EAB308"][i % 6],
-            animationDuration: `${2 + Math.random() * 3}s`,
-            animationDelay: `${Math.random() * 2}s`,
+            width: p.width,
+            height: p.height,
+            backgroundColor: p.color,
+            animationDuration: p.duration,
+            animationDelay: p.delay,
           }}
         />
       ))}

@@ -110,12 +110,20 @@ def test_parse_rejects_overlong_lists():
                           '"strengths": [], "actions": []}')
 
 
-def test_fallback_builds_themes_from_rows():
+def test_fallback_scores_standard_dimensions_from_rows():
+    """The offline fallback scores the fixed business dimensions.
+
+    It used to emit raw word-frequency ("version", "things") and bare
+    enrichment topic keys, which told an owner nothing. Now it produces the
+    standard dimension labels, from the review text.
+    """
     fb = ai._fallback_from_rows(_rows())
     names = [t.name for t in fb.themes]
-    assert "quality" in names
-    assert "service" in names
+    assert "Responsiveness & Speed" in names   # "quick response" in row 2
+    assert "Customer Support & Staff" in names  # "Excellent service" in row 2
     assert fb.summary  # honest offline note, never empty
+    # No raw words or bare topic keys leak into the label set.
+    assert not any(n in names for n in ("quality", "service", "really", "version", "things"))
 
 
 def test_fallback_empty_rows():
@@ -179,7 +187,11 @@ async def test_orchestration_falls_back_when_llm_down(monkeypatch):
     assert res["model"] is None
     assert res["stats"]["total"] == 2
     assert res.get("fallback_reason")
-    assert any(t["name"] == "quality" for t in res["themes"])
+    assert any(t["name"] == "Responsiveness & Speed" for t in res["themes"])
+    # The scorecard is present even with the LLM down, and is taxonomy-bound.
+    assert res["dimensions"]
+    assert all(d["standard"] for d in res["dimensions"])
+    assert all(d["mentions"] > 0 for d in res["dimensions"])
 
 
 def _fake_pipeline_result(total=1):
@@ -193,6 +205,7 @@ def _fake_pipeline_result(total=1):
         "themes": [{"name": "quality", "mentions": total, "avg_rating": 4.0,
                     "positive_pct": 100, "phrases": [], "trend": "stable"}],
         "opportunities": [], "strengths": [], "actions": [],
+        "dimensions": [], "competitive": {},
         "rag_used": False, "rag_chunks": 0, "rag_bank": None,
     }
 
@@ -204,7 +217,8 @@ async def test_stored_report_none_when_never_analyzed(db, user_id):
 
 @pytest.mark.asyncio
 async def test_analyze_stores_and_serves(db, user_id, monkeypatch):
-    async def _fake_pipeline(db_, user_, channel_id=None, days=90, databank_id=None):
+    async def _fake_pipeline(db_, user_, channel_id=None, days=90, databank_id=None,
+                             date_from=None, date_to=None):
         return _fake_pipeline_result()
 
     monkeypatch.setattr(ai, "get_review_intelligence", _fake_pipeline)
@@ -239,7 +253,8 @@ async def test_analyze_stores_and_serves(db, user_id, monkeypatch):
 async def test_stored_report_goes_stale_on_new_review(db, user_id, monkeypatch):
     from app.modules.analytics.models import ReviewInsight
 
-    async def _fake_pipeline(db_, user_, channel_id=None, days=90, databank_id=None):
+    async def _fake_pipeline(db_, user_, channel_id=None, days=90, databank_id=None,
+                             date_from=None, date_to=None):
         return _fake_pipeline_result()
 
     monkeypatch.setattr(ai, "get_review_intelligence", _fake_pipeline)

@@ -104,7 +104,7 @@ const en = {
       responseTimeSub: "once connected",
     },
     start: {
-      title: "Start here — launch in 3 steps",
+      title: "Start here — launch step by step",
       doneOf: "{done} of {total} done",
       allSet: "All set",
       subtitleTodo: "Follow the steps in order — each one unlocks the next.",
@@ -117,6 +117,8 @@ const en = {
       stepConnect: "Connect your first channel",
       stepDatabank: "Upload docs to your Databank",
       stepAutoReply: "Turn on Auto-Reply",
+      stepServices: "List the services you offer",
+      stepHours: "Set your opening hours",
       markDone: 'Mark "{label}" as done',
       markNotDone: 'Mark "{label}" as not done',
       openStep: "Open {label}",

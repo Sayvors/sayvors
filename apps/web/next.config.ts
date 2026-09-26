@@ -4,6 +4,12 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   reactStrictMode: true,
+  // The dev server rejects requests whose Origin is not on this list, and it
+  // answers a blocked HMR websocket upgrade with 503. Facebook Login needs an
+  // HTTPS origin, so local Meta testing goes through a tunnel (ngrok) whose
+  // subdomain is randomly reassigned on every restart — hence the wildcard.
+  // Dev-only: has no effect on `next build` / `next start`.
+  allowedDevOrigins: ["*.ngrok-free.app", "*.ngrok.io", "*.trycloudflare.com"],
   images: {
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 60 * 60 * 24 * 30,

@@ -36,6 +36,7 @@ from .events import (
     log_token_refresh,
     log_account_locked,
 )
+from ...modules.email.service import send_welcome_email
 
 
 async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str) -> dict:
@@ -229,6 +230,15 @@ async def _issue_session(user: User, db: AsyncSession, event: str,
     }
 
 
+async def _send_welcome_email(user: User) -> None:
+    """Fire-and-forget greeting for brand-new social signups. Never fail signup."""
+    try:
+        await send_welcome_email(user.email, user.first_name or "there")
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("Welcome email failed for %s", user.email)
+
+
 async def google_login(claims: dict, db: AsyncSession,
                        user_agent: str, ip: str) -> dict:
     """Find-or-create from verified Google claims; issue a session.
@@ -285,8 +295,11 @@ async def google_login(claims: dict, db: AsyncSession,
             if picture:
                 user.avatar_url = picture
 
-        return await _issue_session(user, db, event, user_agent, ip,
-                                    metadata={"via": "google"})
+        result = await _issue_session(user, db, event, user_agent, ip,
+                                      metadata={"via": "google"})
+        if event == "signup":
+            await _send_welcome_email(user)
+        return result
     except IntegrityError:
         # Concurrent signup race: the row exists now — sign in with it.
         await db.rollback()
@@ -296,6 +309,78 @@ async def google_login(claims: dict, db: AsyncSession,
             raise ValueError("Could not create account")
         return await _issue_session(user, db, "login", user_agent, ip,
                                     metadata={"via": "google"})
+
+
+async def facebook_login(profile: dict, db: AsyncSession,
+                         user_agent: str, ip: str) -> dict:
+    """Find-or-create from a verified Facebook profile; issue a session.
+
+    Mirrors google_login: Meta's tokens are never stored — only the profile
+    snapshot lands on the user row (facebook_id / name / avatar_url).
+    """
+    import secrets as _secrets
+
+    fb_id = profile["id"]
+    email = profile["email"].strip().lower()
+    name = (profile.get("name") or "").strip()
+    picture = profile.get("picture")
+    first, _sep, last = name.partition(" ")
+    if not first:
+        first = email.split("@", 1)[0]
+        last = ""
+
+    try:
+        event = "login"
+        result = await db.execute(select(User).where(User.facebook_id == fb_id))
+        user = result.scalar_one_or_none()
+
+        if user is None:
+            result = await db.execute(
+                select(User).where(func.lower(User.email) == email)
+            )
+            user = result.scalar_one_or_none()
+            if user is not None:
+                # Link — existing password account adopts Facebook.
+                if user.facebook_id is None:
+                    user.facebook_id = fb_id
+                if picture:
+                    user.avatar_url = picture
+            else:
+                user = User(
+                    first_name=first[:100],
+                    last_name=last[:100],
+                    email=email,
+                    password_hash=hash_password(_secrets.token_urlsafe(32)),
+                    email_verified=True,
+                    onboarded=False,
+                    facebook_id=fb_id,
+                    avatar_url=picture,
+                )
+                db.add(user)
+                await db.flush()  # assign user.id before the refresh-token row
+                event = "signup"
+        else:
+            if first:
+                user.first_name = first[:100]
+            if last:
+                user.last_name = last[:100]
+            if picture:
+                user.avatar_url = picture
+
+        result = await _issue_session(user, db, event, user_agent, ip,
+                                      metadata={"via": "facebook"})
+        if event == "signup":
+            await _send_welcome_email(user)
+        return result
+    except IntegrityError:
+        # Concurrent signup race: the row exists now — sign in with it.
+        await db.rollback()
+        result = await db.execute(select(User).where(User.facebook_id == fb_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise ValueError("Could not create account")
+        return await _issue_session(user, db, "login", user_agent, ip,
+                                    metadata={"via": "facebook"})
 
 
 async def refresh_tokens(

@@ -4,6 +4,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
+import httpx
 import jwt
 from google.auth.transport import requests as google_auth_requests
 from google.oauth2.id_token import verify_oauth2_token
@@ -114,3 +115,42 @@ def verify_google_id_token(id_token: str) -> dict:
     if not claims.get("sub") or not claims.get("email") or claims.get("email_verified") is not True:
         raise ValueError("unverified_email")
     return claims
+
+
+def verify_facebook_token(access_token: str) -> dict:
+    """Validate a Facebook Login user token; return a normalized profile.
+
+    1. `debug_token` with the app token proves the token was issued to OUR
+       login app (wrong-app tokens are attacker-controlled). 2. `/me` fetches
+       the profile. Raises ValueError("invalid_token") on any auth/network
+       failure (cause logged, token never logged), ValueError("unverified_email")
+       when id/email are missing, ValueError("unconfigured") when no app id.
+    """
+    app_id = settings.facebook_login_app_id
+    app_secret = settings.facebook_login_app_secret
+    if not app_id or not app_secret:
+        raise ValueError("unconfigured")
+    base = f"https://graph.facebook.com/{settings.META_GRAPH_API_VERSION}"
+    try:
+        dbg = httpx.get(
+            f"{base}/debug_token",
+            params={"input_token": access_token, "access_token": f"{app_id}|{app_secret}"},
+            timeout=10,
+        ).json().get("data", {})
+        if not dbg.get("is_valid") or str(dbg.get("app_id")) != str(app_id):
+            raise ValueError("invalid_token")
+        me = httpx.get(
+            f"{base}/me",
+            params={"fields": "id,name,email,picture.type(large)", "access_token": access_token},
+            timeout=10,
+        ).json()
+        if not me.get("id") or not me.get("email"):
+            raise ValueError("unverified_email")
+        picture = ((me.get("picture") or {}).get("data") or {}).get("url")
+        return {"id": me["id"], "email": me["email"],
+                "name": me.get("name", ""), "picture": picture}
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.warning("Facebook token verification failed: %s: %s", type(e).__name__, e)
+        raise ValueError("invalid_token")

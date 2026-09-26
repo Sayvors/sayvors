@@ -41,16 +41,25 @@ async def test_review_intelligence_analyze_and_serve(client, db, channel_id, use
         "themes": [{"name": "quality", "mentions": 1, "avg_rating": 4.0,
                     "positive_pct": 100, "phrases": [], "trend": "stable"}],
         "opportunities": [], "strengths": [], "actions": [],
+        "dimensions": [{"key": "quality", "label": "Product/Service Quality",
+                        "standard": True, "mentions": 1, "positive": 1, "negative": 0,
+                        "avg_rating": 4.0, "positive_pct": 100, "signal": "strong",
+                        "confidence": "low", "verdict": "1 review(s) praise it.",
+                        "evidence": [{"quote": "good", "rating": 4}]}],
+        "competitive": {"wins": [], "gaps": [], "scope": None},
+        "scope_key": "90",
         "rag_used": False, "rag_chunks": 0, "rag_bank": None,
         "fallback_reason": "test",
         "analyzed_at": "2026-09-09T00:00:00+00:00",
         "review_count": 1, "current_count": 1, "stale": False,
     }
 
-    async def _fake_analyze(db_, user_, channel_id=None, days=90, databank_id=None):
+    async def _fake_analyze(db_, user_, channel_id=None, days=90, databank_id=None,
+                            date_from=None, date_to=None):
         return report
 
-    async def _fake_stored(db_, user_id_, channel_id=None, days=90):
+    async def _fake_stored(db_, user_id_, channel_id=None, days=90,
+                           date_from=None, date_to=None):
         return report
 
     monkeypatch.setattr(intelligence_ai_mod, "analyze_and_store", _fake_analyze)

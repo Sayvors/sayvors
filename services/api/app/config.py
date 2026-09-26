@@ -123,6 +123,18 @@ class Settings(BaseSettings):
     # Never expose these to the frontend.
     META_APP_ID: str = ""
     META_APP_SECRET: str = ""
+    # Dedicated user-login app (Continue with Facebook). Empty = fall back to
+    # the platform META_APP_ID/SECRET (same values for now; split later by env only).
+    META_LOGIN_APP_ID: str = ""
+    META_LOGIN_APP_SECRET: str = ""
+
+    @property
+    def facebook_login_app_id(self) -> str:
+        return self.META_LOGIN_APP_ID or self.META_APP_ID
+
+    @property
+    def facebook_login_app_secret(self) -> str:
+        return self.META_LOGIN_APP_SECRET or self.META_APP_SECRET
     META_GRAPH_API_VERSION: str = "v26.0"
     META_OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/meta/facebook/callback"
     META_WEBHOOK_VERIFY_TOKEN: str = ""

@@ -6,7 +6,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
-import { approveReply, dismissReviewEdit, editReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
 
 type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
@@ -279,6 +279,39 @@ function ReviewsInner() {
   } | null>(null);
   const [intelLoading, setIntelLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  // Analysis interval. Presets map to `days`; the month picker sends an
+  // explicit range so the backend scopes the review set and the LLM run to it.
+  const [intelDays, setIntelDays] = useState(90);
+  const [intelMonth, setIntelMonth] = useState("");
+
+  const intelInterval = useMemo(() => {
+    if (intelMonth) {
+      const [y, m] = intelMonth.split("-").map(Number);
+      const from = new Date(Date.UTC(y, m - 1, 1));
+      const to = new Date(Date.UTC(y, m, 1));
+      return {
+        days: 0,
+        date_from: from.toISOString().slice(0, 10),
+        date_to: to.toISOString().slice(0, 10),
+        label: from.toLocaleDateString("en", { month: "long", year: "numeric", timeZone: "UTC" }),
+      };
+    }
+    const labels: Record<number, string> = { 7: "Last 7 days", 30: "Last 30 days", 90: "Last 90 days", 365: "Last 12 months" };
+    return { days: intelDays, date_from: null as string | null, date_to: null as string | null, label: labels[intelDays] ?? `Last ${intelDays} days` };
+  }, [intelDays, intelMonth]);
+
+  const intelQuery = useMemo(() => {
+    const p = new URLSearchParams();
+    const loc = locations.find((l) => l.id === selectedId);
+    if (loc?.channelId) p.set("channel_id", loc.channelId);
+    if (intelInterval.date_from) {
+      p.set("date_from", intelInterval.date_from);
+      p.set("date_to", intelInterval.date_to!);
+    } else {
+      p.set("days", String(intelInterval.days));
+    }
+    return p.toString();
+  }, [intelInterval, locations, selectedId]);
 
   useEffect(() => {
     if (view.kind !== "intelligence") return;
@@ -286,9 +319,7 @@ function ReviewsInner() {
     setIntelLoading(true);
     (async () => {
       try {
-        const loc = locations.find((l) => l.id === selectedId);
-        const q = loc?.channelId ? `?channel_id=${encodeURIComponent(loc.channelId)}&days=90` : "?days=90";
-        const data = await apiFetch(`/api/v1/analytics/review-intelligence${q}`);
+        const data = await apiFetch(`/api/v1/analytics/review-intelligence?${intelQuery}`);
         if (!cancelled) setAiIntel(data ? mergeAiIntel(data, intelligence) : null);
       } catch {
         if (!cancelled) setAiIntel(null);
@@ -298,7 +329,7 @@ function ReviewsInner() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, selectedId]);
+  }, [view, selectedId, intelQuery]);
 
   const runAnalysis = async () => {
     setAnalyzing(true);
@@ -306,10 +337,15 @@ function ReviewsInner() {
       const loc = locations.find((l) => l.id === selectedId);
       const data = await apiFetch("/api/v1/analytics/review-intelligence/analyze", {
         method: "POST",
-        body: JSON.stringify({ channel_id: loc?.channelId ?? null, days: 90 }),
+        body: JSON.stringify({
+          channel_id: loc?.channelId ?? null,
+          days: intelInterval.days,
+          date_from: intelInterval.date_from,
+          date_to: intelInterval.date_to,
+        }),
       }, 180000); // LLM analysis can take a while on first run
       setAiIntel(mergeAiIntel(data, intelligence));
-      setBanner({ kind: "ok", text: "Analysis updated and stored." });
+      setBanner({ kind: "ok", text: `Analysis updated and stored for ${intelInterval.label.toLowerCase()}.` });
     } catch {
       setBanner({ kind: "err", text: "Analysis failed — try again in a minute." });
     } finally {
@@ -377,6 +413,45 @@ function ReviewsInner() {
     } catch (e) {
       setBanner({ kind: "err", text: detailMsg(e, "Could not save edits.") });
       setTimeout(() => setBanner(null), 5000);
+    }
+  }
+
+  // A review can be flagged replied with no response row on file at all — the
+  // reply was published outside Sayvors, so the "replied" Kafka event set the
+  // flag without ever creating a ReviewReply. Nothing for the Edit card above
+  // to bind to, which is why an already-answered review looked like a dead
+  // end. Create the draft first, then approve it: the click is the merchant's
+  // approval, and this is the only path that can republish over a live reply.
+  async function publishUpdatedReply(item: ReviewItem) {
+    const text = responseText.trim();
+    if (!text) return;
+    setSavingResponse(true);
+    try {
+      const row = item.replyId
+        ? await editReply(item.locationId, item.replyId, text)
+        : await generateReply(item.locationId, {
+            review_id: item.review_id,
+            rating: item.rating,
+            review_text: item.comment,
+            reviewer_name: item.reviewer,
+            custom_text: text,
+          });
+      await approveReply(item.locationId, row.id);
+      setReviews((prev) =>
+        prev.map((r) =>
+          r.id === item.id ? { ...r, replyId: row.id, reply_text: text, status: "posted" } : r
+        )
+      );
+      setResponseText("");
+      setEditingResponse(null);
+      await loadPendingReplies();
+      setBanner({ kind: "ok", text: "Updated reply published to Google." });
+      setTimeout(() => setBanner(null), 4000);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not publish the updated reply.") });
+      setTimeout(() => setBanner(null), 5000);
+    } finally {
+      setSavingResponse(false);
     }
   }
 
@@ -1041,13 +1116,9 @@ function ReviewsInner() {
 
                   {/* Right column: 1/4 - Insights */}
                   <div className="col-span-12 lg:col-span-4 space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                      <StatCard label="Average Rating" value={`${analytics.avg.toFixed(1)} ★`} />
-                      <StatCard label="Total Reviews" value={String(analytics.total)} />
-                      <StatCard label="Response Rate" value={`${analytics.responseRate}%`} />
-                      <StatCard label="Unanswered" value={String(counts.unanswered)} />
-                      <StatCard label="Flagged" value={String(counts.flagged)} />
-                    </div>
+                    {/* Rating breakdown leads the column: the star mix is the
+                        fastest read on business health, and it is the way in
+                        to the full intelligence view. */}
                     <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                       <button onClick={() => setView({ kind: "intelligence" })} className="block w-full text-left">
                         <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Rating breakdown</h3>
@@ -1070,6 +1141,13 @@ function ReviewsInner() {
                         className="mt-3 w-full rounded-xl bg-deep-violet/[0.06] py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet hover:text-white">
                         See more insights →
                       </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <StatCard label="Average Rating" value={`${analytics.avg.toFixed(1)} ★`} />
+                      <StatCard label="Total Reviews" value={String(analytics.total)} />
+                      <StatCard label="Response Rate" value={`${analytics.responseRate}%`} />
+                      <StatCard label="Unanswered" value={String(counts.unanswered)} />
+                      <StatCard label="Flagged" value={String(counts.flagged)} />
                     </div>
                     <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                       <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Reviews trend</h3>
@@ -1272,13 +1350,65 @@ function ReviewsInner() {
                     </div>
                   )}
                   {active.replied ? (
-                     <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
-                       <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
-                       <div>
-                         <p className="text-[12px] font-medium text-[#137333]">Replied on Google</p>
-                         <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">This review already has a published reply. You can still draft an updated response below and publish it from Google.</p>
+                     <>
+                       <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
+                         <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
+                         <div>
+                           <p className="text-[12px] font-medium text-[#137333]">Replied on Google</p>
+                           <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">
+                             {active.reply_text
+                               ? "This review already has a published reply. You can replace it below — the original stays in Google's edit history."
+                               : "This review was answered outside Sayvors, so the reply text was never stored here. Google does not read replies back, so type the reply you want live."}
+                           </p>
+                         </div>
                        </div>
-                     </div>
+                       {!active.replyId && editingResponse !== active.id && (
+                         <button
+                           onClick={() => {
+                             setEditingResponse(active.id);
+                             setResponseText(active.reply_text ?? "");
+                           }}
+                           className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-[#1A73E8] px-3 py-1.5 text-[12px] font-medium text-[#1A73E8] transition hover:bg-[#E8F0FE]"
+                         >
+                           Edit &amp; Republish
+                         </button>
+                       )}
+                       {!active.replyId && editingResponse === active.id && (
+                         <div className="mt-3">
+                           <label className="text-[12px] font-medium text-[#202124]" htmlFor="update-reply">
+                             Your live reply on Google
+                           </label>
+                           <textarea
+                             id="update-reply"
+                             value={responseText}
+                             onChange={(e) => setResponseText(e.target.value)}
+                             rows={4}
+                             maxLength={1000}
+                             placeholder="Write the reply that should be live on Google…"
+                             className="mt-2 min-h-[96px] w-full resize-y rounded-md border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] placeholder:text-[#5F6368]/60 outline-none focus:border-[#1A73E8] focus:ring-1 focus:border-[#1A73E8]"
+                           />
+                           <div className="mt-2 flex items-center justify-end gap-2">
+                             <button
+                               onClick={() => { setEditingResponse(null); setResponseText(""); }}
+                               disabled={savingResponse}
+                               className="rounded-md px-3 py-1.5 text-[12px] font-medium text-[#5F6368] hover:bg-ink/[0.04] disabled:opacity-40"
+                             >
+                               Cancel
+                             </button>
+                             <button
+                               onClick={() => void publishUpdatedReply(active)}
+                               disabled={!responseText.trim() || savingResponse}
+                               className="rounded-md bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
+                             >
+                               {savingResponse ? "Publishing…" : "Republish to Google"}
+                             </button>
+                           </div>
+                           <p className="mt-1.5 text-[11px] leading-4 text-[#5F6368]">
+                             Publishing replaces the reply currently live on Google.
+                           </p>
+                         </div>
+                       )}
+                     </>
                    ) : active.skipped ? (
                      <div className="mt-2 flex items-start gap-2 rounded-md border border-[#E8EAED] bg-[#F8F9FA] px-3 py-2.5">
                        <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#AAAAAA]" />
@@ -1496,6 +1626,11 @@ function ReviewsInner() {
               onAnalyze={() => runAnalysis()}
               onBack={() => setView({ kind: "list" })}
               onOpenStar={(s) => setView({ kind: "star", stars: s, from: "intelligence" })}
+              intelDays={intelDays}
+              intelMonth={intelMonth}
+              intelInterval={intelInterval}
+              setIntelDays={setIntelDays}
+              setIntelMonth={setIntelMonth}
             />
           )}
         </div>
@@ -1528,7 +1663,10 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       sentiment: typeof r.sentiment === "string" ? r.sentiment : undefined,
       reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
-      status: typeof r.status === "string" ? r.status : undefined,
+      // The API sends the response row's state as `reply_status`; reading
+      // `status` always yielded undefined, so the badge and the
+      // "sends this back for approval" hint never rendered.
+      status: typeof r.reply_status === "string" ? r.reply_status : undefined,
       replyId: typeof r.reply_id === "string" ? r.reply_id : undefined,
     };
   });
@@ -1628,6 +1766,27 @@ interface IntelTheme {
   sampleIds: string[];
 }
 
+interface IntelDimension {
+  key: string;
+  label: string;
+  standard: boolean;
+  mentions: number;
+  positive: number;
+  negative: number;
+  avg_rating: number;
+  positive_pct: number;
+  signal: "strong" | "mixed" | "weak";
+  confidence: "low" | "medium" | "high";
+  verdict: string;
+  evidence: { quote: string; rating: number }[];
+}
+
+interface IntelCompetitive {
+  wins: string[];
+  gaps: string[];
+  scope: string | null;
+}
+
 interface Intelligence {
   avg: number;
   sentimentScore: number;
@@ -1642,18 +1801,31 @@ interface Intelligence {
   sentimentSplit: { positive: number; neutral: number; negative: number };
   topics: { name: string; count: number }[];
   actions: { title: string; detail: string }[];
+  /** Business Health Scorecard — only dimensions with mentions > 0 arrive. */
+  dimensions: IntelDimension[];
+  /** Where this business leads / trails the cohort. */
+  competitive: IntelCompetitive;
 }
 
-const THEME_DEFS: { name: string; keywords: string[] }[] = [
-  { name: "Staff & Service", keywords: ["staff", "service", "helpful", "professional", "friendly", "welcoming"] },
-  { name: "Quality", keywords: ["quality", "great", "excellent", "good"] },
-  { name: "Cleanliness", keywords: ["clean"] },
-  { name: "Speed", keywords: ["fast", "quick", "slow", "wait", "queue"] },
-  { name: "Value", keywords: ["price", "pricing", "expensive", "value", "cheap"] },
-  { name: "Communication", keywords: ["communication", "response", "support", "rude"] },
-  { name: "Availability", keywords: ["busy", "availability", "wait", "long"] },
-  { name: "Location", keywords: ["location", "parking", "area"] },
+// Local dimension set for the instant heuristic view. `key` matches the
+// backend taxonomy (analytics/dimensions.py) so AI and heuristic scorecards
+// line up; "Quality" and "Cleanliness" collapse into the canonical
+// Product/Service Quality and Cleanliness & Environment dimensions server-side.
+const THEME_DEFS: { name: string; keywords: string[]; key: string }[] = [
+  { key: "support", name: "Staff & Service", keywords: ["staff", "service", "helpful", "professional", "friendly", "welcoming"] },
+  { key: "quality", name: "Quality", keywords: ["quality", "great", "excellent", "good"] },
+  { key: "environment", name: "Cleanliness", keywords: ["clean"] },
+  { key: "speed", name: "Speed", keywords: ["fast", "quick", "slow", "wait", "queue"] },
+  { key: "value", name: "Value", keywords: ["price", "pricing", "expensive", "value", "cheap"] },
+  { key: "credibility", name: "Communication", keywords: ["communication", "response", "support", "rude"] },
+  { key: "availability", name: "Availability", keywords: ["busy", "availability", "wait", "long"] },
+  { key: "location", name: "Location", keywords: ["location", "parking", "area"] },
 ];
+
+/** Reviews touching a dimension's keywords — the basis for pos/neg counts. */
+function matchedRows(keywords: string[], reviews: ReviewItem[]): ReviewItem[] {
+  return reviews.filter((r) => keywords.some((k) => r.comment.toLowerCase().includes(k)));
+}
 
 function buildIntelligence(reviews: ReviewItem[]): Intelligence {
   const total = reviews.length;
@@ -1703,6 +1875,32 @@ function buildIntelligence(reviews: ReviewItem[]): Intelligence {
     strengths: love.slice(0, 3).map((t) => ({ title: t.name, mentions: t.mentions, avg: t.avgRating })),
     sentimentSplit: { positive: pos, neutral: neu, negative: neg },
     topics: themes.map((t) => ({ name: t.name, count: t.mentions })),
+    // Local scorecard so the heuristic view is as useful as the AI one — the
+    // same six dimensions, counted from the reviews already in memory.
+    dimensions: themes
+      .filter((t) => t.mentions > 0)
+      .map((t) => {
+        const m = matchedRows(t.keywords, reviews);
+        const posN = m.filter((r) => r.rating >= 4).length;
+        const negN = m.filter((r) => r.rating <= 2).length;
+        const judged = posN + negN;
+        const pct = judged ? Math.round((posN / judged) * 100) : 0;
+        return {
+          key: THEME_DEFS.find((d) => d.name === t.name)?.key ?? t.name.toLowerCase(),
+          label: t.name,
+          standard: true,
+          mentions: t.mentions,
+          positive: posN,
+          negative: negN,
+          avg_rating: t.avgRating,
+          positive_pct: pct,
+          signal: (negN === 0 && posN > 0 ? "strong" : posN === 0 && negN > 0 ? "weak" : pct >= 70 ? "strong" : pct <= 30 ? "weak" : "mixed") as IntelDimension["signal"],
+          confidence: (t.mentions >= 5 ? "high" : t.mentions >= 3 ? "medium" : "low") as IntelDimension["confidence"],
+          verdict: `${posN ? `${posN} review(s) praise it` : ""}${posN && negN ? " · " : ""}${negN ? `${negN} review(s) criticise it` : ""} (avg ${t.avgRating.toFixed(1)}★).`.replace(/^ · /, ""),
+          evidence: m.slice(0, 2).map((r) => ({ quote: r.comment.slice(0, 140), rating: r.rating })),
+        };
+      }),
+    competitive: { wins: [], gaps: [], scope: null },
     actions: [
       ...(waitTheme && waitTheme.mentions > 0 ? [{ title: "Fix waiting time", detail: `${waitTheme.mentions} reviews affected · HIGH impact` }] : []),
       { title: `Respond to ${reviews.filter((r) => !r.replied).length} unanswered reviews`, detail: "Immediate action" },
@@ -1718,6 +1916,8 @@ function mergeAiIntel(data: {
   opportunities: { level: "HIGH" | "MEDIUM" | "MAINTAIN"; title: string; detail: string; impact: string }[];
   strengths: { title: string; mentions: number; avg: number }[];
   actions: { title: string; detail: string }[];
+  dimensions: IntelDimension[];
+  competitive: IntelCompetitive;
   rag_used: boolean;
   analyzed_at: string | null;
   stale: boolean;
@@ -1746,6 +1946,10 @@ function mergeAiIntel(data: {
         : base.strengths,
       actions: data.actions.length ? data.actions : base.actions,
       topics: themes.map((t) => ({ name: t.name, count: t.mentions })),
+      // Backend scorecard wins when present (it is verified against the review
+      // rows server-side); otherwise keep the locally computed one.
+      dimensions: data.dimensions?.length ? data.dimensions : base.dimensions,
+      competitive: data.competitive ?? base.competitive,
     },
     source: data.source,
     model: data.model,
@@ -1774,13 +1978,46 @@ function ThemeBars({ topics }: { topics: { name: string; count: number }[] }) {
   );
 }
 
-function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, aiLoading, analyzing, onAnalyze, onBack, onOpenStar }: {
+const PERIOD_PRESETS = [
+  { days: 7, label: "7d" },
+  { days: 30, label: "30d" },
+  { days: 90, label: "90d" },
+  { days: 365, label: "12m" },
+];
+
+/**
+ * Driver-table heat scale: the more reviews a cell holds, the deeper the
+ * green. Intensity is relative to the busiest cell in the table so small
+ * accounts still get a readable spread, and the legend states that.
+ */
+const HEAT_STEPS = [
+  { label: "0", sample: "0", cls: "bg-[#F8F9FA] text-[#5F6368] ring-1 ring-[#E8EAED]" },
+  { label: "few", sample: "1", cls: "bg-[#E6F4EA] text-[#137333]" },
+  { label: "some", sample: "3", cls: "bg-[#A8DAB5] text-[#0B3D1E]" },
+  { label: "many", sample: "6", cls: "bg-[#5BB974] text-[#062A14]" },
+  { label: "most", sample: "9+", cls: "bg-[#188038] text-white" },
+];
+
+function heatCell(value: number, max: number): { cls: string } {
+  if (value <= 0) return { cls: HEAT_STEPS[0].cls };
+  // Relative thresholds so a table whose busiest cell is 2 is still readable.
+  const ratio = max > 0 ? value / max : 0;
+  if (ratio > 0.66) return { cls: HEAT_STEPS[4].cls };
+  if (ratio > 0.33) return { cls: HEAT_STEPS[3].cls };
+  if (ratio > 0.15) return { cls: HEAT_STEPS[2].cls };
+  return { cls: HEAT_STEPS[1].cls };
+}
+
+function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, aiLoading, analyzing, onAnalyze, onBack, onOpenStar, intelDays, intelMonth, intelInterval, setIntelDays, setIntelMonth }: {
   intelligence: Intelligence; total: number; locationName: string;
   aiMeta: { source: string; model: string | null; ragUsed: boolean; analyzedAt: string | null; stale: boolean; newCount: number } | null;
   aiLoading: boolean;
   analyzing: boolean;
   onAnalyze: () => void;
   onBack: () => void; onOpenStar: (s: number) => void;
+  intelDays: number; intelMonth: string;
+  intelInterval: { days: number; date_from: string | null; date_to: string | null; label: string };
+  setIntelDays: (d: number) => void; setIntelMonth: (m: string) => void;
 }) {
   const i = intel;
   const isAI = aiMeta?.source === "ai";
@@ -1804,6 +2041,12 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
   const revenueRisk = i.dislike.length ? `${atRiskPct}% of reviews signal churn risk` : "Low churn risk";
   const sentimentDelta = i.sentimentScore >= 3.5 ? "Positive momentum" : i.sentimentScore >= 2.5 ? "Mixed — fixable friction" : "Needs attention";
 
+  // Busiest driver cell — the denominator for the heat scale.
+  const driverMax = useMemo(
+    () => Math.max(0, ...i.drivers.flatMap((d) => [d.s5, d.s4, d.s3, d.low])),
+    [i.drivers]
+  );
+
   return (
     <div className="space-y-4" style={{ fontFamily: "Roboto, Arial, sans-serif" }}>
       {/* HEADER — Google Material, clean & functional */}
@@ -1823,6 +2066,8 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
             </div>
             <p className="mt-1 text-[13px] leading-5 text-[#5F6368]">
               <span className="font-medium text-[#202124]">{locationName || "All locations"}</span>
+              <span className="mx-1.5 text-[#DADCE0]">•</span>
+              <span className="font-medium text-[#202124]">{intelInterval.label}</span>
               <span className="mx-1.5 text-[#DADCE0]">•</span>
               {total} reviews • {isAI ? `AI analysis${aiMeta?.model ? ` • ${aiMeta.model}` : ""}` : "Instant heuristic — AI adds deeper opportunities & citations"}
             </p>
@@ -1852,6 +2097,49 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
               ) : isAI ? "Re-analyze with AI" : "Analyze with AI"}
             </button>
           </div>
+        </div>
+
+        {/* INTERVAL — scopes every number on this page to the selected window */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#E8EAED] pt-3">
+          <span className="text-[12px] font-medium text-[#5F6368]">Period</span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {PERIOD_PRESETS.map((p) => {
+              const active = !intelMonth && intelDays === p.days;
+              return (
+                <button
+                  key={p.days}
+                  onClick={() => { setIntelDays(p.days); setIntelMonth(""); }}
+                  disabled={isLoading}
+                  className={`rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors disabled:opacity-50 ${
+                    active
+                      ? "border-[#1A73E8] bg-[#E8F0FE] text-[#1967D2]"
+                      : "border-[#DADCE0] bg-white text-[#5F6368] hover:bg-[#F8F9FA]"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+            <label className="ml-1 inline-flex items-center gap-1.5 text-[12px] text-[#5F6368]">
+              <span className="sr-only">Specific month</span>
+              <input
+                type="month"
+                value={intelMonth}
+                disabled={isLoading}
+                onChange={(e) => setIntelMonth(e.target.value)}
+                className="rounded-md border border-[#DADCE0] px-2 py-1 text-[12px] text-[#202124] disabled:opacity-50"
+              />
+            </label>
+            {intelMonth && (
+              <button
+                onClick={() => setIntelMonth("")}
+                className="rounded-full border border-[#DADCE0] bg-white px-2 py-1 text-[11px] font-medium text-[#5F6368] hover:bg-[#F8F9FA]"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          {isLoading && <span className="text-[12px] text-[#5F6368]">Loading {intelInterval.label.toLowerCase()}…</span>}
         </div>
 
         {/* Source transparency — makes AI vs heuristic crystal clear */}
@@ -1895,6 +2183,122 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
           <p className="mt-1 text-[12px] text-[#5F6368]">Fix top 1-sided theme first</p>
         </div>
       </div>
+
+      {/* BUSINESS HEALTH SCORECARD — standard dimensions, evidence-cited.
+          Only dimensions someone actually mentioned reach this view. */}
+      <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F1F3F4] text-[#5F6368]">▦</span>
+          <h3 className="text-[14px] font-medium text-[#202124]">Business Health Scorecard</h3>
+          <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[11px] font-medium text-[#5F6368]">
+            {i.dimensions.length} dimension{i.dimensions.length === 1 ? "" : "s"} in this period
+          </span>
+        </div>
+        {i.dimensions.length === 0 ? (
+          <p className="mt-3 text-[13px] text-[#5F6368]">
+            No review in this period mentions any tracked dimension yet. Collect a few more reviews
+            mentioning staff, speed, quality, value or cleanliness and the scorecard fills in.
+          </p>
+        ) : (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {i.dimensions.map((d) => {
+              const tone =
+                d.signal === "strong"
+                  ? { chip: "bg-[#E6F4EA] text-[#137333]", bar: "#34A853", word: "Strong" }
+                  : d.signal === "weak"
+                    ? { chip: "bg-[#FCE8E6] text-[#C5221F]", bar: "#EA4335", word: "Weak" }
+                    : { chip: "bg-[#FEF7E0] text-[#EA8600]", bar: "#FBBC05", word: "Mixed" };
+              return (
+                <div key={d.key} className="rounded-lg border border-[#E8EAED] p-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium leading-5 text-[#202124]">{d.label}</p>
+                      {!d.standard && (
+                        <span className="mt-0.5 inline-block rounded bg-[#E8F0FE] px-1.5 py-0.5 text-[10px] font-medium text-[#1967D2]">
+                          Discovered in your reviews
+                        </span>
+                      )}
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${tone.chip}`}>
+                      {tone.word}
+                    </span>
+                  </div>
+
+                  {d.verdict && <p className="mt-1.5 text-[12px] leading-5 text-[#5F6368]">{d.verdict}</p>}
+
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#5F6368]">
+                    <span className="inline-flex items-center gap-1">
+                      <span aria-hidden>👍</span> {d.positive} positive
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span aria-hidden>👎</span> {d.negative} negative
+                    </span>
+                    <span className="tabular-nums">avg {d.avg_rating.toFixed(1)}★</span>
+                    <span className="rounded bg-[#F1F3F4] px-1.5 py-0.5 font-medium">
+                      {d.confidence} confidence
+                    </span>
+                  </div>
+
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#E8EAED]">
+                    <span
+                      className="block h-full rounded-full"
+                      style={{ width: `${Math.max(3, d.positive_pct)}%`, backgroundColor: tone.bar }}
+                    />
+                  </div>
+
+                  {d.evidence.length > 0 && (
+                    <ul className="mt-2.5 space-y-1 border-t border-[#F1F3F4] pt-2">
+                      {d.evidence.map((e, idx) => (
+                        <li key={idx} className="flex gap-1.5 text-[11px] leading-4 text-[#5F6368]">
+                          <span aria-hidden className="shrink-0 tabular-nums">{e.rating}★</span>
+                          <span className="italic">“{e.quote}”</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* COMPETITIVE POSITION — where you lead / trail, vs the platform cohort */}
+      {(i.competitive.wins.length > 0 || i.competitive.gaps.length > 0) && (
+        <div className="rounded-lg border border-[#DADCE0] bg-white p-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F1F3F4] text-[#5F6368]">⚖</span>
+            <h3 className="text-[14px] font-medium text-[#202124]">Where you stand vs other businesses</h3>
+            {i.competitive.scope && (
+              <span className="rounded-full bg-[#F1F3F4] px-2 py-0.5 text-[11px] font-medium text-[#5F6368]">
+                {i.competitive.scope}
+              </span>
+            )}
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {i.competitive.wins.length > 0 && (
+              <div className="rounded-lg border border-[#CEEAD6] bg-[#F6FEF8] p-3.5">
+                <p className="text-[12px] font-medium uppercase tracking-wide text-[#137333]">You lead on</p>
+                <ul className="mt-2 space-y-1.5">
+                  {i.competitive.wins.map((w, idx) => (
+                    <li key={idx} className="text-[12px] leading-5 text-[#202124]">• {w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {i.competitive.gaps.length > 0 && (
+              <div className="rounded-lg border border-[#F6C7C3] bg-[#FEF7F6] p-3.5">
+                <p className="text-[12px] font-medium uppercase tracking-wide text-[#C5221F]">You trail on</p>
+                <ul className="mt-2 space-y-1.5">
+                  {i.competitive.gaps.map((g, idx) => (
+                    <li key={idx} className="text-[12px] leading-5 text-[#202124]">• {g}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* AI EXEC SUMMARY — hero card, clearly AI when AI, muted when heuristic */}
       <div className={`rounded-lg border bg-white p-5 ${isAI ? "border-[#CEEAD6] shadow-sm" : "border-[#DADCE0]"}`}>
@@ -1984,15 +2388,49 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
               {i.drivers.map((d) => (
                 <tr key={d.theme} className="border-t border-[#E8EAED]">
                   <td className="py-2 pr-2 text-[13px] font-medium text-[#202124]">{d.theme}</td>
-                  {[d.s5, d.s4, d.s3, d.low].map((v, idx) => (
-                    <td key={idx} className="py-2 text-center">
-                      <span className={`inline-block min-w-7 rounded-full px-2 py-1 text-[12px] font-medium tabular-nums ${v === 0 ? "bg-[#F8F9FA] text-[#5F6368] ring-1 ring-[#E8EAED]" : idx === 3 && v > 0 ? "bg-[#FCE8E6] text-[#C5221F]" : v > 2 ? "bg-[#E6F4EA] text-[#137333]" : "bg-[#F1F3F4] text-[#202124]"}`}>{v}</span>
-                    </td>
-                  ))}
+                  {[d.s5, d.s4, d.s3, d.low].map((v, idx) => {
+                    const base = heatCell(v, driverMax);
+                    // The 1–2★ column is complaints: keep it red-tinted so a
+                    // dense cell reads as "bad" at a glance, intensity by count.
+                    const cls =
+                      idx === 3 && v > 0
+                        ? v > 0
+                          ? ["bg-[#F6C7C3] text-[#A50E0E]", "bg-[#EA4335] text-white", "bg-[#C5221F] text-white"][
+                              Math.min(2, Math.max(0, Math.ceil((v / Math.max(1, driverMax)) * 3) - 1))
+                            ]
+                          : base.cls
+                        : base.cls;
+                    return (
+                      <td key={idx} className="py-2 text-center">
+                        <span
+                          className={`inline-flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-[12px] font-medium tabular-nums ${cls}`}
+                          title={v === 0 ? "No reviews" : `${v} review${v === 1 ? "" : "s"}`}
+                        >
+                          {v}
+                        </span>
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+        {/* INTENSITY SCALE — the legend makes the shading readable */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-[#E8EAED] pt-3 text-[11px] text-[#5F6368]">
+          <span className="font-medium text-[#202124]">Scale</span>
+          <span className="text-[#5F6368]">More reviews = deeper colour (relative to the busiest cell)</span>
+          <span className="flex items-center gap-1.5">
+            {HEAT_STEPS.map((s) => (
+              <span key={s.label} className="flex items-center gap-1">
+                <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium tabular-nums ${s.cls}`}>
+                  {s.sample}
+                </span>
+                <span className="text-[#5F6368]">{s.label}</span>
+              </span>
+            ))}
+          </span>
+          <span className="text-[#C5221F]">1–2★ column stays red-tinted (complaints)</span>
         </div>
       </div>
 

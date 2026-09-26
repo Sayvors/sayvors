@@ -106,7 +106,7 @@ const ar: Dict = {
       responseTimeSub: "بعد الربط",
     },
     start: {
-      title: "ابدأ من هنا — انطلق في 3 خطوات",
+      title: "ابدأ من هنا — انطلق خطوة بخطوة",
       doneOf: "{done} من {total} مكتملة",
       allSet: "كل شيء جاهز",
       subtitleTodo: "اتبع الخطوات بالترتيب — كل خطوة تفتح التالية.",
@@ -119,6 +119,8 @@ const ar: Dict = {
       stepConnect: "اربط قناتك الأولى",
       stepDatabank: "ارفع المستندات إلى بنك المعرفة",
       stepAutoReply: "فعّل الرد التلقائي",
+      stepServices: "اذكر الخدمات التي تقدمها",
+      stepHours: "حدد ساعات العمل",
       markDone: 'وضع "{label}" كمنجزة',
       markNotDone: 'وضع "{label}" كغير منجزة',
       openStep: "فتح {label}",

@@ -68,3 +68,18 @@ class MetaWhatsAppSession(BaseModel):
     waba_id: str | None = None
     phone_number_id: str | None = None
     business_id: str | None = None
+    # 6-digit WhatsApp two-step-verification PIN. Meta REFUSES to register a
+    # number without it, so a connect without a PIN yields a number that
+    # cannot send. Optional here (the tenant can add it afterwards inside the
+    # 14-day window) but surfaced loudly when registration fails.
+    pin: str | None = Field(
+        None,
+        pattern=r"^\d{6}$",
+        description="6-digit two-step verification PIN for the number",
+    )
+
+
+class MetaRegisterNumberRequest(BaseModel):
+    """Retry number registration — Meta allows this for 14 days after signup."""
+
+    pin: str = Field(..., pattern=r"^\d{6}$")
