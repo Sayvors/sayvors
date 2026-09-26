@@ -82,6 +82,24 @@ class ReviewInsight(Base):
     draft_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     # Link to the review on Google (Localith `reviewLink`), for "View on Google".
     review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Photos the reviewer attached, stored as
+    # [{url, kind, label, source_url}]. `url` points at OUR copy under
+    # /media-files, because Google's thumbnailUrl is a short-lived FIFE link
+    # that stops resolving within hours. `source_url` is kept only to detect
+    # a changed photo on the next sync.
+    media: Mapped[list] = mapped_column(JSON, default=list)
+    # Last sync that returned this review. A complete sync that does not
+    # include it means Google no longer serves it (reviewer deleted, Google
+    # removed, or filtered) — see `removed_at`.
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Set when a complete sync stopped returning the review. Soft: the row and
+    # its replies are kept for history, and cleared automatically if the
+    # review reappears. Distinct from `skipped`, which the merchant sets by hand.
+    removed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     # When Google last updated the review (bucket date for daily rollups)
     review_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

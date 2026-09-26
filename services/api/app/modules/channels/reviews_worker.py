@@ -271,6 +271,9 @@ async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review)
             "reviewer_name": review.reviewer_name,
             "reviewer_photo_url": getattr(review, "reviewer_photo_url", None),
             "review_updated_at": review.updated_at.isoformat() if review.updated_at else None,
+            # Reviewer-attached photos. The consumer downloads and stores the
+            # bytes, because Google's thumbnail URLs expire within hours.
+            "media": getattr(review, "media", None) or [],
         },
         topic=REVIEW_EVENTS_TOPIC,
     )

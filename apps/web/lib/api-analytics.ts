@@ -72,6 +72,10 @@ export interface ReviewInsight {
   problems: { name: string; severity: string }[];
   replied: boolean;
   replied_at: string | null;
+  /** Photos the reviewer attached. `url` is our own copy, not Google's expiring link. */
+  media?: { url?: string | null; kind?: string; label?: string | null }[];
+  /** Set when a complete sync stopped returning the review — Google dropped it. */
+  removed_at?: string | null;
   skipped?: boolean;
   edited: boolean;
   edited_at: string | null;

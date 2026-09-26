@@ -295,6 +295,91 @@ async def _release_sync_lock(db: AsyncSession, listing_id: str | None = None) ->
     await release_lock(db, ns, key)
 
 
+def _fetched_review_ids(items) -> set[str]:
+    """Provider ids present in a fetch, normalised to our `localith:` form."""
+    out: set[str] = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        rid = str(item.get("id") or item.get("review_id") or item.get("uid") or "")
+        if rid:
+            out.add(f"localith:{rid}")
+    return out
+
+
+# Below this, a "complete" fetch is far more likely to be a truncated or
+# errored response than a genuine mass deletion. Refuse to sweep rather than
+# mark a merchant's whole history as removed on a bad page.
+MIN_REVIEWS_FOR_REMOVAL_SWEEP = 5
+
+
+async def _mark_removed_reviews(
+    db: AsyncSession, channel: Channel, user_id: str, seen_ids: set[str]
+) -> list[str]:
+    """Soft-mark reviews that a complete fetch no longer returns.
+
+    The row and its replies are kept — a review can be hidden by Google for a
+    while and return later, and the history is worth keeping either way. The
+    flag clears itself on the next sync that does see the review.
+
+    Reviews the merchant marked unavailable by hand are left alone: `skipped`
+    is their decision, not evidence of a deletion.
+    """
+    if len(seen_ids) < MIN_REVIEWS_FOR_REMOVAL_SWEEP:
+        return []
+
+    candidates = (
+        await db.execute(
+            select(ReviewInsight).where(
+                ReviewInsight.channel_id == channel.id,
+                ReviewInsight.removed_at.is_(None),
+            )
+        )
+    ).scalars().all()
+
+    now = datetime.now(timezone.utc)
+    removed: list[str] = []
+    touched_days: set[date] = set()
+    for insight in candidates:
+        if insight.review_id in seen_ids:
+            continue
+        # A review the merchant flagged is already surfaced as unavailable;
+        # removal detection would add nothing and would muddy that state.
+        if insight.skipped:
+            continue
+        # Only judge staleness against a previous successful sighting, so the
+        # very first sync after adding a channel cannot "remove" history that
+        # predates our tracking.
+        if insight.last_seen_at is None:
+            continue
+        insight.removed_at = now
+        removed.append(insight.review_id)
+        # Its day bucket is now wrong — the review no longer counts.
+        touched_days.add((insight.review_updated_at or insight.created_at).date())
+
+    if removed:
+        await db.commit()
+        for review_id in removed[:MAX_PER_SYNC]:
+            await notify(
+                db, user_id, "review_removed",
+                "A review is no longer available on Google",
+                "The reviewer deleted it, or Google removed it. Your copy is kept "
+                "for reference and the review comes back automatically if it returns.",
+                data={"review_id": review_id, "channel_id": channel.id},
+                href="/dashboard/reviews",
+            )
+        # Rebuild the affected daily rollups so the rating average and
+        # response rate stop counting a review Google no longer shows.
+        from ..analytics.consumer import recompute_daily_rollup
+
+        for day in touched_days:
+            try:
+                await recompute_daily_rollup(channel.id, user_id, day)
+            except Exception as e:
+                logger.warning("rollup recompute after removal failed: %s", e)
+    return removed
+
+
 async def _adopt_live_reply(
     db: AsyncSession, channel: Channel, review_id: str, review
 ) -> bool:
@@ -581,6 +666,13 @@ async def _sync_single_connection(
             if not insight.review_url and review.review_url:
                 insight.review_url = review.review_url
                 touched = True
+            # Presence in this complete fetch proves Google still serves the
+            # review; anything absent from it gets marked removed further down.
+            insight.last_seen_at = datetime.now(timezone.utc)
+            if insight.removed_at is not None:
+                # The reviewer or Google restored it — stop treating it as gone.
+                insight.removed_at = None
+                touched = True
             if review.has_replies and not insight.replied:
                 insight.replied = True
                 insight.replied_at = datetime.now(timezone.utc)
@@ -589,7 +681,16 @@ async def _sync_single_connection(
             # This is what backfills reviews answered before Sayvors stored
             # the text, and what picks up an edit made directly in the Google
             # Business Profile. Runs regardless of `touched` because the reply
-            # text is the only part of the row that can change silently.
+            if review.media and user.id:
+                from ..analytics.review_media import sync_review_media
+
+                try:
+                    insight.media = await sync_review_media(
+                        user.id, review.media, insight.media or []
+                    )
+                    touched = True
+                except Exception as e:  # photos are garnish, never fail a sync
+                    logger.warning("review media sync failed for %s: %s", review_id, e)
             if await _adopt_live_reply(
                 db, channel, f"localith:{review_id}", review
             ):
@@ -646,6 +747,19 @@ async def _sync_single_connection(
                     )
             if touched:
                 synced += 1
+
+    # Reviews Google no longer serves. Only safe because `items` above is the
+    # FULL paginated set — a capped or partial fetch would look identical to a
+    # deletion, so the sweep is deliberately confined to this point and gated
+    # on the review count actually retrieved.
+    removed_now = await _mark_removed_reviews(
+        db, channel, user.id, {f"localith:{i}" for i in _fetched_review_ids(items)}
+    )
+    if removed_now:
+        logger.info(
+            "Localith sync: %d review(s) no longer returned for %s",
+            len(removed_now), connection.listing_id,
+        )
 
     # 3+4. Metrics summaries over the trailing window. Metrics are
     # best-effort: a metrics outage must never fail the review sync.

@@ -29,6 +29,8 @@ interface ReviewItem {
   previousText: string | null;
   sentiment?: string;
   reviewUrl?: string;
+  media: { url?: string | null; kind?: string; label?: string | null }[];
+  removed: boolean;
   reply_text?: string;
   status?: string;
   replyId?: string;
@@ -1292,6 +1294,7 @@ function ReviewsInner() {
                 {/* Comment — clean quote, no purple */}
                 <div className="px-4 py-3">
                   <p className="whitespace-pre-wrap break-words text-[13px] leading-6 text-[#202124]">{active.comment ? `“${active.comment}”` : <span className="italic text-[#5F6368]">No written comment — star rating only.</span>}</p>
+                  <ReviewMedia media={active.media} />
                 </div>
 
                 {/* Reply composer — Material, not violet */}
@@ -1349,7 +1352,17 @@ function ReviewsInner() {
                       )}
                     </div>
                   )}
-                  {active.replied ? (
+                  {active.removed ? (
+                    <div className="mt-2 flex items-start gap-2 rounded-md border border-[#E8EAED] bg-[#F8F9FA] px-3 py-2.5">
+                      <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#AAAAAA]" />
+                      <div>
+                        <p className="text-[12px] font-medium text-[#5F6368]">Removed from Google</p>
+                        <p className="mt-0.5 text-[12px] leading-4 text-[#5F6368]/80">
+                          The reviewer deleted this review, or Google took it down, so it is no longer on the listing and no reply is possible. We keep your copy for reference — it drops out of your averages, and comes back on its own if the review returns.
+                        </p>
+                      </div>
+                    </div>
+                  ) : active.replied ? (
                      <>
                        <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
                          <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
@@ -1639,8 +1652,46 @@ function ReviewsInner() {
   );
 }
 
-function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbackName: string): ReviewItem[] {
-  if (!Array.isArray(raw)) return [];
+// Photos a reviewer attached to the review. The API stores our own copy and
+// returns a path relative to the API origin, so it is prefixed here the same
+// way every other API call is.
+const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
+function ReviewMedia({ media }: { media: ReviewItem["media"] }) {
+  const photos = (media ?? []).filter((m) => m && m.kind !== "video" && m.url);
+  const videos = (media ?? []).filter((m) => m && m.kind === "video");
+  if (photos.length === 0 && videos.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {photos.map((m, i) => {
+        const src = String(m.url).startsWith("http") ? String(m.url) : `${API_ORIGIN}${m.url}`;
+        return (
+          <a key={i} href={src} target="_blank" rel="noreferrer" className="group relative block">
+            {/* eslint-disable-next-line @next/next/no-img-element -- our own
+                already-validated raster copy; the optimizer would re-encode it */}
+            <img
+              src={src}
+              alt={m.label || `Photo from the reviewer (${i + 1})`}
+              loading="lazy"
+              className="h-24 w-24 rounded-lg border border-[#E8EAED] object-cover transition group-hover:opacity-80"
+            />
+          </a>
+        );
+      })}
+      {videos.map((m, i) => (
+        <span
+          key={`v${i}`}
+          title={m.label || "Video attached to the review"}
+          className="inline-flex h-24 w-24 items-center justify-center rounded-lg border border-[#E8EAED] bg-[#F8F9FA] text-[11px] text-[#5F6368]"
+        >
+          ▶ Video
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbackName: string): ReviewItem[] {  if (!Array.isArray(raw)) return [];
   return raw.map((it: unknown, i: number) => {
     const r = (it ?? {}) as Record<string, unknown>;
     const channelId = String(r.channel_id ?? "");
@@ -1662,6 +1713,8 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       previousText: typeof r.previous_review_text === "string" ? r.previous_review_text : null,
       sentiment: typeof r.sentiment === "string" ? r.sentiment : undefined,
       reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
+      media: Array.isArray(r.media) ? (r.media as ReviewItem["media"]) : [],
+      removed: typeof r.removed_at === "string",
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
       // The API sends the response row's state as `reply_status`; reading
       // `status` always yielded undefined, so the badge and the

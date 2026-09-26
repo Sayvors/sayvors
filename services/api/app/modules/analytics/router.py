@@ -85,6 +85,9 @@ async def list_review_insights(
     status: str | None = Query(None, pattern="^(replied|unanswered|skipped)$"),
     edited: bool | None = Query(None),
     search: str | None = Query(None, max_length=200),
+    # Tri-state: omit to hide reviews Google no longer returns, true to show
+    # only those, false to show only live ones.
+    removed: bool | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(get_current_user),
@@ -100,6 +103,7 @@ async def list_review_insights(
         status=status,
         edited=edited,
         search=search,
+        removed=removed,
         limit=limit,
         offset=offset,
     )

@@ -62,6 +62,12 @@ class InternalReview:
     reply_text: str | None = None
     reply_external_id: str | None = None
     reply_published_at: str | None = None
+    # Photos the reviewer attached, when the provider supplies them. Localith's
+    # /rest/v1/items payload carries no media today (verified against the live
+    # API: no media field, and /items/{id}/media 404s), so this stays empty on
+    # this provider. Parsed defensively so a future payload change is picked up
+    # without another adapter change.
+    media: list[dict] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
 
 
@@ -564,6 +570,46 @@ def _reply_field(entry, *keys, bare_string: bool = False) -> str | None:
     return None
 
 
+def _parse_item_media(item: dict) -> list[dict]:
+    """Pull reviewer-attached photos off a review payload, if any.
+
+    Localith returns none today, so this yields [] in practice. Kept
+    defensive (every field optional, never raises) so that if they start
+    shipping photos the sync picks them up instead of silently dropping them
+    again — which is exactly how the reply text was lost.
+    """
+    out: list[dict] = []
+    for key in ("media", "mediaItems", "photos", "images", "reviewMediaItems"):
+        raw = item.get(key)
+        if not isinstance(raw, (list, tuple)):
+            continue
+        for entry in raw:
+            if isinstance(entry, str) and entry.strip():
+                out.append({
+                    "thumbnail_url": entry.strip(),
+                    "video_url": None,
+                    "label": None,
+                    "kind": "image",
+                })
+            elif isinstance(entry, dict):
+                thumb = (
+                    entry.get("thumbnailUrl") or entry.get("url")
+                    or entry.get("imageUrl") or entry.get("src")
+                )
+                video = entry.get("videoUrl") or entry.get("video_url")
+                if not thumb and not video:
+                    continue
+                out.append({
+                    "thumbnail_url": thumb,
+                    "video_url": video,
+                    "label": entry.get("thumbnailLabel") or entry.get("label"),
+                    "kind": "video" if video else "image",
+                })
+        if out:
+            break
+    return out
+
+
 def to_internal_review(item: dict) -> InternalReview:
     """Map one Localith review item to our unified shape.
 
@@ -659,5 +705,6 @@ def to_internal_review(item: dict) -> InternalReview:
         reply_published_at=_reply_field(
             latest_reply, "createdOn", "created_on", "publishedOn", "updatedOn",
         ),
+        media=_parse_item_media(item),
         raw=item,
     )

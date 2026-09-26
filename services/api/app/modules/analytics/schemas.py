@@ -80,6 +80,12 @@ class ReviewInsightItem(BaseModel):
     replied: bool
     replied_at: datetime | None = None
     skipped: bool = False
+    # Reviewer-attached photos: [{url, kind, label}]. `url` is our own copy.
+    media: list[Any] = []
+    # Set when a complete sync stopped returning the review, i.e. Google no
+    # longer serves it. The row is kept for history; this clears itself if the
+    # review reappears.
+    removed_at: datetime | None = None
     edited: bool = False
     edited_at: datetime | None = None
     previous_rating: int | None = None

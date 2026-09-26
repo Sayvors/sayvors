@@ -119,6 +119,22 @@ async def _handle_discovered(payload: dict) -> None:
         if not insight.reviewer_photo_url and payload.get("reviewer_photo_url"):
             insight.reviewer_photo_url = payload.get("reviewer_photo_url")
         insight.review_updated_at = _iso_to_dt(payload.get("review_updated_at"))
+        # The poller returned this review, so Google still serves it. Any
+        # earlier "removed" verdict is stale.
+        insight.last_seen_at = datetime.now(timezone.utc)
+        if insight.removed_at is not None:
+            insight.removed_at = None
+
+        media = payload.get("media")
+        if media and insight.user_id:
+            from .review_media import sync_review_media
+
+            try:
+                insight.media = await sync_review_media(
+                    insight.user_id, media, insight.media or []
+                )
+            except Exception as e:  # photos are garnish, never fail the event
+                logger.warning("review media sync failed for %s: %s", review_id, e)
 
         if content_changed:
             insight.edited = True
@@ -226,6 +242,9 @@ async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> 
                     func.avg(ReviewInsight.rating),
                 ).where(
                     ReviewInsight.channel_id == channel_id,
+                    # Reviews Google dropped are not part of the merchant's visible
+                    # performance any more.
+                    ReviewInsight.removed_at.is_(None),
                     func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) >= day_start,
                     func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) < day_end,
                 )
@@ -238,6 +257,9 @@ async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> 
                     select(ReviewInsight.sentiment, func.count())
                     .where(
                         ReviewInsight.channel_id == channel_id,
+                        # Reviews Google dropped are not part of the merchant's visible
+                        # performance any more.
+                        ReviewInsight.removed_at.is_(None),
                         func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) >= day_start,
                         func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) < day_end,
                     )
@@ -254,6 +276,9 @@ async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> 
             await db.execute(
                 select(ReviewInsight.review_id).where(
                     ReviewInsight.channel_id == channel_id,
+                    # Reviews Google dropped are not part of the merchant's visible
+                    # performance any more.
+                    ReviewInsight.removed_at.is_(None),
                     func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) >= day_start,
                     func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) < day_end,
                     ReviewInsight.replied == True,  # noqa: E712

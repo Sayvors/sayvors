@@ -51,6 +51,10 @@ async def get_overview(
     if channel_id:
         review_filter.append(ReviewInsight.channel_id == channel_id)
         metric_filter.append(LocationDailyMetric.channel_id == channel_id)
+    # A review Google no longer serves is not part of the merchant's visible
+    # performance. Excluding it keeps a deleted 1-star review from dragging the
+    # rating average and the response rate indefinitely.
+    review_filter.append(ReviewInsight.removed_at.is_(None))
 
     # ── Totals (all time) ──
     total_row = (
@@ -231,10 +235,17 @@ async def list_insights(
     status: str | None = None,
     edited: bool | None = None,
     search: str | None = None,
+    removed: bool | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[ReviewInsight], int]:
-    """Filterable, paginated enriched-review list (AI Review Inbox backbone)."""
+    """Filterable, paginated enriched-review list (AI Review Inbox backbone).
+
+    `removed` tri-state: None (default) hides reviews a complete sync no longer
+    returns, True shows only those, False shows only the live ones. Hidden by
+    default because a review Google dropped is not a review the merchant can
+    act on, and leaving it in skews the response-rate counts.
+    """
     filters = [ReviewInsight.user_id == user_id]
     if channel_id:
         filters.append(ReviewInsight.channel_id == channel_id)
@@ -244,6 +255,10 @@ async def list_insights(
         filters.append(ReviewInsight.rating == rating)
     if edited is not None:
         filters.append(ReviewInsight.edited == edited)
+    if removed is True:
+        filters.append(ReviewInsight.removed_at.isnot(None))
+    elif removed is not True:
+        filters.append(ReviewInsight.removed_at.is_(None))
     if status == "replied":
         filters.append(ReviewInsight.replied == True)  # noqa: E712
         filters.append(ReviewInsight.skipped == False)  # noqa: E722
