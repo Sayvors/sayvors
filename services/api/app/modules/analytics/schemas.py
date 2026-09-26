@@ -86,6 +86,17 @@ class ReviewInsightItem(BaseModel):
     # longer serves it. The row is kept for history; this clears itself if the
     # review reappears.
     removed_at: datetime | None = None
+    # Abuse reporting. Google exposes no report endpoint, so Sayvors records the
+    # merchant's decision and tracks whether they filed it; abuse_score/labels
+    # are the model's advisory triage and never act on their own.
+    abuse_flagged: bool = False
+    abuse_reported_at: datetime | None = None
+    abuse_note: str | None = None
+    abuse_score: float | None = None
+    abuse_labels: list[Any] = []
+    # Human decision: None (not reviewed) | "confirmed" | "dismissed"
+    abuse_verdict: str | None = None
+    abuse_reviewed_at: datetime | None = None
     edited: bool = False
     edited_at: datetime | None = None
     previous_rating: int | None = None
@@ -102,6 +113,18 @@ class ReviewInsightItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AbuseFlagBody(BaseModel):
+    """Merchant flags a review as a likely policy violation."""
+
+    note: str | None = Field(None, max_length=2000)
+
+
+class AbuseVerdictBody(BaseModel):
+    """The human decision on a flagged review."""
+
+    verdict: str = Field(..., pattern="^(confirmed|dismissed)$")
 
 
 class ReviewInsightListResponse(BaseModel):

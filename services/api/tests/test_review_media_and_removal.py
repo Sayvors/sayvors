@@ -190,6 +190,57 @@ def test_fetched_ids_are_normalised():
     assert _fetched_review_ids(None) == set()
 
 
+@pytest.mark.asyncio
+async def test_sweep_call_site_does_not_double_prefix(db, user_id, channel_id):
+    """Regression: the sync passed `localith:` + an already-prefixed id.
+
+    That produced `localith:localith:<id>`, which matched nothing, so one
+    background sync marked every live review in the channel as removed and hid
+    the whole listing from the merchant. The sweep is called with
+    `_fetched_review_ids(items)` directly; this asserts a realistic payload
+    round-trips, so the prefix cannot drift again.
+    """
+    from datetime import datetime, timezone
+
+    from app.modules.localith.service import MISSES_BEFORE_REMOVAL
+
+    payload = [
+        {"id": "aaa", "captionText": "one"},
+        {"id": "bbb", "captionText": "two"},
+        {"id": "ccc", "captionText": "three"},
+        {"id": "ddd", "captionText": "four"},
+        {"id": "eee", "captionText": "five"},
+    ]
+    seen = _fetched_review_ids(payload)
+    # Already normalised — exactly what the call site passes.
+    assert all(
+        s.startswith("localith:") and not s.startswith("localith:localith:")
+        for s in seen
+    )
+    assert len(seen) == 5
+
+    for rid in sorted(seen):
+        await _insight(
+            db, user_id, channel_id, rid,
+            last_seen_at=datetime.now(timezone.utc),
+            missed_syncs=MISSES_BEFORE_REMOVAL - 1,
+        )
+
+    channel = await db.get(Channel, channel_id)
+    removed = await _mark_removed_reviews(db, channel, user_id, seen)
+
+    # Every review in the payload was seen, so nothing may be removed.
+    assert removed == []
+    rows = (
+        await db.execute(
+            select(ReviewInsight).where(ReviewInsight.channel_id == channel_id)
+        )
+    ).scalars().all()
+    assert len(rows) == 5
+    assert all(r.removed_at is None for r in rows)
+    assert all(r.missed_syncs == 0 for r in rows)
+
+
 async def _insight(db, user_id, channel_id, review_id, **kw):
     row = ReviewInsight(
         id=f"ins-{review_id[-8:]}",
@@ -218,8 +269,16 @@ async def test_review_missing_from_a_complete_fetch_is_marked_removed(
 ):
     from datetime import datetime, timezone
 
-    await _insight(db, user_id, channel_id, "localith:gone", last_seen_at=datetime.now(timezone.utc))
-    await _insight(db, user_id, channel_id, "localith:here", last_seen_at=datetime.now(timezone.utc))
+    # Pre-marked as sighted MISSES_BEFORE_REMOVAL times: one miss is a glitch,
+    # not a deletion.
+    from app.modules.localith.service import MISSES_BEFORE_REMOVAL
+
+    for rid in ("localith:gone", "localith:here"):
+        await _insight(
+            db, user_id, channel_id, rid,
+            last_seen_at=datetime.now(timezone.utc),
+            missed_syncs=MISSES_BEFORE_REMOVAL - 1,
+        )
 
     channel = await db.get(Channel, channel_id)
     seen = {f"localith:i{i}" for i in range(6)} | {"localith:here"}
@@ -234,6 +293,81 @@ async def test_review_missing_from_a_complete_fetch_is_marked_removed(
     by_id = {r.review_id: r for r in rows}
     assert by_id["localith:gone"].removed_at is not None
     assert by_id["localith:here"].removed_at is None
+    assert by_id["localith:here"].missed_syncs == 0
+
+
+@pytest.mark.asyncio
+async def test_a_single_miss_never_removes_a_review(db, user_id, channel_id):
+    """The bug this exists for: one bad sync buried every live review."""
+    from datetime import datetime, timezone
+
+    for i in range(8):
+        await _insight(
+            db, user_id, channel_id, f"localith:live{i}",
+            last_seen_at=datetime.now(timezone.utc), missed_syncs=0,
+        )
+
+    channel = await db.get(Channel, channel_id)
+    # A fetch that returned something entirely unrelated (a mis-scoped query,
+    # a wrong listing) must not remove anything on its first pass.
+    removed = await _mark_removed_reviews(
+        db, channel, user_id, {f"localith:other{i}" for i in range(6)}
+    )
+    assert removed == []
+
+    rows = (
+        await db.execute(
+            select(ReviewInsight).where(ReviewInsight.channel_id == channel_id)
+        )
+    ).scalars().all()
+    assert all(r.removed_at is None for r in rows)
+    assert all(r.missed_syncs == 1 for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_sweep_aborts_rather_than_bury_a_channel(db, user_id, channel_id):
+    """Circuit breaker: a huge one-sync deletion is treated as a fault."""
+    from datetime import datetime, timezone
+
+    from app.modules.localith.service import MISSES_BEFORE_REMOVAL
+
+    for i in range(10):
+        await _insight(
+            db, user_id, channel_id, f"localith:live{i}",
+            last_seen_at=datetime.now(timezone.utc),
+            missed_syncs=MISSES_BEFORE_REMOVAL - 1,
+        )
+
+    channel = await db.get(Channel, channel_id)
+    removed = await _mark_removed_reviews(
+        db, channel, user_id, {f"localith:unrelated{i}" for i in range(6)}
+    )
+    assert removed == []
+    rows = (
+        await db.execute(
+            select(ReviewInsight).where(ReviewInsight.channel_id == channel_id)
+        )
+    ).scalars().all()
+    assert all(r.removed_at is None for r in rows), "a live channel must survive"
+    assert all(r.missed_syncs == 0 for r in rows), "counters must be reset"
+
+
+@pytest.mark.asyncio
+async def test_repeated_misses_eventually_remove(db, user_id, channel_id):
+    """Two consecutive complete misses in a row IS a deletion."""
+    from datetime import datetime, timezone
+
+    await _insight(
+        db, user_id, channel_id, "localith:reallygone",
+        last_seen_at=datetime.now(timezone.utc), missed_syncs=0,
+    )
+    channel = await db.get(Channel, channel_id)
+    filler = {f"localith:i{i}" for i in range(6)}
+
+    assert await _mark_removed_reviews(db, channel, user_id, filler) == []
+    assert await _mark_removed_reviews(db, channel, user_id, filler) == [
+        "localith:reallygone"
+    ]
 
 
 @pytest.mark.asyncio
@@ -245,6 +379,7 @@ async def test_merchant_flagged_review_is_never_marked_removed(
     await _insight(
         db, user_id, channel_id, "localith:flagged", skipped=True,
         last_seen_at=datetime.now(timezone.utc),
+        missed_syncs=9,
     )
     channel = await db.get(Channel, channel_id)
     removed = await _mark_removed_reviews(

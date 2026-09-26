@@ -100,6 +100,30 @@ class ReviewInsight(Base):
     removed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    # Consecutive complete syncs that did NOT return this review. Reset to 0
+    # on every sighting. A review is only called deleted after several misses,
+    # so a single flaky fetch can never hide a live review.
+    missed_syncs: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Merchant flagged the review as abusive / violating Google's policies.
+    # Google's API cannot submit the report, so Sayvors tracks the decision
+    # and the merchant files it in the Business Profile UI.
+    abuse_flagged: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # When the merchant confirmed they filed the report with Google.
+    abuse_reported_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    abuse_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # AI triage. `abuse_score` 0..1 is the model's confidence that this review
+    # breaks Google's content policies; `abuse_verdict` is the human decision
+    # (None = not yet reviewed). The AI never acts on its own.
+    abuse_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    abuse_labels: Mapped[list] = mapped_column(JSON, default=list)
+    abuse_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    abuse_reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # When Google last updated the review (bucket date for daily rollups)
     review_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

@@ -236,6 +236,7 @@ async def list_insights(
     edited: bool | None = None,
     search: str | None = None,
     removed: bool | None = None,
+    abusive: bool | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[ReviewInsight], int]:
@@ -259,6 +260,8 @@ async def list_insights(
         filters.append(ReviewInsight.removed_at.isnot(None))
     elif removed is not True:
         filters.append(ReviewInsight.removed_at.is_(None))
+    if abusive is not None:
+        filters.append(ReviewInsight.abuse_flagged == abusive)
     if status == "replied":
         filters.append(ReviewInsight.replied == True)  # noqa: E712
         filters.append(ReviewInsight.skipped == False)  # noqa: E722

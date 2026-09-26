@@ -7,8 +7,9 @@ import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
 import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
 
-type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited" | "removed";
+type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited" | "removed" | "abusive";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
 
 interface ReviewItem {
@@ -31,6 +32,11 @@ interface ReviewItem {
   reviewUrl?: string;
   media: { url?: string | null; kind?: string; label?: string | null }[];
   removed: boolean;
+  abuseFlagged: boolean;
+  abuseScore: number | null;
+  abuseLabels: string[];
+  abuseVerdict: string | null;
+  abuseReported: boolean;
   reply_text?: string;
   status?: string;
   replyId?: string;
@@ -54,9 +60,10 @@ const TAB_LABELS: Record<ReviewTab, string> = {
   positive: "Positive",
   negative: "Negative",
   removed: "Removed",
+  abusive: "Abusive",
 };
 const PRIMARY_TABS: ReviewTab[] = ["all", "need_approval", "edited"];
-const MORE_TABS: ReviewTab[] = ["unanswered", "flagged", "replied", "positive", "negative", "removed"];
+const MORE_TABS: ReviewTab[] = ["unanswered", "flagged", "replied", "positive", "negative", "abusive", "removed"];
 
 export default function ReviewsPage() {
   return (
@@ -275,12 +282,16 @@ function ReviewsInner() {
     flagged: live.filter((r) => r.skipped).length,
     edited: live.filter((r) => r.edited).length,
     removed: reviews.length - live.length,
+    abusive: live.filter((r) => r.abuseFlagged).length,
   }), [live, reviews, pendingReplies]);
 
   // The Removed tab is the one view that is deliberately the opposite set.
   const removedRows = useMemo(() => reviews.filter((r) => r.removed), [reviews]);
-  const filtered = (tab === "removed" ? removedRows : live).filter((r) => {
-    if (tab === "removed") return true;
+  const abusiveRows = useMemo(() => live.filter((r) => r.abuseFlagged), [live]);
+  const filtered = (
+    tab === "removed" ? removedRows : tab === "abusive" ? abusiveRows : live
+  ).filter((r) => {
+    if (tab === "removed" || tab === "abusive") return true;
     if (tab === "unanswered") return !r.replied && !r.skipped;
     if (tab === "replied") return r.replied;
     if (tab === "need_approval") return !r.replied && !r.skipped;
@@ -553,6 +564,35 @@ function ReviewsInner() {
     void fetchReviews(false);
     setApprovingAllPending(false);
   }
+
+  const [abuseBusy, setAbuseBusy] = useState<string | null>(null);
+
+  const runAbuseAction = async (
+    action: "flag-abuse" | "abuse-verdict" | "abuse-reported" | "clear-abuse",
+    opts: { verdict?: "confirmed" | "dismissed"; note?: string; ok: string } | null
+  ) => {
+    if (view.kind !== "detail" || !active) return;
+    setAbuseBusy(action);
+    try {
+      if (action === "flag-abuse") {
+        await flagReviewAbusive(active.id, opts?.note);
+      } else if (action === "clear-abuse") {
+        await clearAbuseFlag(active.id);
+      } else if (action === "abuse-reported") {
+        await markAbuseReported(active.id);
+      } else {
+        await setAbuseVerdict(active.id, opts?.verdict ?? "confirmed");
+      }
+      setBanner({ kind: "ok", text: opts?.ok ?? "Done." });
+      setTimeout(() => setBanner(null), 4000);
+      void fetchReviews(false);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not update the report.") });
+      setTimeout(() => setBanner(null), 5000);
+    } finally {
+      setAbuseBusy(null);
+    }
+  };
 
   const handleSkip = async () => {
     if (view.kind !== "detail") return;
@@ -1320,6 +1360,141 @@ function ReviewsInner() {
                   <ReviewMedia media={active.media} />
                 </div>
 
+                {/* Report to Google — the decision is ours, the filing is manual */}
+                {active.abuseFlagged ? (
+                  <div className="mx-4 mb-4 rounded-lg border border-[#F4B400]/40 bg-[#FEF7E0] p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[13px] font-semibold text-[#7A4F01]">
+                        Flagged as abusive
+                      </p>
+                      {active.abuseReported ? (
+                        <span className="rounded-full bg-[#E6F4EA] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#137333]">
+                          Reported to Google
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-[#FEF0C0] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#8A6100]">
+                          Not reported yet
+                        </span>
+                      )}
+                      <span className="flex-1" />
+                      <button
+                        onClick={() => void runAbuseAction("clear-abuse", { ok: "Flag withdrawn." })}
+                        disabled={abuseBusy !== null}
+                        className="text-[11px] font-medium text-[#7A4F01] hover:underline disabled:opacity-40"
+                      >
+                        Not abusive after all
+                      </button>
+                    </div>
+
+                    {/* AI triage — advisory only, never acts on its own */}
+                    <div className="mt-2.5 rounded-md border border-[#F4B400]/30 bg-white/70 px-3 py-2.5">
+                      {active.abuseScore == null ? (
+                        <p className="text-[12px] text-[#7A4F01]">
+                          AI triage unavailable for this review — judge it yourself below.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[12px] font-medium text-[#202124]">
+                              AI assessment
+                            </span>
+                            <span className="rounded-full bg-[#FCE8E6] px-2 py-0.5 text-[10px] font-bold text-[#C5221F]">
+                              {Math.round(active.abuseScore * 100)}% likely a violation
+                            </span>
+                            {active.abuseLabels.map((l) => (
+                              <span key={l} className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/70">
+                                {l.replace(/_/g, " ")}
+                              </span>
+                            ))}
+                          </div>
+                          <p className="mt-1.5 text-[11px] leading-4 text-[#5F6368]">
+                            Advisory only — a wrong accusation costs you. You decide.
+                          </p>
+                        </>
+                      )}
+                    </div>
+
+                    {active.abuseVerdict ? (
+                      <p className="mt-2.5 text-[12px] font-medium text-[#202124]">
+                        You marked this {active.abuseVerdict === "confirmed" ? "as a real violation" : "as not a violation"}.
+                      </p>
+                    ) : (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <span className="text-[12px] text-[#7A4F01]">Is this a real policy violation?</span>
+                        <button
+                          onClick={() => void runAbuseAction("abuse-verdict", {
+                            verdict: "confirmed",
+                            ok: "Confirmed. Now report it in Google.",
+                          })}
+                          disabled={abuseBusy !== null}
+                          className="rounded-md bg-[#7A4F01] px-3 py-1.5 text-[12px] font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                        >
+                          Yes, report it
+                        </button>
+                        <button
+                          onClick={() => void runAbuseAction("abuse-verdict", {
+                            verdict: "dismissed",
+                            ok: "Dismissed — left as a normal review.",
+                          })}
+                          disabled={abuseBusy !== null}
+                          className="rounded-md border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0] disabled:opacity-50"
+                        >
+                          No, leave it
+                        </button>
+                      </div>
+                    )}
+
+                    {!active.abuseReported && (
+                      <div className="mt-2.5 border-t border-[#F4B400]/30 pt-2.5">
+                        <p className="text-[12px] leading-5 text-[#7A4F01]">
+                          Google has no API for reporting a review, so you file it yourself.
+                          Open this review, choose <strong>Report review</strong>, pick
+                          &nbsp;<strong>Spam or fake engagement</strong> (or the closest option),
+                          then come back and mark it done.
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {active.reviewUrl && (
+                            <a
+                              href={active.reviewUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-md border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0]"
+                            >
+                              Open on Google ↗
+                            </a>
+                          )}
+                          <button
+                            onClick={() => void runAbuseAction("abuse-reported", {
+                              ok: "Marked as reported to Google.",
+                            })}
+                            disabled={abuseBusy !== null}
+                            className="rounded-md border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0] disabled:opacity-50"
+                          >
+                            {abuseBusy === "abuse-reported" ? "Saving…" : "I've reported it in Google"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  !active.removed && !active.skipped && (
+                    <div className="mx-4 mb-4 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => void runAbuseAction("flag-abuse", {
+                          ok: "Flagged. AI triage is below - you decide whether to report it.",
+                        })}
+                        disabled={abuseBusy !== null}
+                        className="rounded-md border border-[#E8EAED] px-3 py-1.5 text-[12px] font-medium text-[#5F6368] transition hover:bg-ink/[0.04] disabled:opacity-40"
+                      >
+                        {abuseBusy === "flag-abuse" ? "Analysing…" : "Report as abusive"}
+                      </button>
+                      <span className="text-[11px] text-[#5F6368]">
+                        Spam, harassment or a competitor&apos;s fake review?
+                      </span>
+                    </div>
+                  )
+                )}
+
                 {/* Reply composer — Material, not violet */}
                 <div className="mx-4 mb-4 rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-4">
                   <h3 className="text-[13px] font-medium text-[#202124]">Your reply</h3>
@@ -1738,6 +1913,11 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
       media: Array.isArray(r.media) ? (r.media as ReviewItem["media"]) : [],
       removed: typeof r.removed_at === "string",
+      abuseFlagged: r.abuse_flagged === true,
+      abuseScore: typeof r.abuse_score === "number" ? r.abuse_score : null,
+      abuseLabels: Array.isArray(r.abuse_labels) ? r.abuse_labels.map(String) : [],
+      abuseVerdict: typeof r.abuse_verdict === "string" ? r.abuse_verdict : null,
+      abuseReported: typeof r.abuse_reported_at === "string",
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
       // The API sends the response row's state as `reply_status`; reading
       // `status` always yielded undefined, so the badge and the

@@ -76,6 +76,16 @@ export interface ReviewInsight {
   media?: { url?: string | null; kind?: string; label?: string | null }[];
   /** Set when a complete sync stopped returning the review — Google dropped it. */
   removed_at?: string | null;
+  /** Merchant flagged the review as a likely policy violation. */
+  abuse_flagged?: boolean;
+  /** Advisory model score 0..1. Never acts on its own. */
+  abuse_score?: number | null;
+  abuse_labels?: string[];
+  /** Human decision: undefined (unreviewed) | "confirmed" | "dismissed". */
+  abuse_verdict?: string | null;
+  abuse_note?: string | null;
+  /** Set once the merchant confirms they filed the report with Google. */
+  abuse_reported_at?: string | null;
   skipped?: boolean;
   edited: boolean;
   edited_at: string | null;
@@ -409,8 +419,7 @@ export function generateReply(
   });
 }
 
-export function editReply(channelId: string, replyId: string, replyText: string): Promise<ReviewReplyDTO> {
-  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}`, {
+export function editReply(channelId: string, replyId: string, replyText: string): Promise<ReviewReplyDTO> {  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}`, {
     method: "PUT",
     body: JSON.stringify({ reply_text: replyText }),
   });

@@ -312,6 +312,17 @@ def _fetched_review_ids(items) -> set[str]:
 # mark a merchant's whole history as removed on a bad page.
 MIN_REVIEWS_FOR_REMOVAL_SWEEP = 5
 
+# A review must be missing from this many consecutive complete syncs before we
+# call it deleted. One miss is evidence of a glitch, not a deletion.
+MISSES_BEFORE_REMOVAL = 2
+
+# Circuit breaker: if a single sync would mark more than this share of a
+# channel's reviews as removed, something is wrong upstream (or in us) and the
+# sweep is abandoned rather than allowed to bury a live listing. This exists
+# because getting it wrong HIDES REAL REVIEWS from a merchant and silently
+# drops them out of their averages — a far worse failure than a stale review.
+MAX_REMOVAL_RATIO = 0.34
+
 
 async def _mark_removed_reviews(
     db: AsyncSession, channel: Channel, user_id: str, seen_ids: set[str]
@@ -324,6 +335,12 @@ async def _mark_removed_reviews(
 
     Reviews the merchant marked unavailable by hand are left alone: `skipped`
     is their decision, not evidence of a deletion.
+
+    Two deliberate brakes, because the failure mode here is destructive and
+    invisible: a review must be missed by MISSES_BEFORE_REMOVAL consecutive
+    syncs, and a single sync may never remove more than MAX_REMOVAL_RATIO of a
+    channel. Getting this wrong hides live reviews from a merchant and drops
+    them out of their averages, which is far worse than a stale row.
     """
     if len(seen_ids) < MIN_REVIEWS_FOR_REMOVAL_SWEEP:
         return []
@@ -340,22 +357,45 @@ async def _mark_removed_reviews(
     now = datetime.now(timezone.utc)
     removed: list[str] = []
     touched_days: set[date] = set()
+    considered = 0
     for insight in candidates:
         if insight.review_id in seen_ids:
+            # Back on the listing: clear any pending miss and any old verdict.
+            insight.missed_syncs = 0
+            if insight.removed_at is not None:
+                insight.removed_at = None
             continue
-        # A review the merchant flagged is already surfaced as unavailable;
-        # removal detection would add nothing and would muddy that state.
         if insight.skipped:
             continue
-        # Only judge staleness against a previous successful sighting, so the
-        # very first sync after adding a channel cannot "remove" history that
-        # predates our tracking.
+        # Never judge a review we have not successfully sighted at least once,
+        # so adding a channel cannot "remove" history that predates tracking.
         if insight.last_seen_at is None:
             continue
+        considered += 1
+        insight.missed_syncs = (insight.missed_syncs or 0) + 1
+        if insight.missed_syncs < MISSES_BEFORE_REMOVAL:
+            continue
         insight.removed_at = now
+        insight.missed_syncs = 0
         removed.append(insight.review_id)
-        # Its day bucket is now wrong — the review no longer counts.
         touched_days.add((insight.review_updated_at or insight.created_at).date())
+
+    if considered and len(removed) > max(1, int(considered * MAX_REMOVAL_RATIO)):
+        # Something is wrong upstream, or in us. Burying a live listing helps
+        # nobody, so abandon the sweep and leave the rows alone. The verdicts
+        # written during the loop above must be undone explicitly — this
+        # session has not committed, but the objects are still dirty.
+        logger.error(
+            "Removal sweep ABORTED for channel %s: would remove %d of %d unseen "
+            "reviews in one sync (limit %d%%). Fetch looks unreliable — leaving "
+            "every review in place.",
+            channel.id, len(removed), considered, int(MAX_REMOVAL_RATIO * 100),
+        )
+        for insight in candidates:
+            insight.missed_syncs = 0
+            if insight.review_id in set(removed):
+                insight.removed_at = None
+        return []
 
     if removed:
         await db.commit()
@@ -748,12 +788,11 @@ async def _sync_single_connection(
             if touched:
                 synced += 1
 
-    # Reviews Google no longer serves. Only safe because `items` above is the
-    # FULL paginated set — a capped or partial fetch would look identical to a
-    # deletion, so the sweep is deliberately confined to this point and gated
-    # on the review count actually retrieved.
+    # Reviews Google no longer serves. `_fetched_review_ids` already returns
+    # ids in our `localith:<id>` form — do NOT re-prefix here, or every id stops
+    # matching and the sweep buries the whole channel.
     removed_now = await _mark_removed_reviews(
-        db, channel, user.id, {f"localith:{i}" for i in _fetched_review_ids(items)}
+        db, channel, user.id, _fetched_review_ids(items)
     )
     if removed_now:
         logger.info(

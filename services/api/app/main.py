@@ -17,6 +17,7 @@ from .modules.redis.router import router as redis_router
 from .modules.kafka.router import router as kafka_router
 from .modules.rag.router import router as rag_router
 from .modules.analytics.router import router as analytics_router
+from .modules.analytics.abuse_router import router as analytics_abuse_router
 from .modules.profile.router import router as profile_router
 from .modules.localith.router import router as localith_router
 from .modules.locations.router import router as locations_router
@@ -199,6 +200,8 @@ app.include_router(channels_router)
 app.include_router(meta_router)
 app.include_router(meta_webhooks_router)
 app.include_router(analytics_router)
+# Abuse reporting lives in its own module but shares the analytics prefix.
+app.include_router(analytics_abuse_router)
 app.include_router(redis_router)
 app.include_router(kafka_router)
 app.include_router(rag_router)

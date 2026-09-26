@@ -88,6 +88,8 @@ async def list_review_insights(
     # Tri-state: omit to hide reviews Google no longer returns, true to show
     # only those, false to show only live ones.
     removed: bool | None = Query(None),
+    # Tri-state for the abuse queue: omit for all, true for flagged only.
+    abusive: bool | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(get_current_user),
@@ -104,6 +106,7 @@ async def list_review_insights(
         edited=edited,
         search=search,
         removed=removed,
+        abusive=abusive,
         limit=limit,
         offset=offset,
     )
