@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, editReply, fetchBenchmark, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, editReply, fetchBenchmark, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type BenchmarkResponse, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
 import { dedupeBusinesses } from "@/lib/channel-identity";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
@@ -14,6 +14,10 @@ const checklistDefs = [
   { id: "channel", labelKey: "stepConnect", href: "/dashboard/channels" },
   { id: "databank", labelKey: "stepDatabank", href: "/dashboard/databank" },
   { id: "auto-reply", labelKey: "stepAutoReply", href: "/dashboard/channels" },
+  // Services + hours were dashboard tiles that read as metrics but were really
+  // setup tasks. They belong in onboarding, not in the pulse row.
+  { id: "services", labelKey: "stepServices", href: "/dashboard/services" },
+  { id: "hours", labelKey: "stepHours", href: "/dashboard/locations?tab=hours" },
 ] as const;
 
 const CHECKLIST_KEY = "sayvors.onboarding.checklist";
@@ -26,6 +30,19 @@ interface IntelSnapshot {
   summary: string;
   stats: { positive: number; neutral: number; negative: number; total: number };
   themes: { name: string; mentions: number; avg_rating: number; positive_pct: number }[];
+  /** Business Health Scorecard — only dimensions with mentions > 0 arrive. */
+  dimensions?: {
+    key: string;
+    label: string;
+    mentions: number;
+    positive: number;
+    negative: number;
+    avg_rating: number;
+    signal: "strong" | "mixed" | "weak";
+  }[];
+  actions?: { title: string; detail: string }[];
+  /** Where this business leads / trails the anonymised cohort. */
+  competitive?: { wins: string[]; gaps: string[]; scope: string | null };
   stale?: boolean;
 }
 
@@ -1082,12 +1099,9 @@ function BusinessPulse() {
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
   const [channels, setChannels] = useState<DashboardChannel[]>([]);
   const [channelId, setChannelId] = useState("");
-  const [serviceCount, setServiceCount] = useState(0);
-  const [offeredCount, setOfferedCount] = useState(0);
-  const [hoursStatus, setHoursStatus] = useState<{ open: boolean | null; label: string; detail: string }>({
-    open: null, label: "--", detail: "Not configured yet",
-  });
-  const [marketRank, setMarketRank] = useState<{ rank: number; total: number; label: string } | null>(null);
+  // Cohort comparison is already fetched — it feeds the "Where you stand" tile
+  // instead of a "Connected businesses" counter nobody could act on.
+  const [bench, setBench] = useState<BenchmarkResponse | null>(null);
   const [intel, setIntel] = useState<IntelSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -1100,35 +1114,25 @@ function BusinessPulse() {
           (channel: DashboardChannel) => channel.platform === "google_reviews"
         );
         const googleChannels = dedupeBusinesses(rawChannels);
-        const [nextOverview, nextPoints, serviceResults, bench, nextIntel] = await Promise.all([
+        const [nextOverview, nextPoints, bench, nextIntel] = await Promise.all([
           fetchOverview(30, channelId || null),
           fetchTimeseries(30, channelId || null),
-          Promise.all((channelId ? googleChannels.filter((channel: DashboardChannel) => channel.id === channelId) : googleChannels).map((channel: DashboardChannel) => apiFetch(`/api/v1/channels/${channel.id}/services`))),
           fetchBenchmark(30, null).catch(() => null),
           apiFetch(`/api/v1/analytics/review-intelligence?days=90${channelId ? `&channel_id=${encodeURIComponent(channelId)}` : ""}`).catch(() => null),
         ]);
         if (cancelled) return;
-        const allServices = serviceResults.flatMap((result) => (result.services ?? []) as DashboardService[]);
         setChannels(googleChannels);
         setOverview(nextOverview);
         setPoints(nextPoints);
         setIntel(nextIntel);
-        setServiceCount(allServices.length);
-        setOfferedCount(allServices.filter((service) => service.is_offered).length);
-        if (bench?.my_rank && (bench.market ?? []).length > 0 && bench.cohort) {
-          setMarketRank({ rank: bench.my_rank, total: (bench.market ?? []).length, label: bench.cohort.label });
-        } else {
-          setMarketRank(null);
-        }
+        setBench(bench);
       } catch {
         if (!cancelled) {
           setOverview(null);
           setPoints([]);
           setChannels([]);
           setIntel(null);
-          setServiceCount(0);
-          setOfferedCount(0);
-          setMarketRank(null);
+          setBench(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -1140,49 +1144,6 @@ function BusinessPulse() {
     };
   }, [channelId]);
 
-  // Live open/closed status from stored regular hours (independent of scope).
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const prof = await apiFetch("/api/v1/integrations/localith/profile");
-        const listingId = prof?.connection?.listing_id;
-        if (!listingId) return;
-        const data = await apiFetch(`/api/v1/locations/${listingId}`);
-        const regular = data?.hours?.regular;
-        if (!regular || typeof regular !== "object") return;
-        const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-        const now = new Date();
-        const today = regular[days[now.getDay()]];
-        if (!today) return;
-        const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-        const fmt = (t: string) => {
-          const [h, m] = t.split(":").map(Number);
-          if (Number.isNaN(h)) return t;
-          const ap = h >= 12 ? "PM" : "AM";
-          const h12 = h % 12 === 0 ? 12 : h % 12;
-          return `${h12}:${String(m ?? 0).padStart(2, "0")} ${ap}`;
-        };
-        if (!cancelled) {
-          if (today.closed || !today.open || !today.close) {
-            setHoursStatus({ open: false, label: "Closed", detail: "Closed today" });
-          } else if (today.open <= hhmm && hhmm < today.close) {
-            setHoursStatus({ open: true, label: "Open now", detail: `Closes ${fmt(today.close)}` });
-          } else if (hhmm < today.open) {
-            setHoursStatus({ open: false, label: "Closed", detail: `Opens today ${fmt(today.open)}` });
-          } else {
-            setHoursStatus({ open: false, label: "Closed", detail: `Opens ${fmt(today.open)} tomorrow` });
-          }
-        }
-      } catch {
-        /* keep placeholder when offline or unconfigured */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const totalReviews = overview?.total_reviews ?? 0;
   const ratingDistribution = overview?.rating_distribution ?? {};
 
@@ -1191,7 +1152,7 @@ function BusinessPulse() {
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h2 className="text-[16px] font-bold text-ink">Business pulse</h2>
-          <p className="mt-0.5 text-[12px] text-ink/50">A quick view of your connected businesses and customer activity.</p>
+          <p className="mt-0.5 text-[12px] text-ink/50">How you&apos;re doing, and the one thing to fix next.</p>
         </div>
         <div className="flex items-center gap-2">
           {channels.length > 0 && <select value={channelId} onChange={(event) => { setLoading(true); setChannelId(event.target.value); }} aria-label="Business scope" className="rounded-lg border border-ink/[0.08] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 outline-none focus:border-deep-violet/30"><option value="">All businesses</option>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.display_name || "Unnamed business"}</option>)}</select>}
@@ -1199,17 +1160,23 @@ function BusinessPulse() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <PulseStat label="Total reviews" value={totalReviews} detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"} color="text-amber-600" href="/dashboard/reviews" delta={overview?.period.reviews_delta_pct} deltaSuffix="%" spark={points.map((p) => p.reviews_count)} sparkColor="#d97706" />
-        <PulseStat label="Connected businesses" value={channels.length} detail={channels.length ? `Google Business channels${marketRank ? ` · #${marketRank.rank} of ${marketRank.total} ${marketRank.label}` : ""}` : "No Google channel yet"} color="text-deep-violet" href="/dashboard/locations" />
-        <PulseStat label="Services offered" value={offeredCount} detail={serviceCount ? `${serviceCount} services configured` : "No service data yet"} color="text-emerald-600" href="/dashboard/services" />
+      {/* PULSE ROW — one honest number instead of four tiles of setup status.
+          Services / hours moved to the launch checklist; market position gets
+          its own panel below; the rating split lives in Customer voice. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <PulseStat
-          label="Working hours"
-          value={hoursStatus.label}
-          detail={hoursStatus.detail}
-          color={hoursStatus.open === null ? "text-sky-600" : hoursStatus.open ? "text-emerald-600" : "text-coral"}
-          href="/dashboard/locations?tab=hours"
+          label="Total reviews"
+          value={totalReviews}
+          detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"}
+          color="text-amber-600"
+          href="/dashboard/reviews"
+          delta={overview?.period.reviews_delta_pct}
+          deltaSuffix="%"
+          spark={points.map((p) => p.reviews_count)}
+          sparkColor="#d97706"
         />
+        <MarketPosition bench={bench} />
+        <ThisWeekActions intel={intel} bench={bench} overview={overview} />
       </div>
 
       <CustomerVoice intel={intel} loading={loading} />
@@ -1218,18 +1185,41 @@ function BusinessPulse() {
         <Link href="/dashboard/analytics" aria-label="Open analytics" className="group block rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40">
           {loading ? <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" /> : <span className="block rounded-2xl transition duration-200 group-hover:-translate-y-0.5 group-hover:shadow-lg group-hover:shadow-deep-violet/[0.08]"><MetricChart points={points} /></span>}
         </Link>
-        <Link href="/dashboard/reviews" aria-label="Open reviews" className="group block rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-          <h3 className="mb-4 text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">Review ratings</h3>
-          <RatingDistribution distribution={ratingDistribution} total={totalReviews} />
-          <div className="mt-5 border-t border-ink/[0.06] pt-4">
-            <div className="flex items-center justify-between text-[11px] text-ink/45"><span>Response rate</span><strong className="text-ink">{overview ? `${Math.round(overview.response_rate)}%` : "--"}</strong></div>
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/[0.06]"><div className="h-full rounded-full bg-emerald" style={{ width: `${Math.min(100, overview?.response_rate ?? 0)}%` }} /></div>
-          </div>
-        </Link>
+        <div className="space-y-3">
+          <StarsCostingYou intel={intel} />
+          <Link href="/dashboard/reviews" aria-label="Open reviews" className="group block rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+            <h3 className="mb-4 text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">Review ratings</h3>
+            <RatingDistribution distribution={ratingDistribution} total={totalReviews} />
+            <div className="mt-5 border-t border-ink/[0.06] pt-4">
+              <div className="flex items-center justify-between text-[11px] text-ink/45">
+                <span>Response rate</span>
+                <strong className="text-ink">
+                  {totalReviews < MIN_REVIEWS_FOR_RATE
+                    ? `needs ${MIN_REVIEWS_FOR_RATE - totalReviews} more`
+                    : overview
+                      ? `${Math.round(overview.response_rate)}%`
+                      : "--"}
+                </strong>
+              </div>
+              {totalReviews < MIN_REVIEWS_FOR_RATE ? (
+                <p className="mt-1.5 text-[10px] text-ink/40">
+                  Too few reviews for a meaningful rate — below {MIN_REVIEWS_FOR_RATE} reviews it is mostly luck.
+                </p>
+              ) : (
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/[0.06]">
+                  <div className="h-full rounded-full bg-emerald" style={{ width: `${Math.min(100, overview?.response_rate ?? 0)}%` }} />
+                </div>
+              )}
+            </div>
+          </Link>
+        </div>
       </div>
     </section>
   );
 }
+
+/** Response rate on a handful of reviews is noise, not a metric. */
+const MIN_REVIEWS_FOR_RATE = 30;
 
 function PulseStat({ label, value, detail, color, href, delta, deltaSuffix = "", spark, sparkColor }: { label: string; value: number | string; detail: string; color: string; href?: string; delta?: number | null; deltaSuffix?: string; spark?: number[]; sparkColor?: string }) {
   const cls = "group block rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40";
@@ -1257,6 +1247,155 @@ function PulseStat({ label, value, detail, color, href, delta, deltaSuffix = "",
     </>
   );
   return href ? <Link href={href} aria-label={label} className={cls}>{inner}</Link> : <div className={cls}>{inner}</div>;
+}
+
+/** A "2 of 2" ranking is noise. Below this, stay quiet rather than lie. */
+const MIN_COHORT_FOR_RANK = 5;
+
+/**
+ * Where you stand against comparable businesses.
+ *
+ * An absolute 4.8★ is not a decision input — a position is. The cohort
+ * (same city + category, other businesses on Sayvors) is already computed by
+ * the benchmark endpoint, so this needs no extra request.
+ */
+function MarketPosition({ bench }: { bench: BenchmarkResponse | null }) {
+  const cohort = bench?.cohort;
+  const market = bench?.market ?? [];
+  const count = cohort?.count ?? market.length;
+  const rank = bench?.my_rank ?? null;
+  const me = market.find((m) => m.is_you);
+  const ahead = market.filter((m) => !m.is_you && me && m.reputation_score > me.reputation_score);
+  const behind = market.filter((m) => !m.is_you && me && m.reputation_score < me.reputation_score).slice(0, 2);
+
+  if (!bench || count < MIN_COHORT_FOR_RANK) {
+    return (
+      <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">Where you stand</p>
+        <p className="mt-1 text-[22px] font-bold text-ink/25">—</p>
+        <p className="text-[10px] text-ink/40">
+          Need {MIN_COHORT_FOR_RANK}+ comparable businesses before a ranking means anything
+          {count > 0 ? ` — ${count} so far` : ""}.
+        </p>
+      </div>
+    );
+  }
+
+  const percentile = rank && count ? Math.round(((count - rank + 1) / count) * 100) : null;
+  return (
+    <Link href="/dashboard/benchmark" aria-label="Where you stand" className="group block rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+      <p className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-ink/50">
+        <span>Where you stand</span>
+        <span className="text-ink/25 transition group-hover:translate-x-0.5 group-hover:text-deep-violet" aria-hidden>→</span>
+      </p>
+      <p className="mt-1 text-[22px] font-bold text-deep-violet">
+        {rank ? `#${rank}` : "—"}
+        <span className="text-[12px] font-semibold text-ink/40"> of {count} {cohort?.label ?? "similar"}</span>
+      </p>
+      {percentile !== null && (
+        <p className="mt-0.5 text-[11px] text-ink/55">
+          Top {100 - percentile + 1}% · reputation {me ? Math.round(me.reputation_score) : "—"}
+        </p>
+      )}
+      {(cohort?.median_rating != null || cohort?.median_response_rate != null) && (
+        <p className="mt-1 text-[10px] text-ink/40">
+          Median nearby: {cohort?.median_rating?.toFixed(1) ?? "—"}★
+          {cohort?.median_response_rate != null ? ` · ${Math.round(cohort.median_response_rate)}% reply rate` : ""}
+        </p>
+      )}
+      {(ahead.length > 0 || behind.length > 0) && (
+        <p className="mt-1.5 truncate text-[10px] text-ink/45">
+          {ahead.length > 0 && <span className="text-emerald">Ahead: {ahead.length} business{ahead.length === 1 ? "" : "es"}</span>}
+          {ahead.length > 0 && behind.length > 0 && " · "}
+          {behind.length > 0 && <span className="text-coral">Behind: {behind.map((b) => b.name).join(", ")}</span>}
+        </p>
+      )}
+    </Link>
+  );
+}
+
+/**
+ * One action, not a dashboard. Prefers the LLM's own recommended action, falls
+ * back to the competitive gap that is actually measurable today.
+ */
+function ThisWeekActions({ intel, bench, overview }: {
+  intel: IntelSnapshot | null;
+  bench: BenchmarkResponse | null;
+  overview: Overview | null;
+}) {
+  const total = overview?.total_reviews ?? 0;
+  const first = intel?.actions?.[0];
+  const gap = intel?.competitive?.gaps?.[0];
+  const wins = intel?.competitive?.wins?.[0];
+  const rate = overview?.response_rate ?? null;
+  const cohortRate = bench?.cohort?.median_response_rate ?? null;
+
+  const lines: { title: string; detail: string }[] = [];
+  if (first) lines.push({ title: first.title, detail: first.detail });
+  if (gap) lines.push({ title: gap, detail: "What competitors do better — closing this is the cheapest win." });
+  if (
+    !first && !gap && total < MIN_REVIEWS_FOR_RATE && total > 0
+  ) {
+    lines.push({
+      title: `Collect a few more reviews (${total} of ${MIN_REVIEWS_FOR_RATE})`,
+      detail: "Response rate and trends stay hidden until the sample is big enough to be honest.",
+    });
+  }
+  if (!lines.length && wins) {
+    lines.push({ title: wins, detail: "Keep this going — it is already ahead of comparable businesses." });
+  }
+  if (!lines.length && rate != null && cohortRate != null && rate < cohortRate) {
+    lines.push({
+      title: `Reply faster — ${Math.round(rate)}% vs ${Math.round(cohortRate)}% nearby`,
+      detail: "Comparable businesses reply to more of their reviews than you do.",
+    });
+  }
+
+  return (
+    <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">What to do this week</p>
+      {lines.length === 0 ? (
+        <>
+          <p className="mt-1 text-[22px] font-bold text-emerald">All clear</p>
+          <p className="text-[10px] text-ink/40">Nothing urgent — keep the current playbook.</p>
+        </>
+      ) : (
+        <ul className="mt-1.5 space-y-1.5">
+          {lines.slice(0, 2).map((l) => (
+            <li key={l.title}>
+              <p className="text-[12.5px] font-semibold leading-snug text-ink">{l.title}</p>
+              <p className="text-[10px] leading-snug text-ink/50">{l.detail}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The weakest dimension from the scorecard — the thing actually costing stars.
+ * Stays hidden when there is no negative signal, so it never nags an owner
+ * whose business is in good shape.
+ */
+function StarsCostingYou({ intel }: { intel: IntelSnapshot | null }) {
+  const dims = intel?.dimensions ?? [];
+  const worst = dims
+    .filter((d) => d.negative > 0)
+    .sort((a, b) => b.negative - a.negative || a.avg_rating - b.avg_rating)[0];
+  if (!worst) return null;
+  return (
+    <div className="rounded-2xl border-2 border-coral/30 bg-coral/[0.04] p-5 backdrop-blur-sm">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-coral">What&apos;s costing you stars</p>
+      <p className="mt-1.5 text-[15px] font-bold text-ink">{worst.label}</p>
+      <p className="mt-0.5 text-[12px] text-ink/60">
+        {worst.negative} review{worst.negative === 1 ? "" : "s"} criticise it · avg {worst.avg_rating.toFixed(1)}★
+      </p>
+      <Link href="/dashboard/reviews" className="mt-2 inline-block text-[11px] font-semibold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+        Fix this →
+      </Link>
+    </div>
+  );
 }
 
 function CustomerVoice({ intel, loading }: { intel: IntelSnapshot | null; loading: boolean }) {
