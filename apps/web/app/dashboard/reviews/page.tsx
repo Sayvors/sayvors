@@ -1888,6 +1888,29 @@ const PERIOD_PRESETS = [
   { days: 365, label: "12m" },
 ];
 
+/**
+ * Driver-table heat scale: the more reviews a cell holds, the deeper the
+ * green. Intensity is relative to the busiest cell in the table so small
+ * accounts still get a readable spread, and the legend states that.
+ */
+const HEAT_STEPS = [
+  { label: "0", sample: "0", cls: "bg-[#F8F9FA] text-[#5F6368] ring-1 ring-[#E8EAED]" },
+  { label: "few", sample: "1", cls: "bg-[#E6F4EA] text-[#137333]" },
+  { label: "some", sample: "3", cls: "bg-[#A8DAB5] text-[#0B3D1E]" },
+  { label: "many", sample: "6", cls: "bg-[#5BB974] text-[#062A14]" },
+  { label: "most", sample: "9+", cls: "bg-[#188038] text-white" },
+];
+
+function heatCell(value: number, max: number): { cls: string } {
+  if (value <= 0) return { cls: HEAT_STEPS[0].cls };
+  // Relative thresholds so a table whose busiest cell is 2 is still readable.
+  const ratio = max > 0 ? value / max : 0;
+  if (ratio > 0.66) return { cls: HEAT_STEPS[4].cls };
+  if (ratio > 0.33) return { cls: HEAT_STEPS[3].cls };
+  if (ratio > 0.15) return { cls: HEAT_STEPS[2].cls };
+  return { cls: HEAT_STEPS[1].cls };
+}
+
 function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, aiLoading, analyzing, onAnalyze, onBack, onOpenStar, intelDays, intelMonth, intelInterval, setIntelDays, setIntelMonth }: {
   intelligence: Intelligence; total: number; locationName: string;
   aiMeta: { source: string; model: string | null; ragUsed: boolean; analyzedAt: string | null; stale: boolean; newCount: number } | null;
@@ -1920,6 +1943,12 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
   const atRiskPct = total ? Math.round(((i.dislike.reduce((a, b) => a + b.mentions, 0) / Math.max(1, total)) * 100)) : 0;
   const revenueRisk = i.dislike.length ? `${atRiskPct}% of reviews signal churn risk` : "Low churn risk";
   const sentimentDelta = i.sentimentScore >= 3.5 ? "Positive momentum" : i.sentimentScore >= 2.5 ? "Mixed — fixable friction" : "Needs attention";
+
+  // Busiest driver cell — the denominator for the heat scale.
+  const driverMax = useMemo(
+    () => Math.max(0, ...i.drivers.flatMap((d) => [d.s5, d.s4, d.s3, d.low])),
+    [i.drivers]
+  );
 
   return (
     <div className="space-y-4" style={{ fontFamily: "Roboto, Arial, sans-serif" }}>
@@ -2262,15 +2291,49 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
               {i.drivers.map((d) => (
                 <tr key={d.theme} className="border-t border-[#E8EAED]">
                   <td className="py-2 pr-2 text-[13px] font-medium text-[#202124]">{d.theme}</td>
-                  {[d.s5, d.s4, d.s3, d.low].map((v, idx) => (
-                    <td key={idx} className="py-2 text-center">
-                      <span className={`inline-block min-w-7 rounded-full px-2 py-1 text-[12px] font-medium tabular-nums ${v === 0 ? "bg-[#F8F9FA] text-[#5F6368] ring-1 ring-[#E8EAED]" : idx === 3 && v > 0 ? "bg-[#FCE8E6] text-[#C5221F]" : v > 2 ? "bg-[#E6F4EA] text-[#137333]" : "bg-[#F1F3F4] text-[#202124]"}`}>{v}</span>
-                    </td>
-                  ))}
+                  {[d.s5, d.s4, d.s3, d.low].map((v, idx) => {
+                    const base = heatCell(v, driverMax);
+                    // The 1–2★ column is complaints: keep it red-tinted so a
+                    // dense cell reads as "bad" at a glance, intensity by count.
+                    const cls =
+                      idx === 3 && v > 0
+                        ? v > 0
+                          ? ["bg-[#F6C7C3] text-[#A50E0E]", "bg-[#EA4335] text-white", "bg-[#C5221F] text-white"][
+                              Math.min(2, Math.max(0, Math.ceil((v / Math.max(1, driverMax)) * 3) - 1))
+                            ]
+                          : base.cls
+                        : base.cls;
+                    return (
+                      <td key={idx} className="py-2 text-center">
+                        <span
+                          className={`inline-flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-[12px] font-medium tabular-nums ${cls}`}
+                          title={v === 0 ? "No reviews" : `${v} review${v === 1 ? "" : "s"}`}
+                        >
+                          {v}
+                        </span>
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+        {/* INTENSITY SCALE — the legend makes the shading readable */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-[#E8EAED] pt-3 text-[11px] text-[#5F6368]">
+          <span className="font-medium text-[#202124]">Scale</span>
+          <span className="text-[#5F6368]">More reviews = deeper colour (relative to the busiest cell)</span>
+          <span className="flex items-center gap-1.5">
+            {HEAT_STEPS.map((s) => (
+              <span key={s.label} className="flex items-center gap-1">
+                <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium tabular-nums ${s.cls}`}>
+                  {s.sample}
+                </span>
+                <span className="text-[#5F6368]">{s.label}</span>
+              </span>
+            ))}
+          </span>
+          <span className="text-[#C5221F]">1–2★ column stays red-tinted (complaints)</span>
         </div>
       </div>
 
