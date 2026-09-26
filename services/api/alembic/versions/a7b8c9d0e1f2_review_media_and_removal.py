@@ -15,6 +15,10 @@ removed_at   — set when a COMPLETE sync stopped returning it, i.e. Google no
                the flag clears itself if the review reappears.
 
 All nullable/defaulted, so existing rows are unaffected.
+
+NOTE: `missed_syncs` was briefly added to this file AFTER the revision had
+already been applied, so the column was never created in any existing
+database. It is created by d0e1f2a3b4c5 instead. Do not re-add it here.
 """
 import sqlalchemy as sa
 
