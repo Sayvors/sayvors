@@ -295,6 +295,72 @@ async def _release_sync_lock(db: AsyncSession, listing_id: str | None = None) ->
     await release_lock(db, ns, key)
 
 
+async def _adopt_live_reply(
+    db: AsyncSession, channel: Channel, review_id: str, review
+) -> bool:
+    """Adopt the reply Google already shows for a review into a ReviewReply row.
+
+    Localith returns the live reply on every review payload. Without this the
+    review shows as "answered outside Sayvors": the reply text is never stored,
+    so the detail page has no response to display or edit.
+
+    Google is the source of truth for what is live, so a `posted` row whose text
+    no longer matches the listing is corrected in place — that is how a reply
+    edited directly in the Google Business Profile reaches Sayvors.
+
+    A draft the merchant is still working on (`pending_approval`) or one that
+    failed to publish is never touched: their in-flight work outranks whatever
+    the provider reports. Returns True when a row was created or corrected.
+    """
+    live_text = (getattr(review, "reply_text", None) or "").strip()
+    if not getattr(review, "has_replies", False) or not live_text:
+        return False
+
+    existing = (
+        await db.execute(
+            select(ReviewReply)
+            .where(
+                ReviewReply.channel_id == channel.id,
+                ReviewReply.review_id == review_id,
+            )
+            .order_by(ReviewReply.created_at.desc())
+        )
+    ).scalars().all()
+
+    for row in existing:
+        if row.status in ("pending_approval", "failed"):
+            # Merchant-owned state — leave it exactly as it is.
+            return False
+        if row.status in ("posted", "approved") and (row.reply_text or "").strip() == live_text:
+            return False
+
+    posted = next(
+        (r for r in existing if r.status in ("posted", "approved")), None
+    )
+    if posted is not None:
+        posted.reply_text = live_text
+        posted.reply_external_id = getattr(review, "reply_external_id", None)
+        posted.replied_at = _parse_dt(
+            getattr(review, "reply_published_at", None)
+        ) or datetime.now(timezone.utc)
+        return True
+
+    db.add(ReviewReply(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        review_id=review_id,
+        rating=int(getattr(review, "rating", 5) or 5),
+        review_text=getattr(review, "text", None),
+        reviewer_name=getattr(review, "reviewer", None),
+        reply_text=live_text,
+        status="posted",
+        reply_external_id=getattr(review, "reply_external_id", None),
+        replied_at=_parse_dt(getattr(review, "reply_published_at", None))
+        or datetime.now(timezone.utc),
+    ))
+    return True
+
+
 async def sync_connection(
     user: User,
     db: AsyncSession,
@@ -482,6 +548,10 @@ async def _sync_single_connection(
                 insight.replied = True
                 insight.replied_at = datetime.now(timezone.utc)
             db.add(insight)
+            await db.flush()
+            # Store the reply Google already shows, so a review answered
+            # outside the drafts flow still has an editable response.
+            await _adopt_live_reply(db, channel, f"localith:{review_id}", review)
             synced += 1
             if len(pulled) < MAX_PER_SYNC:
                 pulled.append(review)
@@ -514,6 +584,15 @@ async def _sync_single_connection(
             if review.has_replies and not insight.replied:
                 insight.replied = True
                 insight.replied_at = datetime.now(timezone.utc)
+                touched = True
+            # Adopt the live reply on every sync, not just for new reviews.
+            # This is what backfills reviews answered before Sayvors stored
+            # the text, and what picks up an edit made directly in the Google
+            # Business Profile. Runs regardless of `touched` because the reply
+            # text is the only part of the row that can change silently.
+            if await _adopt_live_reply(
+                db, channel, f"localith:{review_id}", review
+            ):
                 touched = True
             # Edit detection: Localith sends no edit timestamp, so compare
             # content against what was stored before this sync. Filling a
@@ -742,6 +821,9 @@ async def _sync_single_connection(
             continue
 
         if review.has_replies:
+            # Already answered on the listing — record what is live instead of
+            # drafting a competing reply.
+            await _adopt_live_reply(db, channel, full_review_id, review)
             continue
         if latest_reply:
             continue

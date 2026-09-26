@@ -1358,7 +1358,7 @@ function ReviewsInner() {
                            <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">
                              {active.reply_text
                                ? "This review already has a published reply. You can replace it below — the original stays in Google's edit history."
-                               : "This review was answered outside Sayvors, so the reply text was never stored here. Google does not read replies back, so type the reply you want live."}
+                               : "Replied on Google, but the reply text wasn't returned to us, so there is nothing to edit yet. Type the reply you want live below."}
                            </p>
                          </div>
                        </div>
