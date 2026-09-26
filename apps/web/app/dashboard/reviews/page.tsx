@@ -6,7 +6,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
-import { approveReply, dismissReviewEdit, editReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
 
 type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
@@ -413,6 +413,45 @@ function ReviewsInner() {
     } catch (e) {
       setBanner({ kind: "err", text: detailMsg(e, "Could not save edits.") });
       setTimeout(() => setBanner(null), 5000);
+    }
+  }
+
+  // A review can be flagged replied with no response row on file at all — the
+  // reply was published outside Sayvors, so the "replied" Kafka event set the
+  // flag without ever creating a ReviewReply. Nothing for the Edit card above
+  // to bind to, which is why an already-answered review looked like a dead
+  // end. Create the draft first, then approve it: the click is the merchant's
+  // approval, and this is the only path that can republish over a live reply.
+  async function publishUpdatedReply(item: ReviewItem) {
+    const text = responseText.trim();
+    if (!text) return;
+    setSavingResponse(true);
+    try {
+      const row = item.replyId
+        ? await editReply(item.locationId, item.replyId, text)
+        : await generateReply(item.locationId, {
+            review_id: item.review_id,
+            rating: item.rating,
+            review_text: item.comment,
+            reviewer_name: item.reviewer,
+            custom_text: text,
+          });
+      await approveReply(item.locationId, row.id);
+      setReviews((prev) =>
+        prev.map((r) =>
+          r.id === item.id ? { ...r, replyId: row.id, reply_text: text, status: "posted" } : r
+        )
+      );
+      setResponseText("");
+      setEditingResponse(null);
+      await loadPendingReplies();
+      setBanner({ kind: "ok", text: "Updated reply published to Google." });
+      setTimeout(() => setBanner(null), 4000);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not publish the updated reply.") });
+      setTimeout(() => setBanner(null), 5000);
+    } finally {
+      setSavingResponse(false);
     }
   }
 
@@ -1311,13 +1350,65 @@ function ReviewsInner() {
                     </div>
                   )}
                   {active.replied ? (
-                     <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
-                       <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
-                       <div>
-                         <p className="text-[12px] font-medium text-[#137333]">Replied on Google</p>
-                         <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">This review already has a published reply. You can still draft an updated response below and publish it from Google.</p>
+                     <>
+                       <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
+                         <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
+                         <div>
+                           <p className="text-[12px] font-medium text-[#137333]">Replied on Google</p>
+                           <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">
+                             {active.reply_text
+                               ? "This review already has a published reply. You can replace it below — the original stays in Google's edit history."
+                               : "This review was answered outside Sayvors, so the reply text was never stored here. Google does not read replies back, so type the reply you want live."}
+                           </p>
+                         </div>
                        </div>
-                     </div>
+                       {!active.replyId && editingResponse !== active.id && (
+                         <button
+                           onClick={() => {
+                             setEditingResponse(active.id);
+                             setResponseText(active.reply_text ?? "");
+                           }}
+                           className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-[#1A73E8] px-3 py-1.5 text-[12px] font-medium text-[#1A73E8] transition hover:bg-[#E8F0FE]"
+                         >
+                           Edit &amp; Republish
+                         </button>
+                       )}
+                       {!active.replyId && editingResponse === active.id && (
+                         <div className="mt-3">
+                           <label className="text-[12px] font-medium text-[#202124]" htmlFor="update-reply">
+                             Your live reply on Google
+                           </label>
+                           <textarea
+                             id="update-reply"
+                             value={responseText}
+                             onChange={(e) => setResponseText(e.target.value)}
+                             rows={4}
+                             maxLength={1000}
+                             placeholder="Write the reply that should be live on Google…"
+                             className="mt-2 min-h-[96px] w-full resize-y rounded-md border border-[#DADCE0] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#202124] placeholder:text-[#5F6368]/60 outline-none focus:border-[#1A73E8] focus:ring-1 focus:border-[#1A73E8]"
+                           />
+                           <div className="mt-2 flex items-center justify-end gap-2">
+                             <button
+                               onClick={() => { setEditingResponse(null); setResponseText(""); }}
+                               disabled={savingResponse}
+                               className="rounded-md px-3 py-1.5 text-[12px] font-medium text-[#5F6368] hover:bg-ink/[0.04] disabled:opacity-40"
+                             >
+                               Cancel
+                             </button>
+                             <button
+                               onClick={() => void publishUpdatedReply(active)}
+                               disabled={!responseText.trim() || savingResponse}
+                               className="rounded-md bg-[#1A73E8] px-4 py-1.5 text-[12px] font-medium text-white hover:bg-[#1765CC] disabled:opacity-50"
+                             >
+                               {savingResponse ? "Publishing…" : "Republish to Google"}
+                             </button>
+                           </div>
+                           <p className="mt-1.5 text-[11px] leading-4 text-[#5F6368]">
+                             Publishing replaces the reply currently live on Google.
+                           </p>
+                         </div>
+                       )}
+                     </>
                    ) : active.skipped ? (
                      <div className="mt-2 flex items-start gap-2 rounded-md border border-[#E8EAED] bg-[#F8F9FA] px-3 py-2.5">
                        <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#AAAAAA]" />
@@ -1572,7 +1663,10 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       sentiment: typeof r.sentiment === "string" ? r.sentiment : undefined,
       reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
-      status: typeof r.status === "string" ? r.status : undefined,
+      // The API sends the response row's state as `reply_status`; reading
+      // `status` always yielded undefined, so the badge and the
+      // "sends this back for approval" hint never rendered.
+      status: typeof r.reply_status === "string" ? r.reply_status : undefined,
       replyId: typeof r.reply_id === "string" ? r.reply_id : undefined,
     };
   });
