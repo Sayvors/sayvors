@@ -8,7 +8,7 @@ import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/review
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
 import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
 
-type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited";
+type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited" | "removed";
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
 
 interface ReviewItem {
@@ -53,9 +53,10 @@ const TAB_LABELS: Record<ReviewTab, string> = {
   replied: "Replied",
   positive: "Positive",
   negative: "Negative",
+  removed: "Removed",
 };
 const PRIMARY_TABS: ReviewTab[] = ["all", "need_approval", "edited"];
-const MORE_TABS: ReviewTab[] = ["unanswered", "flagged", "replied", "positive", "negative"];
+const MORE_TABS: ReviewTab[] = ["unanswered", "flagged", "replied", "positive", "negative", "removed"];
 
 export default function ReviewsPage() {
   return (
@@ -169,9 +170,20 @@ function ReviewsInner() {
   }, []);
 
   const loadInsights = async (channelId?: string) => {
-    const q = channelId ? `?channel_id=${encodeURIComponent(channelId)}&limit=200` : "?limit=200";
-    const data = await apiFetch(`/api/v1/analytics/reviews/insights${q}`);
-    return mapInsights(data.items, channelNames, locations.find((l) => l.id === selectedId)?.name ?? "");
+    const base = channelId ? `channel_id=${encodeURIComponent(channelId)}&` : "";
+    // Two calls on purpose. The API hides reviews Google no longer returns, so
+    // the Removed tab would always be empty if we only asked for the default
+    // set. Both land in one list; `removed` on the item decides which tab shows
+    // it, and the counts below keep the two apart.
+    const [live, gone] = await Promise.all([
+      apiFetch(`/api/v1/analytics/reviews/insights?${base}limit=200`),
+      apiFetch(`/api/v1/analytics/reviews/insights?${base}limit=200&removed=true`),
+    ]);
+    const fallback = locations.find((l) => l.id === selectedId)?.name ?? "";
+    return [
+      ...mapInsights(live.items, channelNames, fallback),
+      ...mapInsights(gone.items, channelNames, fallback),
+    ];
   };
 
   const loadPendingReplies = async () => {
@@ -247,19 +259,28 @@ function ReviewsInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
+  // `reviews` holds live AND removed rows; every count below is over the live
+  // set only, so a review Google dropped never inflates a number the merchant
+  // is judged on.
+  const live = useMemo(() => reviews.filter((r) => !r.removed), [reviews]);
+
   const counts = useMemo(() => ({
-    all: reviews.length,
-    unanswered: reviews.filter((r) => !r.replied && !r.skipped).length,
-    replied: reviews.filter((r) => r.replied).length,
-    positive: reviews.filter((r) => r.rating >= 4).length,
-    negative: reviews.filter((r) => r.rating <= 2).length,
+    all: live.length,
+    unanswered: live.filter((r) => !r.replied && !r.skipped).length,
+    replied: live.filter((r) => r.replied).length,
+    positive: live.filter((r) => r.rating >= 4).length,
+    negative: live.filter((r) => r.rating <= 2).length,
     // The approval queue is the source of truth for this count.
     need_approval: pendingReplies.length,
-    flagged: reviews.filter((r) => r.skipped).length,
-    edited: reviews.filter((r) => r.edited).length,
-  }), [reviews, pendingReplies]);
+    flagged: live.filter((r) => r.skipped).length,
+    edited: live.filter((r) => r.edited).length,
+    removed: reviews.length - live.length,
+  }), [live, reviews, pendingReplies]);
 
-  const filtered = reviews.filter((r) => {
+  // The Removed tab is the one view that is deliberately the opposite set.
+  const removedRows = useMemo(() => reviews.filter((r) => r.removed), [reviews]);
+  const filtered = (tab === "removed" ? removedRows : live).filter((r) => {
+    if (tab === "removed") return true;
     if (tab === "unanswered") return !r.replied && !r.skipped;
     if (tab === "replied") return r.replied;
     if (tab === "need_approval") return !r.replied && !r.skipped;
@@ -271,8 +292,8 @@ function ReviewsInner() {
   });
 
   const active = view.kind === "detail" ? reviews.find((r) => r.id === view.id) ?? null : null;
-  const starGroup = view.kind === "star" ? reviews.filter((r) => r.rating === view.stars) : [];
-  const intelligence = useMemo(() => buildIntelligence(reviews), [reviews]);
+  const starGroup = view.kind === "star" ? live.filter((r) => r.rating === view.stars) : [];
+  const intelligence = useMemo(() => buildIntelligence(live), [live]);
 
   // Stored intelligence (analyze once, serve from DB; re-run on demand).
   const [aiIntel, setAiIntel] = useState<{
@@ -683,20 +704,22 @@ function ReviewsInner() {
     }
   };
 
+  // Live reviews only: a review Google dropped is not part of the average,
+  // the response rate, or the distribution the merchant is judged on.
   const analytics = useMemo(() => {
-    const total = reviews.length;
-    const dist = [5, 4, 3, 2, 1].map((s) => ({ stars: s, count: reviews.filter((r) => r.rating === s).length }));
-    const avg = total ? reviews.reduce((a, r) => a + r.rating, 0) / total : 0;
-    const replied = reviews.filter((r) => r.replied).length;
-    const thisMonth = reviews.filter((r) => r.createdAt.slice(0, 7) === "2026-09").length;
-    const lastMonth = reviews.filter((r) => r.createdAt.slice(0, 7) === "2026-08").length;
+    const total = live.length;
+    const dist = [5, 4, 3, 2, 1].map((s) => ({ stars: s, count: live.filter((r) => r.rating === s).length }));
+    const avg = total ? live.reduce((a, r) => a + r.rating, 0) / total : 0;
+    const replied = live.filter((r) => r.replied).length;
+    const thisMonth = live.filter((r) => r.createdAt.slice(0, 7) === "2026-09").length;
+    const lastMonth = live.filter((r) => r.createdAt.slice(0, 7) === "2026-08").length;
     const months = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"].map((m) => ({
       label: m.slice(5),
-      count: reviews.filter((r) => r.createdAt.slice(0, 7) === m).length,
+      count: live.filter((r) => r.createdAt.slice(0, 7) === m).length,
     }));
     const maxMonth = Math.max(1, ...months.map((m) => m.count));
     return { total, dist, avg, replied, responseRate: total ? Math.round((replied / total) * 100) : 0, thisMonth, lastMonth, months, maxMonth };
-  }, [reviews]);
+  }, [live]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -1063,7 +1086,7 @@ function ReviewsInner() {
                     ) : filtered.length === 0 ? (
                       <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
                           <p className="text-[14px] font-medium text-ink/40">
-                            {reviews.length === 0 && tab === "all"
+                            {live.length === 0 && tab === "all"
                               ? "No reviews yet — press Reconcile after syncing your listing."
                               : tab === "flagged"
                                 ? "No reviews flagged yet — use the flag button on any review."
@@ -1174,7 +1197,7 @@ function ReviewsInner() {
             <StarInsightPage
               stars={view.stars}
               group={starGroup}
-              total={reviews.length}
+              total={live.length}
               onBack={() => setView(view.from === "intelligence" ? { kind: "intelligence" } : { kind: "list" })}
               onOpen={(id) => openDetail(id)}
             />
