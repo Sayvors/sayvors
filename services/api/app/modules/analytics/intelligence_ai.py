@@ -226,7 +226,6 @@ async def _load_reviews(
             "topics": [t.get("name") for t in (r.topics or []) if isinstance(t, dict) and t.get("name")],
             "replied": r.replied,
         })
-    _ = since
     return out
 
 
