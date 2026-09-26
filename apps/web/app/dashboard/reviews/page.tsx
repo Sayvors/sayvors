@@ -1077,13 +1077,9 @@ function ReviewsInner() {
 
                   {/* Right column: 1/4 - Insights */}
                   <div className="col-span-12 lg:col-span-4 space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                      <StatCard label="Average Rating" value={`${analytics.avg.toFixed(1)} ★`} />
-                      <StatCard label="Total Reviews" value={String(analytics.total)} />
-                      <StatCard label="Response Rate" value={`${analytics.responseRate}%`} />
-                      <StatCard label="Unanswered" value={String(counts.unanswered)} />
-                      <StatCard label="Flagged" value={String(counts.flagged)} />
-                    </div>
+                    {/* Rating breakdown leads the column: the star mix is the
+                        fastest read on business health, and it is the way in
+                        to the full intelligence view. */}
                     <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                       <button onClick={() => setView({ kind: "intelligence" })} className="block w-full text-left">
                         <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Rating breakdown</h3>
@@ -1106,6 +1102,13 @@ function ReviewsInner() {
                         className="mt-3 w-full rounded-xl bg-deep-violet/[0.06] py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet hover:text-white">
                         See more insights →
                       </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <StatCard label="Average Rating" value={`${analytics.avg.toFixed(1)} ★`} />
+                      <StatCard label="Total Reviews" value={String(analytics.total)} />
+                      <StatCard label="Response Rate" value={`${analytics.responseRate}%`} />
+                      <StatCard label="Unanswered" value={String(counts.unanswered)} />
+                      <StatCard label="Flagged" value={String(counts.flagged)} />
                     </div>
                     <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                       <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Reviews trend</h3>
