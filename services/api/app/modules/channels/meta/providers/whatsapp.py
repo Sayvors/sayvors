@@ -115,6 +115,13 @@ class WhatsAppAdapter(MetaProviderAdapter):
         logger.info("WhatsApp subscribed_apps ok waba=%s", waba_id)
 
     async def register_number(self, phone_number_id: str, token: str, pin: str | None = None) -> None:
+        """Register the number on the Cloud API (idempotent).
+
+        Meta REQUIRES a 6-digit two-step-verification PIN here — without it
+        the call fails with an onboarding error and the number cannot send
+        until registration succeeds. The PIN is the tenant's own, supplied
+        during Embedded Signup or via the register-retry endpoint.
+        """
         body: dict = {"messaging_product": "whatsapp"}
         if pin:
             body["pin"] = pin

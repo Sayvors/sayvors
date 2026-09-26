@@ -53,10 +53,29 @@ export const postWhatsAppSession = (body: {
   waba_id?: string | null;
   phone_number_id?: string | null;
   business_id?: string | null;
-}): Promise<{ connected: boolean; assets_found: number }> =>
+  /** 6-digit two-step PIN. Without it Meta refuses to register the number. */
+  pin?: string | null;
+}): Promise<{
+  connected: boolean;
+  assets_found: number;
+  registered?: string[];
+  registration_failed?: { asset_id: string; asset_type: string; status: number }[];
+  /** The number connected but cannot send until a PIN is supplied. */
+  needs_pin?: boolean;
+}> =>
   apiFetch("/api/v1/meta/whatsapp/session", {
     method: "POST",
     body: JSON.stringify(body),
+  });
+
+/** Retry registration for a number Meta rejected (allowed for 14 days). */
+export const registerWhatsAppNumber = (
+  phoneNumberId: string,
+  pin: string
+): Promise<{ registered: boolean; phone_number_id: string }> =>
+  apiFetch(`/api/v1/meta/whatsapp/${encodeURIComponent(phoneNumberId)}/register`, {
+    method: "POST",
+    body: JSON.stringify({ pin }),
   });
 
 export const fetchMetaAssets = (

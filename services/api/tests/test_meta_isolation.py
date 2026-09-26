@@ -175,6 +175,176 @@ async def test_whatsapp_session_binds_correct_tenant(client, engine, db, monkeyp
     assert phone_arg == "pn-from-session"
 
 
+async def test_whatsapp_session_passes_pin_and_reports_registration(
+    client, engine, db, monkeypatch
+):
+    """A supplied PIN reaches register_number, and success is reported back.
+
+    Without a PIN Meta refuses registration and the number cannot send, so the
+    response has to say so instead of looking like a clean connect.
+    """
+    state, _ = await _oauth.create_transaction(db, TENANT_AUTH, "whatsapp")
+    adapter = _mock_adapter()
+    monkeypatch.setattr(_service, "get_adapter", lambda _p: adapter)
+
+    resp = client.post(
+        "/api/v1/meta/whatsapp/session",
+        json={"state": state, "code": "fake-code", "pin": "123456"},
+        headers={"host": "localhost"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["connected"] is True
+    assert body["needs_pin"] is False
+    assert "pn-from-session" in body["registered"]
+    assert body["registration_failed"] == []
+    # The PIN must be passed through to the Graph call, not dropped.
+    assert adapter.register_number.call_args.kwargs["pin"] == "123456"
+
+    # …and it is persisted encrypted, never in plaintext.
+    from app.modules.channels.meta.credentials import decrypt_credential
+
+    asset = (
+        await db.execute(
+            select(MetaAsset).where(
+                MetaAsset.tenant_id == TENANT_AUTH,
+                MetaAsset.external_asset_id == "pn-from-session",
+            )
+        )
+    ).scalar_one()
+    stored = asset.asset_metadata.get("pin_encrypted")
+    assert stored and stored != "123456"
+    assert decrypt_credential(stored) == "123456"
+
+
+async def test_whatsapp_session_reports_missing_pin(client, engine, db, monkeypatch):
+    """No PIN → connect still succeeds, but the response flags needs_pin."""
+    state, _ = await _oauth.create_transaction(db, TENANT_AUTH, "whatsapp")
+    adapter = _mock_adapter()
+    monkeypatch.setattr(_service, "get_adapter", lambda _p: adapter)
+
+    resp = client.post(
+        "/api/v1/meta/whatsapp/session",
+        json={"state": state, "code": "fake-code"},
+        headers={"host": "localhost"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["connected"] is True
+    assert body["needs_pin"] is True
+
+
+async def test_whatsapp_session_surfaces_registration_failure(
+    client, engine, db, monkeypatch
+):
+    """A failed registration is reported, not swallowed as a warning."""
+    from app.modules.channels.meta.providers.base import MetaAPIError
+
+    state, _ = await _oauth.create_transaction(db, TENANT_AUTH, "whatsapp")
+    adapter = _mock_adapter()
+    adapter.register_number.side_effect = MetaAPIError("PIN required", 400)
+    monkeypatch.setattr(_service, "get_adapter", lambda _p: adapter)
+
+    resp = client.post(
+        "/api/v1/meta/whatsapp/session",
+        json={"state": state, "code": "fake-code", "pin": "123456"},
+        headers={"host": "localhost"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["connected"] is True          # the connection itself survives
+    assert body["needs_pin"] is True          # …but the number cannot send
+    assert body["registration_failed"]
+    assert body["registration_failed"][0]["asset_id"] == "pn-from-session"
+
+
+async def test_whatsapp_session_rejects_malformed_pin(client, engine, db):
+    state, _ = await _oauth.create_transaction(db, TENANT_AUTH, "whatsapp")
+    resp = client.post(
+        "/api/v1/meta/whatsapp/session",
+        json={"state": state, "code": "fake-code", "pin": "12"},
+        headers={"host": "localhost"},
+    )
+    assert resp.status_code == 422
+
+
+# ── Number registration retry (14-day Meta window) ─────────────
+
+
+async def test_register_number_retry_succeeds(client, engine, db, monkeypatch):
+    """A tenant who typed the wrong PIN can retry without reconnecting."""
+    from app.modules.channels.meta import service as meta_service
+    from app.modules.channels.meta.credentials import encrypt_credential
+    from app.modules.channels.meta.providers.base import MetaAPIError
+
+    conn = await _seed_connection(db, TENANT_AUTH)
+    conn.access_token_encrypted = encrypt_credential("tok-abc")
+    await db.commit()
+    asset = await _seed_asset(db, TENANT_AUTH, conn, external="pn-retry")
+
+    adapter = AsyncMock()
+    monkeypatch.setattr(meta_service, "get_adapter", lambda _p: adapter)
+
+    resp = client.post(
+        "/api/v1/meta/whatsapp/pn-retry/register",
+        json={"pin": "654321"},
+        headers={"host": "localhost"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["registered"] is True
+    adapter.register_number.assert_awaited_once_with(
+        "pn-retry", "tok-abc", pin="654321"
+    )
+
+    await db.refresh(asset)
+    assert asset.status == "registered"
+    from app.modules.channels.meta.credentials import decrypt_credential
+
+    assert decrypt_credential(asset.asset_metadata["pin_encrypted"]) == "654321"
+
+
+async def test_register_number_retry_surfaces_meta_error(client, engine, db, monkeypatch):
+    from app.modules.channels.meta import service as meta_service
+    from app.modules.channels.meta.credentials import encrypt_credential
+    from app.modules.channels.meta.providers.base import MetaAPIError
+
+    conn = await _seed_connection(db, TENANT_AUTH)
+    conn.access_token_encrypted = encrypt_credential("tok-abc")
+    await db.commit()
+    await _seed_asset(db, TENANT_AUTH, conn, external="pn-bad")
+
+    adapter = AsyncMock()
+    adapter.register_number.side_effect = MetaAPIError("PIN rejected", 400)
+    monkeypatch.setattr(meta_service, "get_adapter", lambda _p: adapter)
+
+    resp = client.post(
+        "/api/v1/meta/whatsapp/pn-bad/register",
+        json={"pin": "000000"},
+        headers={"host": "localhost"},
+    )
+    assert resp.status_code == 400
+    assert "PIN rejected" in resp.json()["detail"]
+
+
+async def test_register_number_retry_is_tenant_scoped(client, engine, db, monkeypatch):
+    """Tenant B can never register a number belonging to tenant A."""
+    from app.modules.channels.meta import service as meta_service
+
+    conn_a = await _seed_connection(db, TENANT_A)
+    await _seed_asset(db, TENANT_A, conn_a, external="pn-owned-by-a")
+
+    adapter = AsyncMock()
+    monkeypatch.setattr(meta_service, "get_adapter", lambda _p: adapter)
+
+    resp = client.post(
+        "/api/v1/meta/whatsapp/pn-owned-by-a/register",
+        json={"pin": "123456"},
+        headers={"host": "localhost"},
+    )
+    assert resp.status_code == 404
+    adapter.register_number.assert_not_awaited()
+
+
 async def test_whatsapp_session_rejects_other_tenant(client, engine, db, monkeypatch):
     """Tenant A's state cannot be consumed by Tenant B's authenticated session."""
     state_a, _ = await _oauth.create_transaction(db, TENANT_A, "whatsapp")

@@ -121,6 +121,10 @@ export default function MetaConnections({
   // Gate the WhatsApp button on SDK readiness: FB.login must run inside
   // the click gesture or the popup is silently blocked ("…" hang / flash).
   const [sdkLoading, setSdkLoading] = useState(true);
+  // Optional 6-digit two-step PIN. Meta refuses to register a WhatsApp number
+  // without one, so this is collected before launching Embedded Signup rather
+  // than failing afterwards with no obvious cause.
+  const [pinDraft, setPinDraft] = useState("");
   const params = useSearchParams();
   const urlProvider = (params?.get("provider") as MetaProvider | null) ?? null;
   const activeFilter = urlProvider;
@@ -280,8 +284,19 @@ export default function MetaConnections({
             waba_id: (session.waba_id as string) ?? null,
             phone_number_id: (session.phone_number_id as string) ?? null,
             business_id: (session.business_id as string) ?? null,
+            pin: pinDraft || null,
           });
-          onNotice("ok", `WhatsApp connected! ${res.assets_found} asset(s) found — pick which number to use.`);
+          if (res.needs_pin) {
+            // Connected, but the number cannot send until Meta has a 2-step
+            // PIN. Say so plainly — a silent success here means every send
+            // fails later and the cause is invisible.
+            onNotice(
+              "err",
+              "WhatsApp connected, but the number is NOT registered yet. Add your 6-digit two-step verification PIN to finish — without it the number cannot send messages."
+            );
+          } else {
+            onNotice("ok", `WhatsApp connected and number registered! ${res.assets_found} asset(s) found — pick which number to use.`);
+          }
           setPicked((prev) => {
             const updated = { ...prev, ["whatsapp"]: [] };
             return updated;
@@ -469,13 +484,33 @@ export default function MetaConnections({
                 <p className="truncate text-[12px] text-ink/40 dark:text-fog/40">{label}</p>
               </div>
               {isDisconnected ? (
-                <button
-                  onClick={() => (p.key === "whatsapp" ? connectWhatsApp() : connectOAuth(p.key))}
-                  disabled={busy === p.key || (p.key === "whatsapp" && sdkLoading)}
-                  className="rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {busy === p.key ? "…" : p.key === "whatsapp" && sdkLoading ? "Loading…" : "Connect"}
-                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  {p.key === "whatsapp" && (
+                    <>
+                      <label className="sr-only" htmlFor="wa-2sv-pin">
+                        WhatsApp two-step verification PIN
+                      </label>
+                      <input
+                        id="wa-2sv-pin"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        value={pinDraft}
+                        onChange={(e) => setPinDraft(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        placeholder="2FA PIN"
+                        title="Your 6-digit WhatsApp two-step verification PIN. Needed for Meta to register the number."
+                        className="w-24 rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[12px] tabular-nums outline-none focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink"
+                      />
+                    </>
+                  )}
+                  <button
+                    onClick={() => (p.key === "whatsapp" ? connectWhatsApp() : connectOAuth(p.key))}
+                    disabled={busy === p.key || (p.key === "whatsapp" && sdkLoading)}
+                    className="rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                  >
+                    {busy === p.key ? "…" : p.key === "whatsapp" && sdkLoading ? "Loading…" : "Connect"}
+                  </button>
+                </div>
               ) : (
                 <div className="flex items-center gap-1.5">
                   <button

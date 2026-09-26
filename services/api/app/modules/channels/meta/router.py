@@ -20,6 +20,7 @@ from .schemas import (
     MetaAssetSelect,
     MetaConnectionListResponse,
     MetaConnectionOut,
+    MetaRegisterNumberRequest,
     MetaValidateResponse,
     MetaWhatsAppSession,
 )
@@ -29,6 +30,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/meta", tags=["meta"])
 
 _SAFE_NEXT = re.compile(r"/[A-Za-z0-9\-/_]*")
+
+
+def _remember_pin(asset, pin: str | None) -> None:
+    """Persist the tenant's 2-step PIN (encrypted) on the number asset.
+
+    The PIN is per phone number in Meta's model, and re-registering is only
+    allowed for 14 days — so it has to survive a page reload. Fernet at rest,
+    same scheme as the access token. Never returned by any endpoint.
+    """
+    if not pin:
+        return
+    from .credentials import encrypt_credential
+
+    meta = dict(getattr(asset, "asset_metadata", None) or {})
+    meta["pin_encrypted"] = encrypt_credential(pin)
+    asset.asset_metadata = meta
+
+
+def discovered_has_number(discovered) -> bool:
+    return any(getattr(d, "asset_type", "") == "phone_number" for d in discovered or [])
 
 
 def _conn_out(c) -> MetaConnectionOut:
@@ -173,6 +194,18 @@ async def meta_sdk_bundle():
     return _js_response(body)
 
 
+_META_ERROR_CODES = {
+    "access_denied", "missing_code", "invalid_state", "token_exchange_failed",
+    "unknown_provider", "account_blocked", "server_error",
+}
+
+
+def _safe_meta_error(error: str | None) -> str:
+    """Echo only known error codes back to the frontend — never raw input
+    (an attacker-crafted callback URL must not control the redirect query)."""
+    return error if error in _META_ERROR_CODES else "oauth_error"
+
+
 @router.get("/{provider}/callback")
 async def oauth_callback(
     provider: str,
@@ -186,7 +219,7 @@ async def oauth_callback(
     if provider not in ("facebook", "instagram"):
         return RedirectResponse(f"{base}?meta_error=unknown_provider")
     if error:
-        return RedirectResponse(f"{base}?meta_error={error}")
+        return RedirectResponse(f"{base}?meta_error={_safe_meta_error(error)}")
 
     txn = await _oauth.consume_transaction(db, state, provider)
     if txn is None and provider in ("facebook", "instagram"):
@@ -280,25 +313,112 @@ async def whatsapp_session(
         assets = await _service.save_discovered_assets(
             db, tenant_id, "whatsapp", conn, discovered
         )
-        # Best-effort webhook subscription + number registration for the
-        # tenant's own WABA (never blocks the connect response).
+        # Webhook subscription + number registration. These are best-effort —
+        # a failure must not lose the connection the tenant just completed — but
+        # the outcome is REPORTED, not swallowed: an unregistered number cannot
+        # send, and Meta only allows registration for 14 days after signup.
         token = credentials.get("access_token", "")
+        registered: list[str] = []
+        failed: list[dict] = []
         if token:
             for asset in assets:
                 try:
                     if asset.asset_type == "waba":
                         await adapter.subscribe_app(asset.external_asset_id, token)
                     elif asset.asset_type == "phone_number":
-                        await adapter.register_number(asset.external_asset_id, token)
+                        await adapter.register_number(
+                            asset.external_asset_id, token, pin=body.pin
+                        )
+                        _remember_pin(asset, body.pin)
+                        registered.append(asset.external_asset_id)
                 except MetaAPIError as e:
                     logger.warning(
                         "WhatsApp post-connect step failed asset=%s: %s",
                         asset.external_asset_id, e.status_code,
                     )
+                    failed.append({
+                        "asset_id": asset.external_asset_id,
+                        "asset_type": asset.asset_type,
+                        "status": e.status_code,
+                    })
+            # Commit unconditionally: this persists the encrypted PIN and the
+            # registered status set above. Skipping it on the happy path would
+            # silently discard the PIN the tenant just supplied.
+            await db.commit()
     except MetaAPIError as e:
         await _oauth.fail_transaction(db, txn.id)
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    return {"connected": True, "provider": "whatsapp", "assets_found": len(assets)}
+
+    needs_pin = any(
+        a["asset_type"] == "phone_number" and a["asset_id"] in
+        {r["asset_id"] for r in failed}
+        for a in failed
+    ) or (
+        bool(body.phone_number_id or discovered_has_number(discovered))
+        and not body.pin
+    )
+    return {
+        "connected": True,
+        "provider": "whatsapp",
+        "assets_found": len(assets),
+        "registered": registered,
+        "registration_failed": failed,
+        # The single most important signal for the frontend: the number is live
+        # but cannot send until a PIN is supplied.
+        "needs_pin": needs_pin,
+    }
+
+
+@router.post("/whatsapp/{phone_number_id}/register")
+async def register_whatsapp_number(
+    phone_number_id: str,
+    body: MetaRegisterNumberRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Register (or re-register) a number with the tenant's 2-step PIN.
+
+    Meta only accepts registration for 14 days after Embedded Signup, and a
+    wrong PIN must be recoverable — so this exists as a first-class retry
+    instead of forcing a full reconnect."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .models import MetaAsset
+    from .providers.base import MetaAPIError as _MetaAPIError
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == user.id,
+                MetaAsset.provider == "whatsapp",
+                MetaAsset.asset_type == "phone_number",
+                MetaAsset.external_asset_id == phone_number_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Number not found for this account")
+
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        raise HTTPException(
+            status_code=409, detail="Reconnect WhatsApp — the access token is missing"
+        )
+
+    adapter = _service.get_adapter("whatsapp")
+    try:
+        await adapter.register_number(phone_number_id, token, pin=body.pin)
+    except _MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    _remember_pin(asset, body.pin)
+    asset.status = "registered"
+    await db.commit()
+    return {"registered": True, "phone_number_id": phone_number_id}
 
 
 @router.post("/instagram/discover", response_model=MetaAssetListResponse)
