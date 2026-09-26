@@ -11,6 +11,7 @@ import {
   fetchMetaAssets,
   fetchMetaConnections,
   postWhatsAppSession,
+  registerWhatsAppNumber,
   selectMetaAssets,
   startMetaConnect,
   validateMeta,
@@ -121,10 +122,13 @@ export default function MetaConnections({
   // Gate the WhatsApp button on SDK readiness: FB.login must run inside
   // the click gesture or the popup is silently blocked ("…" hang / flash).
   const [sdkLoading, setSdkLoading] = useState(true);
-  // Optional 6-digit two-step PIN. Meta refuses to register a WhatsApp number
-  // without one, so this is collected before launching Embedded Signup rather
-  // than failing afterwards with no obvious cause.
+  // 6-digit two-step PIN, collected ONLY when Meta reports the connected number
+  // could not be registered. Asking for it before Embedded Signup is
+  // meaningless: the number does not exist in our DB until the popup returns,
+  // and many tenants do not know their PIN until they go and set it.
   const [pinDraft, setPinDraft] = useState("");
+  // phone_number_id awaiting registration (null = nothing pending).
+  const [pendingReg, setPendingReg] = useState<string | null>(null);
   const params = useSearchParams();
   const urlProvider = (params?.get("provider") as MetaProvider | null) ?? null;
   const activeFilter = urlProvider;
@@ -196,6 +200,20 @@ export default function MetaConnections({
   };
 
   const connectWhatsApp = async () => {
+    // Meta's JS SDK hard-throws on non-HTTPS origins ("FB.login can no longer
+    // be called from http pages"), which surfaces as a Next.js console-error
+    // overlay and a dead popup. localhost is exempt; anything else needs TLS.
+    const secure =
+      window.location.protocol === "https:" ||
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+    if (!secure) {
+      onNotice(
+        "err",
+        "WhatsApp connect needs HTTPS — Facebook blocks Meta login on plain http. Open the app via localhost, or tunnel it (e.g. `ngrok http 3000`)."
+      );
+      return;
+    }
     // Synchronous popup probe — runs inside the click gesture, before any
     // await. FB.login opens its popup after our awaits; if popups are
     // blocked its callback never fires and the button hangs on "…" forever.
@@ -289,12 +307,18 @@ export default function MetaConnections({
           if (res.needs_pin) {
             // Connected, but the number cannot send until Meta has a 2-step
             // PIN. Say so plainly — a silent success here means every send
-            // fails later and the cause is invisible.
+            // fails later and the cause is invisible. Remember which number
+            // failed so the inline PIN prompt can retry just that one.
+            const failedPhone = (res.registration_failed ?? []).find(
+              (f) => f.asset_type === "phone_number"
+            );
+            setPendingReg(failedPhone?.asset_id ?? (session.phone_number_id as string) ?? null);
             onNotice(
               "err",
-              "WhatsApp connected, but the number is NOT registered yet. Add your 6-digit two-step verification PIN to finish — without it the number cannot send messages."
+              "WhatsApp connected, but the number is NOT registered yet. Enter your 6-digit two-step verification PIN below to finish — without it the number cannot send messages."
             );
           } else {
+            setPendingReg(null);
             onNotice("ok", `WhatsApp connected and number registered! ${res.assets_found} asset(s) found — pick which number to use.`);
           }
           setPicked((prev) => {
@@ -354,6 +378,28 @@ export default function MetaConnections({
       );
     } catch {
       onNotice("err", "Could not start WhatsApp connect.");
+      setBusy(null);
+    }
+  };
+
+  // Meta only permits /register for 14 days after signup, so a wrong or
+  // missing PIN must be fixable WITHOUT a full Embedded Signup reconnect.
+  const finishRegistration = async () => {
+    if (!pendingReg) return;
+    if (!/^\d{6}$/.test(pinDraft)) {
+      onNotice("err", "Enter the 6-digit PIN from WhatsApp → Settings → Account → Two-step verification.");
+      return;
+    }
+    setBusy("whatsapp-reg");
+    try {
+      await registerWhatsAppNumber(pendingReg, pinDraft);
+      setPinDraft("");
+      setPendingReg(null);
+      onNotice("ok", "Number registered — WhatsApp can send now.");
+      await refresh();
+    } catch {
+      onNotice("err", "Registration rejected. Check the PIN and try again (you have 14 days from signup).");
+    } finally {
       setBusy(null);
     }
   };
@@ -485,24 +531,6 @@ export default function MetaConnections({
               </div>
               {isDisconnected ? (
                 <div className="flex shrink-0 items-center gap-2">
-                  {p.key === "whatsapp" && (
-                    <>
-                      <label className="sr-only" htmlFor="wa-2sv-pin">
-                        WhatsApp two-step verification PIN
-                      </label>
-                      <input
-                        id="wa-2sv-pin"
-                        type="text"
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        value={pinDraft}
-                        onChange={(e) => setPinDraft(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                        placeholder="2FA PIN"
-                        title="Your 6-digit WhatsApp two-step verification PIN. Needed for Meta to register the number."
-                        className="w-24 rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[12px] tabular-nums outline-none focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink"
-                      />
-                    </>
-                  )}
                   <button
                     onClick={() => (p.key === "whatsapp" ? connectWhatsApp() : connectOAuth(p.key))}
                     disabled={busy === p.key || (p.key === "whatsapp" && sdkLoading)}
@@ -540,6 +568,37 @@ export default function MetaConnections({
                 </div>
               )}
             </div>
+
+            {/* Registration follow-up: only after a connect that returned
+                needs_pin, never before the tenant has a number at all. */}
+            {p.key === "whatsapp" && pendingReg && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-3">
+                <label className="sr-only" htmlFor="wa-2sv-pin">
+                  WhatsApp two-step verification PIN
+                </label>
+                <input
+                  id="wa-2sv-pin"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={pinDraft}
+                  onChange={(e) => setPinDraft(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="6-digit PIN"
+                  title="Your 6-digit WhatsApp two-step verification PIN. Needed for Meta to register the number."
+                  className="w-28 rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[12px] tabular-nums outline-none focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink"
+                />
+                <button
+                  onClick={finishRegistration}
+                  disabled={busy === "whatsapp-reg" || pinDraft.length !== 6}
+                  className="rounded-lg bg-deep-violet px-3 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {busy === "whatsapp-reg" ? "Registering…" : "Finish registration"}
+                </button>
+                <span className="text-[11px] text-ink/50 dark:text-fog/50">
+                  WhatsApp → Settings → Account → Two-step verification
+                </span>
+              </div>
+            )}
 
             {/* Asset picker */}
             {picking === p.key && (
