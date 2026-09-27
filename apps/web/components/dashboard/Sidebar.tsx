@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
 
 interface NavItem {
   key: string;
@@ -105,6 +106,22 @@ export default function Sidebar() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
+
+  // The guided tour points at nav items. On a phone those live in the drawer,
+  // so the tour asks for it to open rather than spotlighting something the
+  // user cannot see. No-op on desktop, where the nav is already inline.
+  useEffect(() => {
+    const onOpen = () => {
+      if (isMobile) setDrawerOpen(true);
+    };
+    const onClose = () => setDrawerOpen(false);
+    window.addEventListener(NAV_DRAWER_EVENTS.OPEN, onOpen);
+    window.addEventListener(NAV_DRAWER_EVENTS.CLOSE, onClose);
+    return () => {
+      window.removeEventListener(NAV_DRAWER_EVENTS.OPEN, onOpen);
+      window.removeEventListener(NAV_DRAWER_EVENTS.CLOSE, onClose);
+    };
+  }, [isMobile]);
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const { t } = useI18n();
