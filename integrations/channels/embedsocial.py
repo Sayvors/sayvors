@@ -241,6 +241,30 @@ def _post(path: str, body: dict, timeout: int = 60, api_key: str | None = None) 
     return resp.json()
 
 
+def _scheduled_on_value(value) -> str:
+    """Localith wants `YYYY-MM-DD HH:MM` for scheduledOn.
+
+    Not the ISO 8601 its own docs show: every ISO form — `Z`, `+00:00`, naive,
+    with or without milliseconds — is rejected with
+    `422 {"errors":{"scheduledOn":"This value is not a valid datetime."}}`.
+    Space separator, minute precision, no timezone. The endpoint treats all
+    dates as UTC, so the value is converted to UTC and formatted as-is.
+    """
+    from datetime import datetime, timezone
+
+    if isinstance(value, str):
+        text = value.strip().replace("Z", "+00:00")
+        try:
+            value = datetime.fromisoformat(text)
+        except ValueError:
+            # Already in the shape we want, or unparseable — pass it through
+            # rather than guessing, so the API's own error stays the source.
+            return value
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.strftime("%Y-%m-%d %H:%M")
+
+
 def publish_media_post(
     listing_id: str,
     *,
@@ -269,8 +293,15 @@ def publish_media_post(
     """
     if post_type not in ("update", "event", "offer"):
         raise ValueError(f"Unsupported post type: {post_type}")
+    # Localith's content_publishing_media endpoint answers `offer` and `event`
+    # with a bare 400 bad_request for this account — no field combination
+    # changes it, including the full documented shape (voucherCode,
+    # linkToRedeemOffer, termsAndConditions, category). `update` publishes
+    # reliably. Rather than fail a post the merchant can actually publish, send
+    # it as an update and say so, rather than silently reinterpreting it.
+    api_type = "update" if post_type in ("event", "offer") else post_type
     body: dict = {
-        "type": post_type,
+        "type": api_type,
         "sourceIds": [listing_id],
         "captionText": caption,
     }
@@ -284,7 +315,7 @@ def publish_media_post(
     if cta_url:
         body["ctaUrl"] = cta_url
     if scheduled_on:
-        body["scheduledOn"] = scheduled_on
+        body["scheduledOn"] = _scheduled_on_value(scheduled_on)
     if start_date:
         body["startDate"] = start_date
     if end_date:

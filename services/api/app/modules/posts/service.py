@@ -199,6 +199,11 @@ async def create_post(db: AsyncSession, user_id: str, data: dict) -> dict:
         raise ValueError("post_type must be update, event or offer.")
     if post_type == "event" and start_date is None:
         raise ValueError("Events need a start date — Google requires it.")
+    if post_type == "offer":
+        if start_date is None or end_date is None:
+            raise ValueError("Offers need both start and end dates — Google requires a complete offer schedule.")
+        if end_date <= start_date:
+            raise ValueError("Offer end date must be after its start date.")
 
     post = LocationPost(
         id=str(uuid.uuid4()),
@@ -273,6 +278,12 @@ async def update_post(
         post.delete_at = _parse_dt(data.get("delete_at"))
     if "end_date" in data:
         post.end_date = _parse_dt(data.get("end_date"))
+
+    if post.post_type == "offer":
+        if post.start_date is None or post.end_date is None:
+            raise ValueError("Offers need both start and end dates — Google requires a complete offer schedule.")
+        if post.end_date <= post.start_date:
+            raise ValueError("Offer end date must be after its start date.")
 
     new_status = data.get("status")
     if new_status is not None and new_status != post.status:
@@ -355,6 +366,11 @@ async def _publish_post_inner(
             image_urls=sent,
             cta_type=post.cta_type,
             cta_url=post.cta_url,
+            # Previously dropped on the floor: `scheduled_on` was stored on the
+            # row but never handed to the API, so a "scheduled" post was
+            # published the moment the worker picked it up rather than being
+            # scheduled with Google.
+            scheduled_on=post.scheduled_on,
             start_date=post.start_date.isoformat() if post.start_date else None,
             end_date=effective_end.isoformat() if effective_end else None,
             voucher_code=post.coupon_code or None,
