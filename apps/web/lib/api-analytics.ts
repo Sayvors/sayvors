@@ -57,6 +57,28 @@ export interface TimeseriesPoint {
   direction_requests: number;
 }
 
+export interface ReviewMeaning {
+  intent?: string | null;
+  /** Always one of the closed vocabulary. Never free text. */
+  subject?: string;
+  problem?: string | null;
+  asks?: string[];
+  entities?: { product?: string[]; location?: string[]; staff?: string[]; dates?: string[] };
+  /** The customer denies the thing (e.g. "no problems"). Never read as a complaint. */
+  negated?: boolean;
+  intensity?: number;
+  /** Spans copied verbatim from the review. Empty means nothing was grounded. */
+  evidence?: string[];
+  confidence?: number;
+  /** True when the reading could not be trusted and a person must look. */
+  needs_human?: boolean;
+  source?: "llm" | "heuristic" | "human";
+  reason?: string | null;
+  language?: string;
+  corrected_at?: string | null;
+  correction_note?: string | null;
+}
+
 export interface ReviewInsight {
   id: string;
   channel_id: string;
@@ -76,6 +98,13 @@ export interface ReviewInsight {
   media?: { url?: string | null; kind?: string; label?: string | null }[];
   /** Set when a complete sync stopped returning the review — Google dropped it. */
   removed_at?: string | null;
+  /**
+   * Per-review meaning. `subject` is always one of a fixed vocabulary and
+   * `evidence` spans are always verbatim from the review, so a reading can be
+   * checked rather than trusted. `source` is "llm" | "heuristic" | "human";
+   * a human correction is never overwritten by a re-analysis.
+   */
+  meaning?: ReviewMeaning | null;
   /** Merchant flagged the review as a likely policy violation. */
   abuse_flagged?: boolean;
   /** Advisory model score 0..1. Never acts on its own. */
@@ -450,4 +479,30 @@ export interface VerifyPostedResult {
 
 export function verifyPostedReplies(channelId: string): Promise<VerifyPostedResult> {
   return apiFetch(`/api/v1/channels/${channelId}/reviews/verify-posted`, { method: "POST" });
+}
+
+/**
+ * Correct what the AI understood a review to mean.
+ *
+ * The AI once read the Arabic review "you need to fix your building" as
+ * "bank account corrections" and produced a business action from that
+ * fabrication. This is the human gate that lets a person fix the reading at
+ * the source. The correction is stored as `source: "human"` and re-analysis
+ * will not overwrite it.
+ */
+export function correctReviewMeaning(
+  insightId: string,
+  patch: {
+    subject?: string;
+    intent?: string | null;
+    problem?: string | null;
+    asks?: string[];
+    needs_human?: boolean;
+    note?: string | null;
+  }
+): Promise<ReviewInsight> {
+  return apiFetch(`/api/v1/analytics/reviews/insights/${encodeURIComponent(insightId)}/meaning`, {
+    method: "POST",
+    body: JSON.stringify(patch),
+  });
 }

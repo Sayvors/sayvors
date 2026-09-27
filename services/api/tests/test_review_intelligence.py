@@ -34,10 +34,16 @@ def _rows():
     return [
         {"rating": 4, "text": "I am still using that AI, that's is greatttt.",
          "reviewer": "Syed", "date": "2026-09-09", "sentiment": "neutral",
-         "topics": ["quality"], "replied": False},
+         "topics": ["quality"], "replied": False,
+         "meaning": {"subject": "product_quality", "language": "en",
+                     "evidence": ["greatttt"], "confidence": 0.8,
+                     "needs_human": False, "source": "llm"}},
         {"rating": 5, "text": "Excellent service, quick response.",
          "reviewer": "Sara", "date": "2026-09-06", "sentiment": "positive",
-         "topics": ["service"], "replied": True},
+         "topics": ["service"], "replied": True,
+         "meaning": {"subject": "staff_service", "language": "en",
+                     "evidence": ["Excellent service"], "confidence": 0.9,
+                     "needs_human": False, "source": "llm"}},
     ]
 
 
@@ -48,6 +54,9 @@ def test_verified_stats_math():
         "distribution": {5: 1, 4: 1, 3: 0, 2: 0, 1: 0},
         "positive": 2, "neutral": 0, "negative": 0,
         "replied": 1, "unanswered": 1, "response_rate": 50,
+        # Both rows carry a checked meaning, so nothing is withheld.
+        "held_out": {"needs_human": 0, "not_analysed": 0,
+                     "unclassified": 0, "total": 0},
     }
 
 
@@ -94,13 +103,15 @@ def test_verify_clamps_against_stats():
         ],
         "actions": [],
     })
-    verified = ai._verify(parsed, stats)
-    assert len(verified.themes) == 1  # ghost dropped
-    t = verified.themes[0]
-    assert t.mentions == 2  # clamped to total
-    assert t.avg_rating == 4.9
-    assert verified.strengths[0].mentions == 2
-    assert len(verified.opportunities) == 2
+    verified = ai._verify(parsed, stats, _rows())
+    # The model's own themes are discarded entirely — it claimed 99 mentions of
+    # "quality" and a zero-mention ghost, on a corpus of 2. Categories now come
+    # from the checked meaning layer, so the numbers cannot be wrong at all.
+    assert [t.name for t in verified.themes] == ["Product quality", "Staff & service"]
+    assert all(t.mentions == 1 for t in verified.themes)
+    assert not any("ghost" in t.name for t in verified.themes)
+    # No negative reviews, so nothing is escalated into an opportunity.
+    assert verified.opportunities == []
 
 
 def test_parse_rejects_overlong_lists():
@@ -159,10 +170,14 @@ async def test_orchestration_ai_path_overrides_numbers(monkeypatch):
     assert res["model"] == "gemini:x"
     assert res["rag_used"] is True
     assert res["rag_chunks"] == 2
-    # Verified stats win over anything the model implied:
+    # Verified data wins over anything the model implied:
     assert res["stats"]["total"] == 2
     assert res["stats"]["avg_rating"] == 4.5
-    assert res["themes"][0]["mentions"] == 2  # clamped from 5
+    # The model claimed 5 mentions of "quality"; the corpus has 2 reviews and
+    # each was read as a different subject, so the report says 1 and 1.
+    assert {t["name"]: t["mentions"] for t in res["themes"]} == {
+        "Product quality": 1, "Staff & service": 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -187,7 +202,11 @@ async def test_orchestration_falls_back_when_llm_down(monkeypatch):
     assert res["model"] is None
     assert res["stats"]["total"] == 2
     assert res.get("fallback_reason")
-    assert any(t["name"] == "Responsiveness & Speed" for t in res["themes"])
+    # Themes come from the checked meaning layer, so they survive the LLM being
+    # down — they never depended on it in the first place.
+    assert {t["name"] for t in res["themes"]} == {
+        "Product quality", "Staff & service",
+    }
     # The scorecard is present even with the LLM down, and is taxonomy-bound.
     assert res["dimensions"]
     assert all(d["standard"] for d in res["dimensions"])

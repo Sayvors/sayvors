@@ -80,6 +80,11 @@ class ReviewInsightItem(BaseModel):
     replied: bool
     replied_at: datetime | None = None
     skipped: bool = False
+    # Per-review meaning: subject from a closed vocabulary, verbatim evidence,
+    # and whether a human still needs to look at it. `source` is
+    # "llm" | "heuristic" | "human" — a human correction is authoritative and
+    # is never overwritten by a re-analysis.
+    meaning: dict[str, Any] | None = None
     # Reviewer-attached photos: [{url, kind, label}]. `url` is our own copy.
     media: list[Any] = []
     # Set when a complete sync stopped returning the review, i.e. Google no
@@ -119,6 +124,23 @@ class AbuseFlagBody(BaseModel):
     """Merchant flags a review as a likely policy violation."""
 
     note: str | None = Field(None, max_length=2000)
+
+
+class MeaningCorrectionBody(BaseModel):
+    """A human correcting what the AI understood a review to mean.
+
+    Every field is optional: correct only what is wrong. `subject` is validated
+    against the closed vocabulary, so a correction cannot introduce a category
+    the vocabulary does not have. An unknown value is a 422, not a silent
+    fallback to "other".
+    """
+
+    subject: str | None = None
+    intent: str | None = Field(None, max_length=120)
+    problem: str | None = Field(None, max_length=1000)
+    asks: list[str] | None = None
+    needs_human: bool | None = None
+    note: str | None = Field(None, max_length=500)
 
 
 class AbuseVerdictBody(BaseModel):

@@ -6,10 +6,25 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
-import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
 import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
+import MeaningInspector from "@/components/reviews/MeaningInspector";
 
-type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited" | "removed" | "abusive";
+type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited" | "removed" | "abusive" | "needs_human";
+
+/**
+ * How many reviews the intelligence report refused to categorise.
+ *
+ * The report holds these back rather than guessing, but a silent holdout reads
+ * as a complete report — which is how a mis-read review stayed invisible in
+ * the first place. So the count travels with the report and is shown.
+ */
+type HeldOutCounts = {
+  needs_human: number;
+  not_analysed: number;
+  unclassified: number;
+  total: number;
+};
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
 
 interface ReviewItem {
@@ -32,6 +47,7 @@ interface ReviewItem {
   reviewUrl?: string;
   media: { url?: string | null; kind?: string; label?: string | null }[];
   removed: boolean;
+  meaning: ReviewInsight["meaning"] | null;
   abuseFlagged: boolean;
   abuseScore: number | null;
   abuseLabels: string[];
@@ -61,9 +77,10 @@ const TAB_LABELS: Record<ReviewTab, string> = {
   negative: "Negative",
   removed: "Removed",
   abusive: "Abusive",
+  needs_human: "Needs human",
 };
 const PRIMARY_TABS: ReviewTab[] = ["all", "need_approval", "edited"];
-const MORE_TABS: ReviewTab[] = ["unanswered", "flagged", "replied", "positive", "negative", "abusive", "removed"];
+const MORE_TABS: ReviewTab[] = ["unanswered", "flagged", "replied", "positive", "negative", "needs_human", "abusive", "removed"];
 
 export default function ReviewsPage() {
   return (
@@ -283,15 +300,29 @@ function ReviewsInner() {
     edited: live.filter((r) => r.edited).length,
     removed: reviews.length - live.length,
     abusive: live.filter((r) => r.abuseFlagged).length,
+    // Readings the AI could not ground, plus reviews never analysed at all.
+    // Must stay identical to the needsHumanRows filter below, or the tab count
+    // disagrees with what the tab shows.
+    needs_human: live.filter((r) => !r.meaning || r.meaning.needs_human === true).length,
   }), [live, reviews, pendingReplies]);
 
   // The Removed tab is the one view that is deliberately the opposite set.
   const removedRows = useMemo(() => reviews.filter((r) => r.removed), [reviews]);
   const abusiveRows = useMemo(() => live.filter((r) => r.abuseFlagged), [live]);
+  const needsHumanRows = useMemo(
+    () => live.filter((r) => !r.meaning || r.meaning.needs_human === true),
+    [live]
+  );
   const filtered = (
-    tab === "removed" ? removedRows : tab === "abusive" ? abusiveRows : live
+    tab === "removed"
+      ? removedRows
+      : tab === "abusive"
+        ? abusiveRows
+        : tab === "needs_human"
+          ? needsHumanRows
+          : live
   ).filter((r) => {
-    if (tab === "removed" || tab === "abusive") return true;
+    if (tab === "removed" || tab === "abusive" || tab === "needs_human") return true;
     if (tab === "unanswered") return !r.replied && !r.skipped;
     if (tab === "replied") return r.replied;
     if (tab === "need_approval") return !r.replied && !r.skipped;
@@ -310,6 +341,7 @@ function ReviewsInner() {
   const [aiIntel, setAiIntel] = useState<{
     intel: Intelligence; source: string; model: string | null; ragUsed: boolean;
     analyzedAt: string | null; stale: boolean; newCount: number;
+    heldOut: HeldOutCounts | null;
   } | null>(null);
   const [intelLoading, setIntelLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -1495,6 +1527,32 @@ function ReviewsInner() {
                   )
                 )}
 
+                {/* Meaning — what the AI understood, and the controls to fix it */}
+                <div className="px-4 pb-4">
+                  <MeaningInspector
+                    review={
+                      {
+                        id: active.id,
+                        review_id: active.review_id,
+                        meaning: active.meaning,
+                      } as unknown as ReviewInsight
+                    }
+                    onSaved={(updated) => {
+                      setReviews((prev) =>
+                        prev.map((r) =>
+                          r.id === active.id ? { ...r, meaning: updated.meaning ?? null } : r
+                        )
+                      );
+                      setBanner({ kind: "ok", text: "Meaning corrected. The report will use this." });
+                      setTimeout(() => setBanner(null), 4000);
+                    }}
+                    onError={(m) => {
+                      setBanner({ kind: "err", text: m });
+                      setTimeout(() => setBanner(null), 6000);
+                    }}
+                  />
+                </div>
+
                 {/* Reply composer — Material, not violet */}
                 <div className="mx-4 mb-4 rounded-lg border border-[#E8EAED] bg-[#F8F9FA] p-4">
                   <h3 className="text-[13px] font-medium text-[#202124]">Your reply</h3>
@@ -1831,7 +1889,7 @@ function ReviewsInner() {
               intelligence={aiIntel?.intel ?? intelligence}
               total={reviews.length}
               locationName={locations.find((l) => l.id === selectedId)?.name ?? ""}
-              aiMeta={aiIntel ? { source: aiIntel.source, model: aiIntel.model, ragUsed: aiIntel.ragUsed, analyzedAt: aiIntel.analyzedAt, stale: aiIntel.stale, newCount: aiIntel.newCount } : null}
+              aiMeta={aiIntel ? { source: aiIntel.source, model: aiIntel.model, ragUsed: aiIntel.ragUsed, analyzedAt: aiIntel.analyzedAt, stale: aiIntel.stale, newCount: aiIntel.newCount, heldOut: aiIntel.heldOut } : null}
               aiLoading={intelLoading}
               analyzing={analyzing}
               onAnalyze={() => runAnalysis()}
@@ -1913,6 +1971,7 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
       media: Array.isArray(r.media) ? (r.media as ReviewItem["media"]) : [],
       removed: typeof r.removed_at === "string",
+      meaning: (r.meaning as ReviewItem["meaning"]) ?? null,
       abuseFlagged: r.abuse_flagged === true,
       abuseScore: typeof r.abuse_score === "number" ? r.abuse_score : null,
       abuseLabels: Array.isArray(r.abuse_labels) ? r.abuse_labels.map(String) : [],
@@ -2179,9 +2238,14 @@ function mergeAiIntel(data: {
   stale: boolean;
   current_count: number;
   review_count: number;
+  /** Verified numbers. `held_out` = reviews the report refused to categorise. */
+  stats?: {
+    held_out?: { needs_human: number; not_analysed: number; unclassified: number; total: number } | null;
+  } | null;
 }, base: Intelligence): {
   intel: Intelligence; source: string; model: string | null; ragUsed: boolean;
   analyzedAt: string | null; stale: boolean; newCount: number;
+  heldOut: HeldOutCounts | null;
 } {
   const toTheme = (t: (typeof data.themes)[number]): IntelTheme => ({
     name: t.name, keywords: [], mentions: t.mentions,
@@ -2213,6 +2277,7 @@ function mergeAiIntel(data: {
     analyzedAt: data.analyzed_at ?? null,
     stale: data.stale === true,
     newCount: Math.max(0, (data.current_count ?? 0) - (data.review_count ?? 0)),
+    heldOut: data.stats?.held_out ?? null,
   };
 }
 
@@ -2266,7 +2331,7 @@ function heatCell(value: number, max: number): { cls: string } {
 
 function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, aiLoading, analyzing, onAnalyze, onBack, onOpenStar, intelDays, intelMonth, intelInterval, setIntelDays, setIntelMonth }: {
   intelligence: Intelligence; total: number; locationName: string;
-  aiMeta: { source: string; model: string | null; ragUsed: boolean; analyzedAt: string | null; stale: boolean; newCount: number } | null;
+  aiMeta: { source: string; model: string | null; ragUsed: boolean; analyzedAt: string | null; stale: boolean; newCount: number; heldOut: HeldOutCounts | null } | null;
   aiLoading: boolean;
   analyzing: boolean;
   onAnalyze: () => void;
@@ -2331,6 +2396,17 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
             {aiMeta?.stale && (
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#FEF7E0] px-2.5 py-1 text-[12px] font-medium text-[#EA8600]">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#EA8600]" /> {aiMeta.newCount} new review(s) since last AI run — re-analyze for fresh insights
+              </p>
+            )}
+            {(aiMeta?.heldOut?.total ?? 0) > 0 && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#FEF7E0] px-2.5 py-1 text-[12px] text-[#7A4F01]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#F4B400]" />
+                {aiMeta?.heldOut?.total} review(s) are not counted in these insights
+                {aiMeta?.heldOut?.needs_human
+                  ? ` — ${aiMeta.heldOut.needs_human} the AI could not read confidently`
+                  : ""}
+                {aiMeta?.heldOut?.not_analysed ? `, ${aiMeta.heldOut.not_analysed} not analysed yet` : ""}
+                . Open the Needs human tab to check them.
               </p>
             )}
           </div>

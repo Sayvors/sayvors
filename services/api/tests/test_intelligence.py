@@ -27,9 +27,12 @@ def test_is_emerging_threshold():
 def test_period_bounds_equal_length():
     now = datetime.now(timezone.utc)
     cur_start, cur_end, prev_start, prev_end = _period_bounds(30)
-    assert cur_end == now
-    assert cur_start == now - timedelta(days=30)
-    assert prev_start == now - timedelta(days=60)
+    # _period_bounds() takes its own `now`, so these differ by microseconds.
+    # What matters is that the window is exactly 30 days and the two windows
+    # meet without a gap or an overlap.
+    assert abs((cur_end - now).total_seconds()) < 0.01
+    assert abs((cur_start - (cur_end - timedelta(days=30))).total_seconds()) < 0.01
+    assert abs((prev_end - prev_start).total_seconds() - 30 * 86400) < 0.01
     assert prev_end == cur_start
 
 

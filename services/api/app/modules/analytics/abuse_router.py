@@ -7,9 +7,90 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
 from .models import ReviewInsight
-from .schemas import AbuseFlagBody, AbuseVerdictBody, ReviewInsightItem
+from .schemas import (
+    AbuseFlagBody,
+    AbuseVerdictBody,
+    MeaningCorrectionBody,
+    ReviewInsightItem,
+)
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["abuse"])
+
+
+@router.post("/reviews/insights/{insight_id}/meaning", response_model=ReviewInsightItem)
+async def correct_review_meaning(
+    insight_id: str,
+    body: MeaningCorrectionBody,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Correct what the AI understood a review to mean.
+
+    This is the human gate in the meaning layer. The AI once read the Arabic
+    review "you need to fix your building" as "bank account corrections" and
+    produced a business action from that fabrication. A person has to be able
+    to fix the reading at the source rather than argue with the summary
+    downstream.
+
+    A correction is authoritative: stored with `source: "human"` and never
+    overwritten by re-analysis. `subject` is validated against the closed
+    vocabulary — an unknown value is rejected with a 422 rather than quietly
+    becoming "other", because silently accepting it would reintroduce exactly
+    the problem this endpoint exists to stop.
+    """
+    from . import subjects as S
+
+    insight = await _owned_insight(db, insight_id, user)
+
+    current = insight.meaning if isinstance(insight.meaning, dict) else {}
+    subject = current.get("subject", "other")
+
+    if body.subject is not None:
+        resolved = S.coerce_subject(body.subject)
+        if resolved is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"'{body.subject}' is not a valid subject. Choose one of: "
+                    f"{', '.join(sorted(S.SUBJECT_KEYS))}"
+                ),
+            )
+        subject = resolved
+
+    corrected = {
+        **current,
+        "subject": subject,
+        "needs_human": body.needs_human if body.needs_human is not None else False,
+        "source": "human",
+        "corrected_at": datetime.now(timezone.utc).isoformat(),
+        "reason": None,
+        "language": current.get("language") or S.detect_language(insight.review_text),
+        "intent": current.get("intent"),
+        "problem": current.get("problem"),
+        "asks": current.get("asks") or [],
+        "evidence": current.get("evidence") or [],
+        "entities": current.get("entities") or {k: [] for k in S.ENTITY_KEYS},
+        "negated": bool(current.get("negated")),
+        "intensity": current.get("intensity") or 0.0,
+        # A human has spoken; confidence is not the model's to keep claiming.
+        "confidence": 1.0,
+    }
+    if body.intent is not None:
+        corrected["intent"] = body.intent.strip()[:120] or None
+    if body.problem is not None:
+        corrected["problem"] = body.problem.strip()[:1000] or None
+    if body.asks is not None:
+        corrected["asks"] = [
+            a.strip()[:120] for a in body.asks if isinstance(a, str) and a.strip()
+        ][:5]
+    if body.note:
+        corrected["correction_note"] = body.note.strip()[:500]
+
+    insight.meaning = corrected
+    db.add(insight)
+    await db.commit()
+    await db.refresh(insight)
+    return ReviewInsightItem.model_validate(insight)
 
 
 # -- Abusive review reporting -------------------------------------

@@ -88,6 +88,12 @@ class ReviewInsight(Base):
     # that stops resolving within hours. `source_url` is kept only to detect
     # a changed photo on the next sync.
     media: Mapped[list] = mapped_column(JSON, default=list)
+    # Per-review meaning record — the layer the intelligence report reads
+    # instead of re-interpreting raw text. See analytics/subjects.py for the
+    # closed vocabulary and the evidence rule that stops the model inventing
+    # complaints. `source` is "llm" | "heuristic" | "human"; a human
+    # correction is never overwritten by a re-analysis.
+    meaning: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Last sync that returned this review. A complete sync that does not
     # include it means Google no longer serves it (reviewer deleted, Google
     # removed, or filtered) — see `removed_at`.

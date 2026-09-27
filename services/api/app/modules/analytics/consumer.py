@@ -32,7 +32,7 @@ from ..channels.models import Channel, ReviewReply
 from ..kafka.client import create_consumer
 from ..notifications.service import notify
 from ..outbox.service import enqueue_event
-from .enrichment import enrich_review
+from .enrichment import enrich_review, extract_meaning, is_human_corrected
 from .models import LocationDailyMetric, ReviewInsight
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,17 @@ async def _handle_discovered(payload: dict) -> None:
                 new_rating != existing.rating
                 or (bool(existing.review_text) and (new_text or None) != (existing.review_text or None))
             )
-            if existing.enrichment_status == "done" and not content_changed:
+            # A replay is only idempotent once BOTH the old enrichment and the
+            # meaning layer have run. Every existing row already says
+            # enrichment "done" from the pre-meaning pipeline, so keying this
+            # on enrichment alone would skip meaning for all of them forever
+            # and leave the report reading nothing.
+            meaning_pending = not is_human_corrected(existing.meaning) and not existing.meaning
+            if (
+                existing.enrichment_status == "done"
+                and not content_changed
+                and not meaning_pending
+            ):
                 return  # idempotent replay
             if content_changed and not existing.edited:
                 # First detection — snapshot what we had on file.
@@ -135,6 +145,27 @@ async def _handle_discovered(payload: dict) -> None:
                 )
             except Exception as e:  # photos are garnish, never fail the event
                 logger.warning("review media sync failed for %s: %s", review_id, e)
+
+        # Per-review meaning. This is the layer the intelligence report reads
+        # instead of re-interpreting raw text, which is how an Arabic "fix your
+        # building" review became a "bank account" finding in the first place.
+        # A human correction is authoritative and is never overwritten here; a
+        # genuine edit from the reviewer does invalidate it.
+        if content_changed and is_human_corrected(insight.meaning):
+            # The customer changed what they wrote, so the old reading no
+            # longer describes it. A human call on stale text is not a call on
+            # the new text.
+            insight.meaning = None
+        if not is_human_corrected(insight.meaning):
+            try:
+                insight.meaning = await extract_meaning(
+                    text=insight.review_text,
+                    rating=insight.rating,
+                    reviewer_name=insight.reviewer_name,
+                    tenant_id=insight.user_id,
+                )
+            except Exception as e:  # meaning is additive, never fail the event
+                logger.warning("meaning extraction failed for %s: %s", review_id, e)
 
         if content_changed:
             insight.edited = True

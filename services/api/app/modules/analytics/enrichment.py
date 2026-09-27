@@ -1,9 +1,20 @@
-"""Per-review AI enrichment: sentiment, topics, products, problems.
+"""Per-review AI enrichment: sentiment, topics, products, problems, meaning.
 
 Runs inside the analytics Kafka consumer. Uses the tenant's LLM catalog
 (strict-JSON prompt) with a deterministic keyword/rating heuristic fallback,
 so the pipeline never stalls when the LLM is unavailable — matching the
 graceful-degradation pattern used across the codebase (Kafka, Redis).
+
+The `meaning` half is the part that matters for trust. A language model asked
+to summarise a set of reviews will invent a plausible complaint nobody made: it
+read the Arabic "you need to fix your building" as "bank account corrections"
+and then propagated that through a theme, an opportunity and a business
+action. Telling it not to do that in the prompt did not help.
+
+So meaning is extracted per review and then *checked in code* (see subjects.py):
+the subject must come from a closed vocabulary, and every evidence span must
+appear verbatim in the review. A complaint that cannot be grounded is marked
+`needs_human` and surfaced, never believed and never forced into a theme.
 """
 import json
 import logging
@@ -162,3 +173,222 @@ async def enrich_review(
     except Exception as e:
         logger.warning("LLM enrichment failed (%s); using heuristic fallback: %s", model, e)
         return _heuristic_enrich(rating, text)
+
+
+# ── Meaning layer ────────────────────────────────────────────────
+
+MEANING_SYSTEM_PROMPT = """You extract what a single customer review MEANS.
+
+Return STRICT JSON only (no markdown fences, no commentary):
+
+{
+  "intent": "<what the customer is doing: praising, complaining, asking, warning>",
+  "subject": "<ONE value from the list below>",
+  "problem": "<the complaint in the customer's own framing, or null>",
+  "asks": ["<what the customer is asking for, verbatim where possible>"],
+  "entities": {"product": [], "location": [], "staff": [], "dates": []},
+  "negated": <true if the review DENIES something it would otherwise imply, e.g. no problems>,
+  "sentiment": "positive" | "neutral" | "negative",
+  "intensity": <float 0.0..1.0, strength of feeling>,
+  "evidence": ["<short spans copied VERBATIM from the review that support the above>"],
+  "confidence": <float 0.0..1.0>
+}
+
+SUBJECT must be exactly one of:
+{subjects}
+
+Rules:
+- Judge the REVIEW, never the reviewer.
+- Being negative is NOT a problem by itself. Only assign a subject when the
+  review actually raises that issue; otherwise use the closest subject or "other".
+- If nothing fits, use "other" and set confidence low. DO NOT invent an issue.
+- evidence MUST be copied character-for-character from the review. Never
+  translate, paraphrase, or invent a quote. 2-8 words is ideal.
+- If the review is in a language other than English, still copy evidence in
+  that language. Do not translate the evidence.
+- "negated" is true when the customer denies something, e.g. "no problems",
+  "nothing to complain about", "not fresh". Read it carefully; the difference
+  is a few characters.
+
+Return an empty object if the review has no text at all."""
+
+
+def _meaning_prompt() -> str:
+    from .subjects import SUBJECTS
+
+    allowed = "\n".join(f"- {key}: {label}" for key, label in SUBJECTS.items())
+    return MEANING_SYSTEM_PROMPT.replace("{subjects}", allowed)
+
+
+def _blank_meaning(*, reason: str, language: str, source: str) -> dict:
+    """A meaning record that asserts nothing.
+
+    Used whenever we cannot ground an interpretation. `needs_human` is the
+    point: an ungrounded review must be visible to a person, not silently
+    filed under a theme the model made up.
+    """
+    return {
+        "intent": None,
+        "subject": "other",
+        "problem": None,
+        "asks": [],
+        "entities": {"product": [], "location": [], "staff": [], "dates": []},
+        "negated": False,
+        "intensity": 0.0,
+        "evidence": [],
+        "confidence": 0.0,
+        "needs_human": True,
+        "source": source,
+        "reason": reason,
+        "language": language,
+        "corrected_at": None,
+    }
+
+
+async def extract_meaning(
+    *,
+    text: str | None,
+    rating: int,
+    reviewer_name: str | None = None,
+    model: str = ENRICHMENT_MODEL,
+    tenant_id: str | None = None,
+) -> dict:
+    """Work out what one review means, and refuse to guess.
+
+    Always returns a record. When the model cannot be reached, returns junk, or
+    returns something whose evidence is not in the review, the record is
+    `needs_human` with `confidence` 0 — so the failure shows up in the UI as
+    work for a person rather than as a fabricated finding.
+    """
+    from . import subjects as S
+
+    body = (text or "").strip()
+    language = S.detect_language(body)
+    if not body:
+        return _blank_meaning(reason="no review text", language=language, source="llm")
+
+    try:
+        from ..llm.providers.base import LLMMessage, LLMRequest
+        from ..llm.providers.registry import get_provider_for_model
+        from ..llm.service import _resolve_model
+
+        provider = get_provider_for_model(model)
+        api_model, _ = _resolve_model(model)
+        resp = await provider.complete(
+            LLMRequest(
+                model=api_model,
+                messages=[LLMMessage(role="user", content=json.dumps({
+                    "rating": rating,
+                    "reviewer_name": reviewer_name or "an anonymous customer",
+                    "review_text": body[:2000],
+                }))],
+                system_prompt=_meaning_prompt(),
+                temperature=0.0,
+                max_tokens=500,
+                stream=False,
+                tenant_id=tenant_id,
+                model_id=model,
+                purpose="analytics.meaning",
+            )
+        )
+        data = _extract_json(resp.content)
+    except Exception as e:
+        logger.warning("meaning extraction unavailable (%s): %s", model, e)
+        return _blank_meaning(reason="llm unavailable", language=language, source="llm")
+
+    if not isinstance(data, dict) or not data:
+        return _blank_meaning(reason="unparseable output", language=language, source="llm")
+
+    subject = S.coerce_subject(data.get("subject"))
+    if subject is None:
+        # The model invented a category. That is the exact failure this layer
+        # exists to stop, so it is recorded rather than coerced into a legal one.
+        return _blank_meaning(
+            reason=f"invented subject: {str(data.get('subject'))[:60]!r}",
+            language=language,
+            source="llm",
+        )
+
+    evidence = S.filter_evidence(
+        data.get("evidence") if isinstance(data.get("evidence"), list) else None,
+        body,
+    )
+    confidence = S.coerce_confidence(data.get("confidence"))
+
+    # A complaint with nothing supporting it in the review is a fabrication.
+    # A praise-only review legitimately has no evidence spans, so only gate the
+    # negative case — that is the one that produces business actions.
+    is_negative = str(data.get("sentiment", "")).lower() in ("negative", "neutral")
+    if is_negative and not evidence:
+        return _blank_meaning(
+            reason="no verbatim evidence for the complaint",
+            language=language,
+            source="llm",
+        )
+
+    # Cross-check the model's negation answer against the text. Where they
+    # disagree, drop confidence rather than trusting either: "no problems" and
+    # "there is a problem" differ by a few characters in both languages.
+    model_negated = bool(data.get("negated"))
+    text_negated = S.has_negation(body)
+    if model_negated != text_negated:
+        confidence = round(confidence * 0.6, 3)
+
+    needs_human = confidence < S.AUTO_ACCEPT_CONFIDENCE
+    record = {
+        "intent": _clean_str(data.get("intent"), 60),
+        "subject": subject,
+        "problem": _clean_str(data.get("problem"), 300),
+        "asks": _clean_list(data.get("asks"), 5, 120),
+        "entities": _clean_entities(data.get("entities")),
+        "negated": model_negated,
+        "intensity": S.coerce_confidence(data.get("intensity")),
+        "evidence": evidence,
+        "confidence": confidence,
+        "needs_human": needs_human,
+        "source": "llm",
+        "reason": "low confidence" if needs_human else None,
+        "language": language,
+        "corrected_at": None,
+    }
+    return record
+
+
+def _clean_str(value, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed[:limit] if trimmed else None
+
+
+def _clean_list(value, limit: int, item_limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        cleaned = _clean_str(item, item_limit)
+        if cleaned:
+            out.append(cleaned)
+        if len(out) >= limit:
+            break
+    return out
+
+
+_ENTITY_KEYS = ("product", "location", "staff", "dates")
+
+
+def _clean_entities(value) -> dict:
+    """Entities as a fixed shape, so downstream code never guesses at keys."""
+    from .subjects import ENTITY_KEYS
+
+    src = value if isinstance(value, dict) else {}
+    return {k: _clean_list(src.get(k), 4, 80) for k in ENTITY_KEYS}
+
+
+def is_human_corrected(meaning) -> bool:
+    """True when a person has already set this meaning.
+
+    Re-analysis must not overwrite it: a human looked at the review and made a
+    call, and a later model pass has no way of knowing that.
+    """
+    return isinstance(meaning, dict) and meaning.get("source") == "human"
