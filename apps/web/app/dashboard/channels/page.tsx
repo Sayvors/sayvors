@@ -257,7 +257,7 @@ function AiReplyControls({
           <button
             onClick={() => onSave(channel.id)}
             disabled={saving}
-            className="rounded-lg bg-deep-violet px-3.5 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+            className="min-h-8 rounded-lg bg-deep-violet px-3.5 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
           >
             {saving ? (
               <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span>
@@ -316,12 +316,12 @@ function LocalithListingRow({
   const rev = profile?.item_metrics?.listings?.[0];
   return (
     <div className={`rounded-xl border p-3 transition ${connected ? "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/[0.06]" : "border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink"}`}>
-      <div className="flex items-center gap-2.5">
+      <div className="flex flex-wrap items-center gap-2.5">
         <button
           onClick={() => setExpanded((e) => !e)}
           aria-expanded={expanded}
           aria-label={expanded ? "Collapse listing details" : "Expand listing details"}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink/40 outline-none transition hover:bg-ink/[0.05] hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink/40 outline-none transition hover:bg-ink/[0.05] hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/40 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
         >
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden>
             <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -332,7 +332,7 @@ function LocalithListingRow({
           title={connected ? "Connected" : "Not connected"}
           className={`h-2 w-2 shrink-0 rounded-full ${connected ? "bg-emerald-500" : "bg-ink/20 dark:bg-fog/20"}`}
         />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[9rem] flex-1">
           <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 truncate text-[13px] font-semibold text-ink dark:text-fog">
             <span className="truncate">{connected ? conn.listing_name : listing.name}</span>
             {connected ? (
@@ -358,7 +358,7 @@ function LocalithListingRow({
           <button
             onClick={() => onResync(listing.id)}
             disabled={busy}
-            className="shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            className="min-h-8 shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
           >
             {busy ? <LogoLoader size={14} /> : "Sync now"}
           </button>
@@ -372,7 +372,7 @@ function LocalithListingRow({
           }}
           aria-label={`Enable ${listing.name} in Sayvors`}
           title={connected ? "Disable this listing" : "Enable this listing"}
-          className="shrink-0 rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] font-semibold text-ink outline-none transition focus:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+          className="min-h-8 shrink-0 rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] font-semibold text-ink outline-none transition focus:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         >
           <option value="disabled">Disabled</option>
           <option value="enabled">Enabled</option>
@@ -942,7 +942,7 @@ function ConnectHub() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {/* Localith — ONE card: every listing on the account, enabled per row */}
         <div className="rounded-xl border border-ink/[0.06] bg-white p-4 sm:col-span-2 lg:col-span-3 dark:border-fog/[0.06] dark:bg-ink" data-tour="connect-location">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-sm">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
                 <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
@@ -964,7 +964,7 @@ function ConnectHub() {
               disabled={busyBranch !== null || localithConns.length === 0}
               data-tour="sync-now"
               title="Sync every connected branch"
-              className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+              className="min-h-8 shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
             >
               {busyBranch === "all" ? <LogoLoader size={14} /> : "Sync all"}
             </button>
@@ -987,7 +987,7 @@ function ConnectHub() {
                   onClick={() => setShowKeyForm(true)}
                   disabled={keyBusy || localithConns.length === 0}
                   title={localithConns.length === 0 ? "Connect a listing first" : hasOwnKey ? "Rotate your key" : "Use your own Localith key"}
-                  className="shrink-0 rounded-lg border border-ink/10 px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-emerald-500/40 hover:text-emerald-700 disabled:opacity-50 dark:border-fog/10 dark:text-fog/60"
+                  className="min-h-8 shrink-0 rounded-lg border border-ink/10 px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-emerald-500/40 hover:text-emerald-700 disabled:opacity-50 dark:border-fog/10 dark:text-fog/60"
                 >
                   {hasOwnKey ? "Rotate" : "Set key"}
                 </button>
@@ -996,7 +996,7 @@ function ConnectHub() {
                 <button
                   onClick={() => void removeApiKey()}
                   disabled={keyBusy}
-                  className="shrink-0 rounded-lg border border-ink/10 px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-red-400/50 hover:text-red-600 disabled:opacity-50 dark:border-fog/10 dark:text-fog/60"
+                  className="min-h-8 shrink-0 rounded-lg border border-ink/10 px-2.5 py-1 text-[11px] font-semibold text-ink/60 transition hover:border-red-400/50 hover:text-red-600 disabled:opacity-50 dark:border-fog/10 dark:text-fog/60"
                 >
                   Remove
                 </button>
@@ -1015,14 +1015,14 @@ function ConnectHub() {
                 <button
                   onClick={() => void saveApiKey()}
                   disabled={keyBusy}
-                  className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                  className="min-h-8 shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
                 >
                   {keyBusy ? "Saving…" : "Save"}
                 </button>
                 <button
                   onClick={() => { setShowKeyForm(false); setApiKeyDraft(""); }}
                   disabled={keyBusy}
-                  className="shrink-0 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink/50 disabled:opacity-50 dark:text-fog/50"
+                  className="min-h-8 shrink-0 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-ink/50 disabled:opacity-50 dark:text-fog/50"
                 >
                   Cancel
                 </button>
@@ -1075,7 +1075,7 @@ function ConnectHub() {
         ].map((c) => (
           <div
             key={c.name}
-            className="flex items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 opacity-70 dark:border-fog/[0.06] dark:bg-ink"
+            className="flex flex-wrap items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 opacity-70 dark:border-fog/[0.06] dark:bg-ink"
           >
             <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${c.color} text-[22px] text-white shadow-sm`}>
               {c.icon}

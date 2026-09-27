@@ -505,14 +505,14 @@ export default function MetaConnections({
         return (
           <div key={p.key}>
             <div
-              className={`flex items-center gap-4 rounded-xl border bg-white p-4 transition dark:bg-ink ${
+              className={`flex flex-wrap items-center gap-4 rounded-xl border bg-white p-4 transition dark:bg-ink ${
                 activeFilter ? p.key === "whatsapp" ? "border-emerald-200/60 shadow-[0_0_28px_-8px_rgba(16,185,129,0.25)] dark:border-emerald-500/20" : p.key === "facebook" ? "border-blue-200/60 shadow-[0_0_28px_-8px_rgba(37,99,235,0.25)] dark:border-blue-500/20" : p.key === "instagram" ? "border-pink-200/60 shadow-[0_0_28px_-8px_rgba(236,72,153,0.25)] dark:border-pink-500/20" : "border-ink/[0.06] dark:border-fog/[0.06]" : "border-ink/[0.06] dark:border-fog/[0.06]"
               }`}
             >
               <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${p.color} text-[22px] text-white shadow-sm`}>
                 {p.icon}
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-[10rem] flex-1">
                 <p className="flex items-center gap-2 text-[14px] font-semibold text-ink dark:text-fog">
                   {p.name}
                   {conn && conn.status !== "revoked" && (
@@ -530,11 +530,11 @@ export default function MetaConnections({
                 <p className="truncate text-[12px] text-ink/40 dark:text-fog/40">{label}</p>
               </div>
               {isDisconnected ? (
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2 max-sm:w-full">
                   <button
                     onClick={() => (p.key === "whatsapp" ? connectWhatsApp() : connectOAuth(p.key))}
                     disabled={busy === p.key || (p.key === "whatsapp" && sdkLoading)}
-                    className="rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                    className="min-h-8 rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
                   >
                     {busy === p.key ? "…" : p.key === "whatsapp" && sdkLoading ? "Loading…" : "Connect"}
                   </button>
