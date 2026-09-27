@@ -23,6 +23,7 @@ from .modules.localith.router import router as localith_router
 from .modules.locations.router import router as locations_router
 from .modules.posts.router import router as posts_router
 from .modules.media.router import router as media_router
+from .modules.storage.router import router as storage_router
 from .modules.admin.router import router as admin_router
 from .modules.email.router import router as email_router
 from .modules.review_engine.router import router as review_engine_router
@@ -210,6 +211,7 @@ app.include_router(localith_router)
 app.include_router(locations_router)
 app.include_router(posts_router)
 app.include_router(media_router)
+app.include_router(storage_router)
 app.include_router(admin_router)
 app.include_router(email_router)
 app.include_router(review_engine_router)

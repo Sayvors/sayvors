@@ -118,7 +118,13 @@ async def save_upload(
     storage_key, public_url = put_media(user_id, filename, data, expected_type)
     if not public_url:
         public_url = local_media_url(base_url, user_id, storage_key)
+    object_key = storage_key
+    if object_key.startswith(f"media/{user_id}/"):
+        object_key = object_key[len("media/"):]
+    elif not object_key.startswith(f"{user_id}/"):
+        object_key = f"{user_id}/{Path(object_key).name}"
     return {
+        "key": object_key,
         "image_url": public_url,
         "type": detect_media_type(filename, expected_type),
         "size": len(data),

@@ -101,6 +101,7 @@ function PostsInner() {
   const [keywords, setKeywords] = useState<string[]>([]);
   const [keywordInput, setKeywordInput] = useState("");
   const [images, setImages] = useState<string[]>([]);
+  const [imageUrlInput, setImageUrlInput] = useState("");
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
   const [deleteEnabled, setDeleteEnabled] = useState(false);
@@ -250,6 +251,7 @@ function PostsInner() {
     setKeywords([]);
     setKeywordInput("");
     setImages([]);
+    setImageUrlInput("");
     setScheduleEnabled(false);
     setScheduledAt("");
     setDeleteEnabled(false);
@@ -301,10 +303,59 @@ function PostsInner() {
     if (v && !list.includes(v)) setList([...list, v]);
   };
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = async (files: FileList | null) => {
     if (!files) return;
-    const names = Array.from(files).slice(0, 5).map((f) => f.name);
-    setImages((prev) => [...prev, ...names].slice(0, 5));
+    const remaining = Math.max(0, 5 - images.length);
+    const selected = Array.from(files).slice(0, remaining);
+    if (!selected.length) return;
+    setSubmitting(true);
+    try {
+      const uploaded: string[] = [];
+      for (const file of selected) {
+        const form = new FormData();
+        form.append("file", file);
+        const result = await apiFetch("/api/v1/storage/upload", {
+          method: "POST",
+          body: form,
+        });
+        if (typeof result?.url !== "string" || !result.url.startsWith("https://")) {
+          throw new Error("This server stores uploads on local HTTP storage. Add a publicly hosted HTTPS image URL below instead; Localith must be able to fetch it.");
+        }
+        uploaded.push(result.url);
+      }
+      setImages((prev) => [...prev, ...uploaded].slice(0, 5));
+      showBannerTimed("ok", `${uploaded.length} media file(s) uploaded and ready for your post.`);
+    } catch (e) {
+      showBannerTimed("err", e instanceof Error ? e.message.slice(0, 180) : "Media upload failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const addHostedImageUrl = () => {
+    const value = imageUrlInput.trim();
+    if (!value) return;
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      showBannerTimed("err", "Enter a valid public image URL.");
+      return;
+    }
+    if (parsed.protocol !== "https:") {
+      showBannerTimed("err", "Use an HTTPS image URL that Localith can access publicly.");
+      return;
+    }
+    if (images.includes(value)) {
+      showBannerTimed("err", "That image URL is already attached.");
+      return;
+    }
+    if (images.length >= 5) {
+      showBannerTimed("err", "A post can include up to 5 images.");
+      return;
+    }
+    setImages((prev) => [...prev, value]);
+    setImageUrlInput("");
   };
 
   // Scheduled deletion must be in the future — and after the scheduled
@@ -705,7 +756,8 @@ function PostsInner() {
               keywords={keywords} keywordInput={keywordInput} setKeywordInput={setKeywordInput}
               onAddKeyword={() => { addChip(keywordInput, keywords, setKeywords); setKeywordInput(""); }}
               onRemoveKeyword={(k) => setKeywords(keywords.filter((x) => x !== k))}
-              images={images} onFiles={handleFiles} onRemoveImage={(n) => setImages(images.filter((x) => x !== n))}
+              images={images} onFiles={(files) => void handleFiles(files)} onRemoveImage={(url) => setImages(images.filter((x) => x !== url))}
+              imageUrlInput={imageUrlInput} setImageUrlInput={setImageUrlInput} onAddImageUrl={addHostedImageUrl}
               scheduleEnabled={scheduleEnabled} setScheduleEnabled={setScheduleEnabled}
               scheduledAt={scheduledAt} setScheduledAt={setScheduledAt}
               deleteEnabled={deleteEnabled} setDeleteEnabled={setDeleteEnabled}
@@ -748,7 +800,8 @@ function PostsInner() {
                   keywords={keywords} keywordInput={keywordInput} setKeywordInput={setKeywordInput}
                   onAddKeyword={() => { addChip(keywordInput, keywords, setKeywords); setKeywordInput(""); }}
                   onRemoveKeyword={(k) => setKeywords(keywords.filter((x) => x !== k))}
-                  images={images} onFiles={handleFiles} onRemoveImage={(n) => setImages(images.filter((x) => x !== n))}
+                  images={images} onFiles={(files) => void handleFiles(files)} onRemoveImage={(url) => setImages(images.filter((x) => x !== url))}
+                  imageUrlInput={imageUrlInput} setImageUrlInput={setImageUrlInput} onAddImageUrl={addHostedImageUrl}
                   scheduleEnabled={scheduleEnabled} setScheduleEnabled={setScheduleEnabled}
                   scheduledAt={scheduledAt} setScheduledAt={setScheduledAt}
                   deleteEnabled={deleteEnabled} setDeleteEnabled={setDeleteEnabled}
@@ -955,6 +1008,7 @@ function PostForm(props: {
   tags: string[]; tagInput: string; setTagInput: (v: string) => void; onAddTag: () => void; onRemoveTag: (t: string) => void;
   keywords: string[]; keywordInput: string; setKeywordInput: (v: string) => void; onAddKeyword: () => void; onRemoveKeyword: (k: string) => void;
   images: string[]; onFiles: (f: FileList | null) => void; onRemoveImage: (n: string) => void;
+  imageUrlInput: string; setImageUrlInput: (v: string) => void; onAddImageUrl: () => void;
   scheduleEnabled: boolean; setScheduleEnabled: (v: boolean) => void;
   scheduledAt: string; setScheduledAt: (v: string) => void;
   deleteEnabled: boolean; setDeleteEnabled: (v: boolean) => void;
@@ -1132,15 +1186,28 @@ function PostForm(props: {
         <div>
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Images (up to 5)</label>
           <label className="flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-ink/[0.12] py-6 text-[12px] text-ink/40">
-            <span>Click to attach images</span>
-            <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => p.onFiles(e.target.files)} />
+              <span>{p.submitting ? "Uploading…" : "Click to upload images"}</span>
+            <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { p.onFiles(e.target.files); e.currentTarget.value = ""; }} />
           </label>
+          <div className="mt-2 flex gap-2">
+            <input
+              value={p.imageUrlInput}
+              onChange={(e) => p.setImageUrlInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); p.onAddImageUrl(); } }}
+              placeholder="Or paste a public HTTPS image URL"
+              className="input-field min-w-0 flex-1"
+              inputMode="url"
+              aria-label="Public image URL"
+            />
+            <button type="button" onClick={p.onAddImageUrl} className="btn-secondary">Add URL</button>
+          </div>
+          <p className="mt-1 text-[10px] text-ink/40">Localith must be able to fetch the image. Localhost and private-network URLs will not work.</p>
           {p.images.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {p.images.map((n) => (
-                <span key={n} className="inline-flex items-center gap-1 rounded-lg bg-ink/[0.04] px-2 py-1 text-[11px] text-ink/60">
-                  {n}
-                  <button onClick={() => p.onRemoveImage(n)} className="opacity-50 hover:opacity-100">✕</button>
+              {p.images.map((url) => (
+                <span key={url} className="inline-flex items-center gap-1 rounded-lg bg-ink/[0.04] px-2 py-1 text-[11px] text-ink/60">
+                  {decodeURIComponent(url.split("/").pop()?.split("?")[0] ?? "Uploaded media")}
+                  <button onClick={() => p.onRemoveImage(url)} className="opacity-50 hover:opacity-100">✕</button>
                 </span>
               ))}
             </div>

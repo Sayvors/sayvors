@@ -50,7 +50,9 @@ class Settings(BaseSettings):
     MEDIA_DIR: str = "./data/uploads/media"
     MEDIA_PUBLIC_PATH: str = "/media-files"
     MEDIA_MAX_MB: int = 25
-    # Google Cloud Storage (optional; empty = local disk). Two buckets:
+    # Storage (optional; empty = local disk). GCS remains supported; S3 can
+    # be selected independently for public media and private documents. S3
+    # private docs require their own bucket; never reuse the media fallback.
     #   GCS_PUBLIC_BUCKET  — owner photos/videos (uniform PUBLIC access).
     #                        The provider fetches media from public URLs.
     #   GCS_PRIVATE_BUCKET — databank docs/scrapes/exports (private).
@@ -58,6 +60,12 @@ class Settings(BaseSettings):
     # service-account JSON (mounted as a secret, never committed).
     GCS_PUBLIC_BUCKET: str = ""
     GCS_PRIVATE_BUCKET: str = ""
+    AWS_S3_BUCKET: str = ""  # shared default; per-purpose buckets override it
+    S3_MEDIA_BUCKET: str = ""
+    S3_DOCS_BUCKET: str = ""
+    AWS_REGION: str = "eu-north-1"
+    AWS_S3_ENDPOINT_URL: str = ""  # optional for S3-compatible providers
+    S3_MEDIA_PUBLIC_BASE_URL: str = ""  # optional CDN/custom public object base
 
     # ── Channel encryption ────────────────────────────────
     CHANNEL_ENCRYPTION_KEY: str = ""  # Falls back to JWT_SECRET if empty
