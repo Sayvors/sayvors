@@ -136,6 +136,40 @@ def test_facility_catches_the_makkah_review():
     assert subject != "billing_payments"
 
 
+def test_financial_subject_is_rejected_for_arabic_building_review():
+    """A genuine quote cannot rescue a semantically unrelated category."""
+    assert S.subject_conflicts_with_text("billing_payments", AR_REVIEW)
+    assert S.subject_conflicts_with_text("account_access", AR_REVIEW)
+
+
+def test_financial_subject_is_allowed_when_review_names_a_payment():
+    text = "تم خصم المبلغ من حسابي البنكي"
+    assert not S.subject_conflicts_with_text("billing_payments", text)
+    assert not S.subject_conflicts_with_text("account_access", text)
+
+
+def test_building_with_explicit_payment_context_is_not_auto_rejected():
+    text = "The building repair charge was taken from my bank account twice."
+    assert not S.subject_conflicts_with_text("billing_payments", text)
+
+
+def test_financial_subject_is_rejected_for_arabic_building_review():
+    """A genuine quote cannot rescue a semantically unrelated category."""
+    assert S.subject_conflicts_with_text("billing_payments", AR_REVIEW)
+    assert S.subject_conflicts_with_text("account_access", AR_REVIEW)
+
+
+def test_financial_subject_is_allowed_when_review_names_a_payment():
+    text = "تم خصم المبلغ من حسابي البنكي"
+    assert not S.subject_conflicts_with_text("billing_payments", text)
+    assert not S.subject_conflicts_with_text("account_access", text)
+
+
+def test_building_with_explicit_payment_context_is_not_auto_rejected():
+    text = "The building repair charge was taken from my bank account twice."
+    assert not S.subject_conflicts_with_text("billing_payments", text)
+
+
 # ── Confidence ──────────────────────────────────────────────────
 
 def test_out_of_range_confidence_is_not_clamped():

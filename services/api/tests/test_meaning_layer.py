@@ -83,6 +83,36 @@ async def test_building_complaint_is_read_as_premises(fake_llm):
 
 
 @pytest.mark.asyncio
+async def test_building_review_cannot_be_misfiled_as_billing(fake_llm):
+    """Regression: wrong category plus a real Arabic quote must still fail."""
+    fake_llm(
+        '{"intent":"complaining","subject":"billing_payments",'
+        '"problem":"bank account correction needed",'
+        '"evidence":["مبناكم"],"confidence":0.99,"sentiment":"negative"}'
+    )
+    m = await extract_meaning(text=AR_BUILDING, rating=2)
+
+    assert m["subject"] == "other"
+    assert m["needs_human"] is True
+    assert m["evidence"] == []
+    assert m["reason"] == "subject conflicts with review evidence"
+
+
+@pytest.mark.asyncio
+async def test_arabic_bank_complaint_is_not_rejected_as_premises(fake_llm):
+    text = "تم خصم المبلغ من حسابي البنكي"
+    fake_llm(
+        '{"intent":"complaining","subject":"billing_payments",'
+        '"problem":"خصم غير صحيح","evidence":["حسابي البنكي"],'
+        '"confidence":0.9,"sentiment":"negative"}'
+    )
+    m = await extract_meaning(text=text, rating=2)
+
+    assert m["subject"] == "billing_payments"
+    assert m["needs_human"] is False
+
+
+@pytest.mark.asyncio
 async def test_bank_account_subject_is_rejected(fake_llm):
     """The exact fabrication, refused at the boundary."""
     fake_llm(
@@ -107,7 +137,10 @@ async def test_complaint_without_evidence_is_rejected(fake_llm):
     m = await extract_meaning(text=AR_BUILDING, rating=2)
 
     assert m["needs_human"] is True
-    assert "no verbatim evidence" in (m["reason"] or "")
+    assert m["reason"] in {
+        "no verbatim evidence for the complaint",
+        "subject conflicts with review evidence",
+    }
 
 
 @pytest.mark.asyncio
@@ -795,6 +828,26 @@ def test_summary_is_told_how_many_reviews_it_is_not_seeing():
 
     src = inspect.getsource(ai._call_llm)
     assert "reviews_not_included" in src
+
+
+def test_ai_summary_does_not_copy_unverified_llm_claims():
+    from app.modules.analytics.intelligence_ai import AIIntelligence, _verify
+
+    rows = [_rowdict(AR_BUILDING, 2, "facility_premises", ["مبناكم"], language="ar")]
+    parsed = AIIntelligence(
+        summary="A customer needs bank account corrections.",
+        themes=[], opportunities=[], strengths=[], actions=[],
+    )
+    verified = _verify(
+        parsed,
+        {"total": 1, "avg_rating": 2.0, "positive": 0, "neutral": 0,
+         "negative": 1, "held_out": {"total": 0}},
+        rows,
+    )
+
+    assert "bank" not in verified.summary.lower()
+    assert "Facility & premises" in verified.summary
+    assert "0 positive, 0 neutral, and 1 negative" in verified.summary
 
 
 # ── Removed reviews must not reach the report ───────────────────

@@ -53,6 +53,39 @@ SUBJECTS: dict[str, str] = {
 
 SUBJECT_KEYS = frozenset(SUBJECTS)
 
+# Strong, language-specific semantic anchors used only to catch obvious
+# cross-domain misclassifications. These are not a substitute for language
+# understanding: a rule fires only when the review clearly names a premises
+# issue but contains no financial/account language. Keep these conservative.
+_PREMISES_ANCHORS = (
+    "building", "premises", "facility", "roof", "wall", "floor",
+    "restroom", "bathroom", "maintenance", "repair", "renovation",
+    "مبن", "عماره", "جدار", "سقف", "صيان", "ترميم", "تصلح", "اصلح",
+)
+_FINANCIAL_ANCHORS = (
+    "bank", "account", "payment", "pay", "invoice", "bill", "charge",
+    "transfer", "refund", "credit card", "debit card", "بنك", "حساب",
+    "دفع", "فاتور", "رسوم", "تحويل", "مصرف", "بطاق",
+)
+_FINANCIAL_SUBJECTS = {"billing_payments", "account_access"}
+
+
+def subject_conflicts_with_text(subject: str, review_text: str | None) -> bool:
+    """Catch a narrow class of high-confidence semantic contradictions.
+
+    A quote can be verbatim while the assigned category is unrelated. In
+    particular, a premises complaint must not become an account/billing issue
+    just because the model supplies a legal subject and a real quote. This
+    conservative cross-language guard abstains only when premises language is
+    present and financial/account language is absent.
+    """
+    if subject not in _FINANCIAL_SUBJECTS:
+        return False
+    text = normalise(review_text or "")
+    has_premises_anchor = any(anchor in text for anchor in _PREMISES_ANCHORS)
+    has_financial_anchor = any(anchor in text for anchor in _FINANCIAL_ANCHORS)
+    return has_premises_anchor and not has_financial_anchor
+
 # The entity buckets a meaning record carries. Exposed so callers can build a
 # complete record without reaching into a private name.
 ENTITY_KEYS = ("product", "location", "staff", "dates")
@@ -204,8 +237,18 @@ NEGATION_MARKERS: dict[str, tuple[str, ...]] = {
 }
 
 _NEGATION_RE = {
-    lang: re.compile(r"(?:^|[\s,.:;!؟(\[{])" + "|".join(re.escape(w) for w in words) + r"(?:$|[\s,.:;!؟)\]}])")
-    for lang, words in NEGATION_MARKERS.items()
+    "en": re.compile(
+        r"(?:^|[\s,.:;!؟(\[{])"
+        + "|".join(re.escape(w) for w in NEGATION_MARKERS["en"])
+        + r"(?:$|[\s,.:;!؟)\]}])"
+    ),
+    # Arabic negation morphemes such as غير / غير صحيح are often attached to
+    # adjacent words or followed by a suffix. Match those by token prefix,
+    # while retaining the boundary-aware phrase markers.
+    "ar": re.compile(
+        r"(?:^|\s)(?:لا|لم|لن|سوف|بدون|غير|ولم)[^\s]*"
+        r"|(?:^|\s)(?:ما\s*في|ماكو|ماكوا|ما\s*ا)[^\s]*"
+    ),
 }
 
 

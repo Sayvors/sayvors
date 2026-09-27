@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 MODELS_CHAIN = ["groq:qwen3.8-27b", "gemini:gemini-3.6-flash", "openai:gpt-4o-mini"]
 MAX_REVIEWS = 50
 MAX_RAG_CHARS = 4000
+ANALYSIS_VERSION = 2
 
 STOPWORDS = {
     "that", "this", "with", "from", "have", "still", "they", "them",
@@ -679,6 +680,53 @@ def _strengths_from_groups(groups: dict[str, list[dict]]) -> list[AIStrength]:
     return out[:4]
 
 
+def _verified_summary(stats: dict, groups: dict[str, list[dict]]) -> str:
+    """Compose the displayed summary exclusively from verified facts.
+
+    The free-form LLM summary bypassed the checks applied to themes and
+    actions, allowing an invented issue to appear in the most prominent card.
+    This conservative text only cites server-counted ratings and checked
+    meaning groups, independent of tenant type or business context.
+    """
+    total = stats["total"]
+    if not total:
+        return "No reviews were found in this period."
+
+    rating_line = (
+        f"Across {total} review(s), the average rating is {stats.get('avg_rating', 0.0):.2f}/5: "
+        f"{stats.get('positive', 0)} positive, {stats.get('neutral', 0)} neutral, and "
+        f"{stats.get('negative', 0)} negative by star rating."
+    )
+    from .subjects import SUBJECTS
+
+    if not groups:
+        held_out = stats.get("held_out", {}).get("total", 0)
+        return (
+            f"{rating_line} No review themes are verified yet; "
+            f"{held_out} review(s) are excluded from theme claims."
+        )
+
+    ranked = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
+    top = ", ".join(
+        f"{SUBJECTS.get(subject, subject)} ({len(group)} mention(s))"
+        for subject, group in ranked[:3]
+    )
+    complaints = [
+        (subject, group, sum(r["rating"] <= 2 for r in group))
+        for subject, group in groups.items()
+    ]
+    complaints = [item for item in complaints if item[2] > 0]
+    if complaints:
+        subject, _, count = sorted(complaints, key=lambda item: (-item[2], item[0]))[0]
+        focus = (
+            f" The clearest area to review is {SUBJECTS.get(subject, subject)} "
+            f"({count} low-rated review(s))."
+        )
+    else:
+        focus = " No low-rated checked theme stands out in this period."
+    return f"{rating_line} Verified review themes include {top}.{focus}"
+
+
 def _verify(parsed: AIIntelligence, stats: dict, rows: list[dict] | None = None) -> AIIntelligence:
     """Take the model's word for nothing that a customer actually said.
 
@@ -691,7 +739,7 @@ def _verify(parsed: AIIntelligence, stats: dict, rows: list[dict] | None = None)
         # No usable meaning yet. Publish the narrative but claim no categories,
         # rather than falling back to the model's invented ones.
         return AIIntelligence(
-            summary=parsed.summary,
+            summary=_verified_summary(stats, groups),
             themes=[],
             opportunities=[],
             strengths=[],
@@ -701,7 +749,7 @@ def _verify(parsed: AIIntelligence, stats: dict, rows: list[dict] | None = None)
         )
 
     return AIIntelligence(
-        summary=parsed.summary,
+        summary=_verified_summary(stats, groups),
         themes=_themes_from_groups(groups),
         opportunities=_opportunities_from_groups(groups),
         strengths=_strengths_from_groups(groups),
@@ -977,6 +1025,10 @@ async def get_stored_report(
     report = result.scalar_one_or_none()
     if report is None:
         return None
+    # Never serve cached free-form claims created before verified summaries.
+    # The UI will show its instant local analysis until a fresh run is stored.
+    if (report.stats or {}).get("analysis_version") != ANALYSIS_VERSION:
+        return None
     current = await _current_review_count(db, user_id, channel_id, date_from, date_to)
     return _report_to_dict(report, current, key)
 
@@ -1026,6 +1078,7 @@ async def analyze_and_store(
     report.strengths = result["strengths"]
     report.actions = result["actions"]
     report.stats = result["stats"]
+    report.stats["analysis_version"] = ANALYSIS_VERSION
     report.dimensions = result.get("dimensions") or []
     report.competitive = result.get("competitive") or {}
     report.rag_used = result["rag_used"]

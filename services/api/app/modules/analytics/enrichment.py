@@ -26,6 +26,7 @@ from ..llm.providers.registry import get_provider_for_model
 logger = logging.getLogger(__name__)
 
 ENRICHMENT_MODEL = "groq:qwen3.8-27b"
+MEANING_VERSION = 2
 
 SYSTEM_PROMPT = """You are a review analytics engine. Analyse the customer review and
 respond with STRICT JSON only (no markdown fences, no commentary).
@@ -199,8 +200,16 @@ SUBJECT must be exactly one of:
 
 Rules:
 - Judge the REVIEW, never the reviewer.
+- Classify the customer's actual subject, not what seems plausible for the
+    business. Any tenant can receive reviews about its office/building; never
+    infer the review topic from tenant or business context.
+- Distinguish carefully: facility_premises = a physical place/building,
+    repairs, maintenance, cleanliness or facilities; billing_payments = a charge,
+    invoice, payment or refund; account_access = login, credentials or digital
+    account access. These are not interchangeable. A building mention is not a
+    bank/account issue unless the review explicitly says so.
 - Being negative is NOT a problem by itself. Only assign a subject when the
-  review actually raises that issue; otherwise use the closest subject or "other".
+    review actually raises that issue; otherwise use "other" and lower confidence.
 - If nothing fits, use "other" and set confidence low. DO NOT invent an issue.
 - evidence MUST be copied character-for-character from the review. Never
   translate, paraphrase, or invent a quote. 2-8 words is ideal.
@@ -242,6 +251,7 @@ def _blank_meaning(*, reason: str, language: str, source: str) -> dict:
         "reason": reason,
         "language": language,
         "corrected_at": None,
+        "version": MEANING_VERSION,
     }
 
 
@@ -309,6 +319,13 @@ async def extract_meaning(
             source="llm",
         )
 
+    if S.subject_conflicts_with_text(subject, body):
+        return _blank_meaning(
+            reason="subject conflicts with review evidence",
+            language=language,
+            source="llm",
+        )
+
     evidence = S.filter_evidence(
         data.get("evidence") if isinstance(data.get("evidence"), list) else None,
         body,
@@ -350,6 +367,7 @@ async def extract_meaning(
         "reason": "low confidence" if needs_human else None,
         "language": language,
         "corrected_at": None,
+        "version": MEANING_VERSION,
     }
     return record
 
