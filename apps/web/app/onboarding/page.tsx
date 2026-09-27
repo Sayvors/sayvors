@@ -133,17 +133,31 @@ export default function OnboardingPage() {
     else saveAndContinue();
   };
 
+  const goBack = () => {
+    if (step > 0) setStep(step - 1);
+  };
+
   const skip = () => saveAndContinue();
 
-  const handleConnect = (slug: string) => {
+  const handleConnect = async (slug: string) => {
     if (slug !== "google") return;
-    const token = getAccessToken();
-    if (!token) {
+    if (!getAccessToken()) {
       setBanner({ kind: "err", text: "Please log in again." });
       return;
     }
-    // Real OAuth: Google consent → callback → back to /onboarding?google_connected=N
-    window.location.href = `${API_URL}/api/v1/channels/google/connect?token=${encodeURIComponent(token)}&next=/onboarding`;
+    try {
+      // Mint a 120s single-use connect ticket so the access JWT never
+      // appears in a URL (history / proxy logs / Referer leakage).
+      const res = await apiFetch("/api/v1/channels/google/connect-ticket", {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("ticket");
+      const { ticket } = await res.json();
+      // Real OAuth: Google consent → callback → back to /onboarding?google_connected=N
+      window.location.href = `${API_URL}/api/v1/channels/google/connect?ticket=${encodeURIComponent(ticket)}&next=/onboarding`;
+    } catch {
+      setBanner({ kind: "err", text: "Could not start Google connect. Please try again." });
+    }
   };
 
   return (
@@ -247,14 +261,22 @@ export default function OnboardingPage() {
 
       {/* Bottom buttons */}
       {step !== 2 && (
-        <div className="mt-8 flex items-center gap-4">
+        <div className="mt-8 flex flex-wrap items-center gap-4">
+          {step > 0 && (
+            <button
+              onClick={goBack}
+              className="rounded-xl border border-ink/[0.12] px-5 py-2.5 text-[13px] font-medium text-ink/70 transition hover:border-ink/25 hover:bg-ink/[0.03]"
+            >
+              Back
+            </button>
+          )}
           <button onClick={skip} className="text-[12px] text-ink/30 hover:text-ink/50 dark:text-fog/30 dark:hover:text-fog/50">
             Skip for now
           </button>
           {step !== 3 && (
             <button
               onClick={goNext}
-              className="rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
+              className="ml-auto rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
             >
               {step === 0 ? "Let's go" : "Continue"}
             </button>
@@ -262,7 +284,13 @@ export default function OnboardingPage() {
         </div>
       )}
       {step === 2 && (
-        <div className="mt-8">
+        <div className="mt-8 flex flex-wrap items-center gap-4">
+          <button
+            onClick={goBack}
+            className="rounded-xl border border-ink/[0.12] px-5 py-2.5 text-[13px] font-medium text-ink/70 transition hover:border-ink/25 hover:bg-ink/[0.03]"
+          >
+            Back
+          </button>
           <button onClick={skip} className="text-[12px] text-ink/30 hover:text-ink/50 dark:text-fog/30 dark:hover:text-fog/50">
             Skip for now
           </button>
