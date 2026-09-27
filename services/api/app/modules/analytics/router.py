@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
@@ -15,7 +15,10 @@ from .schemas import (
     AnalyzeIntelligenceRequest,
     BenchmarkResponse,
     ExecutiveSummaryResponse,
+    IssueListResponse,
+    IssueUpdateBody,
     KeywordsResponse,
+    LocationIssueOut,
     OpportunitiesResponse,
     OverviewResponse,
     ProblemsResponse,
@@ -32,6 +35,150 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
+
+
+# ── Tracked issues ─────────────────────────────────────────────
+#
+# "Fix this" on the dashboard used to link to the review list. These endpoints
+# are what it points at now: one addressable item per subject per location,
+# built from the same checked meaning layer the report uses, so the counts here
+# and the counts in the report are the same numbers by construction.
+
+async def _issue_payload(db: AsyncSession, user: User, issues: list) -> list[dict]:
+    """Serialise issues, resolving the channel name for display."""
+    from ..channels.models import Channel
+    from .subjects import SUBJECTS
+
+    names: dict[str, str] = {}
+    if issues:
+        rows = await db.execute(
+            select(Channel.id, Channel.display_name).where(
+                Channel.id.in_({i.channel_id for i in issues})
+            )
+        )
+        names = {cid: name for cid, name in rows.all()}
+    return [
+        LocationIssueOut.model_validate(i).model_dump()
+        | {
+            "channel_name": names.get(i.channel_id),
+            "subject_label": SUBJECTS.get(i.subject, i.subject),
+        }
+        for i in issues
+    ]
+
+
+async def _held_out_counts(
+    db: AsyncSession, user_id: str, channel_id: str | None
+) -> dict[str, int]:
+    """Reviews that exist but cannot become an issue, counted cheaply.
+
+    A review the meaning layer refused to categorise, or never read, is
+    correctly absent from the issue list. Silently, that makes the list look
+    complete. The number is cheap enough to always compute — two counts, no
+    review loading — so the gap is never invisible.
+    """
+    from .models import ReviewInsight
+
+    def _filters():
+        f = [
+            ReviewInsight.user_id == user_id,
+            ReviewInsight.removed_at.is_(None),
+        ]
+        if channel_id:
+            f.append(ReviewInsight.channel_id == channel_id)
+        return f
+
+    total = (
+        await db.execute(
+            select(func.count()).select_from(ReviewInsight).where(*_filters())
+        )
+    ).scalar_one()
+    readable = (
+        await db.execute(
+            select(func.count())
+            .select_from(ReviewInsight)
+            .where(*_filters(), ReviewInsight.meaning.is_not(None))
+        )
+    ).scalar_one()
+    return {
+        "total": max(0, total - readable),
+        "reviewable": readable,
+        "reviews": total,
+    }
+
+
+@router.get("/issues", response_model=IssueListResponse)
+async def list_issues(
+    channel_id: str | None = Query(None),
+    status: str | None = Query(
+        None, description="open | in_progress | done | dismissed"
+    ),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tracked issues for this tenant, most-negative first."""
+    from . import issues as issues_service
+
+    try:
+        rows = await issues_service.list_issues(db, user.id, channel_id, status)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    all_rows = await issues_service.list_issues(db, user.id, channel_id)
+    counts: dict[str, int] = {s: 0 for s in issues_service.ALL_STATUSES}
+    for r in all_rows:
+        counts[r.status] = counts.get(r.status, 0) + 1
+
+    return {
+        "items": await _issue_payload(db, user, rows),
+        "held_out": await _held_out_counts(db, user.id, channel_id),
+        "counts": counts,
+    }
+
+
+@router.post("/issues/refresh", response_model=dict)
+async def refresh_issues(
+    channel_id: str | None = Query(None),
+    days: int = Query(90, ge=1, le=3650),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recompute issues from current review meaning.
+
+    Never changes an issue's status, note or resolution — the merchant owns the
+    outcome. Only the evidence and counts move, and `last_seen_at` records when.
+    """
+    from . import intelligence_ai, issues as issues_service
+
+    rows = await intelligence_ai._load_reviews(db, user.id, channel_id, days)
+    return await issues_service.refresh_issues(db, user.id, rows)
+
+
+@router.patch("/issues/{issue_id}", response_model=LocationIssueOut)
+async def update_issue(
+    issue_id: str,
+    body: IssueUpdateBody,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Move an issue along, or add a note about what was done."""
+    from . import issues as issues_service
+    from .subjects import SUBJECTS
+
+    try:
+        issue = await issues_service.update_issue(
+            db, user.id, issue_id,
+            status=body.status,
+            resolution_note=body.resolution_note,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if issue is None:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    payload = LocationIssueOut.model_validate(issue).model_dump()
+    payload["subject_label"] = SUBJECTS.get(issue.subject, issue.subject)
+    return payload
 
 
 @router.get("/overview", response_model=OverviewResponse)
@@ -85,6 +232,11 @@ async def list_review_insights(
     status: str | None = Query(None, pattern="^(replied|unanswered|skipped)$"),
     edited: bool | None = Query(None),
     search: str | None = Query(None, max_length=200),
+    # Tri-state: omit to hide reviews Google no longer returns, true to show
+    # only those, false to show only live ones.
+    removed: bool | None = Query(None),
+    # Tri-state for the abuse queue: omit for all, true for flagged only.
+    abusive: bool | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(get_current_user),
@@ -100,6 +252,8 @@ async def list_review_insights(
         status=status,
         edited=edited,
         search=search,
+        removed=removed,
+        abusive=abusive,
         limit=limit,
         offset=offset,
     )

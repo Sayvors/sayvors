@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PeriodComparison(BaseModel):
@@ -80,22 +80,143 @@ class ReviewInsightItem(BaseModel):
     replied: bool
     replied_at: datetime | None = None
     skipped: bool = False
+    # Per-review meaning: subject from a closed vocabulary, verbatim evidence,
+    # and whether a human still needs to look at it. `source` is
+    # "llm" | "heuristic" | "human" — a human correction is authoritative and
+    # is never overwritten by a re-analysis.
+    meaning: dict[str, Any] | None = None
+    # Reviewer-attached photos: [{url, kind, label}]. `url` is our own copy.
+    media: list[Any] = []
+    # Set when a complete sync stopped returning the review, i.e. Google no
+    # longer serves it. The row is kept for history; this clears itself if the
+    # review reappears.
+    removed_at: datetime | None = None
+    # Abuse reporting. Google exposes no report endpoint, so Sayvors records the
+    # merchant's decision and tracks whether they filed it; abuse_score/labels
+    # are the model's advisory triage and never act on their own.
+    abuse_flagged: bool = False
+    abuse_reported_at: datetime | None = None
+    abuse_note: str | None = None
+    abuse_score: float | None = None
+    abuse_labels: list[Any] = []
+    # Human decision: None (not reviewed) | "confirmed" | "dismissed"
+    abuse_verdict: str | None = None
+    abuse_reviewed_at: datetime | None = None
     edited: bool = False
     edited_at: datetime | None = None
     previous_rating: int | None = None
     previous_review_text: str | None = None
     review_url: str | None = None
     review_updated_at: datetime | None = None
-    created_at: datetime
-    # Latest response row for this review, if any (pending / posted /
+    created_at: datetime    # Latest response row for this review, if any (pending / posted /
     # failed / approved). Lets the review page show and edit every
     # response inline.
     reply_id: str | None = None
     reply_text: str | None = None
     reply_status: str | None = None
 
+    @field_validator(
+        "topics", "products", "problems", "media", "abuse_labels", mode="before"
+    )
+    @classmethod
+    def _null_list_is_empty(cls, v):
+        """A NULL list column must not take down the whole list endpoint.
+
+        These columns are `nullable=True` with no server default, so any writer
+        that omits them — an older process still running, a raw insert, a
+        migration added later — leaves NULL behind. One such row used to make
+        `GET /analytics/reviews/insights` return 500 for the entire tenant,
+        which reads as "the reviews page is broken" rather than "one field is
+        empty". Absent means empty.
+        """
+        return [] if v is None else v
+
     class Config:
         from_attributes = True
+
+
+class IssueUpdateBody(BaseModel):
+    """Move an issue along, or leave a note on what was done about it.
+
+    Both fields are optional so a note can be added without changing status.
+    """
+
+    status: str | None = Field(
+        None, pattern="^(open|in_progress|done|dismissed)$"
+    )
+    resolution_note: str | None = Field(None, max_length=2000)
+
+
+class LocationIssueOut(BaseModel):
+    """One tracked issue. `evidence` quotes are verbatim spans from the review."""
+
+    id: str
+    channel_id: str
+    channel_name: str | None = None
+    subject: str
+    # Not a column: resolved from the vocabulary at serialisation time so the
+    # label can change without a data migration. Always set by the endpoint,
+    # which is why it defaults to empty rather than being required here.
+    subject_label: str = ""
+    review_count: int
+    negative_count: int
+    avg_rating: float
+    evidence: list[dict[str, Any]] = []
+    title: str
+    detail: str
+    status: str
+    resolution_note: str | None = None
+    resolved_at: datetime | None = None
+    assignee_kind: str | None = None
+    assignee_ref: str | None = None
+    notified_at: datetime | None = None
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _null_evidence_is_empty(cls, v):
+        return [] if v is None else v
+
+    class Config:
+        from_attributes = True
+
+
+class IssueListResponse(BaseModel):
+    items: list[LocationIssueOut]
+    # Reviews the meaning layer refused to categorise. Surfaced so the list is
+    # never mistaken for the whole picture.
+    held_out: dict[str, int] = Field(default_factory=dict)
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class AbuseFlagBody(BaseModel):
+    """Merchant flags a review as a likely policy violation."""
+
+    note: str | None = Field(None, max_length=2000)
+
+
+class MeaningCorrectionBody(BaseModel):
+    """A human correcting what the AI understood a review to mean.
+
+    Every field is optional: correct only what is wrong. `subject` is validated
+    against the closed vocabulary, so a correction cannot introduce a category
+    the vocabulary does not have. An unknown value is a 422, not a silent
+    fallback to "other".
+    """
+
+    subject: str | None = None
+    intent: str | None = Field(None, max_length=120)
+    problem: str | None = Field(None, max_length=1000)
+    asks: list[str] | None = None
+    needs_human: bool | None = None
+    note: str | None = Field(None, max_length=500)
+
+
+class AbuseVerdictBody(BaseModel):
+    """The human decision on a flagged review."""
+
+    verdict: str = Field(..., pattern="^(confirmed|dismissed)$")
 
 
 class ReviewInsightListResponse(BaseModel):

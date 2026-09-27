@@ -57,6 +57,72 @@ export interface TimeseriesPoint {
   direction_requests: number;
 }
 
+export interface ReviewMeaning {
+  intent?: string | null;
+  /** Always one of the closed vocabulary. Never free text. */
+  subject?: string;
+  problem?: string | null;
+  asks?: string[];
+  entities?: { product?: string[]; location?: string[]; staff?: string[]; dates?: string[] };
+  /** The customer denies the thing (e.g. "no problems"). Never read as a complaint. */
+  negated?: boolean;
+  intensity?: number;
+  /** Spans copied verbatim from the review. Empty means nothing was grounded. */
+  evidence?: string[];
+  confidence?: number;
+  /** True when the reading could not be trusted and a person must look. */
+  needs_human?: boolean;
+  source?: "llm" | "heuristic" | "human";
+  reason?: string | null;
+  language?: string;
+  corrected_at?: string | null;
+  correction_note?: string | null;
+}
+
+export interface IssueEvidence {
+  review_id: string;
+  /** Verbatim span from the review — the meaning layer checked it is there. */
+  quote: string;
+  rating: number;
+}
+
+/**
+ * One tracked problem at one location.
+ *
+ * `subject` is always a member of the closed vocabulary, and `status` is the
+ * merchant's to set — a refresh updates the evidence and counts but never
+ * reopens or closes an issue, so `avg_rating` before and after `resolved_at`
+ * stays a fair comparison.
+ */
+export interface LocationIssue {
+  id: string;
+  channel_id: string;
+  channel_name: string | null;
+  subject: string;
+  subject_label: string;
+  review_count: number;
+  negative_count: number;
+  avg_rating: number;
+  evidence: IssueEvidence[];
+  title: string;
+  detail: string;
+  status: "open" | "in_progress" | "done" | "dismissed";
+  resolution_note: string | null;
+  resolved_at: string | null;
+  assignee_kind: string | null;
+  assignee_ref: string | null;
+  notified_at: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface IssueListResponse {
+  items: LocationIssue[];
+  /** Reviews that exist but could not be categorised. Never hidden. */
+  held_out: { total: number; reviewable: number; reviews: number };
+  counts: Record<string, number>;
+}
+
 export interface ReviewInsight {
   id: string;
   channel_id: string;
@@ -72,6 +138,27 @@ export interface ReviewInsight {
   problems: { name: string; severity: string }[];
   replied: boolean;
   replied_at: string | null;
+  /** Photos the reviewer attached. `url` is our own copy, not Google's expiring link. */
+  media?: { url?: string | null; kind?: string; label?: string | null }[];
+  /** Set when a complete sync stopped returning the review — Google dropped it. */
+  removed_at?: string | null;
+  /**
+   * Per-review meaning. `subject` is always one of a fixed vocabulary and
+   * `evidence` spans are always verbatim from the review, so a reading can be
+   * checked rather than trusted. `source` is "llm" | "heuristic" | "human";
+   * a human correction is never overwritten by a re-analysis.
+   */
+  meaning?: ReviewMeaning | null;
+  /** Merchant flagged the review as a likely policy violation. */
+  abuse_flagged?: boolean;
+  /** Advisory model score 0..1. Never acts on its own. */
+  abuse_score?: number | null;
+  abuse_labels?: string[];
+  /** Human decision: undefined (unreviewed) | "confirmed" | "dismissed". */
+  abuse_verdict?: string | null;
+  abuse_note?: string | null;
+  /** Set once the merchant confirms they filed the report with Google. */
+  abuse_reported_at?: string | null;
   skipped?: boolean;
   edited: boolean;
   edited_at: string | null;
@@ -89,6 +176,37 @@ export interface InsightList {
 export interface ChannelOption {
   id: string;
   label: string;
+}
+
+export function fetchIssues(params?: {
+  channelId?: string | null;
+  status?: string | null;
+}): Promise<IssueListResponse> {
+  const q = new URLSearchParams();
+  if (params?.channelId) q.set("channel_id", params.channelId);
+  if (params?.status) q.set("status", params.status);
+  const qs = q.toString();
+  return apiFetch(`/api/v1/analytics/issues${qs ? `?${qs}` : ""}`);
+}
+
+/** Recompute issues from current review meaning. Never changes a status. */
+export function refreshIssues(channelId?: string | null): Promise<{
+  created: number;
+  updated: number;
+  held_out: Record<string, number>;
+}> {
+  const q = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";
+  return apiFetch(`/api/v1/analytics/issues/refresh${q}`, { method: "POST" });
+}
+
+export function updateIssue(
+  id: string,
+  patch: { status?: LocationIssue["status"]; resolution_note?: string | null }
+): Promise<LocationIssue> {
+  return apiFetch(`/api/v1/analytics/issues/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
 }
 
 export async function fetchOverview(
@@ -405,8 +523,7 @@ export function generateReply(
   });
 }
 
-export function editReply(channelId: string, replyId: string, replyText: string): Promise<ReviewReplyDTO> {
-  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}`, {
+export function editReply(channelId: string, replyId: string, replyText: string): Promise<ReviewReplyDTO> {  return apiFetch(`/api/v1/channels/${channelId}/reviews/${replyId}`, {
     method: "PUT",
     body: JSON.stringify({ reply_text: replyText }),
   });
@@ -437,4 +554,30 @@ export interface VerifyPostedResult {
 
 export function verifyPostedReplies(channelId: string): Promise<VerifyPostedResult> {
   return apiFetch(`/api/v1/channels/${channelId}/reviews/verify-posted`, { method: "POST" });
+}
+
+/**
+ * Correct what the AI understood a review to mean.
+ *
+ * The AI once read the Arabic review "you need to fix your building" as
+ * "bank account corrections" and produced a business action from that
+ * fabrication. This is the human gate that lets a person fix the reading at
+ * the source. The correction is stored as `source: "human"` and re-analysis
+ * will not overwrite it.
+ */
+export function correctReviewMeaning(
+  insightId: string,
+  patch: {
+    subject?: string;
+    intent?: string | null;
+    problem?: string | null;
+    asks?: string[];
+    needs_human?: boolean;
+    note?: string | null;
+  }
+): Promise<ReviewInsight> {
+  return apiFetch(`/api/v1/analytics/reviews/insights/${encodeURIComponent(insightId)}/meaning`, {
+    method: "POST",
+    body: JSON.stringify(patch),
+  });
 }

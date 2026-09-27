@@ -55,6 +55,19 @@ class InternalReview:
     source_name: str | None = None
     review_url: str | None = None
     has_replies: bool = False
+    # The business's live reply, as the provider reports it. Localith/EmbedSocial
+    # returns the full reply array on every review payload; we used to collapse
+    # it to `has_replies` and throw the text away, which left every review
+    # answered outside Sayvors with no editable response on file.
+    reply_text: str | None = None
+    reply_external_id: str | None = None
+    reply_published_at: str | None = None
+    # Photos the reviewer attached, when the provider supplies them. Localith's
+    # /rest/v1/items payload carries no media today (verified against the live
+    # API: no media field, and /items/{id}/media 404s), so this stays empty on
+    # this provider. Parsed defensively so a future payload change is picked up
+    # without another adapter change.
+    media: list[dict] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
 
 
@@ -506,6 +519,97 @@ def _to_int_rating(value) -> int:
     return max(1, min(5, rating))
 
 
+def _latest_reply(item: dict) -> dict | None:
+    """Pick the newest reply the provider reports for a review.
+
+    Localith returns `replies: [{id, text, createdOn}]`. A review can carry more
+    than one (owner + other users), so the most recent `createdOn` wins — that
+    is the reply currently live on the listing. Entries may also be bare
+    strings in older payloads.
+    """
+    replies = item.get("replies") or item.get("repliesList") or []
+    if not isinstance(replies, (list, tuple)):
+        return None
+
+    def _sort_key(entry):
+        if not isinstance(entry, dict):
+            return ("", 0)
+        return (
+            str(
+                entry.get("createdOn")
+                or entry.get("created_on")
+                or entry.get("publishedOn")
+                or entry.get("updatedOn")
+                or ""
+            ),
+            # Undated entries: the provider appends in order, so the later
+            # element is the newer reply. Without this, max() would keep the
+            # first one and we'd show the oldest reply as current.
+            replies.index(entry),
+        )
+
+    if not replies:
+        return None
+    return max(replies, key=_sort_key)
+
+
+def _reply_field(entry, *keys, bare_string: bool = False) -> str | None:
+    """Read the first non-empty key off a reply entry.
+
+    `bare_string` allows legacy payloads where a reply is just a string. It is
+    opt-in per call so a bare string can never be mistaken for an id or date.
+    """
+    if isinstance(entry, str):
+        return entry.strip() or None if bare_string else None
+    if not isinstance(entry, dict):
+        return None
+    for key in keys:
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _parse_item_media(item: dict) -> list[dict]:
+    """Pull reviewer-attached photos off a review payload, if any.
+
+    Localith returns none today, so this yields [] in practice. Kept
+    defensive (every field optional, never raises) so that if they start
+    shipping photos the sync picks them up instead of silently dropping them
+    again — which is exactly how the reply text was lost.
+    """
+    out: list[dict] = []
+    for key in ("media", "mediaItems", "photos", "images", "reviewMediaItems"):
+        raw = item.get(key)
+        if not isinstance(raw, (list, tuple)):
+            continue
+        for entry in raw:
+            if isinstance(entry, str) and entry.strip():
+                out.append({
+                    "thumbnail_url": entry.strip(),
+                    "video_url": None,
+                    "label": None,
+                    "kind": "image",
+                })
+            elif isinstance(entry, dict):
+                thumb = (
+                    entry.get("thumbnailUrl") or entry.get("url")
+                    or entry.get("imageUrl") or entry.get("src")
+                )
+                video = entry.get("videoUrl") or entry.get("video_url")
+                if not thumb and not video:
+                    continue
+                out.append({
+                    "thumbnail_url": thumb,
+                    "video_url": video,
+                    "label": entry.get("thumbnailLabel") or entry.get("label"),
+                    "kind": "video" if video else "image",
+                })
+        if out:
+            break
+    return out
+
+
 def to_internal_review(item: dict) -> InternalReview:
     """Map one Localith review item to our unified shape.
 
@@ -557,6 +661,8 @@ def to_internal_review(item: dict) -> InternalReview:
         or item.get("timestamp")
     )
 
+    latest_reply = _latest_reply(item)
+
     return InternalReview(
         external_id=str(
             item.get("id") or item.get("review_id") or item.get("uid") or ""
@@ -588,6 +694,17 @@ def to_internal_review(item: dict) -> InternalReview:
             or item.get("reviewUrl")
             or item.get("url")
         ),
-        has_replies=bool(item.get("replies")),
+        has_replies=bool(latest_reply),
+        reply_text=_reply_field(
+            latest_reply, "text", "body", "content", "message", "comment",
+            bare_string=True,
+        ),
+        reply_external_id=_reply_field(
+            latest_reply, "id", "replyId", "reply_id",
+        ),
+        reply_published_at=_reply_field(
+            latest_reply, "createdOn", "created_on", "publishedOn", "updatedOn",
+        ),
+        media=_parse_item_media(item),
         raw=item,
     )

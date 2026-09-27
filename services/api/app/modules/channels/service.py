@@ -15,12 +15,58 @@ from .schemas import ChannelCreate, ChannelMessageSend
 
 
 def _get_fernet():
-    """Lazy-load Fernet for token encryption."""
-    from cryptography.fernet import Fernet
-    # Derive a Fernet key from JWT_SECRET (deterministic, same every boot)
-    key = hashlib.sha256(settings.JWT_SECRET.encode()).digest()
+    """Lazy-load Fernet for token encryption.
+
+    Primary key: CHANNEL_ENCRYPTION_KEY (dedicated, independent of the JWT
+    signing secret — leaking one must not unlock the other). When unset, the
+    legacy JWT-derived key is used so existing deployments keep working, and
+    a loud log tells operators to set the dedicated key.
+
+    Decryption tries the primary key first, then falls back to legacy, so
+    setting CHANNEL_ENCRYPTION_KEY later never breaks previously stored
+    ciphertext. New writes always use the primary key.
+    """
     import base64
-    return Fernet(base64.urlsafe_b64encode(key))
+    import logging
+
+    from cryptography.fernet import Fernet, InvalidToken
+
+    log = logging.getLogger(__name__)
+
+    def _fernet_from(secret: str):
+        key = hashlib.sha256(secret.encode()).digest()
+        return Fernet(base64.urlsafe_b64encode(key))
+
+    primary_secret = (settings.CHANNEL_ENCRYPTION_KEY or "").strip()
+    legacy_fernet = _fernet_from(settings.JWT_SECRET)
+
+    if primary_secret:
+        class _PrimaryFirstFernet:
+            def encrypt(self, data: bytes) -> bytes:
+                return _fernet_from(primary_secret).encrypt(data)
+
+            def decrypt(self, token: bytes) -> bytes:
+                try:
+                    return _fernet_from(primary_secret).decrypt(token)
+                except InvalidToken:
+                    return legacy_fernet.decrypt(token)
+
+        return _PrimaryFirstFernet()
+
+    log.warning(
+        "CHANNEL_ENCRYPTION_KEY is not set — credential encryption is falling "
+        "back to a key derived from JWT_SECRET. Set a dedicated "
+        "CHANNEL_ENCRYPTION_KEY so JWT and storage keys are independent."
+    )
+
+    class _LegacyFernet:
+        def encrypt(self, data: bytes) -> bytes:
+            return legacy_fernet.encrypt(data)
+
+        def decrypt(self, data: bytes) -> bytes:
+            return legacy_fernet.decrypt(data)
+
+    return _LegacyFernet()
 
 
 def encrypt_token(token: str) -> str:

@@ -38,6 +38,19 @@ class ExtractedIssue(BaseModel):
     # Natural customer-facing equivalents. Coverage accepts THESE — the reply
     # must never contain the internal key/label to satisfy validation.
     semantic: list[str] = Field(default_factory=list, max_length=12)
+    # The meaning layer's equivalent subject, where one exists.
+    #
+    # The two vocabularies do different jobs. This one is regex-derived and
+    # decides which reply strategy to use; it cannot be inspected or corrected
+    # by a merchant. The tracked Issues page is built on the meaning layer
+    # instead, because an issue nobody can check is not one they will trust.
+    # This field is the bridge, so a reply and a tracked issue can be described
+    # in one language without deleting either taxonomy.
+    #
+    # `None` means there is genuinely no equivalent — `cancel` has no subject.
+    # Filing it under something adjacent is how an invented category gets in, so
+    # None is the honest answer rather than a gap to paper over.
+    subject: str | None = Field(default=None, max_length=60)
 
 
 class StrategyFulfillment(BaseModel):

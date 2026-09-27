@@ -69,6 +69,15 @@ def validate_readonly_sql(sql: str, limit: int) -> str:
     first_word = text.split(None, 1)[0].upper() if text.split() else ""
     if first_word not in ("SELECT", "WITH"):
         raise ValueError("Only SELECT / WITH queries are allowed")
+    # WITH can prefix data-modifying statements in Postgres (CTE form:
+    # WITH x AS (...) INSERT INTO ...). Locking clauses belong to writes too.
+    if re.search(
+        r"\b(insert|update|delete|merge|truncate|copy|call|do|vacuum|lock)\b"
+        r"|\bfor\s+(update|no\s+key\s+update|share|key\s+share)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        raise ValueError("Only read-only SELECT / WITH queries are allowed")
     if not re.search(r"\bLIMIT\b", text, re.IGNORECASE):
         text = f"{text} LIMIT {limit}"
     return text
@@ -138,21 +147,59 @@ def _ver_sql(cfg: DbConfig) -> str:
     return "SELECT version()" if cfg.db_type == "postgres" else "SELECT VERSION()"
 
 
+# ── SSRF guard ────────────────────────────────────────────
+
+def _assert_connectable_host(cfg: DbConfig) -> None:
+    """Block database connections to non-public targets (SSRF guard).
+
+    The DB source feature lets tenants connect their *own* databases, which
+    from a SaaS deployment means internet-reachable endpoints. Anything that
+    resolves to loopback/private/link-local would actually be reaching OUR
+    network (cloud metadata, internal services), so it is rejected before any
+    socket is opened. Literal IPs are checked without DNS; hostnames must
+    resolve exclusively to global IPs (round-robin rebinding cover).
+
+    Self-hosted deployments that legitimately target private networks can set
+    RAG_DB_ALLOW_PRIVATE_HOSTS=true.
+    """
+    from ...config import settings as _settings
+
+    if getattr(_settings, "RAG_DB_ALLOW_PRIVATE_HOSTS", False):
+        return
+
+    from ...core.http import resolve_public_ips
+
+    host = (cfg.host or "").strip().rstrip(".")
+    if not host:
+        raise ValueError("Database host is required.")
+    if not resolve_public_ips(host):
+        logger.warning("DB source host rejected (not publicly routable): %s", _redacted(cfg))
+        raise ValueError("Database host must be publicly reachable.")
+
+
 # ── public API ────────────────────────────────────────────
 
 async def test_connection(cfg: DbConfig) -> dict:
     """Connect + run a trivial query. Returns {ok, version} or raises."""
+    _assert_connectable_host(cfg)
     try:
         _columns, rows = await _fetch(cfg, _ver_sql(cfg))
+    except ValueError:
+        raise
     except Exception as e:
+        # Details go to logs only — driver errors can leak internal topology
+        # to the client (port-scan oracle).
         logger.warning("DB connection test failed for %s: %s", _redacted(cfg), e)
-        raise ValueError(f"Could not connect: {e}") from e
+        raise ValueError(
+            "Could not connect to the database. Check the host, port, and credentials."
+        ) from e
     version = str(rows[0][0]) if rows else "unknown"
     return {"ok": True, "version": version[:200]}
 
 
 async def list_tables(cfg: DbConfig) -> list[dict]:
     """Return [{name, columns}] for user tables."""
+    _assert_connectable_host(cfg)
     if cfg.db_type == "postgres":
         sql = """
             SELECT t.table_name,
@@ -178,6 +225,7 @@ async def list_tables(cfg: DbConfig) -> list[dict]:
 
 async def preview_table(cfg: DbConfig, table: str, limit: int = DEFAULT_PREVIEW_LIMIT) -> dict:
     """Column names + first N rows of one table."""
+    _assert_connectable_host(cfg)
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table or ""):
         raise ValueError("Invalid table name")
     limit = max(1, min(limit, 100))
@@ -200,6 +248,7 @@ async def preview_table(cfg: DbConfig, table: str, limit: int = DEFAULT_PREVIEW_
 
 async def run_query(cfg: DbConfig, sql: str, limit: int = DEFAULT_QUERY_LIMIT) -> dict:
     """Run a guarded read-only query. Returns {columns, rows, truncated}."""
+    _assert_connectable_host(cfg)
     limit = max(1, min(limit, MAX_QUERY_LIMIT))
     safe_sql = validate_readonly_sql(sql, limit)
     try:
@@ -208,7 +257,9 @@ async def run_query(cfg: DbConfig, sql: str, limit: int = DEFAULT_QUERY_LIMIT) -
         raise
     except Exception as e:
         logger.warning("DB query failed for %s: %s", _redacted(cfg), e)
-        raise ValueError(f"Query failed: {e}") from e
+        raise ValueError(
+            "Query failed. Check the statement syntax and the database connection."
+        ) from e
     return {
         "columns": columns,
         "rows": [[_safe_cell(v) for v in r] for r in rows[:limit]],

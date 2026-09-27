@@ -204,6 +204,18 @@ class ReviewReply(Base):
         Integer, nullable=False, default=1, server_default="1"
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set when the row is adopted from a reply Google already shows (the
+    # Localith sync pulls the live reply text on every poll). Identifies the
+    # provider-side reply so a later poll can tell "same reply" from "the
+    # business edited it directly in the Google Business Profile".
+    reply_external_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    # When that live reply was published, per the provider. Distinct from
+    # created_at, which is when Sayvors first learned about the row.
+    replied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

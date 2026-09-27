@@ -6,9 +6,25 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
 import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
-import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
+import MeaningInspector from "@/components/reviews/MeaningInspector";
 
-type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited";
+type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited" | "removed" | "abusive" | "needs_human";
+
+/**
+ * How many reviews the intelligence report refused to categorise.
+ *
+ * The report holds these back rather than guessing, but a silent holdout reads
+ * as a complete report — which is how a mis-read review stayed invisible in
+ * the first place. So the count travels with the report and is shown.
+ */
+type HeldOutCounts = {
+  needs_human: number;
+  not_analysed: number;
+  unclassified: number;
+  total: number;
+};
 type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
 
 interface ReviewItem {
@@ -29,6 +45,14 @@ interface ReviewItem {
   previousText: string | null;
   sentiment?: string;
   reviewUrl?: string;
+  media: { url?: string | null; kind?: string; label?: string | null }[];
+  removed: boolean;
+  meaning: ReviewInsight["meaning"] | null;
+  abuseFlagged: boolean;
+  abuseScore: number | null;
+  abuseLabels: string[];
+  abuseVerdict: string | null;
+  abuseReported: boolean;
   reply_text?: string;
   status?: string;
   replyId?: string;
@@ -51,9 +75,12 @@ const TAB_LABELS: Record<ReviewTab, string> = {
   replied: "Replied",
   positive: "Positive",
   negative: "Negative",
+  removed: "Removed",
+  abusive: "Abusive",
+  needs_human: "Needs human",
 };
 const PRIMARY_TABS: ReviewTab[] = ["all", "need_approval", "edited"];
-const MORE_TABS: ReviewTab[] = ["unanswered", "flagged", "replied", "positive", "negative"];
+const MORE_TABS: ReviewTab[] = ["unanswered", "flagged", "replied", "positive", "negative", "needs_human", "abusive", "removed"];
 
 export default function ReviewsPage() {
   return (
@@ -167,9 +194,20 @@ function ReviewsInner() {
   }, []);
 
   const loadInsights = async (channelId?: string) => {
-    const q = channelId ? `?channel_id=${encodeURIComponent(channelId)}&limit=200` : "?limit=200";
-    const data = await apiFetch(`/api/v1/analytics/reviews/insights${q}`);
-    return mapInsights(data.items, channelNames, locations.find((l) => l.id === selectedId)?.name ?? "");
+    const base = channelId ? `channel_id=${encodeURIComponent(channelId)}&` : "";
+    // Two calls on purpose. The API hides reviews Google no longer returns, so
+    // the Removed tab would always be empty if we only asked for the default
+    // set. Both land in one list; `removed` on the item decides which tab shows
+    // it, and the counts below keep the two apart.
+    const [live, gone] = await Promise.all([
+      apiFetch(`/api/v1/analytics/reviews/insights?${base}limit=200`),
+      apiFetch(`/api/v1/analytics/reviews/insights?${base}limit=200&removed=true`),
+    ]);
+    const fallback = locations.find((l) => l.id === selectedId)?.name ?? "";
+    return [
+      ...mapInsights(live.items, channelNames, fallback),
+      ...mapInsights(gone.items, channelNames, fallback),
+    ];
   };
 
   const loadPendingReplies = async () => {
@@ -245,19 +283,46 @@ function ReviewsInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
+  // `reviews` holds live AND removed rows; every count below is over the live
+  // set only, so a review Google dropped never inflates a number the merchant
+  // is judged on.
+  const live = useMemo(() => reviews.filter((r) => !r.removed), [reviews]);
+
   const counts = useMemo(() => ({
-    all: reviews.length,
-    unanswered: reviews.filter((r) => !r.replied && !r.skipped).length,
-    replied: reviews.filter((r) => r.replied).length,
-    positive: reviews.filter((r) => r.rating >= 4).length,
-    negative: reviews.filter((r) => r.rating <= 2).length,
+    all: live.length,
+    unanswered: live.filter((r) => !r.replied && !r.skipped).length,
+    replied: live.filter((r) => r.replied).length,
+    positive: live.filter((r) => r.rating >= 4).length,
+    negative: live.filter((r) => r.rating <= 2).length,
     // The approval queue is the source of truth for this count.
     need_approval: pendingReplies.length,
-    flagged: reviews.filter((r) => r.skipped).length,
-    edited: reviews.filter((r) => r.edited).length,
-  }), [reviews, pendingReplies]);
+    flagged: live.filter((r) => r.skipped).length,
+    edited: live.filter((r) => r.edited).length,
+    removed: reviews.length - live.length,
+    abusive: live.filter((r) => r.abuseFlagged).length,
+    // Readings the AI could not ground, plus reviews never analysed at all.
+    // Must stay identical to the needsHumanRows filter below, or the tab count
+    // disagrees with what the tab shows.
+    needs_human: live.filter((r) => !r.meaning || r.meaning.needs_human === true).length,
+  }), [live, reviews, pendingReplies]);
 
-  const filtered = reviews.filter((r) => {
+  // The Removed tab is the one view that is deliberately the opposite set.
+  const removedRows = useMemo(() => reviews.filter((r) => r.removed), [reviews]);
+  const abusiveRows = useMemo(() => live.filter((r) => r.abuseFlagged), [live]);
+  const needsHumanRows = useMemo(
+    () => live.filter((r) => !r.meaning || r.meaning.needs_human === true),
+    [live]
+  );
+  const filtered = (
+    tab === "removed"
+      ? removedRows
+      : tab === "abusive"
+        ? abusiveRows
+        : tab === "needs_human"
+          ? needsHumanRows
+          : live
+  ).filter((r) => {
+    if (tab === "removed" || tab === "abusive" || tab === "needs_human") return true;
     if (tab === "unanswered") return !r.replied && !r.skipped;
     if (tab === "replied") return r.replied;
     if (tab === "need_approval") return !r.replied && !r.skipped;
@@ -269,13 +334,14 @@ function ReviewsInner() {
   });
 
   const active = view.kind === "detail" ? reviews.find((r) => r.id === view.id) ?? null : null;
-  const starGroup = view.kind === "star" ? reviews.filter((r) => r.rating === view.stars) : [];
-  const intelligence = useMemo(() => buildIntelligence(reviews), [reviews]);
+  const starGroup = view.kind === "star" ? live.filter((r) => r.rating === view.stars) : [];
+  const intelligence = useMemo(() => buildIntelligence(live), [live]);
 
   // Stored intelligence (analyze once, serve from DB; re-run on demand).
   const [aiIntel, setAiIntel] = useState<{
     intel: Intelligence; source: string; model: string | null; ragUsed: boolean;
     analyzedAt: string | null; stale: boolean; newCount: number;
+    heldOut: HeldOutCounts | null;
   } | null>(null);
   const [intelLoading, setIntelLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -531,6 +597,35 @@ function ReviewsInner() {
     setApprovingAllPending(false);
   }
 
+  const [abuseBusy, setAbuseBusy] = useState<string | null>(null);
+
+  const runAbuseAction = async (
+    action: "flag-abuse" | "abuse-verdict" | "abuse-reported" | "clear-abuse",
+    opts: { verdict?: "confirmed" | "dismissed"; note?: string; ok: string } | null
+  ) => {
+    if (view.kind !== "detail" || !active) return;
+    setAbuseBusy(action);
+    try {
+      if (action === "flag-abuse") {
+        await flagReviewAbusive(active.id, opts?.note);
+      } else if (action === "clear-abuse") {
+        await clearAbuseFlag(active.id);
+      } else if (action === "abuse-reported") {
+        await markAbuseReported(active.id);
+      } else {
+        await setAbuseVerdict(active.id, opts?.verdict ?? "confirmed");
+      }
+      setBanner({ kind: "ok", text: opts?.ok ?? "Done." });
+      setTimeout(() => setBanner(null), 4000);
+      void fetchReviews(false);
+    } catch (e) {
+      setBanner({ kind: "err", text: detailMsg(e, "Could not update the report.") });
+      setTimeout(() => setBanner(null), 5000);
+    } finally {
+      setAbuseBusy(null);
+    }
+  };
+
   const handleSkip = async () => {
     if (view.kind !== "detail") return;
     setSkippingId(active!.id);
@@ -681,20 +776,22 @@ function ReviewsInner() {
     }
   };
 
+  // Live reviews only: a review Google dropped is not part of the average,
+  // the response rate, or the distribution the merchant is judged on.
   const analytics = useMemo(() => {
-    const total = reviews.length;
-    const dist = [5, 4, 3, 2, 1].map((s) => ({ stars: s, count: reviews.filter((r) => r.rating === s).length }));
-    const avg = total ? reviews.reduce((a, r) => a + r.rating, 0) / total : 0;
-    const replied = reviews.filter((r) => r.replied).length;
-    const thisMonth = reviews.filter((r) => r.createdAt.slice(0, 7) === "2026-09").length;
-    const lastMonth = reviews.filter((r) => r.createdAt.slice(0, 7) === "2026-08").length;
+    const total = live.length;
+    const dist = [5, 4, 3, 2, 1].map((s) => ({ stars: s, count: live.filter((r) => r.rating === s).length }));
+    const avg = total ? live.reduce((a, r) => a + r.rating, 0) / total : 0;
+    const replied = live.filter((r) => r.replied).length;
+    const thisMonth = live.filter((r) => r.createdAt.slice(0, 7) === "2026-09").length;
+    const lastMonth = live.filter((r) => r.createdAt.slice(0, 7) === "2026-08").length;
     const months = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"].map((m) => ({
       label: m.slice(5),
-      count: reviews.filter((r) => r.createdAt.slice(0, 7) === m).length,
+      count: live.filter((r) => r.createdAt.slice(0, 7) === m).length,
     }));
     const maxMonth = Math.max(1, ...months.map((m) => m.count));
     return { total, dist, avg, replied, responseRate: total ? Math.round((replied / total) * 100) : 0, thisMonth, lastMonth, months, maxMonth };
-  }, [reviews]);
+  }, [live]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -1061,7 +1158,7 @@ function ReviewsInner() {
                     ) : filtered.length === 0 ? (
                       <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
                           <p className="text-[14px] font-medium text-ink/40">
-                            {reviews.length === 0 && tab === "all"
+                            {live.length === 0 && tab === "all"
                               ? "No reviews yet — press Reconcile after syncing your listing."
                               : tab === "flagged"
                                 ? "No reviews flagged yet — use the flag button on any review."
@@ -1172,7 +1269,7 @@ function ReviewsInner() {
             <StarInsightPage
               stars={view.stars}
               group={starGroup}
-              total={reviews.length}
+              total={live.length}
               onBack={() => setView(view.from === "intelligence" ? { kind: "intelligence" } : { kind: "list" })}
               onOpen={(id) => openDetail(id)}
             />
@@ -1292,6 +1389,168 @@ function ReviewsInner() {
                 {/* Comment — clean quote, no purple */}
                 <div className="px-4 py-3">
                   <p className="whitespace-pre-wrap break-words text-[13px] leading-6 text-[#202124]">{active.comment ? `“${active.comment}”` : <span className="italic text-[#5F6368]">No written comment — star rating only.</span>}</p>
+                  <ReviewMedia media={active.media} />
+                </div>
+
+                {/* Report to Google — the decision is ours, the filing is manual */}
+                {active.abuseFlagged ? (
+                  <div className="mx-4 mb-4 rounded-lg border border-[#F4B400]/40 bg-[#FEF7E0] p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[13px] font-semibold text-[#7A4F01]">
+                        Flagged as abusive
+                      </p>
+                      {active.abuseReported ? (
+                        <span className="rounded-full bg-[#E6F4EA] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#137333]">
+                          Reported to Google
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-[#FEF0C0] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#8A6100]">
+                          Not reported yet
+                        </span>
+                      )}
+                      <span className="flex-1" />
+                      <button
+                        onClick={() => void runAbuseAction("clear-abuse", { ok: "Flag withdrawn." })}
+                        disabled={abuseBusy !== null}
+                        className="text-[11px] font-medium text-[#7A4F01] hover:underline disabled:opacity-40"
+                      >
+                        Not abusive after all
+                      </button>
+                    </div>
+
+                    {/* AI triage — advisory only, never acts on its own */}
+                    <div className="mt-2.5 rounded-md border border-[#F4B400]/30 bg-white/70 px-3 py-2.5">
+                      {active.abuseScore == null ? (
+                        <p className="text-[12px] text-[#7A4F01]">
+                          AI triage unavailable for this review — judge it yourself below.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[12px] font-medium text-[#202124]">
+                              AI assessment
+                            </span>
+                            <span className="rounded-full bg-[#FCE8E6] px-2 py-0.5 text-[10px] font-bold text-[#C5221F]">
+                              {Math.round(active.abuseScore * 100)}% likely a violation
+                            </span>
+                            {active.abuseLabels.map((l) => (
+                              <span key={l} className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/70">
+                                {l.replace(/_/g, " ")}
+                              </span>
+                            ))}
+                          </div>
+                          <p className="mt-1.5 text-[11px] leading-4 text-[#5F6368]">
+                            Advisory only — a wrong accusation costs you. You decide.
+                          </p>
+                        </>
+                      )}
+                    </div>
+
+                    {active.abuseVerdict ? (
+                      <p className="mt-2.5 text-[12px] font-medium text-[#202124]">
+                        You marked this {active.abuseVerdict === "confirmed" ? "as a real violation" : "as not a violation"}.
+                      </p>
+                    ) : (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <span className="text-[12px] text-[#7A4F01]">Is this a real policy violation?</span>
+                        <button
+                          onClick={() => void runAbuseAction("abuse-verdict", {
+                            verdict: "confirmed",
+                            ok: "Confirmed. Now report it in Google.",
+                          })}
+                          disabled={abuseBusy !== null}
+                          className="rounded-md bg-[#7A4F01] px-3 py-1.5 text-[12px] font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                        >
+                          Yes, report it
+                        </button>
+                        <button
+                          onClick={() => void runAbuseAction("abuse-verdict", {
+                            verdict: "dismissed",
+                            ok: "Dismissed — left as a normal review.",
+                          })}
+                          disabled={abuseBusy !== null}
+                          className="rounded-md border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0] disabled:opacity-50"
+                        >
+                          No, leave it
+                        </button>
+                      </div>
+                    )}
+
+                    {!active.abuseReported && (
+                      <div className="mt-2.5 border-t border-[#F4B400]/30 pt-2.5">
+                        <p className="text-[12px] leading-5 text-[#7A4F01]">
+                          Google has no API for reporting a review, so you file it yourself.
+                          Open this review, choose <strong>Report review</strong>, pick
+                          &nbsp;<strong>Spam or fake engagement</strong> (or the closest option),
+                          then come back and mark it done.
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {active.reviewUrl && (
+                            <a
+                              href={active.reviewUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-md border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0]"
+                            >
+                              Open on Google ↗
+                            </a>
+                          )}
+                          <button
+                            onClick={() => void runAbuseAction("abuse-reported", {
+                              ok: "Marked as reported to Google.",
+                            })}
+                            disabled={abuseBusy !== null}
+                            className="rounded-md border border-[#7A4F01]/40 px-3 py-1.5 text-[12px] font-medium text-[#7A4F01] transition hover:bg-[#FEF7E0] disabled:opacity-50"
+                          >
+                            {abuseBusy === "abuse-reported" ? "Saving…" : "I've reported it in Google"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  !active.removed && !active.skipped && (
+                    <div className="mx-4 mb-4 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => void runAbuseAction("flag-abuse", {
+                          ok: "Flagged. AI triage is below - you decide whether to report it.",
+                        })}
+                        disabled={abuseBusy !== null}
+                        className="rounded-md border border-[#E8EAED] px-3 py-1.5 text-[12px] font-medium text-[#5F6368] transition hover:bg-ink/[0.04] disabled:opacity-40"
+                      >
+                        {abuseBusy === "flag-abuse" ? "Analysing…" : "Report as abusive"}
+                      </button>
+                      <span className="text-[11px] text-[#5F6368]">
+                        Spam, harassment or a competitor&apos;s fake review?
+                      </span>
+                    </div>
+                  )
+                )}
+
+                {/* Meaning — what the AI understood, and the controls to fix it */}
+                <div className="px-4 pb-4">
+                  <MeaningInspector
+                    review={
+                      {
+                        id: active.id,
+                        review_id: active.review_id,
+                        meaning: active.meaning,
+                      } as unknown as ReviewInsight
+                    }
+                    onSaved={(updated) => {
+                      setReviews((prev) =>
+                        prev.map((r) =>
+                          r.id === active.id ? { ...r, meaning: updated.meaning ?? null } : r
+                        )
+                      );
+                      setBanner({ kind: "ok", text: "Meaning corrected. The report will use this." });
+                      setTimeout(() => setBanner(null), 4000);
+                    }}
+                    onError={(m) => {
+                      setBanner({ kind: "err", text: m });
+                      setTimeout(() => setBanner(null), 6000);
+                    }}
+                  />
                 </div>
 
                 {/* Reply composer — Material, not violet */}
@@ -1349,7 +1608,17 @@ function ReviewsInner() {
                       )}
                     </div>
                   )}
-                  {active.replied ? (
+                  {active.removed ? (
+                    <div className="mt-2 flex items-start gap-2 rounded-md border border-[#E8EAED] bg-[#F8F9FA] px-3 py-2.5">
+                      <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#AAAAAA]" />
+                      <div>
+                        <p className="text-[12px] font-medium text-[#5F6368]">Removed from Google</p>
+                        <p className="mt-0.5 text-[12px] leading-4 text-[#5F6368]/80">
+                          The reviewer deleted this review, or Google took it down, so it is no longer on the listing and no reply is possible. We keep your copy for reference — it drops out of your averages, and comes back on its own if the review returns.
+                        </p>
+                      </div>
+                    </div>
+                  ) : active.replied ? (
                      <>
                        <div className="mt-2 flex items-start gap-2 rounded-md border border-[#CEEAD6] bg-[#E6F4EA] px-3 py-2.5">
                          <span aria-hidden className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#34A853]" />
@@ -1357,8 +1626,8 @@ function ReviewsInner() {
                            <p className="text-[12px] font-medium text-[#137333]">Replied on Google</p>
                            <p className="mt-0.5 text-[12px] leading-4 text-[#137333]/80">
                              {active.reply_text
-                               ? "This review already has a published reply. You can replace it below — the original stays in Google's edit history."
-                               : "This review was answered outside Sayvors, so the reply text was never stored here. Google does not read replies back, so type the reply you want live."}
+                                ? "This review already has a published reply. You can replace it below — saving overwrites the current wording, so keep a copy if you need it."
+                               : "Replied on Google, but the reply text wasn't returned to us, so there is nothing to edit yet. Type the reply you want live below."}
                            </p>
                          </div>
                        </div>
@@ -1620,7 +1889,7 @@ function ReviewsInner() {
               intelligence={aiIntel?.intel ?? intelligence}
               total={reviews.length}
               locationName={locations.find((l) => l.id === selectedId)?.name ?? ""}
-              aiMeta={aiIntel ? { source: aiIntel.source, model: aiIntel.model, ragUsed: aiIntel.ragUsed, analyzedAt: aiIntel.analyzedAt, stale: aiIntel.stale, newCount: aiIntel.newCount } : null}
+              aiMeta={aiIntel ? { source: aiIntel.source, model: aiIntel.model, ragUsed: aiIntel.ragUsed, analyzedAt: aiIntel.analyzedAt, stale: aiIntel.stale, newCount: aiIntel.newCount, heldOut: aiIntel.heldOut } : null}
               aiLoading={intelLoading}
               analyzing={analyzing}
               onAnalyze={() => runAnalysis()}
@@ -1639,8 +1908,46 @@ function ReviewsInner() {
   );
 }
 
-function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbackName: string): ReviewItem[] {
-  if (!Array.isArray(raw)) return [];
+// Photos a reviewer attached to the review. The API stores our own copy and
+// returns a path relative to the API origin, so it is prefixed here the same
+// way every other API call is.
+const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
+function ReviewMedia({ media }: { media: ReviewItem["media"] }) {
+  const photos = (media ?? []).filter((m) => m && m.kind !== "video" && m.url);
+  const videos = (media ?? []).filter((m) => m && m.kind === "video");
+  if (photos.length === 0 && videos.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {photos.map((m, i) => {
+        const src = String(m.url).startsWith("http") ? String(m.url) : `${API_ORIGIN}${m.url}`;
+        return (
+          <a key={i} href={src} target="_blank" rel="noreferrer" className="group relative block">
+            {/* eslint-disable-next-line @next/next/no-img-element -- our own
+                already-validated raster copy; the optimizer would re-encode it */}
+            <img
+              src={src}
+              alt={m.label || `Photo from the reviewer (${i + 1})`}
+              loading="lazy"
+              className="h-24 w-24 rounded-lg border border-[#E8EAED] object-cover transition group-hover:opacity-80"
+            />
+          </a>
+        );
+      })}
+      {videos.map((m, i) => (
+        <span
+          key={`v${i}`}
+          title={m.label || "Video attached to the review"}
+          className="inline-flex h-24 w-24 items-center justify-center rounded-lg border border-[#E8EAED] bg-[#F8F9FA] text-[11px] text-[#5F6368]"
+        >
+          ▶ Video
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbackName: string): ReviewItem[] {  if (!Array.isArray(raw)) return [];
   return raw.map((it: unknown, i: number) => {
     const r = (it ?? {}) as Record<string, unknown>;
     const channelId = String(r.channel_id ?? "");
@@ -1662,6 +1969,14 @@ function mapInsights(raw: unknown, channelNames: Record<string, string>, fallbac
       previousText: typeof r.previous_review_text === "string" ? r.previous_review_text : null,
       sentiment: typeof r.sentiment === "string" ? r.sentiment : undefined,
       reviewUrl: typeof r.review_url === "string" ? r.review_url : undefined,
+      media: Array.isArray(r.media) ? (r.media as ReviewItem["media"]) : [],
+      removed: typeof r.removed_at === "string",
+      meaning: (r.meaning as ReviewItem["meaning"]) ?? null,
+      abuseFlagged: r.abuse_flagged === true,
+      abuseScore: typeof r.abuse_score === "number" ? r.abuse_score : null,
+      abuseLabels: Array.isArray(r.abuse_labels) ? r.abuse_labels.map(String) : [],
+      abuseVerdict: typeof r.abuse_verdict === "string" ? r.abuse_verdict : null,
+      abuseReported: typeof r.abuse_reported_at === "string",
       reply_text: typeof r.reply_text === "string" ? r.reply_text : undefined,
       // The API sends the response row's state as `reply_status`; reading
       // `status` always yielded undefined, so the badge and the
@@ -1923,9 +2238,14 @@ function mergeAiIntel(data: {
   stale: boolean;
   current_count: number;
   review_count: number;
+  /** Verified numbers. `held_out` = reviews the report refused to categorise. */
+  stats?: {
+    held_out?: { needs_human: number; not_analysed: number; unclassified: number; total: number } | null;
+  } | null;
 }, base: Intelligence): {
   intel: Intelligence; source: string; model: string | null; ragUsed: boolean;
   analyzedAt: string | null; stale: boolean; newCount: number;
+  heldOut: HeldOutCounts | null;
 } {
   const toTheme = (t: (typeof data.themes)[number]): IntelTheme => ({
     name: t.name, keywords: [], mentions: t.mentions,
@@ -1957,6 +2277,7 @@ function mergeAiIntel(data: {
     analyzedAt: data.analyzed_at ?? null,
     stale: data.stale === true,
     newCount: Math.max(0, (data.current_count ?? 0) - (data.review_count ?? 0)),
+    heldOut: data.stats?.held_out ?? null,
   };
 }
 
@@ -2010,7 +2331,7 @@ function heatCell(value: number, max: number): { cls: string } {
 
 function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, aiLoading, analyzing, onAnalyze, onBack, onOpenStar, intelDays, intelMonth, intelInterval, setIntelDays, setIntelMonth }: {
   intelligence: Intelligence; total: number; locationName: string;
-  aiMeta: { source: string; model: string | null; ragUsed: boolean; analyzedAt: string | null; stale: boolean; newCount: number } | null;
+  aiMeta: { source: string; model: string | null; ragUsed: boolean; analyzedAt: string | null; stale: boolean; newCount: number; heldOut: HeldOutCounts | null } | null;
   aiLoading: boolean;
   analyzing: boolean;
   onAnalyze: () => void;
@@ -2075,6 +2396,17 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
             {aiMeta?.stale && (
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#FEF7E0] px-2.5 py-1 text-[12px] font-medium text-[#EA8600]">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#EA8600]" /> {aiMeta.newCount} new review(s) since last AI run — re-analyze for fresh insights
+              </p>
+            )}
+            {(aiMeta?.heldOut?.total ?? 0) > 0 && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#FEF7E0] px-2.5 py-1 text-[12px] text-[#7A4F01]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#F4B400]" />
+                {aiMeta?.heldOut?.total} review(s) are not counted in these insights
+                {aiMeta?.heldOut?.needs_human
+                  ? ` — ${aiMeta.heldOut.needs_human} the AI could not read confidently`
+                  : ""}
+                {aiMeta?.heldOut?.not_analysed ? `, ${aiMeta.heldOut.not_analysed} not analysed yet` : ""}
+                . Open the Needs human tab to check them.
               </p>
             )}
           </div>

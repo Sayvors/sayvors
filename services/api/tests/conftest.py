@@ -14,6 +14,10 @@ from datetime import datetime, timezone
 os.environ.setdefault("GOOGLE_REVIEWS_MOCK", "true")
 # TestClient sends Host: testclient — allow it through TrustedHostMiddleware.
 os.environ.setdefault("ALLOWED_HOSTS", '["localhost", "127.0.0.1", "testclient"]')
+# Gates the in-code test bypasses (rate limits, LLM calls). Prod code checks
+# settings.TESTING — never sys.modules probing — so an import accident in the
+# deployed image cannot disarm security controls.
+os.environ.setdefault("TESTING", "true")
 
 import pytest
 import pytest_asyncio
@@ -122,37 +126,23 @@ def _override_user(user_id):
     return _dep
 
 
-    # Patch CSRF middleware globally so all requests (mutating or not) pass
-    # without requiring cookie/header pairing in every test call.
-    try:
-        from app.main import CSRFMiddleware
-        async def _noop_csrf(self, request, call_next):
-            return await call_next(request)
-        CSRFMiddleware.dispatch = _noop_csrf  # noqa: E402
-    except Exception:
-        pass
+# The production TrustedHostMiddleware blocks TestClient's host
+# ("testclient"). A local .env can override ALLOWED_HOSTS via
+# pydantic-settings, so patch the class itself (it is pure ASGI —
+# it has no `dispatch`; instances are built lazily from this class).
+# NOTE: this must run at module level — the middleware stack is built
+# on the first request, after this import-time patch is in place.
+try:
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-    # The production TrustedHostMiddleware blocks TestClient's host ("testclient").
-    # Monkeypatch it globally so integration tests can reach all endpoints.
-    try:
-        from starlette.middleware.trustedhost import TrustedHostMiddleware
+    _orig_trusted_host_init = TrustedHostMiddleware.__init__
 
-        async def _noop_dispatch(self, request, call_next):
-            return await call_next(request)
+    def _permissive_init(self, app, allowed_hosts=None, www_redirect=True):
+        _orig_trusted_host_init(self, app, ["*"], www_redirect)
 
-        TrustedHostMiddleware.dispatch = _noop_dispatch  # noqa: E402
-    except Exception:
-        pass
-
-    # Also patch any instances already added to the app
-    for mw in getattr(fastapi_app, "user_middleware", []):
-        try:
-            from starlette.middleware.base import BaseHTTPMiddleware
-            if isinstance(mw, BaseHTTPMiddleware):
-                # TrustedHostMiddleware inherits BaseHTTPMiddleware
-                mw.allowed_hosts = ["testclient", "localhost", "127.0.0.1"]
-        except Exception:
-            pass
+    TrustedHostMiddleware.__init__ = _permissive_init  # noqa: E402
+except Exception:
+    pass
 
 
 # Replace production lifespan with a no-op so Kafka/Redis/DB warmup and

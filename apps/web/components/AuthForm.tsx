@@ -183,7 +183,6 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   const [pwVisible, setPwVisible] = useState(false);
   const [confirmVisible, setConfirmVisible] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loginFailed, setLoginFailed] = useState(false);
@@ -330,8 +329,11 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       setBusy(true);
       setLoginFailed(false);
       try {
-        await login({ email: v.email.trim(), password: v.password });
-        setDone(true);
+        // Straight through to the app. There used to be a "Welcome back" screen
+        // with a button to click, which only added a step between a working
+        // password and the dashboard.
+        const u = await login({ email: v.email.trim(), password: v.password });
+        window.location.href = u?.onboarded ? "/dashboard" : "/onboarding";
       } catch (err: any) {
         if (err.code === "email_not_verified") {
           router.push(`/verify-otp?email=${encodeURIComponent(v.email.trim())}`);
@@ -360,7 +362,10 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         if (result.verification_token) {
           localStorage.setItem("verification_token", result.verification_token);
         }
-        setDone(true);
+        // Straight to the code entry. The green-tick "Check your email" screen
+        // that sat here only asked the user to click through to the only thing
+        // they could actually do next.
+        router.push(`/verify-otp?email=${encodeURIComponent(v.email.trim())}`);
       } catch (err: any) {
         setError(err.message || "Signup failed");
       } finally {
@@ -368,38 +373,6 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       }
     }
   };
-
-  /* ── success ── */
-  if (done) {
-    return (
-      <div className="flex flex-col items-center text-center">
-        <div className="relative mb-6">
-          <div className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-emerald-500 transition-transform duration-300 scale-100">
-            <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6"><path d="M4.5 12.75l6 6 9-13.5" /></svg>
-          </div>
-        </div>
-        <h2 className="text-lg font-semibold text-ink">{isLogin ? "Welcome back" : "Check your email"}</h2>
-        <p className="mt-1.5 text-[13px] text-ink/55">
-          {isLogin ? "Redirecting you to dashboard..." : "We sent a 6-digit verification code. Enter it to activate your account."}
-        </p>
-        <div className="mt-7 flex w-full flex-col gap-2.5">
-          {isLogin ? (
-            <Link href="/dashboard" className="flex h-11 items-center justify-center rounded-lg bg-ink text-[14px] font-medium text-white transition-all duration-200 hover:bg-ink/90 active:scale-[0.98]">
-              Go to dashboard
-            </Link>
-          ) : (
-            <Link href={`/verify-otp?email=${encodeURIComponent(v.email.trim())}`} className="flex h-11 items-center justify-center rounded-lg bg-ink text-[14px] font-medium text-white transition-all duration-200 hover:bg-ink/90 active:scale-[0.98]">
-              Enter verification code
-            </Link>
-          )}
-          <button type="button" onClick={() => { setV(defaultValues); setDone(false); setStep(0); }}
-            className="flex h-11 items-center justify-center rounded-lg border border-ink/[0.12] text-[14px] font-medium text-ink/60 transition-all duration-200 hover:bg-ink/[0.03] hover:border-ink/20 active:scale-[0.98]">
-            Back to {isLogin ? "sign in" : "sign up"}
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   /* ── form ── */
   return (

@@ -9,7 +9,6 @@ Context layers, cheapest first:
   3. LLM synthesis merges both layers with the conversation history.
 """
 import logging
-import sys
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -18,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
 from ...core.deps import get_current_user, get_db
 from ..auth.rate_limit import rate_limit
 from ..analytics.models import ReviewInsight
@@ -382,7 +382,7 @@ async def chat(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not sys.modules.get("pytest") and not await rate_limit(f"assistant:{user.id}", 10, 60):
+    if not settings.TESTING and not await rate_limit(f"assistant:{user.id}", 10, 60):
         raise HTTPException(status_code=429, detail="Too many messages — wait a moment.")
 
     snapshot = await _business_snapshot(db, user)

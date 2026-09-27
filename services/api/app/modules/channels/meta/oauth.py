@@ -47,7 +47,6 @@ async def create_transaction(
     logger.info("Meta OAuth started provider=%s tenant=%s", provider, tenant_id)
     return state, row
 
-
 async def consume_transaction(
     db: AsyncSession, state: str | None, provider: str
 ) -> MetaOAuthTransaction | None:
@@ -55,38 +54,57 @@ async def consume_transaction(
 
     Returns the row with status flipped to completed, or None when the
     state is invalid, expired, already used, or for another provider.
-    SELECT-first (no UPDATE..RETURNING) so SQLite/Postgres behave alike.
+
+    Claiming is an atomic conditional UPDATE (not SELECT-then-UPDATE), so two
+    concurrent callbacks presenting the same state can never both win —
+    rowcount arbitrates. Works identically on Postgres and SQLite. When the
+    caller passes the sibling dialog's provider (facebook/instagram share one
+    redirect URI), the claim misses and the caller retries with the sibling,
+    which then claims atomically.
     """
     if not state:
         return None
+    state_hash = _hash_state(state)
+    now = datetime.now(timezone.utc)
+
+    claimed = await db.execute(
+        update(MetaOAuthTransaction)
+        .where(
+            MetaOAuthTransaction.state_hash == state_hash,
+            MetaOAuthTransaction.provider == provider,
+            MetaOAuthTransaction.status == "pending",
+        )
+        .values(status="completed", completed_at=now)
+    )
+    await db.commit()
+    if (claimed.rowcount or 0) == 0:
+        logger.warning("Meta OAuth state rejected provider=%s", provider)
+        return None
+
     row = (
         await db.execute(
             select(MetaOAuthTransaction).where(
-                MetaOAuthTransaction.state_hash == _hash_state(state),
+                MetaOAuthTransaction.state_hash == state_hash,
                 MetaOAuthTransaction.provider == provider,
-                MetaOAuthTransaction.status == "pending",
+                MetaOAuthTransaction.status == "completed",
             )
         )
     ).scalar_one_or_none()
-    if row is None:
-        logger.warning("Meta OAuth state rejected provider=%s", provider)
+    if row is None:  # pragma: no cover — row just updated in this session
+        logger.warning("Meta OAuth claimed state vanished provider=%s", provider)
         return None
+
     expires_at = row.expires_at
     if expires_at is not None and expires_at.tzinfo is None:
         # SQLite drops tzinfo — interpret stored UTC as UTC.
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    now = datetime.now(timezone.utc)
     if expires_at is not None and expires_at <= now:
         row.status = "expired"
         db.add(row)
         await db.commit()
         logger.warning("Meta OAuth state expired provider=%s", provider)
         return None
-    row.status = "completed"
-    row.completed_at = now
-    db.add(row)
-    await db.commit()
-    await db.refresh(row)
+
     logger.info(
         "Meta OAuth completed provider=%s tenant=%s", provider, row.tenant_id
     )

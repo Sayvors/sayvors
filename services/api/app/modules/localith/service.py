@@ -295,6 +295,197 @@ async def _release_sync_lock(db: AsyncSession, listing_id: str | None = None) ->
     await release_lock(db, ns, key)
 
 
+def _fetched_review_ids(items) -> set[str]:
+    """Provider ids present in a fetch, normalised to our `localith:` form."""
+    out: set[str] = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        rid = str(item.get("id") or item.get("review_id") or item.get("uid") or "")
+        if rid:
+            out.add(f"localith:{rid}")
+    return out
+
+
+# Below this, a "complete" fetch is far more likely to be a truncated or
+# errored response than a genuine mass deletion. Refuse to sweep rather than
+# mark a merchant's whole history as removed on a bad page.
+MIN_REVIEWS_FOR_REMOVAL_SWEEP = 5
+
+# A review must be missing from this many consecutive complete syncs before we
+# call it deleted. One miss is evidence of a glitch, not a deletion.
+MISSES_BEFORE_REMOVAL = 2
+
+# Circuit breaker: if a single sync would mark more than this share of a
+# channel's reviews as removed, something is wrong upstream (or in us) and the
+# sweep is abandoned rather than allowed to bury a live listing. This exists
+# because getting it wrong HIDES REAL REVIEWS from a merchant and silently
+# drops them out of their averages — a far worse failure than a stale review.
+MAX_REMOVAL_RATIO = 0.34
+
+
+async def _mark_removed_reviews(
+    db: AsyncSession, channel: Channel, user_id: str, seen_ids: set[str]
+) -> list[str]:
+    """Soft-mark reviews that a complete fetch no longer returns.
+
+    The row and its replies are kept — a review can be hidden by Google for a
+    while and return later, and the history is worth keeping either way. The
+    flag clears itself on the next sync that does see the review.
+
+    Reviews the merchant marked unavailable by hand are left alone: `skipped`
+    is their decision, not evidence of a deletion.
+
+    Two deliberate brakes, because the failure mode here is destructive and
+    invisible: a review must be missed by MISSES_BEFORE_REMOVAL consecutive
+    syncs, and a single sync may never remove more than MAX_REMOVAL_RATIO of a
+    channel. Getting this wrong hides live reviews from a merchant and drops
+    them out of their averages, which is far worse than a stale row.
+    """
+    if len(seen_ids) < MIN_REVIEWS_FOR_REMOVAL_SWEEP:
+        return []
+
+    candidates = (
+        await db.execute(
+            select(ReviewInsight).where(
+                ReviewInsight.channel_id == channel.id,
+                ReviewInsight.removed_at.is_(None),
+            )
+        )
+    ).scalars().all()
+
+    now = datetime.now(timezone.utc)
+    removed: list[str] = []
+    touched_days: set[date] = set()
+    considered = 0
+    for insight in candidates:
+        if insight.review_id in seen_ids:
+            # Back on the listing: clear any pending miss and any old verdict.
+            insight.missed_syncs = 0
+            if insight.removed_at is not None:
+                insight.removed_at = None
+            continue
+        if insight.skipped:
+            continue
+        # Never judge a review we have not successfully sighted at least once,
+        # so adding a channel cannot "remove" history that predates tracking.
+        if insight.last_seen_at is None:
+            continue
+        considered += 1
+        insight.missed_syncs = (insight.missed_syncs or 0) + 1
+        if insight.missed_syncs < MISSES_BEFORE_REMOVAL:
+            continue
+        insight.removed_at = now
+        insight.missed_syncs = 0
+        removed.append(insight.review_id)
+        touched_days.add((insight.review_updated_at or insight.created_at).date())
+
+    if considered and len(removed) > max(1, int(considered * MAX_REMOVAL_RATIO)):
+        # Something is wrong upstream, or in us. Burying a live listing helps
+        # nobody, so abandon the sweep and leave the rows alone. The verdicts
+        # written during the loop above must be undone explicitly — this
+        # session has not committed, but the objects are still dirty.
+        logger.error(
+            "Removal sweep ABORTED for channel %s: would remove %d of %d unseen "
+            "reviews in one sync (limit %d%%). Fetch looks unreliable — leaving "
+            "every review in place.",
+            channel.id, len(removed), considered, int(MAX_REMOVAL_RATIO * 100),
+        )
+        for insight in candidates:
+            insight.missed_syncs = 0
+            if insight.review_id in set(removed):
+                insight.removed_at = None
+        return []
+
+    if removed:
+        await db.commit()
+        for review_id in removed[:MAX_PER_SYNC]:
+            await notify(
+                db, user_id, "review_removed",
+                "A review is no longer available on Google",
+                "The reviewer deleted it, or Google removed it. Your copy is kept "
+                "for reference and the review comes back automatically if it returns.",
+                data={"review_id": review_id, "channel_id": channel.id},
+                href="/dashboard/reviews",
+            )
+        # Rebuild the affected daily rollups so the rating average and
+        # response rate stop counting a review Google no longer shows.
+        from ..analytics.consumer import recompute_daily_rollup
+
+        for day in touched_days:
+            try:
+                await recompute_daily_rollup(channel.id, user_id, day)
+            except Exception as e:
+                logger.warning("rollup recompute after removal failed: %s", e)
+    return removed
+
+
+async def _adopt_live_reply(
+    db: AsyncSession, channel: Channel, review_id: str, review
+) -> bool:
+    """Adopt the reply Google already shows for a review into a ReviewReply row.
+
+    Localith returns the live reply on every review payload. Without this the
+    review shows as "answered outside Sayvors": the reply text is never stored,
+    so the detail page has no response to display or edit.
+
+    Google is the source of truth for what is live, so a `posted` row whose text
+    no longer matches the listing is corrected in place — that is how a reply
+    edited directly in the Google Business Profile reaches Sayvors.
+
+    A draft the merchant is still working on (`pending_approval`) or one that
+    failed to publish is never touched: their in-flight work outranks whatever
+    the provider reports. Returns True when a row was created or corrected.
+    """
+    live_text = (getattr(review, "reply_text", None) or "").strip()
+    if not getattr(review, "has_replies", False) or not live_text:
+        return False
+
+    existing = (
+        await db.execute(
+            select(ReviewReply)
+            .where(
+                ReviewReply.channel_id == channel.id,
+                ReviewReply.review_id == review_id,
+            )
+            .order_by(ReviewReply.created_at.desc())
+        )
+    ).scalars().all()
+
+    for row in existing:
+        if row.status in ("pending_approval", "failed"):
+            # Merchant-owned state — leave it exactly as it is.
+            return False
+        if row.status in ("posted", "approved") and (row.reply_text or "").strip() == live_text:
+            return False
+
+    posted = next(
+        (r for r in existing if r.status in ("posted", "approved")), None
+    )
+    if posted is not None:
+        posted.reply_text = live_text
+        posted.reply_external_id = getattr(review, "reply_external_id", None)
+        posted.replied_at = _parse_dt(
+            getattr(review, "reply_published_at", None)
+        ) or datetime.now(timezone.utc)
+        return True
+
+    db.add(ReviewReply(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        review_id=review_id,
+        rating=int(getattr(review, "rating", 5) or 5),
+        review_text=getattr(review, "text", None),
+        reviewer_name=getattr(review, "reviewer", None),
+        reply_text=live_text,
+        status="posted",
+        reply_external_id=getattr(review, "reply_external_id", None),
+        replied_at=_parse_dt(getattr(review, "reply_published_at", None))
+        or datetime.now(timezone.utc),
+    ))
+    return True
+
+
 async def sync_connection(
     user: User,
     db: AsyncSession,
@@ -482,6 +673,10 @@ async def _sync_single_connection(
                 insight.replied = True
                 insight.replied_at = datetime.now(timezone.utc)
             db.add(insight)
+            await db.flush()
+            # Store the reply Google already shows, so a review answered
+            # outside the drafts flow still has an editable response.
+            await _adopt_live_reply(db, channel, f"localith:{review_id}", review)
             synced += 1
             if len(pulled) < MAX_PER_SYNC:
                 pulled.append(review)
@@ -511,9 +706,34 @@ async def _sync_single_connection(
             if not insight.review_url and review.review_url:
                 insight.review_url = review.review_url
                 touched = True
+            # Presence in this complete fetch proves Google still serves the
+            # review; anything absent from it gets marked removed further down.
+            insight.last_seen_at = datetime.now(timezone.utc)
+            if insight.removed_at is not None:
+                # The reviewer or Google restored it — stop treating it as gone.
+                insight.removed_at = None
+                touched = True
             if review.has_replies and not insight.replied:
                 insight.replied = True
                 insight.replied_at = datetime.now(timezone.utc)
+                touched = True
+            # Adopt the live reply on every sync, not just for new reviews.
+            # This is what backfills reviews answered before Sayvors stored
+            # the text, and what picks up an edit made directly in the Google
+            # Business Profile. Runs regardless of `touched` because the reply
+            if review.media and user.id:
+                from ..analytics.review_media import sync_review_media
+
+                try:
+                    insight.media = await sync_review_media(
+                        user.id, review.media, insight.media or []
+                    )
+                    touched = True
+                except Exception as e:  # photos are garnish, never fail a sync
+                    logger.warning("review media sync failed for %s: %s", review_id, e)
+            if await _adopt_live_reply(
+                db, channel, f"localith:{review_id}", review
+            ):
                 touched = True
             # Edit detection: Localith sends no edit timestamp, so compare
             # content against what was stored before this sync. Filling a
@@ -567,6 +787,18 @@ async def _sync_single_connection(
                     )
             if touched:
                 synced += 1
+
+    # Reviews Google no longer serves. `_fetched_review_ids` already returns
+    # ids in our `localith:<id>` form — do NOT re-prefix here, or every id stops
+    # matching and the sweep buries the whole channel.
+    removed_now = await _mark_removed_reviews(
+        db, channel, user.id, _fetched_review_ids(items)
+    )
+    if removed_now:
+        logger.info(
+            "Localith sync: %d review(s) no longer returned for %s",
+            len(removed_now), connection.listing_id,
+        )
 
     # 3+4. Metrics summaries over the trailing window. Metrics are
     # best-effort: a metrics outage must never fail the review sync.
@@ -742,6 +974,9 @@ async def _sync_single_connection(
             continue
 
         if review.has_replies:
+            # Already answered on the listing — record what is live instead of
+            # drafting a competing reply.
+            await _adopt_live_reply(db, channel, full_review_id, review)
             continue
         if latest_reply:
             continue

@@ -14,4 +14,9 @@ async def redis_health(user: User = Depends(get_current_user)):
         await r.ping()
         return {"status": "ok"}
     except Exception as e:
-        return {"status": "error", "detail": str(e)}
+        # Detail goes to logs only — driver errors can carry internal
+        # host/port topology that must not reach clients.
+        import logging
+
+        logging.getLogger(__name__).warning("Redis health check failed: %s", e)
+        return {"status": "error", "detail": "Redis is unavailable"}

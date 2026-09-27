@@ -15,10 +15,20 @@ mirroring the existing event architecture in `modules/outbox`.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
+from .subjects import SUBJECT_KEYS
+
+# A JSON list column with no server default is a trap: `default=list` only
+# applies when *this* SQLAlchemy version builds the INSERT. Any writer that
+# omits the column — an older process still running against the new schema, a
+# raw insert, a migration that added the column later — leaves NULL, and a NULL
+# then fails list validation and 500s the endpoint that reads the whole table.
+# The literal is written unquoted-cast so it is valid on both Postgres and the
+# SQLite the tests run on.
+_EMPTY_JSON = text("'[]'")
 
 
 class ReviewInsight(Base):
@@ -52,11 +62,11 @@ class ReviewInsight(Base):
     # -1.0 .. 1.0
     sentiment_score: Mapped[float] = mapped_column(Float, default=0.0)
     # [{"name": "service", "sentiment": "positive"}, ...]
-    topics: Mapped[list] = mapped_column(JSON, default=list)
+    topics: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
     # [{"name": "Chicken Burger", "sentiment": "positive"}, ...]
-    products: Mapped[list] = mapped_column(JSON, default=list)
+    products: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
     # [{"name": "slow service", "severity": "high"}, ...]
-    problems: Mapped[list] = mapped_column(JSON, default=list)
+    problems: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
     # pending -> done | failed
     enrichment_status: Mapped[str] = mapped_column(
         Enum("pending", "done", "failed", name="enrichment_status"),
@@ -82,8 +92,151 @@ class ReviewInsight(Base):
     draft_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     # Link to the review on Google (Localith `reviewLink`), for "View on Google".
     review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Photos the reviewer attached, stored as
+    # [{url, kind, label, source_url}]. `url` points at OUR copy under
+    # /media-files, because Google's thumbnailUrl is a short-lived FIFE link
+    # that stops resolving within hours. `source_url` is kept only to detect
+    # a changed photo on the next sync.
+    media: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+    # Per-review meaning record — the layer the intelligence report reads
+    # instead of re-interpreting raw text. See analytics/subjects.py for the
+    # closed vocabulary and the evidence rule that stops the model inventing
+    # complaints. `source` is "llm" | "heuristic" | "human"; a human
+    # correction is never overwritten by a re-analysis.
+    meaning: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Last sync that returned this review. A complete sync that does not
+    # include it means Google no longer serves it (reviewer deleted, Google
+    # removed, or filtered) — see `removed_at`.
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Set when a complete sync stopped returning the review. Soft: the row and
+    # its replies are kept for history, and cleared automatically if the
+    # review reappears. Distinct from `skipped`, which the merchant sets by hand.
+    removed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    # Consecutive complete syncs that did NOT return this review. Reset to 0
+    # on every sighting. A review is only called deleted after several misses,
+    # so a single flaky fetch can never hide a live review.
+    missed_syncs: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Merchant flagged the review as abusive / violating Google's policies.
+    # Google's API cannot submit the report, so Sayvors tracks the decision
+    # and the merchant files it in the Business Profile UI.
+    abuse_flagged: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # When the merchant confirmed they filed the report with Google.
+    abuse_reported_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    abuse_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # AI triage. `abuse_score` 0..1 is the model's confidence that this review
+    # breaks Google's content policies; `abuse_verdict` is the human decision
+    # (None = not yet reviewed). The AI never acts on its own.
+    abuse_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    abuse_labels: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+    abuse_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    abuse_reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # When Google last updated the review (bucket date for daily rollups)
     review_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class LocationIssue(Base):
+    """One addressable problem at one location, derived from checked meaning.
+
+    "Fix this" on the dashboard used to link to the review list, which promised
+    a fix and delivered reading. This is the thing it should have pointed at: a
+    tracked item with a fix, the evidence behind it, and a status the merchant
+    owns.
+
+    Two decisions shape the schema:
+
+    The evidence is a frozen snapshot rather than a live join. If the page
+    queried `review_insights` directly, an issue marked done could silently
+    resurrect as new reviews arrived and nobody would know why. Snapshotting
+    makes the issue a stable object you can reason about; `last_seen_at` tells
+    you it is still active.
+
+    `status` is never written by the refresh path. The merchant closes their
+    own issues, which is what keeps `avg_rating` before and after `resolved_at`
+    answerable — the only way to learn whether the fix actually worked.
+    """
+
+    __tablename__ = "location_issues"
+    __table_args__ = (
+        # One open item per subject per location. A resolved issue keeps its
+        # row, so the unique index covers the pair without the status.
+        UniqueConstraint("channel_id", "subject", name="uq_location_issue_channel_subject"),
+        # The subject must be a real member of the closed vocabulary. Enforced
+        # in the database as well as in code, because an invented category is
+        # exactly the failure this whole layer exists to prevent.
+        CheckConstraint(
+            "subject IN (" + ", ".join(f"'{s}'" for s in sorted(SUBJECT_KEYS)) + ")",
+            name="ck_location_issue_subject_vocab",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(String(36), index=True)
+    # A key from the meaning layer's closed vocabulary, never free text.
+    subject: Mapped[str] = mapped_column(String(60), index=True)
+
+    # Impact, snapshotted at refresh. Frozen for the same reason the evidence
+    # is: the number the merchant reacted to must not move underneath them.
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
+    negative_count: Mapped[int] = mapped_column(Integer, default=0)
+    avg_rating: Mapped[float] = mapped_column(Float, default=0.0)
+    # [{"review_id", "quote", "rating"}] — quotes are verbatim spans the meaning
+    # layer already checked against the source review.
+    evidence: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+
+    # The fix. Written from the deterministic playbook, never by the model.
+    title: Mapped[str] = mapped_column(String(120), default="")
+    detail: Mapped[str] = mapped_column(String(300), default="")
+
+    status: Mapped[str] = mapped_column(
+        Enum(
+            "open", "in_progress", "done", "dismissed",
+            name="location_issue_status",
+        ),
+        default="open",
+        nullable=False,
+        server_default="open",
+        index=True,
+    )
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Reserved for assigning the work and notifying someone. Deliberately not a
+    # foreign key: there is no team table yet, and a dangling FK is worse than
+    # a column waiting to be filled.
+    assignee_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    assignee_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    notified_channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

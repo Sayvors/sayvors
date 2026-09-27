@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 # (pattern, key, label, detail-template, keyword-variants)
 PATTERNS: list[tuple[str, str, str, str, list[str]]] = [
     (
+        r"(?:تصلح\w*|صلح\w*|ترميم\w*|صيان\w*|إصلاح\w*|اصلاح\w*).{0,30}(?:مبن\w*|عمار\w*|مرفق\w*)|(?:مبن\w*|عمار\w*|مرفق\w*).{0,30}(?:تصلح\w*|صلح\w*|ترميم\w*|صيان\w*|إصلاح\w*|اصلاح\w*)",
+        "facility_premises",
+        "Building or premises issue",
+        "the building needs attention",
+        ["building", "premises", "facility", "مبنى", "المبنى", "مبناكم", "مبنا", "عمارة", "صيانة", "إصلاح", "تصلح"],
+    ),
+    (
         r"(\d+)\s*(?:-|–)?\s*(min|mins|minute|minutes|hr|hrs|hour|hours)",
         "wait_time",
         "Long wait",
@@ -108,6 +115,7 @@ ISSUE_SEMANTICS: dict[str, list[str]] = {
     "food_temperature": ["cold", "hot", "lukewarm", "temperature"],
     "food_quality": ["quality", "taste", "undercooked", "burnt", "raw", "soggy"],
     "ambience": ["noise", "noisy", "loud", "crowded"],
+    "facility_premises": ["building", "premises", "facility", "المبنى", "مبناكم", "حالة المبنى"],
     "product_reference": [],
 }
 
@@ -115,6 +123,18 @@ ISSUE_SEMANTICS: dict[str, list[str]] = {
 def detect_churn(review_text: str) -> bool:
     text = (review_text or "").lower()
     return any(sig in text for sig in CHURN_SIGNALS)
+
+
+def _subject_for(key: str) -> str | None:
+    """The meaning-layer subject this issue key corresponds to, if any.
+
+    Imported lazily because the analytics meaning layer sits downstream of the
+    reply engine; the dependency runs one way so a reply can name a tracked
+    issue without the engine owning the business vocabulary.
+    """
+    from ..analytics.issues import ISSUE_KEY_TO_SUBJECT
+
+    return ISSUE_KEY_TO_SUBJECT.get(key)
 
 
 def extract_issues(review_text: str, analysis: ReviewAnalysis) -> list[ExtractedIssue]:
@@ -150,6 +170,7 @@ def extract_issues(review_text: str, analysis: ReviewAnalysis) -> list[Extracted
             key=key, label=label, detail=detail,
             keywords=[k for k in dict.fromkeys(keywords) if k][:12],
             semantic=ISSUE_SEMANTICS.get(key, []),
+            subject=_subject_for(key),
         ))
 
     # Fall back to the analysis issue_type so there is always a target

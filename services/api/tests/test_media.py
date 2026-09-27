@@ -208,6 +208,9 @@ async def test_upload_from_computer_returns_public_url(monkeypatch, tmp_path, db
     from app.config import settings
 
     monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
     r = client.post(
         "/api/v1/media/upload",
         files={"file": ("shop.jpg", b"\xff\xd8fake-bytes", "image/jpeg")},
@@ -222,6 +225,60 @@ async def test_upload_from_computer_returns_public_url(monkeypatch, tmp_path, db
     # The returned URL flows straight into create (http check passes).
     res = await media.create_media(db, user_id, _photo_for_upload(body["image_url"]))
     assert res["media"]["status"] == "draft"
+
+
+def test_generic_storage_routes_upload_get_list_update_delete(monkeypatch, tmp_path, client, user_id):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "S3_DOCS_BUCKET", "")
+    headers = {"host": "localhost"}
+
+    uploaded = client.post(
+        "/api/v1/storage/upload",
+        files={"file": ("post-photo.jpg", b"\xff\xd8photo-v1", "image/jpeg")},
+        headers=headers,
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    obj = uploaded.json()
+    key = obj["key"]
+    assert obj["operation"] == "upload"
+    assert obj["url"].startswith("http://localhost/media-files/")
+
+    fetched = client.get(f"/api/v1/storage/objects/{key}", headers=headers)
+    assert fetched.status_code == 200
+    assert fetched.content == b"\xff\xd8photo-v1"
+
+    listed = client.get("/api/v1/storage/objects", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()["count"] == 1
+
+    updated = client.put(
+        f"/api/v1/storage/objects/{key}",
+        files={"file": ("post-photo.jpg", b"\xff\xd8photo-v2", "image/jpeg")},
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["operation"] == "update"
+    assert client.get(f"/api/v1/storage/objects/{key}", headers=headers).content == b"\xff\xd8photo-v2"
+
+    deleted = client.delete(f"/api/v1/storage/objects/{key}", headers=headers)
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+    assert client.get(f"/api/v1/storage/objects/{key}", headers=headers).status_code == 404
+
+
+def test_generic_storage_routes_enforce_tenant_key(monkeypatch, tmp_path, client):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    response = client.get(
+        "/api/v1/storage/objects/another-tenant/private.jpg",
+        headers={"host": "localhost"},
+    )
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -276,6 +333,9 @@ async def test_upload_stores_content_type_derived_from_extension(monkeypatch, tm
     from app.config import settings
 
     monkeypatch.setattr(settings, "MEDIA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "S3_MEDIA_BUCKET", "")
+    monkeypatch.setattr(settings, "AWS_S3_BUCKET", "")
+    monkeypatch.setattr(settings, "GCS_PUBLIC_BUCKET", "")
     png_magic = b"\x89PNG\r\n\x1a\n" + b"rest-of-png"
     r = client.post(
         "/api/v1/media/upload",

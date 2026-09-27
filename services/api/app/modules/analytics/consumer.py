@@ -32,7 +32,7 @@ from ..channels.models import Channel, ReviewReply
 from ..kafka.client import create_consumer
 from ..notifications.service import notify
 from ..outbox.service import enqueue_event
-from .enrichment import enrich_review
+from .enrichment import enrich_review, extract_meaning, is_human_corrected
 from .models import LocationDailyMetric, ReviewInsight
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,17 @@ async def _handle_discovered(payload: dict) -> None:
                 new_rating != existing.rating
                 or (bool(existing.review_text) and (new_text or None) != (existing.review_text or None))
             )
-            if existing.enrichment_status == "done" and not content_changed:
+            # A replay is only idempotent once BOTH the old enrichment and the
+            # meaning layer have run. Every existing row already says
+            # enrichment "done" from the pre-meaning pipeline, so keying this
+            # on enrichment alone would skip meaning for all of them forever
+            # and leave the report reading nothing.
+            meaning_pending = not is_human_corrected(existing.meaning) and not existing.meaning
+            if (
+                existing.enrichment_status == "done"
+                and not content_changed
+                and not meaning_pending
+            ):
                 return  # idempotent replay
             if content_changed and not existing.edited:
                 # First detection — snapshot what we had on file.
@@ -119,6 +129,49 @@ async def _handle_discovered(payload: dict) -> None:
         if not insight.reviewer_photo_url and payload.get("reviewer_photo_url"):
             insight.reviewer_photo_url = payload.get("reviewer_photo_url")
         insight.review_updated_at = _iso_to_dt(payload.get("review_updated_at"))
+        # `last_seen_at` and `removed_at` are deliberately NOT touched here.
+        #
+        # They are the evidence removal detection runs on, and only a complete
+        # provider fetch can prove a review is still on the listing. A Kafka
+        # `review.discovered` event cannot: it is replayed on redelivery, on
+        # consumer rebalance, and for every historical event after a deploy.
+        # Writing `now` into `last_seen_at` from a replay made ten reviews that
+        # had not been seen since the 26th claim they were seen that morning,
+        # which is exactly the signal the sweep trusts. The sync path sets both
+        # correctly, in the same pass that computes the full seen-set, so it is
+        # the only writer.
+
+        media = payload.get("media")
+        if media and insight.user_id:
+            from .review_media import sync_review_media
+
+            try:
+                insight.media = await sync_review_media(
+                    insight.user_id, media, insight.media or []
+                )
+            except Exception as e:  # photos are garnish, never fail the event
+                logger.warning("review media sync failed for %s: %s", review_id, e)
+
+        # Per-review meaning. This is the layer the intelligence report reads
+        # instead of re-interpreting raw text, which is how an Arabic "fix your
+        # building" review became a "bank account" finding in the first place.
+        # A human correction is authoritative and is never overwritten here; a
+        # genuine edit from the reviewer does invalidate it.
+        if content_changed and is_human_corrected(insight.meaning):
+            # The customer changed what they wrote, so the old reading no
+            # longer describes it. A human call on stale text is not a call on
+            # the new text.
+            insight.meaning = None
+        if not is_human_corrected(insight.meaning):
+            try:
+                insight.meaning = await extract_meaning(
+                    text=insight.review_text,
+                    rating=insight.rating,
+                    reviewer_name=insight.reviewer_name,
+                    tenant_id=insight.user_id,
+                )
+            except Exception as e:  # meaning is additive, never fail the event
+                logger.warning("meaning extraction failed for %s: %s", review_id, e)
 
         if content_changed:
             insight.edited = True
@@ -226,6 +279,9 @@ async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> 
                     func.avg(ReviewInsight.rating),
                 ).where(
                     ReviewInsight.channel_id == channel_id,
+                    # Reviews Google dropped are not part of the merchant's visible
+                    # performance any more.
+                    ReviewInsight.removed_at.is_(None),
                     func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) >= day_start,
                     func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) < day_end,
                 )
@@ -238,6 +294,9 @@ async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> 
                     select(ReviewInsight.sentiment, func.count())
                     .where(
                         ReviewInsight.channel_id == channel_id,
+                        # Reviews Google dropped are not part of the merchant's visible
+                        # performance any more.
+                        ReviewInsight.removed_at.is_(None),
                         func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) >= day_start,
                         func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) < day_end,
                     )
@@ -254,6 +313,9 @@ async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> 
             await db.execute(
                 select(ReviewInsight.review_id).where(
                     ReviewInsight.channel_id == channel_id,
+                    # Reviews Google dropped are not part of the merchant's visible
+                    # performance any more.
+                    ReviewInsight.removed_at.is_(None),
                     func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) >= day_start,
                     func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) < day_end,
                     ReviewInsight.replied == True,  # noqa: E712

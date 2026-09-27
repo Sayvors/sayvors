@@ -23,7 +23,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   signup: (data: SignupData) => Promise<{ verification_token?: string }>;
-  login: (data: LoginData) => Promise<void>;
+  login: (data: LoginData) => Promise<User>;
   googleLogin: (idToken: string) => Promise<User>;
   facebookLogin: (accessToken: string) => Promise<User>;
   logout: (allDevices?: boolean) => Promise<void>;
@@ -180,6 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const result = await res.json();
     if (result.access_token) setAccessToken(result.access_token);
     setUser(result.user);
+    return result.user as User;
   };
 
   const googleLogin = async (idToken: string): Promise<User> => {

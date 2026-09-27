@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 MODELS_CHAIN = ["groq:qwen3.8-27b", "gemini:gemini-3.6-flash", "openai:gpt-4o-mini"]
 MAX_REVIEWS = 50
 MAX_RAG_CHARS = 4000
+ANALYSIS_VERSION = 2
 
 STOPWORDS = {
     "that", "this", "with", "from", "have", "still", "they", "them",
@@ -168,7 +169,19 @@ Competitive rules:
 - "wins" = where this business leads the cohort. "gaps" = where it trails, phrased as the concrete thing to fix. If the cohort has no complaints about something this business is also praised for, that is a win worth stating.
 
 General rules:
-- Ground every theme in the ACTUAL review texts. Never invent topics, names, products or events not present in the reviews.
+- Each review may carry a `meaning` block. That is its CHECKED reading: the
+  subject is from a fixed vocabulary and the evidence spans are verbatim from
+  the review. Build themes FROM the meaning subjects. Do not re-derive meaning
+  from the text — a previous pass read the Arabic review "you need to fix your
+  building" as "bank account corrections" and invented a business action from it.
+- A review with no `meaning`, or with `needs_human: true`, has NO established
+  meaning. Do not guess one and do not create a theme from it.
+- `problems` lists the customer's actual complaints. These are first-class
+  evidence — a theme that is not backed by a meaning subject or a problem
+  entry does not exist.
+- `negated: true` means the customer DENIES the thing (e.g. "no problems").
+  Never read a negated review as a complaint.
+- Never invent topics, names, products or events not present in the reviews.
 - mentions must never exceed the total review count provided.
 - Use the BUSINESS CONTEXT only to interpret wording (e.g. what "it" refers to), never as a source of claims.
 - With few reviews, return few themes. An empty themes array is acceptable when there is nothing to say.
@@ -195,6 +208,10 @@ async def _load_reviews(
     filters = [
         ReviewInsight.user_id == user_id,
         ReviewInsight.review_updated_at.is_not(None),
+        # A review Google no longer serves is not part of the merchant's
+        # performance. Including it inflated the report's counts (9 reviews
+        # reported against 7 actually live).
+        ReviewInsight.removed_at.is_(None),
     ]
     if channel_id:
         filters.append(ReviewInsight.channel_id == channel_id)
@@ -217,7 +234,10 @@ async def _load_reviews(
     ).scalars().all()
     out = []
     for r in rows:
-        out.append({
+        meaning = r.meaning if isinstance(r.meaning, dict) else {}
+        entry = {
+            "review_id": r.review_id,
+            "channel_id": r.channel_id,
             "rating": r.rating,
             "text": r.review_text or "",
             "reviewer": r.reviewer_name or "Customer",
@@ -225,7 +245,34 @@ async def _load_reviews(
             "sentiment": r.sentiment,
             "topics": [t.get("name") for t in (r.topics or []) if isinstance(t, dict) and t.get("name")],
             "replied": r.replied,
-        })
+            # The complaint side, which was being dropped entirely. A report that
+            # can only see praise cannot surface a real problem.
+            "problems": [p.get("name") for p in (r.problems or []) if isinstance(p, dict) and p.get("name")],
+        }
+        if meaning:
+            # Meaning is the checked, per-review reading. The model groups it;
+            # it is not asked to re-derive meaning from the raw text.
+            entry["meaning"] = {
+                "subject": meaning.get("subject"),
+                "intent": meaning.get("intent"),
+                "problem": meaning.get("problem"),
+                "asks": meaning.get("asks") or [],
+                "negated": bool(meaning.get("negated")),
+                "evidence": meaning.get("evidence") or [],
+                "confidence": meaning.get("confidence"),
+                "needs_human": bool(meaning.get("needs_human")),
+                "source": meaning.get("source"),
+                "language": meaning.get("language"),
+            }
+            # The meaning is the authority, so do not hand back raw text for
+            # negative reviews and invite a fresh misreading. Praise-only
+            # reviews keep their text: there is no complaint to misread.
+            if not entry["meaning"]["needs_human"] and meaning.get("subject") not in (
+                "product_quality", "features_updates", "staff_service",
+                "cleanliness", "value_pricing", "other",
+            ):
+                entry["text"] = ""
+        out.append(entry)
     return out
 
 
@@ -247,6 +294,9 @@ def _verified_stats(rows: list[dict]) -> dict:
         "replied": replied,
         "unanswered": total - replied,
         "response_rate": round((replied / total) * 100) if total else 0,
+        # Travels with the report (it is persisted) and is shown in the UI, so
+        # the reviews the analysis declined to speak for are never a silent gap.
+        "held_out": _held_out_counts(rows),
     }
 
 
@@ -346,6 +396,9 @@ async def _call_llm(facts: dict, rag_text: str, model: str, tenant_id: str | Non
         "total_reviews": facts["stats"]["total"],
         "verified_avg": facts["stats"]["avg_rating"],
         "rating_distribution": facts["stats"]["distribution"],
+        # Tell the model what it is not looking at, so the summary it writes
+        # does not imply the numbers cover every review.
+        "reviews_not_included": facts["stats"].get("held_out", {}).get("total", 0),
         "reviews": facts["reviews"],
         "business_context": rag_text or "(no databank content available)",
         "competitive_facts": facts.get("competitive") or
@@ -432,25 +485,279 @@ def _verify_dimensions(
     return out
 
 
-def _verify(parsed: AIIntelligence, stats: dict) -> AIIntelligence:
-    """Clamp the AI payload against verified stats. Numbers never lie."""
+def _meaning_is_reportable(m: object) -> bool:
+    """Only a checked reading may name a category in the report.
+
+    Three ways out: no meaning yet, flagged for a person, or a subject outside
+    the closed vocabulary. All three are held out rather than guessed at — the
+    report is allowed to be incomplete, never wrong.
+    """
+    from .subjects import SUBJECT_KEYS
+
+    if not isinstance(m, dict):
+        return False
+    if m.get("needs_human") is True:
+        return False
+    return m.get("subject") in SUBJECT_KEYS
+
+
+def _held_out_counts(rows: list[dict]) -> dict:
+    """How much of the corpus the report is refusing to speak for.
+
+    Withheld reviews used to vanish silently, which made the report look
+    complete while quietly dropping exactly the ones it could not read. The
+    count is surfaced so the gap is visible.
+    """
+    from .subjects import SUBJECT_KEYS
+
+    unchecked = held = invented = 0
+    for r in rows:
+        m = r.get("meaning")
+        if _meaning_is_reportable(m):
+            continue
+        if not isinstance(m, dict) or not m:
+            unchecked += 1
+        elif m.get("needs_human") is True:
+            held += 1
+        elif m.get("subject") not in SUBJECT_KEYS:
+            invented += 1
+    return {
+        "needs_human": held,
+        "not_analysed": unchecked,
+        "unclassified": invented,
+        "total": held + unchecked + invented,
+    }
+
+
+def _meaning_groups(rows: list[dict]) -> dict[str, list[dict]]:
+    """Bucket the reportable reviews by their checked subject.
+
+    Every downstream number — theme mentions, opportunity priority, action
+    wording — is derived from these buckets, so a category the model invented
+    has no path into the report at all.
+    """
+    buckets: dict[str, list[dict]] = {}
+    for r in rows:
+        m = r.get("meaning")
+        if not _meaning_is_reportable(m):
+            continue
+        buckets.setdefault(m["subject"], []).append(r)
+    return buckets
+
+
+def _themes_from_groups(groups: dict[str, list[dict]]) -> list[AITheme]:
+    """Themes grouped by the checked subject — counts cannot be invented.
+
+    This replaces model-named themes. The AI once labelled an Arabic "you need
+    to fix your building" review as "bank account corrections" and the report
+    carried it as a HIGH opportunity with a business action attached. The
+    category now comes from a validated field on a per-review record, and every
+    phrase shown is a span the meaning layer already proved is in the review.
+    """
+    from .subjects import SUBJECTS
+
+    themes: list[AITheme] = []
+    for subject, group in groups.items():
+        total = len(group)
+        ratings = [r["rating"] for r in group]
+        positive = sum(1 for x in ratings if x >= 4)
+        # Phrases come from stored evidence, which was verbatim-checked at
+        # write time. Re-checked here because the report is the last reader.
+        phrases: list[str] = []
+        for r in group:
+            for span in (r["meaning"].get("evidence") or [])[:1]:
+                if span and span not in phrases:
+                    phrases.append(span[:80])
+                if len(phrases) >= 3:
+                    break
+            if len(phrases) >= 3:
+                break
+        themes.append(AITheme(
+            name=SUBJECTS.get(subject, subject),
+            mentions=total,
+            avg_rating=round(sum(ratings) / total, 1),
+            positive_pct=round((positive / total) * 100),
+            phrases=phrases,
+            trend="stable",
+        ))
+
+    themes.sort(key=lambda t: (-t.mentions, t.avg_rating))
+    return themes[:8]
+
+
+# What to actually do about a subject, keyed by the checked meaning. The model
+# does not get to invent these: an action that does not correspond to a
+# verified subject is an action about something nobody complained about.
+_SUBJECT_PLAYBOOK: dict[str, tuple[str, str]] = {
+    "product_quality": ("Review product quality complaints", "Check the specific products named in the evidence."),
+    "features_updates": ("Commit to the requested features", "Group the requests and tell customers what is planned."),
+    "staff_service": ("Coach the staff named in these reviews", "Acknowledge the service experience in your replies."),
+    "cleanliness": ("Reinstate and audit the cleaning schedule", "Verify the cleaning routine that customers say lapsed."),
+    "speed_waiting": ("Cut the wait time customers described", "Look at peak-hour staffing for the periods mentioned."),
+    "value_pricing": ("Address the price concern", "Explain what the price covers, or review the pricing."),
+    "communication_response": ("Improve response handling", "Own the delay and set a response-time expectation."),
+    "facility_premises": ("Fix the building and premises", "Get the physical issues in the evidence inspected and repaired."),
+    "location_access": ("Improve location and access", "Check signage, parking and entry described in the reviews."),
+    "delivery": ("Fix the delivery process", "Review the delivery steps customers complained about."),
+    "billing_payments": ("Review the billing process", "Check the charges customers said were wrong."),
+    "account_access": ("Fix account access", "Help customers who could not get into their account."),
+    "other": ("Read these reviews directly", "No defined category — read them and decide."),
+}
+
+
+def _opportunities_from_groups(groups: dict[str, list[dict]]) -> list[AIOpportunity]:
+    """Priority from real complaint volume on a checked subject."""
+    from .subjects import SUBJECTS
+
+    out: list[AIOpportunity] = []
+    for subject, group in groups.items():
+        total = len(group)
+        negative = sum(1 for r in group if r["rating"] <= 2)
+        if negative <= 0:
+            continue
+        avg = round(sum(r["rating"] for r in group) / total, 1)
+        label = SUBJECTS.get(subject, subject)
+        # Priority needs VOLUME as well as severity. A single furious customer
+        # is a signal to read, not a reason to change the business — ranking
+        # that HIGH off one review is how "hire a banking specialist" happened
+        # from one Arabic sentence about a building.
+        if negative >= 3 and avg <= 3.0:
+            level, impact = "HIGH", "HIGH"
+        elif negative >= 3 or negative >= 2 or (negative >= 1 and avg <= 2.5):
+            level, impact = "MEDIUM", "MEDIUM"
+        else:
+            level, impact = "MAINTAIN", "GUARD"
+        out.append(AIOpportunity(
+            level=level,
+            title=f"{label}: {negative} negative review(s)",
+            detail=(
+                f"{negative} of {total} review(s) about {label} are negative, "
+                f"averaging {avg}/5."
+            ),
+            impact=impact,
+        ))
+    out.sort(key=lambda o: ({"HIGH": 0, "MEDIUM": 1, "MAINTAIN": 2}[o.level], o.title))
+    return out[:4]
+
+
+def _actions_from_groups(groups: dict[str, list[dict]], rows: list[dict]) -> list[AIAction]:
+    """Actions that can only exist if a verified subject asked for them."""
+    unanswered = sum(1 for r in rows if not r["replied"])
+    actions: list[AIAction] = []
+    for subject, group in groups.items():
+        negative = sum(1 for r in group if r["rating"] <= 2)
+        if negative <= 0:
+            continue
+        total = len(group)
+        avg = round(sum(r["rating"] for r in group) / total, 1)
+        title, detail = _SUBJECT_PLAYBOOK.get(subject, ("", ""))
+        if not title:
+            continue
+        actions.append(AIAction(
+            title=title,
+            detail=f"{detail} ({negative} negative of {total} review(s), {avg}/5 avg)",
+        ))
+    if unanswered:
+        actions.append(AIAction(
+            title=f"Respond to {unanswered} unanswered review(s)",
+            detail="Unanswered reviews are the cheapest win available.",
+        ))
+    return actions[:5]
+
+
+def _strengths_from_groups(groups: dict[str, list[dict]]) -> list[AIStrength]:
+    from .subjects import SUBJECTS
+
+    out: list[AIStrength] = []
+    for subject, group in groups.items():
+        total = len(group)
+        positive = sum(1 for r in group if r["rating"] >= 4)
+        pct = round((positive / total) * 100) if total else 0
+        if pct >= 70 and total >= 2:
+            out.append(AIStrength(
+                title=SUBJECTS.get(subject, subject),
+                mentions=total,
+                avg=round(sum(r["rating"] for r in group) / total, 1),
+            ))
+    return out[:4]
+
+
+def _verified_summary(stats: dict, groups: dict[str, list[dict]]) -> str:
+    """Compose the displayed summary exclusively from verified facts.
+
+    The free-form LLM summary bypassed the checks applied to themes and
+    actions, allowing an invented issue to appear in the most prominent card.
+    This conservative text only cites server-counted ratings and checked
+    meaning groups, independent of tenant type or business context.
+    """
     total = stats["total"]
-    themes = [t for t in parsed.themes if t.mentions > 0][:8]
-    for t in themes:
-        t.mentions = min(t.mentions, total)
-        t.avg_rating = max(1.0, min(5.0, round(t.avg_rating, 1)))
-        t.positive_pct = max(0, min(100, t.positive_pct))
-        t.phrases = [str(p)[:120] for p in t.phrases[:3]]
-    strengths = parsed.strengths[:4]
-    for s in strengths:
-        s.mentions = min(s.mentions, total)
-        s.avg = max(1.0, min(5.0, round(s.avg, 1)))
+    if not total:
+        return "No reviews were found in this period."
+
+    rating_line = (
+        f"Across {total} review(s), the average rating is {stats.get('avg_rating', 0.0):.2f}/5: "
+        f"{stats.get('positive', 0)} positive, {stats.get('neutral', 0)} neutral, and "
+        f"{stats.get('negative', 0)} negative by star rating."
+    )
+    from .subjects import SUBJECTS
+
+    if not groups:
+        held_out = stats.get("held_out", {}).get("total", 0)
+        return (
+            f"{rating_line} No review themes are verified yet; "
+            f"{held_out} review(s) are excluded from theme claims."
+        )
+
+    ranked = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
+    top = ", ".join(
+        f"{SUBJECTS.get(subject, subject)} ({len(group)} mention(s))"
+        for subject, group in ranked[:3]
+    )
+    complaints = [
+        (subject, group, sum(r["rating"] <= 2 for r in group))
+        for subject, group in groups.items()
+    ]
+    complaints = [item for item in complaints if item[2] > 0]
+    if complaints:
+        subject, _, count = sorted(complaints, key=lambda item: (-item[2], item[0]))[0]
+        focus = (
+            f" The clearest area to review is {SUBJECTS.get(subject, subject)} "
+            f"({count} low-rated review(s))."
+        )
+    else:
+        focus = " No low-rated checked theme stands out in this period."
+    return f"{rating_line} Verified review themes include {top}.{focus}"
+
+
+def _verify(parsed: AIIntelligence, stats: dict, rows: list[dict] | None = None) -> AIIntelligence:
+    """Take the model's word for nothing that a customer actually said.
+
+    Themes, opportunities, actions and strengths are all recomputed from the
+    checked meaning layer. The model keeps only what it is genuinely good at:
+    the narrative summary and the dimension verdicts.
+    """
+    groups = _meaning_groups(rows or [])
+    if not groups:
+        # No usable meaning yet. Publish the narrative but claim no categories,
+        # rather than falling back to the model's invented ones.
+        return AIIntelligence(
+            summary=_verified_summary(stats, groups),
+            themes=[],
+            opportunities=[],
+            strengths=[],
+            actions=[],
+            dimensions=parsed.dimensions,
+            competitive=parsed.competitive,
+        )
+
     return AIIntelligence(
-        summary=parsed.summary,
-        themes=themes,
-        opportunities=parsed.opportunities[:4],
-        strengths=strengths,
-        actions=parsed.actions[:5],
+        summary=_verified_summary(stats, groups),
+        themes=_themes_from_groups(groups),
+        opportunities=_opportunities_from_groups(groups),
+        strengths=_strengths_from_groups(groups),
+        actions=_actions_from_groups(groups, rows or []),
+        dimensions=parsed.dimensions,
+        competitive=parsed.competitive,
     )
 
 
@@ -547,7 +854,7 @@ async def get_review_intelligence(
                 # Retry once, echoing the contract violation.
                 raw, used = await _call_llm_retry(facts, rag_text, model, str(e), user.id)
                 parsed = _parse_ai_json(raw)
-            verified = _verify(parsed, stats)
+            verified = _verify(parsed, stats, rows)
             return {
                 "source": "ai",
                 "model": used,
@@ -572,7 +879,7 @@ async def get_review_intelligence(
             logger.debug("Intelligence LLM attempt failed (%s)", last_error)
             continue  # next model in chain
     logger.info("Review intelligence using deterministic fallback: %s", last_error)
-    fb = _verify(_fallback_from_rows(rows), stats)
+    fb = _verify(_fallback_from_rows(rows), stats, rows)
     return {
         "source": "fallback",
         "model": None,
@@ -720,6 +1027,10 @@ async def get_stored_report(
     report = result.scalar_one_or_none()
     if report is None:
         return None
+    # Never serve cached free-form claims created before verified summaries.
+    # The UI will show its instant local analysis until a fresh run is stored.
+    if (report.stats or {}).get("analysis_version") != ANALYSIS_VERSION:
+        return None
     current = await _current_review_count(db, user_id, channel_id, date_from, date_to)
     return _report_to_dict(report, current, key)
 
@@ -769,6 +1080,7 @@ async def analyze_and_store(
     report.strengths = result["strengths"]
     report.actions = result["actions"]
     report.stats = result["stats"]
+    report.stats["analysis_version"] = ANALYSIS_VERSION
     report.dimensions = result.get("dimensions") or []
     report.competitive = result.get("competitive") or {}
     report.rag_used = result["rag_used"]

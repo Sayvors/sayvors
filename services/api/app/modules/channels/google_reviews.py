@@ -10,7 +10,7 @@ Required OAuth scope: https://www.googleapis.com/auth/business.manage
 """
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -107,6 +107,9 @@ class GoogleReview:
     reviewer_photo_url: str | None = None
     updated_at: datetime | None = None
     has_reply: bool = False
+    # Photos the reviewer attached. Google returns these as
+    # `reviewMediaItems: [{thumbnailUrl, videoUrl, thumbnailLabel}]`.
+    media: list[dict] = field(default_factory=list)
 
 
 _STAR_RATINGS = {
@@ -122,6 +125,33 @@ def _parse_rating(raw) -> int:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):
         return 5
+
+
+def _parse_media(raw) -> list[dict]:
+    """Normalise GBP `reviewMediaItems` into the shape we store.
+
+    Each item is `{thumbnailUrl, videoUrl, thumbnailLabel}`. The URLs are
+    Google FIFE links, which are short-lived — the sync downloads the bytes
+    rather than persisting the URL, so only the label and kind are kept here.
+    Items with neither a still nor a video are dropped.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        thumbnail = entry.get("thumbnailUrl")
+        video = entry.get("videoUrl")
+        if not thumbnail and not video:
+            continue
+        out.append({
+            "thumbnail_url": thumbnail or None,
+            "video_url": video or None,
+            "label": entry.get("thumbnailLabel") or None,
+            "kind": "video" if video else "image",
+        })
+    return out
 
 
 def _photo_url(value) -> str | None:
@@ -305,6 +335,7 @@ class GoogleReviewsClient:
                     updated_at=updated,
                     has_reply=bool(r.get("reviewReply")),
                     reviewer_photo_url=_photo_url((r.get("reviewer") or {}).get("profilePhotoUrl")),
+                    media=_parse_media(r.get("reviewMediaItems")),
                 )
             )
         return reviews
