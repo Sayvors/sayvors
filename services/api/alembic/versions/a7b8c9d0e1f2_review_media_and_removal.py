@@ -43,10 +43,6 @@ def upgrade() -> None:
         "review_insights",
         sa.Column("removed_at", sa.DateTime(timezone=True), nullable=True),
     )
-    op.add_column(
-        "review_insights",
-        sa.Column("missed_syncs", sa.Integer(), nullable=False, server_default="0"),
-    )
     op.create_index(
         "ix_review_insights_removed_at",
         "review_insights",
@@ -60,7 +56,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_review_insights_removed_at", table_name="review_insights")
-    op.drop_column("review_insights", "missed_syncs")
     op.drop_column("review_insights", "removed_at")
     op.drop_column("review_insights", "last_seen_at")
     op.drop_column("review_insights", "media")
