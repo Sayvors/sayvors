@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PeriodComparison(BaseModel):
@@ -108,13 +108,28 @@ class ReviewInsightItem(BaseModel):
     previous_review_text: str | None = None
     review_url: str | None = None
     review_updated_at: datetime | None = None
-    created_at: datetime
-    # Latest response row for this review, if any (pending / posted /
+    created_at: datetime    # Latest response row for this review, if any (pending / posted /
     # failed / approved). Lets the review page show and edit every
     # response inline.
     reply_id: str | None = None
     reply_text: str | None = None
     reply_status: str | None = None
+
+    @field_validator(
+        "topics", "products", "problems", "media", "abuse_labels", mode="before"
+    )
+    @classmethod
+    def _null_list_is_empty(cls, v):
+        """A NULL list column must not take down the whole list endpoint.
+
+        These columns are `nullable=True` with no server default, so any writer
+        that omits them — an older process still running, a raw insert, a
+        migration added later — leaves NULL behind. One such row used to make
+        `GET /analytics/reviews/insights` return 500 for the entire tenant,
+        which reads as "the reviews page is broken" rather than "one field is
+        empty". Absent means empty.
+        """
+        return [] if v is None else v
 
     class Config:
         from_attributes = True

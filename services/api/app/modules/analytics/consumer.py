@@ -129,11 +129,17 @@ async def _handle_discovered(payload: dict) -> None:
         if not insight.reviewer_photo_url and payload.get("reviewer_photo_url"):
             insight.reviewer_photo_url = payload.get("reviewer_photo_url")
         insight.review_updated_at = _iso_to_dt(payload.get("review_updated_at"))
-        # The poller returned this review, so Google still serves it. Any
-        # earlier "removed" verdict is stale.
-        insight.last_seen_at = datetime.now(timezone.utc)
-        if insight.removed_at is not None:
-            insight.removed_at = None
+        # `last_seen_at` and `removed_at` are deliberately NOT touched here.
+        #
+        # They are the evidence removal detection runs on, and only a complete
+        # provider fetch can prove a review is still on the listing. A Kafka
+        # `review.discovered` event cannot: it is replayed on redelivery, on
+        # consumer rebalance, and for every historical event after a deploy.
+        # Writing `now` into `last_seen_at` from a replay made ten reviews that
+        # had not been seen since the 26th claim they were seen that morning,
+        # which is exactly the signal the sweep trusts. The sync path sets both
+        # correctly, in the same pass that computes the full seen-set, so it is
+        # the only writer.
 
         media = payload.get("media")
         if media and insight.user_id:

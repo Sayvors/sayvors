@@ -15,10 +15,19 @@ mirroring the existing event architecture in `modules/outbox`.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
+
+# A JSON list column with no server default is a trap: `default=list` only
+# applies when *this* SQLAlchemy version builds the INSERT. Any writer that
+# omits the column — an older process still running against the new schema, a
+# raw insert, a migration that added the column later — leaves NULL, and a NULL
+# then fails list validation and 500s the endpoint that reads the whole table.
+# The literal is written unquoted-cast so it is valid on both Postgres and the
+# SQLite the tests run on.
+_EMPTY_JSON = text("'[]'")
 
 
 class ReviewInsight(Base):
@@ -52,11 +61,11 @@ class ReviewInsight(Base):
     # -1.0 .. 1.0
     sentiment_score: Mapped[float] = mapped_column(Float, default=0.0)
     # [{"name": "service", "sentiment": "positive"}, ...]
-    topics: Mapped[list] = mapped_column(JSON, default=list)
+    topics: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
     # [{"name": "Chicken Burger", "sentiment": "positive"}, ...]
-    products: Mapped[list] = mapped_column(JSON, default=list)
+    products: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
     # [{"name": "slow service", "severity": "high"}, ...]
-    problems: Mapped[list] = mapped_column(JSON, default=list)
+    problems: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
     # pending -> done | failed
     enrichment_status: Mapped[str] = mapped_column(
         Enum("pending", "done", "failed", name="enrichment_status"),
@@ -87,7 +96,7 @@ class ReviewInsight(Base):
     # /media-files, because Google's thumbnailUrl is a short-lived FIFE link
     # that stops resolving within hours. `source_url` is kept only to detect
     # a changed photo on the next sync.
-    media: Mapped[list] = mapped_column(JSON, default=list)
+    media: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
     # Per-review meaning record — the layer the intelligence report reads
     # instead of re-interpreting raw text. See analytics/subjects.py for the
     # closed vocabulary and the evidence rule that stops the model inventing
@@ -125,7 +134,7 @@ class ReviewInsight(Base):
     # breaks Google's content policies; `abuse_verdict` is the human decision
     # (None = not yet reviewed). The AI never acts on its own.
     abuse_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    abuse_labels: Mapped[list] = mapped_column(JSON, default=list)
+    abuse_labels: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
     abuse_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     abuse_reviewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

@@ -464,6 +464,105 @@ async def test_reviewer_edit_invalidates_a_stale_human_correction(
     assert row.meaning["subject"] == "billing_payments"
 
 
+@pytest.mark.asyncio
+async def test_replay_never_claims_a_review_was_just_seen(
+    db, user_id, channel_id, monkeypatch
+):
+    """A replayed event must not write `last_seen_at`.
+
+    `last_seen_at` is the evidence the removal sweep trusts. A Kafka event is
+    replayed on redelivery and rebalance, so writing `now` from the consumer
+    made ten reviews that had not been seen since the 26th claim they were seen
+    that morning — corrupting the one field that decides whether a merchant's
+    reviews are still live.
+    """
+    from app.modules.analytics import consumer
+    from app.modules.analytics.models import ReviewInsight
+    from datetime import datetime as _dt
+
+    stale = _dt(2026, 9, 26, 11, 25, 39, tzinfo=timezone.utc)
+    db.add(_row(
+        rid="old", user_id=user_id, channel_id=channel_id,
+        text="an old review", rating=5, sentiment="positive", meaning=None,
+    ))
+    await db.commit()
+    await db.execute(
+        __import__("sqlalchemy").text(
+            "UPDATE review_insights SET last_seen_at = :t WHERE id = 'ins-r-old'"
+        ),
+        {"t": stale},
+    )
+    await db.commit()
+
+    async def _fake_extract(*a, **k):
+        return {
+            "subject": "staff_service", "problem": None, "evidence": ["Great"],
+            "confidence": 0.9, "intensity": 0.2, "needs_human": False,
+            "source": "llm", "language": "en", "intent": "praising",
+            "asks": [], "entities": {}, "negated": False, "reason": None,
+        }
+
+    monkeypatch.setattr(consumer, "async_session", _test_session_factory())
+    monkeypatch.setattr(consumer, "extract_meaning", _fake_extract)
+    monkeypatch.setattr(consumer, "enrich_review", _fake_enrich)
+    monkeypatch.setattr(consumer, "enqueue_event", _fake_enqueue)
+
+    await consumer._handle_discovered({
+        "event": "review.discovered", "channel_id": channel_id,
+        "review_id": "localith:old", "text": "an old review", "rating": 5,
+        "reviewer_name": "Tester",
+        "review_updated_at": stale.isoformat(),
+    })
+
+    row = await db.get(ReviewInsight, "ins-r-old")
+    assert row.last_seen_at == stale, "replay rewrote last_seen_at"
+
+
+@pytest.mark.asyncio
+async def test_replay_does_not_resurrect_a_genuinely_removed_review(
+    db, user_id, channel_id, monkeypatch
+):
+    """A replay must not clear a correct removal verdict either.
+
+    The same reasoning as `last_seen_at`: an event replay is not proof the
+    review is back on the listing. Only the sync's full fetch can clear it, and
+    it does so in the same pass that computes the seen-set.
+    """
+    from app.modules.analytics import consumer
+    from app.modules.analytics.models import ReviewInsight
+
+    gone = _row(
+        rid="gone2", user_id=user_id, channel_id=channel_id,
+        text="deleted by reviewer", rating=1, sentiment="negative", meaning=None,
+    )
+    gone.removed_at = datetime(2026, 9, 26, 11, 26, 8, tzinfo=timezone.utc)
+    db.add(gone)
+    await db.commit()
+
+    async def _fake_extract(*a, **k):
+        return {
+            "subject": "other", "problem": None, "evidence": [],
+            "confidence": 0.5, "intensity": 0.5, "needs_human": True,
+            "source": "llm", "language": "en", "intent": "complaining",
+            "asks": [], "entities": {}, "negated": False, "reason": "low confidence",
+        }
+
+    monkeypatch.setattr(consumer, "async_session", _test_session_factory())
+    monkeypatch.setattr(consumer, "extract_meaning", _fake_extract)
+    monkeypatch.setattr(consumer, "enrich_review", _fake_enrich)
+    monkeypatch.setattr(consumer, "enqueue_event", _fake_enqueue)
+
+    await consumer._handle_discovered({
+        "event": "review.discovered", "channel_id": channel_id,
+        "review_id": "localith:gone2", "text": "deleted by reviewer", "rating": 1,
+        "reviewer_name": "Tester",
+        "review_updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    row = await db.get(ReviewInsight, "ins-r-gone2")
+    assert row.removed_at is not None, "a replay cleared a correct removal verdict"
+
+
 def _human_meaning(language="ar", evidence="مبناكم"):
     return {
         "subject": "facility_premises", "problem": "the building",
