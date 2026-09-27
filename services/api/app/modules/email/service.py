@@ -12,6 +12,7 @@ infrastructure simple.
 
 from __future__ import annotations
 
+import hmac
 import logging
 import secrets
 
@@ -23,6 +24,9 @@ from ..redis.client import get_redis
 logger = logging.getLogger(__name__)
 
 OTP_TTL_SECONDS = 10 * 60
+# Guessing budget per OTP before the code is invalidated. 6 digits x 5 tries
+# keeps the per-OTP success probability at 5e-6 even without IP throttling.
+OTP_MAX_ATTEMPTS = 5
 
 LOGO_FILENAME = "Sayvors_Wordmark_Dark.png"
 
@@ -206,11 +210,15 @@ async def send_otp_email(email: str, purpose: str = "verification") -> None:
     The generated code is stored in Redis for 10 minutes, then the HTML/plain-text
     version is sent through Resend. If the same email requests a new code, the
     newest value replaces the older one.
+
+    The code lives ONLY in the body — never the subject — so it does not show up
+    on lock screens / notification previews.
     """
 
     code = f"{secrets.randbelow(900000) + 100000}"
     redis = await get_redis()
     await redis.setex(_otp_key(email), OTP_TTL_SECONDS, code)
+    await redis.delete(_otp_attempts_key(email))
     html = (
         OTP_HTML.replace("{logo_url}", _logo_url())
         .replace("{purpose}", purpose)
@@ -218,10 +226,14 @@ async def send_otp_email(email: str, purpose: str = "verification") -> None:
     )
     await send_email(
         email,
-        f"Your Sayvors {purpose} code: {code}",
+        f"Your Sayvors {purpose} code",
         html,
         text=f"Your Sayvors {purpose} code is: {code} (expires in 10 minutes)",
     )
+
+
+def _otp_attempts_key(email: str) -> str:
+    return f"{_otp_key(email)}:attempts"
 
 
 async def verify_otp(email: str, code: str) -> bool:
@@ -229,13 +241,32 @@ async def verify_otp(email: str, code: str) -> bool:
 
     Returns True only when the provided code matches the Redis value for the email.
     A successful match deletes the underlying key so the OTP cannot be reused.
+
+    Brute-force control: a per-email attempt counter invalidates the code after
+    OTP_MAX_ATTEMPTS failed tries. Comparison is constant-time.
     """
 
     redis = await get_redis()
-    stored = await redis.get(_otp_key(email))
-    if stored and stored.strip() == code.strip():
-        await redis.delete(_otp_key(email))
+    otp_key = _otp_key(email)
+    attempts_key = _otp_attempts_key(email)
+
+    try:
+        attempts = int(await redis.get(attempts_key) or 0)
+    except (TypeError, ValueError):
+        attempts = 0
+    if attempts >= OTP_MAX_ATTEMPTS:
+        # Budget exhausted: kill the code so even the correct answer fails.
+        await redis.delete(otp_key)
+        return False
+
+    stored = await redis.get(otp_key)
+    if stored and hmac.compare_digest(stored.strip().encode(), code.strip().encode()):
+        await redis.delete(otp_key)
+        await redis.delete(attempts_key)
         return True
+
+    await redis.incr(attempts_key)
+    await redis.expire(attempts_key, OTP_TTL_SECONDS)
     return False
 
 
@@ -284,7 +315,7 @@ async def send_password_reset_success_email(
     location: str,
     device: str,
 ) -> str:
-    """Security notice: password was just reset â€” time, IP, location, device."""
+    """Security notice: password was just reset — time, IP, location, device."""
     import html as _html
 
     display = _html.escape(name or "there")
@@ -315,8 +346,8 @@ async def send_password_reset_success_email(
         f"<p style=\"margin:0 0 8px;font-size:15px;line-height:24px;color:#52525B;\">Your Sayvors password was just changed successfully.</p>"
         f"<p style=\"margin:0 0 4px;font-size:13px;line-height:20px;color:#71717A;\">Here are the details of that activity:</p>"
         f"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;margin:12px 0;padding:4px 20px;background-color:#FAFAFA;border:1px solid #EEEEF0;border-radius:8px;\">{details}</table>"
-        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#52525B;\">If this was you, you're all set â€” no further action needed.</p>"
-        f"<p style=\"margin:12px 0 0;font-size:14px;line-height:22px;color:#52525B;\">If this <strong>wasn't you</strong>, someone else may have access to your account â€” reset your password immediately:</p>"
+        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#52525B;\">If this was you, you're all set — no further action needed.</p>"
+        f"<p style=\"margin:12px 0 0;font-size:14px;line-height:22px;color:#52525B;\">If this <strong>wasn't you</strong>, someone else may have access to your account — reset your password immediately:</p>"
         f"{_cta_button('Secure my account', forgot_url)}"
     )
     return await send_email(
@@ -354,12 +385,26 @@ async def send_notification_email(email: str, subject: str, message: str, cta_ur
 
     This is intended for system notifications, alerts, and other non-public
     transactional communications. When provided, a CTA link is included in the HTML.
+
+    `message` is plain text and is HTML-escaped before being embedded; callers
+    must not rely on HTML markup surviving. `cta_url` must be an http(s) URL.
     """
 
-    cta = f"<p><a href='{cta_url}'>View in Sayvors</a></p>" if cta_url else ""
+    import html as _html
+    from urllib.parse import urlparse as _urlparse
+
+    full_subject = f"[Sayvors] {subject}"
+    safe_message = _html.escape(message or "")
+    cta = ""
+    if cta_url:
+        parsed = _urlparse(cta_url or "")
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("cta_url must be an absolute http(s) URL.")
+        safe_cta = _html.escape(cta_url, quote=True)
+        cta = f"<p><a href='{safe_cta}'>View in Sayvors</a></p>"
     return await send_email(
         email,
-        f"[Sayvors] {subject}",
-        f"<p>{message}</p>{cta}",
-        text=f"[Sayvors] {subject}\n{message}" + (f"\n{cta_url}" if cta_url else ""),
+        full_subject,
+        f"<p>{safe_message}</p>{cta}",
+        text=f"{full_subject}\n{message}" + (f"\n{cta_url}" if cta_url else ""),
     )

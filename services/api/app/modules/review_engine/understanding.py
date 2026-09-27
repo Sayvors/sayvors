@@ -1,6 +1,7 @@
 """Analyze a review into a structured representation via a single LLM call."""
 import json
 import logging
+import re
 import time
 
 from ..llm.providers.base import LLMMessage, LLMRequest, ProviderError
@@ -14,7 +15,7 @@ ANALYSIS_SYSTEM_PROMPT = """Analyze the review → JSON {sentiment,emotion,inten
 sentiment: very_negative|negative|neutral|positive|very_positive
 emotion: one word (anger,frustration,joy,disappointment,indifference)
 intent: subset of [complaint,praise,suggestion,refund_request,question,recommendation_request]
-issue_type: pricing|billing|product_quality|product_dissatisfaction|service_quality|delivery|wait_time|cleanliness|staff_behavior|technical_issue|general_complaint|null
+issue_type: pricing|billing|product_quality|product_dissatisfaction|service_quality|delivery|wait_time|cleanliness|staff_behavior|facility_premises|technical_issue|general_complaint|null
 product_reference: product name or null
 urgency: low|medium|high|critical
 customer_request: what they ask for or null
@@ -22,7 +23,46 @@ language: en|ar …
 
 PRICING vs BILLING: pricing=price too high (expensive,costly,overpriced,not worth) no transaction error; billing=transaction failed (charged twice,wrong amount,payment failed,invoice wrong,billing error). "cost/price/charge/refund" alone ≠ billing.
 "pricing" when price opinion; NOT make it billing without transaction error.
+TENANT-AGNOSTIC CLASSIFICATION: any kind of business can receive feedback about
+its physical premises. "مبناكم" / "المبنى" means building/premises, not bank or
+account. Use facility_premises for a clear building/facility complaint. Never
+infer a complaint from the tenant's business type. If review text is Arabic,
+set language=ar even if the rest of this prompt is English.
+QUESTIONS: a review that ASKS something (do you sell X? where are you? is there parking? هل تبيعون …؟ عندكم …؟) has intent "question" — even when the rating is 5★. A question is not praise; include "question" whenever anything is being asked.
 Return ONLY JSON."""
+
+# Deterministic question detection — a review that ASKS something is not
+# feedback, and thanking it for a "wonderful review" is nonsense. Covers
+# Arabic interrogatives (هل / question mark ؟ / common dialect openers)
+# and English wh-words/auxiliaries.
+_QUESTION_MARK = re.compile(r"[?؟]")
+_QUESTION_AR = re.compile(
+    r"(?:^|\s)(?:هل|من|ما|ماذا|متى|أين|اين|وين|كيف|ليش|لماذا|ليه|شنو|ايش|إيش|كم|ممكن|هل يمكن)\b"
+)
+_QUESTION_EN = re.compile(
+    r"(?:^|\s)(?:what|where|when|why|who|how|do|does|did|can|could|is|are|was|were|will|would|may|i wonder|any)\b",
+    re.I,
+)
+
+
+def looks_like_question(review_text: str | None) -> bool:
+    """True when the review text is (or contains) a direct question.
+
+    Deliberately conservative about English: a bare "?" or a sentence-starting
+    auxiliary counts, but mid-sentence "how" inside praise must not flip a
+    review into a question. Arabic markers are unambiguous enough to match
+    anywhere in the text.
+    """
+    text = (review_text or "").strip()
+    if not text:
+        return False
+    if _QUESTION_AR.search(text):
+        return True
+    if "?" in text or "؟" in text:
+        # Any explicit question mark: the review asks something.
+        return True
+    # No question mark — only a leading interrogative counts in English.
+    return bool(_QUESTION_EN.match(text))
 
 
 def _salvage_analysis_json(raw: str) -> dict:
@@ -133,6 +173,15 @@ async def analyze_review(
         customer_request=data.get("customer_request"),
         language=data.get("language", "en"),
     )
+    # Do not let a mistaken model language label make Arabic reviews receive
+    # English replies. Script is a reliable override for Arabic-script reviews.
+    if re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]", review_text or ""):
+        analysis.language = "ar"
+    # Deterministic guard: the LLM sometimes misses a question inside a
+    # high-rating review. A question review must never be answered as if
+    # it were praise ("thanks for your wonderful review!").
+    if "question" not in analysis.intent and looks_like_question(review_text):
+        analysis.intent.append("question")
     usage = {
         "model": model,
         "tokens": resp.usage.total_tokens,
@@ -159,6 +208,7 @@ def _rule_based_analysis(review_text: str, rating: int) -> ReviewAnalysis:
     product_ref = None
 
     issue_keywords = {
+        "facility_premises": ["مبنى", "المبنى", "مبناكم", "عمارة", "مرفق", "building", "premises"],
         "product_quality": ["quality", "broken", "defective", "terrible", "bad"],
         "delivery": ["delivery", "late", "slow", "shipping", "arrived"],
         "service_quality": ["service", "rude", "unhelpful", "staff", "wait"],
@@ -171,6 +221,12 @@ def _rule_based_analysis(review_text: str, rating: int) -> ReviewAnalysis:
         if any(kw in text for kw in keywords):
             issue_type = itype
             break
+
+    if issue_type is None and re.search(
+        r"(?:تصلح\w*|صلح\w*|ترميم\w*|صيان\w*|إصلاح\w*|اصلاح\w*).{0,30}(?:مبن\w*|عمار\w*|مرفق\w*)|(?:مبن\w*|عمار\w*|مرفق\w*).{0,30}(?:تصلح\w*|صلح\w*|ترميم\w*|صيان\w*|إصلاح\w*|اصلاح\w*)",
+        text,
+    ):
+        issue_type = "facility_premises"
 
     if rating <= 2:
         urgency = "medium"
@@ -186,6 +242,8 @@ def _rule_based_analysis(review_text: str, rating: int) -> ReviewAnalysis:
         intent.append("praise")
     if any(w in text for w in ["refund", "money back", "return"]):
         intent.append("refund_request")
+    if looks_like_question(review_text):
+        intent.append("question")
 
     return ReviewAnalysis(
         sentiment=sentiment,
@@ -195,5 +253,5 @@ def _rule_based_analysis(review_text: str, rating: int) -> ReviewAnalysis:
         product_reference=product_ref,
         urgency=urgency,
         customer_request=review_text[:200] if review_text else None,
-        language="en",
+        language="ar" if re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]", review_text or "") else "en",
     )

@@ -47,7 +47,11 @@ services:
     image: redis:7-alpine
     container_name: sayvors-redis
     restart: unless-stopped
-    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    # noeviction: this instance holds OTPs, rate-limit windows, JWT
+    # blacklist entries and session indexes. An LRU eviction would silently
+    # void brute-force limits / revocation checks; capacity alarms are the
+    # correct control instead.
+    command: redis-server --maxmemory 128mb --maxmemory-policy noeviction
     volumes:
       - redisdata:/data
     healthcheck:

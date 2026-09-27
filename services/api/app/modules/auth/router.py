@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
@@ -412,10 +413,16 @@ async def me(user=Depends(get_current_user)):
     }
 
 
+class UpdateMeRequest(BaseModel):
+    """Whitelisted, typed self-profile update (no raw dict / setattr)."""
+    onboarded: bool | None = None
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+
+
 @router.patch("/me")
-async def update_me(body: dict, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    allowed_fields = {"onboarded", "first_name", "last_name"}
-    update_data = {k: v for k, v in body.items() if k in allowed_fields}
+async def update_me(body: UpdateMeRequest, user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    update_data = body.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No valid fields to update")
     for field, value in update_data.items():

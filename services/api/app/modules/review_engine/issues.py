@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 # (pattern, key, label, detail-template, keyword-variants)
 PATTERNS: list[tuple[str, str, str, str, list[str]]] = [
     (
+        r"(?:تصلح\w*|صلح\w*|ترميم\w*|صيان\w*|إصلاح\w*|اصلاح\w*).{0,30}(?:مبن\w*|عمار\w*|مرفق\w*)|(?:مبن\w*|عمار\w*|مرفق\w*).{0,30}(?:تصلح\w*|صلح\w*|ترميم\w*|صيان\w*|إصلاح\w*|اصلاح\w*)",
+        "facility_premises",
+        "Building or premises issue",
+        "the building needs attention",
+        ["building", "premises", "facility", "مبنى", "المبنى", "مبناكم", "مبنا", "عمارة", "صيانة", "إصلاح", "تصلح"],
+    ),
+    (
         r"(\d+)\s*(?:-|–)?\s*(min|mins|minute|minutes|hr|hrs|hour|hours)",
         "wait_time",
         "Long wait",
@@ -108,6 +115,7 @@ ISSUE_SEMANTICS: dict[str, list[str]] = {
     "food_temperature": ["cold", "hot", "lukewarm", "temperature"],
     "food_quality": ["quality", "taste", "undercooked", "burnt", "raw", "soggy"],
     "ambience": ["noise", "noisy", "loud", "crowded"],
+    "facility_premises": ["building", "premises", "facility", "المبنى", "مبناكم", "حالة المبنى"],
     "product_reference": [],
 }
 
