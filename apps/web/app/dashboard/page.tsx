@@ -1377,6 +1377,16 @@ function ThisWeekActions({ intel, bench, overview }: {
  * The weakest dimension from the scorecard — the thing actually costing stars.
  * Stays hidden when there is no negative signal, so it never nags an owner
  * whose business is in good shape.
+ *
+ * "Fix this" now lands on Issues rather than the review list. The two used to
+ * be the same destination, which is why the link felt broken: the card named a
+ * problem and the page offered no way to act on it.
+ *
+ * No subject pre-filter on the URL. The card reports a *dimension* (the six
+ * fixed business dimensions) while issues are keyed by *subject* (the meaning
+ * layer's vocabulary), and "Cleanliness & Environment" spans two subjects. A
+ * deep link would need that mapping, and guessing it would drop the merchant
+ * into an empty list more often than not.
  */
 function StarsCostingYou({ intel }: { intel: IntelSnapshot | null }) {
   const dims = intel?.dimensions ?? [];
@@ -1391,7 +1401,7 @@ function StarsCostingYou({ intel }: { intel: IntelSnapshot | null }) {
       <p className="mt-0.5 text-[12px] text-ink/60">
         {worst.negative} review{worst.negative === 1 ? "" : "s"} criticise it · avg {worst.avg_rating.toFixed(1)}★
       </p>
-      <Link href="/dashboard/reviews" className="mt-2 inline-block text-[11px] font-semibold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+      <Link href="/dashboard/issues" className="mt-2 inline-block text-[11px] font-semibold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40">
         Fix this →
       </Link>
     </div>

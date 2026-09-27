@@ -125,6 +125,18 @@ def detect_churn(review_text: str) -> bool:
     return any(sig in text for sig in CHURN_SIGNALS)
 
 
+def _subject_for(key: str) -> str | None:
+    """The meaning-layer subject this issue key corresponds to, if any.
+
+    Imported lazily because the analytics meaning layer sits downstream of the
+    reply engine; the dependency runs one way so a reply can name a tracked
+    issue without the engine owning the business vocabulary.
+    """
+    from ..analytics.issues import ISSUE_KEY_TO_SUBJECT
+
+    return ISSUE_KEY_TO_SUBJECT.get(key)
+
+
 def extract_issues(review_text: str, analysis: ReviewAnalysis) -> list[ExtractedIssue]:
     """Extract concrete complaint facts. Deterministic for the same input."""
     text = review_text or ""
@@ -158,6 +170,7 @@ def extract_issues(review_text: str, analysis: ReviewAnalysis) -> list[Extracted
             key=key, label=label, detail=detail,
             keywords=[k for k in dict.fromkeys(keywords) if k][:12],
             semantic=ISSUE_SEMANTICS.get(key, []),
+            subject=_subject_for(key),
         ))
 
     # Fall back to the analysis issue_type so there is always a target

@@ -236,6 +236,8 @@ async def _load_reviews(
     for r in rows:
         meaning = r.meaning if isinstance(r.meaning, dict) else {}
         entry = {
+            "review_id": r.review_id,
+            "channel_id": r.channel_id,
             "rating": r.rating,
             "text": r.review_text or "",
             "reviewer": r.reviewer_name or "Customer",

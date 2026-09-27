@@ -79,6 +79,50 @@ export interface ReviewMeaning {
   correction_note?: string | null;
 }
 
+export interface IssueEvidence {
+  review_id: string;
+  /** Verbatim span from the review — the meaning layer checked it is there. */
+  quote: string;
+  rating: number;
+}
+
+/**
+ * One tracked problem at one location.
+ *
+ * `subject` is always a member of the closed vocabulary, and `status` is the
+ * merchant's to set — a refresh updates the evidence and counts but never
+ * reopens or closes an issue, so `avg_rating` before and after `resolved_at`
+ * stays a fair comparison.
+ */
+export interface LocationIssue {
+  id: string;
+  channel_id: string;
+  channel_name: string | null;
+  subject: string;
+  subject_label: string;
+  review_count: number;
+  negative_count: number;
+  avg_rating: number;
+  evidence: IssueEvidence[];
+  title: string;
+  detail: string;
+  status: "open" | "in_progress" | "done" | "dismissed";
+  resolution_note: string | null;
+  resolved_at: string | null;
+  assignee_kind: string | null;
+  assignee_ref: string | null;
+  notified_at: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface IssueListResponse {
+  items: LocationIssue[];
+  /** Reviews that exist but could not be categorised. Never hidden. */
+  held_out: { total: number; reviewable: number; reviews: number };
+  counts: Record<string, number>;
+}
+
 export interface ReviewInsight {
   id: string;
   channel_id: string;
@@ -132,6 +176,37 @@ export interface InsightList {
 export interface ChannelOption {
   id: string;
   label: string;
+}
+
+export function fetchIssues(params?: {
+  channelId?: string | null;
+  status?: string | null;
+}): Promise<IssueListResponse> {
+  const q = new URLSearchParams();
+  if (params?.channelId) q.set("channel_id", params.channelId);
+  if (params?.status) q.set("status", params.status);
+  const qs = q.toString();
+  return apiFetch(`/api/v1/analytics/issues${qs ? `?${qs}` : ""}`);
+}
+
+/** Recompute issues from current review meaning. Never changes a status. */
+export function refreshIssues(channelId?: string | null): Promise<{
+  created: number;
+  updated: number;
+  held_out: Record<string, number>;
+}> {
+  const q = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";
+  return apiFetch(`/api/v1/analytics/issues/refresh${q}`, { method: "POST" });
+}
+
+export function updateIssue(
+  id: string,
+  patch: { status?: LocationIssue["status"]; resolution_note?: string | null }
+): Promise<LocationIssue> {
+  return apiFetch(`/api/v1/analytics/issues/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
 }
 
 export async function fetchOverview(

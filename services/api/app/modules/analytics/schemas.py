@@ -135,6 +135,61 @@ class ReviewInsightItem(BaseModel):
         from_attributes = True
 
 
+class IssueUpdateBody(BaseModel):
+    """Move an issue along, or leave a note on what was done about it.
+
+    Both fields are optional so a note can be added without changing status.
+    """
+
+    status: str | None = Field(
+        None, pattern="^(open|in_progress|done|dismissed)$"
+    )
+    resolution_note: str | None = Field(None, max_length=2000)
+
+
+class LocationIssueOut(BaseModel):
+    """One tracked issue. `evidence` quotes are verbatim spans from the review."""
+
+    id: str
+    channel_id: str
+    channel_name: str | None = None
+    subject: str
+    # Not a column: resolved from the vocabulary at serialisation time so the
+    # label can change without a data migration. Always set by the endpoint,
+    # which is why it defaults to empty rather than being required here.
+    subject_label: str = ""
+    review_count: int
+    negative_count: int
+    avg_rating: float
+    evidence: list[dict[str, Any]] = []
+    title: str
+    detail: str
+    status: str
+    resolution_note: str | None = None
+    resolved_at: datetime | None = None
+    assignee_kind: str | None = None
+    assignee_ref: str | None = None
+    notified_at: datetime | None = None
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _null_evidence_is_empty(cls, v):
+        return [] if v is None else v
+
+    class Config:
+        from_attributes = True
+
+
+class IssueListResponse(BaseModel):
+    items: list[LocationIssueOut]
+    # Reviews the meaning layer refused to categorise. Surfaced so the list is
+    # never mistaken for the whole picture.
+    held_out: dict[str, int] = Field(default_factory=dict)
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
 class AbuseFlagBody(BaseModel):
     """Merchant flags a review as a likely policy violation."""
 
