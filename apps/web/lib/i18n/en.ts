@@ -33,6 +33,8 @@ const en = {
     access: "Access",
     collapse: "Collapse sidebar",
     expand: "Expand sidebar",
+    openMenu: "Open menu",
+    closeMenu: "Close menu",
     mainNavigation: "Main navigation",
   },
   account: {

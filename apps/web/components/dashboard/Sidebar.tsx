@@ -68,6 +68,43 @@ function isActive(pathname: string, item: NavItem) {
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Small screens get the nav as an overlay drawer, not a column. A 220px
+  // inline sidebar is 56% of a 390px phone, permanently, before any content.
+  const [isMobile, setIsMobile] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const apply = () => {
+      setIsMobile(mq.matches);
+      // Leaving the mobile breakpoint should not strand a half-open drawer,
+      // and entering it should not leave the inline toggle in a stale state.
+      if (!mq.matches) setDrawerOpen(false);
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  // While the drawer is open it covers the page, so the page behind it must
+  // not scroll away underneath.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [drawerOpen]);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const { t } = useI18n();
@@ -99,33 +136,86 @@ export default function Sidebar() {
 
   useEffect(() => {
     setMenuOpen(false);
+    // Following a link inside the drawer should reveal the page, not leave the
+    // nav covering it.
+    setDrawerOpen(false);
   }, [pathname]);
 
+  // "Rail" means the icon-only 56px strip. Only the inline desktop sidebar can
+  // be a rail — the mobile drawer is always full width, so gating label
+  // visibility on `collapsed` alone would render it icon-only for no reason.
+  const rail = collapsed && !isMobile;
+
   return (
-    <aside
-      className={`relative flex h-screen flex-col border-r border-white/[0.08] transition-all duration-200 ${
-        collapsed ? "w-[56px]" : "w-[220px]"
-      }`}
-      style={{ background: "linear-gradient(180deg, #1e1547 0%, #151030 100%)" }}
-    >
+    <>
+      {/* Hamburger — mobile only, fixed so it does not shift page content. */}
+      <button
+        onClick={() => setDrawerOpen(true)}
+        aria-label={t.nav.openMenu}
+        aria-expanded={drawerOpen}
+        aria-controls="dashboard-sidebar"
+        className={`fixed left-3 top-3 z-40 flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-[#1e1547] text-white shadow-lg transition hover:bg-[#251b55] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-light md:hidden ${
+          drawerOpen ? "pointer-events-none opacity-0" : "opacity-100"
+        }`}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5">
+          <path d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+      </button>
+
+      {/* Scrim — tap anywhere to dismiss, as a drawer is expected to do. */}
+      {drawerOpen && (
+        <button
+          onClick={() => setDrawerOpen(false)}
+          aria-label={t.nav.closeMenu}
+          tabIndex={-1}
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+        />
+      )}
+
+      <aside
+        id="dashboard-sidebar"
+        aria-hidden={isMobile && !drawerOpen ? true : undefined}
+        className={`flex h-screen flex-col border-r border-white/[0.08] transition-all duration-200 ${
+          isMobile
+            ? `fixed inset-y-0 left-0 z-50 w-[248px] shadow-2xl ${
+                drawerOpen ? "translate-x-0" : "-translate-x-full"
+              }`
+            : collapsed
+              ? "w-[56px]"
+              : "w-[220px]"
+        }`}
+        style={{ background: "linear-gradient(180deg, #1e1547 0%, #151030 100%)" }}
+      >
       {/* Logo */}
       <div className="flex h-11 items-center gap-2 border-b border-white/[0.08] px-3">
         <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-5 w-auto" />
-        {!collapsed && (
+        {/* The drawer is always wide, so the wordmark shows even when the
+            inline rail is collapsed. */}
+        {(!collapsed || isMobile) && (
           <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={110} height={18} className="h-4 w-auto brightness-0 invert" />
         )}
+        <button
+          onClick={() => setDrawerOpen(false)}
+          aria-label={t.nav.closeMenu}
+          className="ml-auto flex h-7 w-7 items-center justify-center rounded-md text-white/40 outline-none transition hover:bg-white/[0.08] hover:text-white/70 focus-visible:ring-2 focus-visible:ring-violet-light/60 md:hidden"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
       </div>
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 pt-3 pb-4" aria-label={t.nav.mainNavigation}>
         {NAV_GROUPS.map((group, gi) => (
           <div key={gi}>
-            {group.label && !collapsed && (
+            {group.label && !rail && (
               <p className="mb-1 px-2.5 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-widest text-white/25">
                 {group.label}
               </p>
             )}
-            {group.label && collapsed && gi > 0 && (
+            {group.label && rail && gi > 0 && (
               <div className="mx-2 my-2 border-t border-white/[0.06]" />
             )}
             <div className="space-y-0.5">
@@ -138,7 +228,7 @@ export default function Sidebar() {
                     href={item.href}
                     data-tour={`nav-${item.key}`}
                     aria-current={active ? "page" : undefined}
-                    title={collapsed ? label : undefined}
+                    title={rail ? label : undefined}
                     className={`group relative flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
                       active
                         ? "bg-white/[0.1] text-white"
@@ -158,7 +248,7 @@ export default function Sidebar() {
                     >
                       {item.icon}
                     </span>
-                    {!collapsed && <span className="flex-1 truncate">{label}</span>}
+                    {!rail && <span className="flex-1 truncate">{label}</span>}
                   </Link>
                 );
               })}
@@ -175,7 +265,7 @@ export default function Sidebar() {
         {menuOpen && (
           <div
             className={`absolute bottom-full z-50 mb-2 overflow-hidden rounded-lg border border-white/10 bg-[#221b4d] shadow-xl ${
-              collapsed ? "left-12 w-48" : "left-2 right-2"
+              rail ? "left-12 w-48" : "left-2 right-2"
             }`}
           >
             <div className="border-b border-white/[0.08] px-3 py-2.5">
@@ -198,12 +288,12 @@ export default function Sidebar() {
             </div>
           </div>
         )}
-        <div className={`flex items-center gap-1 p-2 ${collapsed ? "flex-col" : ""}`}>
+        <div className={`flex items-center gap-1 p-2 ${collapsed && !isMobile ? "flex-col" : ""}`}>
           <button
-            onClick={() => setMenuOpen(!menuOpen)}
-            aria-label={t.account.menu}
-            aria-expanded={menuOpen}
-            title={collapsed ? displayName : undefined}
+            onClick={() => (isMobile ? setDrawerOpen(false) : setMenuOpen(!menuOpen))}
+            aria-label={isMobile ? t.nav.closeMenu : t.account.menu}
+            aria-expanded={isMobile ? drawerOpen : menuOpen}
+            title={!isMobile && collapsed ? displayName : undefined}
             className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
               collapsed ? "justify-center" : ""
             }`}
@@ -226,7 +316,9 @@ export default function Sidebar() {
             onClick={() => setCollapsed(!collapsed)}
             aria-label={collapsed ? t.nav.expand : t.nav.collapse}
             title={collapsed ? t.nav.expand : t.nav.collapse}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/25 outline-none transition hover:bg-white/[0.08] hover:text-white/50 focus-visible:ring-2 focus-visible:ring-violet-light/60"
+            /* The drawer is already the compact form on a phone — a collapse
+               toggle there would collapse what is off-screen twice over. */
+            className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/25 outline-none transition hover:bg-white/[0.08] hover:text-white/50 focus-visible:ring-2 focus-visible:ring-violet-light/60 md:flex"
           >
             <svg
               viewBox="0 0 16 16"
@@ -241,6 +333,7 @@ export default function Sidebar() {
         </div>
       </div>
     </aside>
+    </>
   );
 }
 

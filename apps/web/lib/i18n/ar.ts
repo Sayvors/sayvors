@@ -35,6 +35,8 @@ const ar: Dict = {
     access: "Access",
     collapse: "طيّ الشريط الجانبي",
     expand: "توسيع الشريط الجانبي",
+    openMenu: "فتح القائمة",
+    closeMenu: "إغلاق القائمة",
     mainNavigation: "التنقل الرئيسي",
   },
   account: {
