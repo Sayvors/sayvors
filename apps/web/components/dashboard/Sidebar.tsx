@@ -34,7 +34,7 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Google Business",
+    label: "googleBusiness",
     items: [
       { key: "locations", icon: <LocationIcon />, href: "/dashboard/locations" },
       { key: "services", icon: <WrenchIcon />, href: "/dashboard/services" },
@@ -46,7 +46,7 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Tools",
+    label: "tools",
     items: [
       { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
       { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
@@ -124,7 +124,7 @@ export default function Sidebar() {
   }, [isMobile]);
   const pathname = usePathname();
   const { user, logout } = useAuth();
-  const { t } = useI18n();
+  const { t, dir } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
 
   const displayName =
@@ -171,7 +171,7 @@ export default function Sidebar() {
         aria-label={t.nav.openMenu}
         aria-expanded={drawerOpen}
         aria-controls="dashboard-sidebar"
-        className={`fixed left-3 top-3 z-40 flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-[#1e1547] text-white shadow-lg transition hover:bg-[#251b55] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-light md:hidden ${
+        className={`fixed ${dir === "rtl" ? "right-3" : "left-3"} top-3 z-40 flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-[#1e1547] text-white shadow-lg transition hover:bg-[#251b55] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-light md:hidden ${
           drawerOpen ? "pointer-events-none opacity-0" : "opacity-100"
         }`}
       >
@@ -193,10 +193,10 @@ export default function Sidebar() {
       <aside
         id="dashboard-sidebar"
         aria-hidden={isMobile && !drawerOpen ? true : undefined}
-        className={`flex h-screen flex-col border-r border-white/[0.08] transition-all duration-200 ${
+        className={`flex h-screen flex-col ${dir === "rtl" ? "border-l" : "border-r"} border-white/[0.08] transition-all duration-200 ${
           isMobile
-            ? `fixed inset-y-0 left-0 z-50 w-[248px] shadow-2xl ${
-                drawerOpen ? "translate-x-0" : "-translate-x-full"
+            ? `fixed inset-y-0 ${dir === "rtl" ? "right-0" : "left-0"} z-50 w-[248px] shadow-2xl ${
+                drawerOpen ? "translate-x-0" : dir === "rtl" ? "translate-x-full" : "-translate-x-full"
               }`
             : collapsed
               ? "w-[56px]"
@@ -229,7 +229,7 @@ export default function Sidebar() {
           <div key={gi}>
             {group.label && !rail && (
               <p className="mb-1 px-2.5 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-widest text-white/25">
-                {group.label}
+                {t.nav[group.label as keyof typeof t.nav]}
               </p>
             )}
             {group.label && rail && gi > 0 && (
@@ -254,7 +254,7 @@ export default function Sidebar() {
                   >
                     <span
                       aria-hidden
-                      className={`absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-violet-light to-magenta transition-opacity ${
+                      className={`absolute ${dir === "rtl" ? "right-0 rounded-l-full" : "left-0 rounded-r-full"} top-1/2 h-4 w-[3px] -translate-y-1/2 bg-gradient-to-b from-violet-light to-magenta transition-opacity ${
                         active ? "opacity-100" : "opacity-0"
                       }`}
                     />
@@ -282,7 +282,7 @@ export default function Sidebar() {
         {menuOpen && (
           <div
             className={`absolute bottom-full z-50 mb-2 overflow-hidden rounded-lg border border-white/10 bg-[#221b4d] shadow-xl ${
-              rail ? "left-12 w-48" : "left-2 right-2"
+              rail ? (dir === "rtl" ? "right-12 w-48" : "left-12 w-48") : "inset-x-2"
             }`}
           >
             <div className="border-b border-white/[0.08] px-3 py-2.5">
@@ -319,7 +319,7 @@ export default function Sidebar() {
               {initials}
             </span>
             {!collapsed && (
-              <span className="min-w-0 flex-1 text-left">
+              <span className="min-w-0 flex-1 text-start">
                 <span className="block truncate text-[12px] font-medium text-white">
                   {displayName}
                 </span>

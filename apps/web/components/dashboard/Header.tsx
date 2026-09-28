@@ -21,7 +21,7 @@ import {
 
 export default function Header() {
   const { theme, toggle } = useTheme();
-  const { locale, setLocale, t } = useI18n();
+  const { locale, dir, setLocale, t } = useI18n();
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -117,7 +117,7 @@ export default function Header() {
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
-        <span className="hidden flex-1 truncate text-left sm:block">{t.header.search}</span>
+        <span className="hidden flex-1 truncate text-start sm:block">{t.header.search}</span>
         <kbd className="hidden shrink-0 rounded border border-deep-violet/[0.1] bg-white px-1 py-0.5 text-[9px] font-medium text-deep-violet/40 sm:block dark:bg-ink dark:text-deep-violet/50">
           ⌘K
         </kbd>
@@ -137,13 +137,13 @@ export default function Header() {
           ?
         </button>
         {helpOpen && (
-          <div className="absolute right-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
+          <div className={`absolute ${dir === "rtl" ? "left-0" : "right-0"} top-full z-50 mt-1 w-52 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink`}>
             <button
               onClick={() => {
                 setHelpOpen(false);
                 startTour();
               }}
-              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12.5px] text-ink/70 outline-none transition hover:bg-deep-violet/[0.04] hover:text-ink dark:text-fog/70 dark:hover:bg-deep-violet/[0.08] dark:hover:text-fog"
+              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-start text-[12.5px] text-ink/70 outline-none transition hover:bg-deep-violet/[0.04] hover:text-ink dark:text-fog/70 dark:hover:bg-deep-violet/[0.08] dark:hover:text-fog"
             >
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-3.5 w-3.5 text-deep-violet" aria-hidden>
                 <circle cx="10" cy="10" r="8" />
@@ -173,7 +173,7 @@ export default function Header() {
           aria-label={t.account.menu}
           aria-expanded={profileOpen}
           title={t.account.menu}
-          className="flex h-8 items-center gap-1.5 rounded-lg pl-1.5 pr-2 outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:hover:bg-deep-violet/[0.1]"
+          className="flex h-8 items-center gap-1.5 rounded-lg ps-1.5 pe-2 outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:hover:bg-deep-violet/[0.1]"
         >
           <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-violet-light to-magenta text-[10px] font-semibold text-white">
             {initials}
@@ -183,7 +183,7 @@ export default function Header() {
           </svg>
         </button>
         {profileOpen && (
-          <div className="absolute right-0 top-full z-50 mt-1 max-h-[80vh] w-60 overflow-y-auto rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink">
+          <div className={`absolute ${dir === "rtl" ? "left-0" : "right-0"} top-full z-50 mt-1 max-h-[80vh] w-60 overflow-y-auto rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink`}>
             <div className="border-b border-deep-violet/[0.06] px-3 py-2.5">
               <p className="truncate text-[13px] font-medium text-ink dark:text-fog">{displayName}</p>
               <p className="truncate text-[11px] text-ink/40 dark:text-fog/40">{user?.email ?? ""}</p>
@@ -198,7 +198,7 @@ export default function Header() {
                   setPilotOpen(true);
                 }}
                 title={`Auto Pilot — ${t.pilot.title}`}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition hover:bg-deep-violet/[0.04]"
+                className="flex w-full items-center gap-2 px-3 py-2 text-start text-[12px] transition hover:bg-deep-violet/[0.04]"
               >
                 <span
                   aria-hidden
@@ -235,7 +235,7 @@ export default function Header() {
               <button
                 onClick={toggle}
                 aria-label={theme === "light" ? t.header.switchToDark : t.header.switchToLight}
-                className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-ink/60 transition hover:bg-deep-violet/[0.04] hover:text-ink dark:text-fog/60 dark:hover:text-fog"
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-start text-[12px] text-ink/60 transition hover:bg-deep-violet/[0.04] hover:text-ink dark:text-fog/60 dark:hover:text-fog"
               >
                 {theme === "light" ? (
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5" aria-hidden>
@@ -256,25 +256,25 @@ export default function Header() {
                 )}
                 {theme === "light" ? t.header.switchToDark : t.header.switchToLight}
               </button>
-              {LOCALES.filter((l) => l.code === "en").map((l) => (
+              {LOCALES.filter((l) => l.code === "en" || l.code === "ar").map((l) => (
                 <button
                   key={l.code}
                   onClick={() => setLocale(l.code)}
                   aria-current={locale === l.code ? "true" : undefined}
-                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] transition hover:bg-deep-violet/[0.04] ${
+                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-start text-[12px] transition hover:bg-deep-violet/[0.04] ${
                     locale === l.code ? "font-medium text-deep-violet" : "text-ink/60 dark:text-fog/60"
                   }`}
                 >
                   <span className="text-[14px]" aria-hidden>{l.flag}</span>
                   {l.label}
                   {locale === l.code && (
-                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto h-3 w-3" aria-hidden>
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" className="ms-auto h-3 w-3" aria-hidden>
                       <path d="M3 8.5l3.5 3.5 6.5-7" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   )}
                 </button>
               ))}
-              {LOCALES.filter((l) => l.code !== "en").map((l) => (
+              {LOCALES.filter((l) => l.code !== "en" && l.code !== "ar").map((l) => (
                 <div
                   key={l.code}
                   className="flex w-full items-center gap-2.5 px-3 py-2 text-[12px] text-ink/35 dark:text-fog/35"

@@ -2,9 +2,9 @@
 
 import { ReactNode } from "react";
 
-export function DeltaChip({ delta, suffix = "%" }: { delta: number | null; suffix?: string }) {
+export function DeltaChip({ delta, suffix = "%", noPriorData = "no prior data" }: { delta: number | null; suffix?: string; noPriorData?: string }) {
   if (delta === null || delta === undefined) {
-    return <span className="text-[11px] font-medium text-ink/35">no prior data</span>;
+    return <span className="text-[11px] font-medium text-ink/35">{noPriorData}</span>;
   }
   const up = delta > 0;
   const flat = delta === 0;
@@ -37,6 +37,7 @@ export function StatCard({
   deltaSuffix,
   icon,
   loading,
+  noPriorData,
 }: {
   label: string;
   value: string;
@@ -46,6 +47,7 @@ export function StatCard({
   deltaSuffix?: string;
   icon?: ReactNode;
   loading?: boolean;
+  noPriorData?: string;
 }) {
   if (loading) {
     return (
@@ -68,7 +70,7 @@ export function StatCard({
       </div>
       <div className="mt-1 flex items-baseline gap-2">
         <p className="text-[22px] font-bold text-ink">{value}</p>
-        <DeltaChip delta={delta ?? null} suffix={deltaSuffix} />
+        <DeltaChip delta={delta ?? null} suffix={deltaSuffix} noPriorData={noPriorData} />
       </div>
       {sub && <p className="text-[10px] text-ink/40">{sub}</p>}
     </div>

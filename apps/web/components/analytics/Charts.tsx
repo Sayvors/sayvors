@@ -7,18 +7,46 @@ import type { TimeseriesPoint } from "@/lib/api-analytics";
 
 type MetricKey = "reviews" | "sentiment" | "google";
 
-const METRICS: { key: MetricKey; label: string }[] = [
-  { key: "reviews", label: "Reviews" },
-  { key: "sentiment", label: "Sentiment" },
-  { key: "google", label: "Google" },
+type MetricChartLabels = {
+  activityOverTime: string;
+  metric: string;
+  reviews: string;
+  sentiment: string;
+  google: string;
+  mapsImpressions: string;
+  positive: string;
+  neutral: string;
+  negative: string;
+  noActivity: string;
+  chartLabel: string;
+};
+
+const DEFAULT_METRIC_CHART_LABELS: MetricChartLabels = {
+  activityOverTime: "Activity over time",
+  metric: "Chart metric",
+  reviews: "Reviews",
+  sentiment: "Sentiment",
+  google: "Google",
+  mapsImpressions: "Maps impressions",
+  positive: "Positive",
+  neutral: "Neutral",
+  negative: "Negative",
+  noActivity: "No activity in this period yet",
+  chartLabel: "{metric} chart",
+};
+
+const METRICS: { key: MetricKey }[] = [
+  { key: "reviews" },
+  { key: "sentiment" },
+  { key: "google" },
 ];
 
-function fmtDay(iso: string) {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString("en", { month: "short", day: "numeric" });
+function fmtDay(iso: string, locale: string) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString(locale, { month: "short", day: "numeric" });
 }
 
-function fmtNum(n: number) {
-  return new Intl.NumberFormat("en", { notation: n >= 10000 ? "compact" : "standard" }).format(n);
+function fmtNum(n: number, locale: string) {
+  return new Intl.NumberFormat(locale, { notation: n >= 10000 ? "compact" : "standard" }).format(n);
 }
 
 function buildPath(values: number[], max: number, w: number, h: number, pad: number) {
@@ -34,23 +62,29 @@ function buildPath(values: number[], max: number, w: number, h: number, pad: num
   return { line, area };
 }
 
-export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
+export function MetricChart({ points, labels, locale = "en" }: { points: TimeseriesPoint[]; labels?: MetricChartLabels; locale?: string }) {
   const [metric, setMetric] = useState<MetricKey>("reviews");
   const [hover, setHover] = useState<number | null>(null);
+  const chartLabels = labels ?? DEFAULT_METRIC_CHART_LABELS;
+  const metricLabels: Record<MetricKey, string> = {
+    reviews: chartLabels.reviews,
+    sentiment: chartLabels.sentiment,
+    google: chartLabels.google,
+  };
 
   const series = useMemo(() => {
     if (metric === "reviews") {
-      return [{ key: "reviews_count", label: "Reviews", color: "#5b2d8e", values: points.map((p) => p.reviews_count) }];
+      return [{ key: "reviews_count", label: chartLabels.reviews, color: "#5b2d8e", values: points.map((p) => p.reviews_count) }];
     }
     if (metric === "google") {
-      return [{ key: "impressions", label: "Maps impressions", color: "#0ea5e9", values: points.map((p) => p.impressions_maps) }];
+      return [{ key: "impressions", label: chartLabels.mapsImpressions, color: "#0ea5e9", values: points.map((p) => p.impressions_maps) }];
     }
     return [
-      { key: "pos", label: "Positive", color: "#10b981", values: points.map((p) => p.positive_count) },
-      { key: "neu", label: "Neutral", color: "#8b7fb8", values: points.map((p) => p.neutral_count) },
-      { key: "neg", label: "Negative", color: "#ff4f6e", values: points.map((p) => p.negative_count) },
+      { key: "pos", label: chartLabels.positive, color: "#10b981", values: points.map((p) => p.positive_count) },
+      { key: "neu", label: chartLabels.neutral, color: "#8b7fb8", values: points.map((p) => p.neutral_count) },
+      { key: "neg", label: chartLabels.negative, color: "#ff4f6e", values: points.map((p) => p.negative_count) },
     ];
-  }, [metric, points]);
+  }, [chartLabels, metric, points]);
 
   const max = Math.max(1, ...series.flatMap((s) => s.values));
   const W = 600;
@@ -61,7 +95,7 @@ export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
   const hoverInfo =
     hover !== null && points[hover]
       ? {
-          date: fmtDay(points[hover].date),
+          date: fmtDay(points[hover].date, locale),
           rows: series.map((s) => ({ label: s.label, color: s.color, value: s.values[hover] ?? 0 })),
         }
       : null;
@@ -69,8 +103,8 @@ export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
   return (
     <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-[14px] font-bold text-ink">Activity over time</h3>
-        <div className="flex rounded-lg bg-deep-violet/[0.06] p-0.5" role="group" aria-label="Chart metric">
+        <h3 className="text-[14px] font-bold text-ink">{chartLabels.activityOverTime}</h3>
+        <div className="flex rounded-lg bg-deep-violet/[0.06] p-0.5" role="group" aria-label={chartLabels.metric}>
           {METRICS.map((m) => (
             <button
               key={m.key}
@@ -80,7 +114,7 @@ export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
                 metric === m.key ? "bg-white text-deep-violet shadow-sm" : "text-ink/45 hover:text-ink/70"
               }`}
             >
-              {m.label}
+              {metricLabels[m.key]}
             </button>
           ))}
         </div>
@@ -88,7 +122,7 @@ export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
 
       {!hasData ? (
         <div className="flex h-40 items-center justify-center text-[12px] text-ink/35">
-          No activity in this period yet
+          {chartLabels.noActivity}
         </div>
       ) : (
         <div className="relative">
@@ -108,7 +142,7 @@ export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
               preserveAspectRatio="none"
               className="h-40 w-full"
               role="img"
-              aria-label={`${METRICS.find((m) => m.key === metric)?.label} chart`}
+              aria-label={chartLabels.chartLabel.replace("{metric}", metricLabels[metric])}
               onMouseMove={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 const frac = (e.clientX - rect.left) / rect.width;
@@ -150,7 +184,7 @@ export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
             </svg>
 
             {/* max label */}
-            <span className="pointer-events-none absolute right-1 top-0 text-[9px] font-medium text-ink/30">{fmtNum(max)}</span>
+            <span className="pointer-events-none absolute right-1 top-0 text-[9px] font-medium text-ink/30">{fmtNum(max, locale)}</span>
 
             {/* tooltip */}
             {hoverInfo && (
@@ -165,7 +199,7 @@ export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
                 {hoverInfo.rows.map((r) => (
                   <p key={r.label} className="flex items-center gap-1.5 text-[10px] text-ink/55">
                     <span className="h-1.5 w-1.5 rounded-full" style={{ background: r.color }} aria-hidden />
-                    {r.label}: <span className="font-semibold text-ink">{fmtNum(r.value)}</span>
+                    {r.label}: <span className="font-semibold text-ink">{fmtNum(r.value, locale)}</span>
                   </p>
                 ))}
               </div>
@@ -174,9 +208,9 @@ export function MetricChart({ points }: { points: TimeseriesPoint[] }) {
 
           {/* x labels */}
           <div className="mt-1 flex justify-between text-[9px] text-ink/30">
-            <span>{fmtDay(points[0].date)}</span>
-            {points.length > 2 && <span>{fmtDay(points[Math.floor(points.length / 2)].date)}</span>}
-            <span>{fmtDay(points[points.length - 1].date)}</span>
+            <span>{fmtDay(points[0].date, locale)}</span>
+            {points.length > 2 && <span>{fmtDay(points[Math.floor(points.length / 2)].date, locale)}</span>}
+            <span>{fmtDay(points[points.length - 1].date, locale)}</span>
           </div>
         </div>
       )}
@@ -224,10 +258,10 @@ const STAR_COLORS: Record<number, string> = {
   1: "#ff4f6e",
 };
 
-export function RatingDistribution({ distribution, total }: { distribution: Record<string, number>; total: number }) {
+export function RatingDistribution({ distribution, total, labels = { ariaLabel: "Rating distribution", reviewsTooltip: "{count} reviews ({percent}%)" } }: { distribution: Record<string, number>; total: number; labels?: { ariaLabel: string; reviewsTooltip: string } }) {
   const max = Math.max(1, ...Object.values(distribution));
   return (
-    <div className="space-y-2" aria-label="Rating distribution">
+    <div className="space-y-2" aria-label={labels.ariaLabel}>
       {[5, 4, 3, 2, 1].map((star) => {
         const count = distribution[String(star)] ?? 0;
         const pct = total ? Math.round((count / total) * 100) : 0;
@@ -245,7 +279,7 @@ export function RatingDistribution({ distribution, total }: { distribution: Reco
                 style={{ width: `${(count / max) * 100}%`, background: STAR_COLORS[star] }}
               />
             </div>
-            <span className="w-14 text-right text-[11px] tabular-nums text-ink/40" title={`${count} reviews (${pct}%)`}>
+            <span className="w-14 text-right text-[11px] tabular-nums text-ink/40" title={labels.reviewsTooltip.replace("{count}", String(count)).replace("{percent}", String(pct))}>
               {count} · {pct}%
             </span>
           </div>

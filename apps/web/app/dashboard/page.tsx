@@ -1095,6 +1095,8 @@ function AttentionQueue() {
 }
 
 function BusinessPulse() {
+  const { t, locale } = useI18n();
+  const copy = t.dashboard.pulse;
   const [overview, setOverview] = useState<Overview | null>(null);
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
   const [channels, setChannels] = useState<DashboardChannel[]>([]);
@@ -1148,15 +1150,15 @@ function BusinessPulse() {
   const ratingDistribution = overview?.rating_distribution ?? {};
 
   return (
-    <section aria-label="Business pulse" className="space-y-3">
+    <section aria-label={copy.title} className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h2 className="text-[16px] font-bold text-ink">Business pulse</h2>
-          <p className="mt-0.5 text-[12px] text-ink/50">How you&apos;re doing, and the one thing to fix next.</p>
+          <h2 className="text-[16px] font-bold text-ink">{copy.title}</h2>
+          <p className="mt-0.5 text-[12px] text-ink/50">{copy.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          {channels.length > 0 && <select value={channelId} onChange={(event) => { setLoading(true); setChannelId(event.target.value); }} aria-label="Business scope" className="rounded-lg border border-ink/[0.08] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 outline-none focus:border-deep-violet/30"><option value="">All businesses</option>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.display_name || "Unnamed business"}</option>)}</select>}
-          <span className="text-[11px] font-semibold text-ink/40">Last 30 days</span>
+          {channels.length > 0 && <select value={channelId} onChange={(event) => { setLoading(true); setChannelId(event.target.value); }} aria-label={copy.businessScope} className="rounded-lg border border-ink/[0.08] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 outline-none focus:border-deep-violet/30"><option value="">{copy.allBusinesses}</option>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.display_name || copy.unnamedBusiness}</option>)}</select>}
+          <span className="text-[11px] font-semibold text-ink/40">{copy.last30Days}</span>
         </div>
       </div>
 
@@ -1165,9 +1167,9 @@ function BusinessPulse() {
           its own panel below; the rating split lives in Customer voice. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <PulseStat
-          label="Total reviews"
+          label={copy.totalReviews}
           value={totalReviews}
-          detail={overview ? `${overview.avg_rating.toFixed(1)} average rating` : "No review data yet"}
+          detail={overview ? copy.averageRating.replace("{rating}", overview.avg_rating.toFixed(1)) : copy.noReviewData}
           color="text-amber-600"
           href="/dashboard/reviews"
           delta={overview?.period.reviews_delta_pct}
@@ -1175,27 +1177,27 @@ function BusinessPulse() {
           spark={points.map((p) => p.reviews_count)}
           sparkColor="#d97706"
         />
-        <MarketPosition bench={bench} />
-        <ThisWeekActions intel={intel} bench={bench} overview={overview} />
+        <MarketPosition bench={bench} copy={copy} />
+        <ThisWeekActions intel={intel} bench={bench} overview={overview} copy={copy} />
       </div>
 
-      <CustomerVoice intel={intel} loading={loading} />
+      <CustomerVoice intel={intel} loading={loading} copy={copy} />
 
       <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr]">
-        <Link href="/dashboard/analytics" aria-label="Open analytics" className="group block rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-          {loading ? <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" /> : <span className="block rounded-2xl transition duration-200 group-hover:-translate-y-0.5 group-hover:shadow-lg group-hover:shadow-deep-violet/[0.08]"><MetricChart points={points} /></span>}
+        <Link href="/dashboard/analytics" aria-label={copy.openAnalytics} className="group block rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+          {loading ? <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" /> : <span className="block rounded-2xl transition duration-200 group-hover:-translate-y-0.5 group-hover:shadow-lg group-hover:shadow-deep-violet/[0.08]"><MetricChart points={points} labels={copy.chart} locale={locale} /></span>}
         </Link>
         <div className="space-y-3">
-          <StarsCostingYou intel={intel} />
+          <StarsCostingYou intel={intel} copy={copy} />
           <Link href="/dashboard/reviews" aria-label="Open reviews" className="group block rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-            <h3 className="mb-4 text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">Review ratings</h3>
-            <RatingDistribution distribution={ratingDistribution} total={totalReviews} />
+            <h3 className="mb-4 text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">{copy.reviewRatings}</h3>
+            <RatingDistribution distribution={ratingDistribution} total={totalReviews} labels={{ ariaLabel: copy.ratingDistribution, reviewsTooltip: copy.reviewsTooltip }} />
             <div className="mt-5 border-t border-ink/[0.06] pt-4">
               <div className="flex items-center justify-between text-[11px] text-ink/45">
-                <span>Response rate</span>
+                <span>{copy.responseRate}</span>
                 <strong className="text-ink">
                   {totalReviews < MIN_REVIEWS_FOR_RATE
-                    ? `needs ${MIN_REVIEWS_FOR_RATE - totalReviews} more`
+                    ? copy.needsMore.replace("{count}", String(MIN_REVIEWS_FOR_RATE - totalReviews))
                     : overview
                       ? `${Math.round(overview.response_rate)}%`
                       : "--"}
@@ -1203,7 +1205,7 @@ function BusinessPulse() {
               </div>
               {totalReviews < MIN_REVIEWS_FOR_RATE ? (
                 <p className="mt-1.5 text-[10px] text-ink/40">
-                  Too few reviews for a meaningful rate — below {MIN_REVIEWS_FOR_RATE} reviews it is mostly luck.
+                  {copy.tooFewReviews.replace("{minimum}", String(MIN_REVIEWS_FOR_RATE))}
                 </p>
               ) : (
                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/[0.06]">
@@ -1259,7 +1261,7 @@ const MIN_COHORT_FOR_RANK = 5;
  * (same city + category, other businesses on Sayvors) is already computed by
  * the benchmark endpoint, so this needs no extra request.
  */
-function MarketPosition({ bench }: { bench: BenchmarkResponse | null }) {
+function MarketPosition({ bench, copy }: { bench: BenchmarkResponse | null; copy: ReturnType<typeof useI18n>["t"]["dashboard"]["pulse"] }) {
   const cohort = bench?.cohort;
   const market = bench?.market ?? [];
   const count = cohort?.count ?? market.length;
@@ -1271,11 +1273,11 @@ function MarketPosition({ bench }: { bench: BenchmarkResponse | null }) {
   if (!bench || count < MIN_COHORT_FOR_RANK) {
     return (
       <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">Where you stand</p>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">{copy.whereYouStand}</p>
         <p className="mt-1 text-[22px] font-bold text-ink/25">—</p>
         <p className="text-[10px] text-ink/40">
-          Need {MIN_COHORT_FOR_RANK}+ comparable businesses before a ranking means anything
-          {count > 0 ? ` — ${count} so far` : ""}.
+          {copy.needComparableBusinesses.replace("{minimum}", String(MIN_COHORT_FOR_RANK))}
+          {count > 0 ? ` — ${copy.businessesSoFar.replace("{count}", String(count))}` : ""}.
         </p>
       </div>
     );
@@ -1283,31 +1285,30 @@ function MarketPosition({ bench }: { bench: BenchmarkResponse | null }) {
 
   const percentile = rank && count ? Math.round(((count - rank + 1) / count) * 100) : null;
   return (
-    <Link href="/dashboard/benchmark" aria-label="Where you stand" className="group block rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+    <Link href="/dashboard/benchmark" aria-label={copy.whereYouStand} className="group block rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
       <p className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-ink/50">
-        <span>Where you stand</span>
+        <span>{copy.whereYouStand}</span>
         <span className="text-ink/25 transition group-hover:translate-x-0.5 group-hover:text-deep-violet" aria-hidden>→</span>
       </p>
       <p className="mt-1 text-[22px] font-bold text-deep-violet">
-        {rank ? `#${rank}` : "—"}
-        <span className="text-[12px] font-semibold text-ink/40"> of {count} {cohort?.label ?? "similar"}</span>
+        {copy.rankAmong.replace("{rank}", rank ? `#${rank}` : "—").replace("{count}", String(count)).replace("{label}", cohort?.label ?? copy.cohortSimilar)}
       </p>
       {percentile !== null && (
         <p className="mt-0.5 text-[11px] text-ink/55">
-          Top {100 - percentile + 1}% · reputation {me ? Math.round(me.reputation_score) : "—"}
+          {copy.topPercent.replace("{percent}", String(100 - percentile + 1))} · {copy.reputation.replace("{score}", String(me ? Math.round(me.reputation_score) : "—"))}
         </p>
       )}
       {(cohort?.median_rating != null || cohort?.median_response_rate != null) && (
         <p className="mt-1 text-[10px] text-ink/40">
-          Median nearby: {cohort?.median_rating?.toFixed(1) ?? "—"}★
-          {cohort?.median_response_rate != null ? ` · ${Math.round(cohort.median_response_rate)}% reply rate` : ""}
+          {copy.medianNearby.replace("{rating}", cohort?.median_rating?.toFixed(1) ?? "—")}
+          {cohort?.median_response_rate != null ? ` · ${copy.replyRate.replace("{rate}", String(Math.round(cohort.median_response_rate)))}` : ""}
         </p>
       )}
       {(ahead.length > 0 || behind.length > 0) && (
         <p className="mt-1.5 truncate text-[10px] text-ink/45">
-          {ahead.length > 0 && <span className="text-emerald">Ahead: {ahead.length} business{ahead.length === 1 ? "" : "es"}</span>}
+          {ahead.length > 0 && <span className="text-emerald">{copy.ahead.replace("{count}", String(ahead.length))}</span>}
           {ahead.length > 0 && behind.length > 0 && " · "}
-          {behind.length > 0 && <span className="text-coral">Behind: {behind.map((b) => b.name).join(", ")}</span>}
+          {behind.length > 0 && <span className="text-coral">{copy.behind.replace("{names}", behind.map((b) => b.name).join("، "))}</span>}
         </p>
       )}
     </Link>
@@ -1318,10 +1319,11 @@ function MarketPosition({ bench }: { bench: BenchmarkResponse | null }) {
  * One action, not a dashboard. Prefers the LLM's own recommended action, falls
  * back to the competitive gap that is actually measurable today.
  */
-function ThisWeekActions({ intel, bench, overview }: {
+function ThisWeekActions({ intel, bench, overview, copy }: {
   intel: IntelSnapshot | null;
   bench: BenchmarkResponse | null;
   overview: Overview | null;
+  copy: ReturnType<typeof useI18n>["t"]["dashboard"]["pulse"];
 }) {
   const total = overview?.total_reviews ?? 0;
   const first = intel?.actions?.[0];
@@ -1332,32 +1334,32 @@ function ThisWeekActions({ intel, bench, overview }: {
 
   const lines: { title: string; detail: string }[] = [];
   if (first) lines.push({ title: first.title, detail: first.detail });
-  if (gap) lines.push({ title: gap, detail: "What competitors do better — closing this is the cheapest win." });
+  if (gap) lines.push({ title: gap, detail: copy.competitorGapDetail });
   if (
     !first && !gap && total < MIN_REVIEWS_FOR_RATE && total > 0
   ) {
     lines.push({
-      title: `Collect a few more reviews (${total} of ${MIN_REVIEWS_FOR_RATE})`,
-      detail: "Response rate and trends stay hidden until the sample is big enough to be honest.",
+      title: copy.collectMoreReviews.replace("{total}", String(total)).replace("{minimum}", String(MIN_REVIEWS_FOR_RATE)),
+      detail: copy.responseRateHidden,
     });
   }
   if (!lines.length && wins) {
-    lines.push({ title: wins, detail: "Keep this going — it is already ahead of comparable businesses." });
+    lines.push({ title: wins, detail: copy.keepThisGoing });
   }
   if (!lines.length && rate != null && cohortRate != null && rate < cohortRate) {
     lines.push({
-      title: `Reply faster — ${Math.round(rate)}% vs ${Math.round(cohortRate)}% nearby`,
-      detail: "Comparable businesses reply to more of their reviews than you do.",
+      title: copy.replyFaster.replace("{rate}", String(Math.round(rate))).replace("{nearby}", String(Math.round(cohortRate))),
+      detail: copy.competitorsReplyMore,
     });
   }
 
   return (
     <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">What to do this week</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">{copy.whatToDoThisWeek}</p>
       {lines.length === 0 ? (
         <>
-          <p className="mt-1 text-[22px] font-bold text-emerald">All clear</p>
-          <p className="text-[10px] text-ink/40">Nothing urgent — keep the current playbook.</p>
+          <p className="mt-1 text-[22px] font-bold text-emerald">{copy.allClear}</p>
+          <p className="text-[10px] text-ink/40">{copy.nothingUrgent}</p>
         </>
       ) : (
         <ul className="mt-1.5 space-y-1.5">
@@ -1388,7 +1390,7 @@ function ThisWeekActions({ intel, bench, overview }: {
  * deep link would need that mapping, and guessing it would drop the merchant
  * into an empty list more often than not.
  */
-function StarsCostingYou({ intel }: { intel: IntelSnapshot | null }) {
+function StarsCostingYou({ intel, copy }: { intel: IntelSnapshot | null; copy: ReturnType<typeof useI18n>["t"]["dashboard"]["pulse"] }) {
   const dims = intel?.dimensions ?? [];
   const worst = dims
     .filter((d) => d.negative > 0)
@@ -1396,27 +1398,27 @@ function StarsCostingYou({ intel }: { intel: IntelSnapshot | null }) {
   if (!worst) return null;
   return (
     <div className="rounded-2xl border-2 border-coral/30 bg-coral/[0.04] p-5 backdrop-blur-sm">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-coral">What&apos;s costing you stars</p>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-coral">{copy.whatCostsStars}</p>
       <p className="mt-1.5 text-[15px] font-bold text-ink">{worst.label}</p>
       <p className="mt-0.5 text-[12px] text-ink/60">
-        {worst.negative} review{worst.negative === 1 ? "" : "s"} criticise it · avg {worst.avg_rating.toFixed(1)}★
+        {copy.reviewCount.replace("{count}", String(worst.negative))} · {copy.averageShort.replace("{rating}", worst.avg_rating.toFixed(1))}
       </p>
       <Link href="/dashboard/issues" className="mt-2 inline-block text-[11px] font-semibold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-        Fix this →
+        {copy.fixThis} →
       </Link>
     </div>
   );
 }
 
-function CustomerVoice({ intel, loading }: { intel: IntelSnapshot | null; loading: boolean }) {
+function CustomerVoice({ intel, loading, copy }: { intel: IntelSnapshot | null; loading: boolean; copy: ReturnType<typeof useI18n>["t"]["dashboard"]["pulse"] }) {
   if (loading) {
     return <div className="h-36 animate-pulse rounded-2xl border-2 border-white bg-white/60" aria-hidden />;
   }
   if (!intel || (intel.stats.total === 0 && (intel.themes ?? []).length === 0)) {
     return (
-      <Link href="/dashboard/reviews" aria-label="Open reviews" className="group block rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-        <h3 className="text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">Customer voice</h3>
-        <p className="mt-1 text-[12px] text-ink/50">No analysis yet — open Reviews to run your first AI analysis and see what customers love and what hurts your rating.</p>
+      <Link href="/dashboard/reviews" aria-label={copy.openReviews} className="group block rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+        <h3 className="text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">{copy.customerVoice}</h3>
+        <p className="mt-1 text-[12px] text-ink/50">{copy.noAnalysisYet}</p>
       </Link>
     );
   }
@@ -1428,33 +1430,33 @@ function CustomerVoice({ intel, loading }: { intel: IntelSnapshot | null; loadin
   const neg = intel.stats.negative;
   const total = Math.max(1, pos + neu + neg);
   return (
-    <section aria-label="Customer voice" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+    <section aria-label={copy.customerVoice} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-[14px] font-bold text-ink">Customer voice</h3>
-          <p className="text-[11px] text-ink/45">What customers praise — and what costs you stars.</p>
+          <h3 className="text-[14px] font-bold text-ink">{copy.customerVoice}</h3>
+          <p className="text-[11px] text-ink/45">{copy.customerVoiceSubtitle}</p>
         </div>
         <Link href="/dashboard/reviews" className="text-[11px] font-semibold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-          Full intelligence →
+          {copy.fullIntelligence} →
         </Link>
       </div>
       {intel.summary ? <p className="mt-2 line-clamp-2 text-[12.5px] leading-snug text-ink/70">{intel.summary}</p> : null}
-      <div className="mt-3 flex h-2.5 overflow-hidden rounded-full" role="img" aria-label={`${pos} positive, ${neu} neutral, ${neg} negative`}>
+      <div className="mt-3 flex h-2.5 overflow-hidden rounded-full" role="img" aria-label={copy.sentimentAria.replace("{positive}", String(pos)).replace("{neutral}", String(neu)).replace("{negative}", String(neg))}>
         <div className="bg-emerald-500" style={{ width: `${(pos / total) * 100}%` }} />
         <div className="bg-amber-400" style={{ width: `${(neu / total) * 100}%` }} />
         <div className="bg-coral" style={{ width: `${(neg / total) * 100}%` }} />
       </div>
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink/55">
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Positive {pos}</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-400" /> Neutral {neu}</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-coral" /> Negative {neg}</span>
-        {intel.stale ? <span className="text-amber-600">Stale — re-run analysis in Reviews</span> : null}
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {copy.positive} {pos}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-400" /> {copy.neutral} {neu}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-coral" /> {copy.negative} {neg}</span>
+        {intel.stale ? <span className="text-amber-600">{copy.staleAnalysis}</span> : null}
       </div>
       {(loves.length > 0 || hurts.length > 0) && (
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {loves.length > 0 && (
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Loved</p>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">{copy.loved}</p>
               <ul className="mt-1.5 space-y-1">
                 {loves.map((t) => (
                   <li key={t.name} className="flex items-center justify-between gap-2 text-[12.5px]">
@@ -1467,7 +1469,7 @@ function CustomerVoice({ intel, loading }: { intel: IntelSnapshot | null; loadin
           )}
           {hurts.length > 0 && (
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-coral">Hurting</p>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-coral">{copy.hurting}</p>
               <ul className="mt-1.5 space-y-1">
                 {hurts.map((t) => (
                   <li key={t.name} className="flex items-center justify-between gap-2 text-[12.5px]">
