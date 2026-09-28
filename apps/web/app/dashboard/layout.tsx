@@ -6,6 +6,7 @@ import ToastProvider from "@/components/feedback/ToastStack";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthGuard } from "@/components/AuthGuard";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
+import FeedbackWidget from "@/components/FeedbackWidget";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -23,6 +24,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </main>
               </div>
               <SayvorsChat />
+              <FeedbackWidget />
             </div>
           </TourProvider>
           </ToastProvider>

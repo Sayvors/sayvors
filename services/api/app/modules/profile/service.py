@@ -142,7 +142,7 @@ async def get_profile(user_id: str, db: AsyncSession) -> dict:
     rows = (
         await db.execute(select(UserFeedback).where(UserFeedback.user_id == user_id))
     ).scalars().all()
-    feedback = {r.category: r.stars for r in rows}
+    feedback = [{"emoji_rating": r.emoji_rating, "message": r.message, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
 
     payload = _serialize(user, feedback)
     await _cache_set(_profile_key(user_id), payload, PROFILE_TTL)
@@ -232,32 +232,19 @@ async def get_usage(user_id: str, db: AsyncSession) -> dict:
     return payload
 
 
-async def list_feedback(user_id: str, db: AsyncSession) -> dict[str, int]:
+async def list_feedback(user_id: str, db: AsyncSession) -> list[dict]:
     rows = (
         await db.execute(select(UserFeedback).where(UserFeedback.user_id == user_id))
     ).scalars().all()
-    return {r.category: r.stars for r in rows}
+    return [{"emoji_rating": r.emoji_rating, "message": r.message, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
 
 
-async def submit_feedback(user_id: str, category: str, stars: int, db: AsyncSession) -> dict[str, int]:
-    category = category.strip().lower()
-    if category not in FEEDBACK_CATEGORIES:
-        raise ValueError(f"Unknown category. Use one of: {sorted(FEEDBACK_CATEGORIES)}")
+async def submit_feedback(user_id: str, emoji_rating: int, message: str | None, db: AsyncSession) -> list[dict]:
+    if emoji_rating < 1 or emoji_rating > 5:
+        raise ValueError("emoji_rating must be between 1 and 5")
 
-    row = (
-        await db.execute(
-            select(UserFeedback).where(
-                UserFeedback.user_id == user_id, UserFeedback.category == category
-            )
-        )
-    ).scalar_one_or_none()
-    now = datetime.now(timezone.utc)
-    if row:
-        row.stars = stars
-        row.updated_at = now
-    else:
-        row = UserFeedback(user_id=user_id, category=category, stars=stars)
-        db.add(row)
+    row = UserFeedback(user_id=user_id, emoji_rating=emoji_rating, message=message)
+    db.add(row)
     await db.commit()
 
     await _cache_delete(_profile_key(user_id), _usage_key(user_id))
@@ -265,7 +252,7 @@ async def submit_feedback(user_id: str, category: str, stars: int, db: AsyncSess
     await _emit(
         "feedback.submitted",
         user_id,
-        metadata={"category": category, "stars": stars},
+        metadata={"emoji_rating": emoji_rating},
     )
 
     return await list_feedback(user_id, db)
