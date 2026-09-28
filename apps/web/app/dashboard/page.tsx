@@ -8,6 +8,8 @@ import { approveReply, editReply, fetchBenchmark, fetchInsights, fetchOverview, 
 import { dedupeBusinesses } from "@/lib/channel-identity";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
+import AskForReview from "@/components/dashboard/AskForReview";
+import QRCodeGenerator from "@/components/dashboard/QRCodeGenerator";
 import { MetricChart, RatingDistribution, Sparkline } from "@/components/analytics/Charts";
 
 const checklistDefs = [
@@ -1740,6 +1742,10 @@ export default function DashboardPage() {
       <AttentionQueue />
 
       <BusinessPulse />
+
+      <AskForReview />
+
+      <QRCodeGenerator />
 
     </div>
   );
