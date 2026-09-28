@@ -1,13 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch } from "@/lib/api-rag";
 import { setChatOpen, useChatOpen } from "@/lib/chat-store";
+import { streamAssistantChat } from "@/lib/api-assistant";
 import FeedbackPanel from "@/components/FeedbackPanel";
 
 interface ChatMsg {
   role: "user" | "assistant";
   content: string;
+  /** Short process trail (databank lookups, thinking) kept with the answer. */
+  steps?: Step[];
+}
+
+/** One line in the process trail: a short label plus an optional detail. */
+interface Step {
+  id: string;
+  label: string;
+  detail?: string | null;
 }
 
 interface ChatSession {
@@ -68,9 +77,20 @@ function loadSessions(): { sessions: ChatSession[]; activeId: string } {
           .map((s) => ({
             id: s.id,
             title: typeof s.title === "string" ? s.title : "New chat",
-            messages: s.messages.filter(
-              (m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string"
-            ),
+            messages: s.messages
+              .filter(
+                (m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string"
+              )
+              .map((m) => ({
+                role: m.role,
+                content: m.content,
+                // Keep the process trail so past answers still show how they were produced.
+                steps: Array.isArray(m.steps)
+                  ? m.steps
+                      .filter((st) => st && typeof st.id === "string" && typeof st.label === "string")
+                      .map((st) => ({ id: st.id, label: st.label, detail: st.detail ?? null }))
+                  : undefined,
+              })),
             updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : 0,
           }));
         if (sessions.length > 0) {
@@ -237,6 +257,42 @@ function renderMarkdown(text: string): React.ReactNode {
 }
 
 /**
+ * The process trail: what the assistant is doing right now (or did).
+ * Deliberately quiet — small, dimmed, arrow-led — so the answer stays the
+ * focus. The last row breathes while the answer is still being written.
+ */
+function StepTrail({ steps, done }: { steps: Step[]; done: boolean }) {
+  return (
+    <ul className="space-y-0.5 pl-0.5" aria-label="Assistant progress">
+      {steps.map((s, i) => {
+        const last = i === steps.length - 1;
+        const active = !done && last;
+        return (
+          <li
+            key={s.id}
+            className={`flex items-baseline gap-1 text-[10.5px] leading-relaxed transition-colors ${
+              active
+                ? "text-ink/50 dark:text-fog/50"
+                : done
+                  ? "text-ink/25 dark:text-fog/25"
+                  : "text-ink/35 dark:text-fog/35"
+            }`}
+          >
+            <span aria-hidden className="shrink-0 translate-y-[1px] text-ink/25 dark:text-fog/25">
+              ›
+            </span>
+            <span className={active ? "animate-pulse" : ""}>{s.label}</span>
+            {s.detail && (
+              <span className="truncate text-ink/25 dark:text-fog/25">· {s.detail}</span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
  * Ask Sayvors — secondary sidebar that sits inside the dashboard flex row
  * and pushes page content (overlays full-width on mobile). Chat history is
  * session-based and persisted in localStorage.
@@ -252,8 +308,11 @@ export default function SayvorsChat() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** In-flight answer: the process trail plus the text typed so far. */
+  const [live, setLive] = useState<{ steps: Step[]; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Restore persisted sessions once on mount. Runs after hydration on
   // purpose: the server renders the greeting, so loading history in a lazy
@@ -283,25 +342,31 @@ export default function SayvorsChat() {
   useEffect(() => {
     if (open) {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-      setTimeout(() => inputRef.current?.focus(), 240);
+      if (!busy) setTimeout(() => inputRef.current?.focus(), 240);
     }
-  }, [open, messages, busy]);
+  }, [open, messages, busy, live]);
 
   function patchActive(fn: (s: ChatSession) => ChatSession) {
     setSessions((prev) => prev.map((s) => (s.id === activeId ? fn(s) : s)));
   }
 
   function startNewChat() {
+    abortRef.current?.abort();
     const s = newSession();
     setSessions((prev) => [s, ...prev].slice(0, MAX_SESSIONS));
     setActiveId(s.id);
     setError(null);
     setInput("");
+    setLive(null);
     setHistoryOpen(false);
     setTimeout(() => inputRef.current?.focus(), 100);
   }
 
   function openSession(id: string) {
+    if (id !== activeId) {
+      abortRef.current?.abort();
+      setLive(null);
+    }
     setActiveId(id);
     setError(null);
     setHistoryOpen(false);
@@ -336,28 +401,71 @@ export default function SayvorsChat() {
     setInput("");
     setBusy(true);
     setError(null);
+    setLive({ steps: [], text: "" });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const steps: Step[] = [];
+    let answer = "";
+
+    const addStep = (label: string, detail?: string | null, id?: string) => {
+      const stepId = id ?? label;
+      const existing = steps.find((s) => s.id === stepId);
+      if (existing) {
+        existing.label = label;
+        if (detail) existing.detail = detail;
+      } else {
+        steps.push({ id: stepId, label, detail: detail ?? null });
+      }
+      setLive({ steps: steps.map((s) => ({ ...s })), text: answer });
+    };
+
     try {
-      const r = await apiFetch("/api/v1/assistant/chat", {
-        method: "POST",
-        body: JSON.stringify({ message: text, history }),
-      });
-      patchActive((s) => ({
-        ...s,
-        messages: [...s.messages, { role: "assistant", content: r.reply }],
-        updatedAt: Date.now(),
-      }));
-    } catch (e) {
-      let msg = "I couldn't reach the assistant. Try again.";
-      if (e instanceof Error) {
-        try {
-          const parsed = JSON.parse(e.message) as { detail?: unknown };
-          if (typeof parsed.detail === "string") msg = parsed.detail;
-        } catch {
-          /* not JSON */
+      for await (const ev of streamAssistantChat(text, history, controller.signal)) {
+        if (ev.type === "step" && ev.label) {
+          addStep(ev.label, ev.detail, ev.id);
+        } else if (ev.type === "delta" && ev.text) {
+          answer += ev.text;
+          setLive({ steps: steps.map((s) => ({ ...s })), text: answer });
+        } else if (ev.type === "error") {
+          throw new Error(ev.message || "Assistant is unavailable right now.");
         }
       }
-      setError(msg);
+      if (!answer.trim()) throw new Error("The assistant returned an empty reply.");
+      patchActive((s) => ({
+        ...s,
+        messages: [...s.messages, { role: "assistant", content: answer, steps }],
+        updatedAt: Date.now(),
+      }));
+      setLive(null);
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") {
+        // User switched chat or started a new one — drop the partial answer.
+        setLive(null);
+      } else {
+        let msg = "I couldn't reach the assistant. Try again.";
+        if (e instanceof Error) {
+          try {
+            const parsed = JSON.parse(e.message) as { detail?: unknown; message?: unknown };
+            if (typeof parsed.detail === "string") msg = parsed.detail;
+            else if (typeof parsed.message === "string") msg = parsed.message;
+          } catch {
+            const raw = e.message;
+            if (raw && !raw.startsWith("{")) msg = raw.slice(0, 200);
+          }
+        }
+        setError(msg);
+        if (answer.trim()) {
+          patchActive((s) => ({
+            ...s,
+            messages: [...s.messages, { role: "assistant", content: answer, steps }],
+            updatedAt: Date.now(),
+          }));
+        }
+        setLive(null);
+      }
     } finally {
+      abortRef.current = null;
       setBusy(false);
     }
   }
@@ -454,21 +562,37 @@ export default function SayvorsChat() {
                     {m.content}
                   </p>
                 ) : (
-                  <div className="max-w-[85%] space-y-1 rounded-2xl rounded-bl-md bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
-                    {renderMarkdown(m.content)}
+                  <div className="max-w-[88%] space-y-1.5">
+                    {m.steps && m.steps.length > 0 && <StepTrail steps={m.steps} done />}
+                    <div className="space-y-1 rounded-2xl rounded-bl-md bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
+                      {renderMarkdown(m.content)}
+                    </div>
                   </div>
                 )}
               </div>
             ))}
-            {busy && (
+
+            {/* In-flight: process trail, then the answer typed out */}
+            {live && (
               <div className="flex justify-start">
-                <p className="flex items-center gap-1.5 rounded-2xl rounded-bl-md bg-ink/[0.05] px-3.5 py-2.5 dark:bg-fog/[0.08]">
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:0ms] dark:bg-fog/40" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:120ms] dark:bg-fog/40" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:240ms] dark:bg-fog/40" />
-                </p>
+                <div className="max-w-[88%] space-y-1.5">
+                  {live.steps.length > 0 && <StepTrail steps={live.steps} done={false} />}
+                  {live.text ? (
+                    <div className="space-y-1 rounded-2xl rounded-bl-md bg-ink/[0.05] px-3.5 py-2 text-[12.5px] text-ink dark:bg-fog/[0.08] dark:text-fog">
+                      {renderMarkdown(live.text)}
+                      <span className="ml-0.5 inline-block h-3 w-[2px] translate-y-[2px] animate-pulse rounded-full bg-deep-violet align-middle" aria-hidden />
+                    </div>
+                  ) : (
+                    <p className="flex items-center gap-1.5 rounded-2xl rounded-bl-md bg-ink/[0.05] px-3.5 py-2.5 dark:bg-fog/[0.08]">
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:0ms] dark:bg-fog/40" />
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:120ms] dark:bg-fog/40" />
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40 [animation-delay:240ms] dark:bg-fog/40" />
+                    </p>
+                  )}
+                </div>
               </div>
             )}
+
             {error && (
               <p className="rounded-xl bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{error}</p>
             )}
