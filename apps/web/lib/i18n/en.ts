@@ -50,6 +50,7 @@ const en = {
     search: "Search…",
     searchLabel: "Search",
     connect: "Connect",
+    ask: "Ask Sayvors",
     premium: "Premium",
     subscribePremium: "Subscribe to premium",
     notifications: "Notifications",

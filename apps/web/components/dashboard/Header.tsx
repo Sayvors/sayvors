@@ -11,6 +11,7 @@ import AutoPilotDialog from "@/components/dashboard/AutoPilotDialog";
 import NotificationsBell from "@/components/dashboard/NotificationsBell";
 import SearchPalette from "@/components/dashboard/SearchPalette";
 import { useTour } from "@/components/tour/TourProvider";
+import { toggleChat, useChatOpen } from "@/lib/chat-store";
 import {
   derivePilotState,
   fetchPilotChannels,
@@ -25,6 +26,7 @@ export default function Header() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const chatOpen = useChatOpen();
   const profileRef = useRef<HTMLDivElement>(null);
   const helpRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuth();
@@ -154,6 +156,25 @@ export default function Header() {
           </div>
         )}
       </div>
+
+      {/* Ask Sayvors — opens the chat sidebar */}
+      <button
+        onClick={toggleChat}
+        aria-expanded={chatOpen}
+        aria-label="Chat with Sayvors"
+        title="Ask Sayvors — answers from your live business data"
+        className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] ${
+          chatOpen
+            ? "bg-deep-violet text-white shadow-sm shadow-deep-violet/25"
+            : "border border-deep-violet/[0.12] text-deep-violet hover:bg-deep-violet/[0.06]"
+        }`}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" />
+          <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z" />
+        </svg>
+        <span className="hidden lg:inline">{t.header.ask}</span>
+      </button>
 
       {/* Connect channel */}
       <Link

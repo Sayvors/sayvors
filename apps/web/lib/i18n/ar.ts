@@ -52,6 +52,7 @@ const ar: Dict = {
     search: "ابحث…",
     searchLabel: "بحث",
     connect: "ربط",
+    ask: "اسأل سيفورس",
     premium: "المميزة",
     subscribePremium: "اشترك في الخطة المميزة",
     notifications: "الإشعارات",
