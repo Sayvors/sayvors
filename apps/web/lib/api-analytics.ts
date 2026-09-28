@@ -52,9 +52,12 @@ export interface TimeseriesPoint {
   negative_count: number;
   replies_count: number;
   impressions_maps: number;
+  impressions_search?: number;
   website_clicks: number;
   call_clicks: number;
   direction_requests: number;
+  messages?: number;
+  bookings?: number;
 }
 
 export interface ReviewMeaning {

@@ -14,6 +14,7 @@ import {
 } from "@/lib/api-analytics";
 import { StatCard } from "@/components/analytics/StatCard";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
+import PresenceChart from "@/components/analytics/PresenceChart";
 import { ReviewInbox } from "@/components/analytics/ReviewInbox";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import InsightsPage from "../insights/page";
@@ -152,38 +153,102 @@ function presenceFromProfile(prof: {
   };
 }
 
-function PresenceSection({ presence }: { presence: PresenceData }) {
+function PresenceSection({
+  presence,
+  points,
+  channelLabels,
+  scopeLabel,
+  locale,
+  loading,
+}: {
+  presence: PresenceData;
+  points: TimeseriesPoint[];
+  channelLabels: Record<string, string>;
+  scopeLabel: string;
+  locale: string;
+  loading: boolean;
+}) {
   const { t } = useI18n();
   const copy = t.analytics.presence;
   const p = presence;
-  const cells: { label: string; value: string; sub?: string }[] = [
-    { label: copy.searchViews, value: String(p.searchViews) },
-    { label: copy.mapViews, value: String(p.mapViews) },
-    { label: copy.impressions, value: String(p.searchViews + p.mapViews), sub: copy.searchAndMaps },
-    { label: copy.websiteClicks, value: String(p.websiteClicks) },
-    { label: copy.directionRequests, value: String(p.directionRequests) },
-    { label: copy.phoneCalls, value: String(p.phoneCalls) },
+
+  const labels = {
+    discovery: copy.presenceDiscovery,
+    actions: copy.presenceActions,
+    impressions: copy.impressions,
+    searchViews: copy.searchViews,
+    mapViews: copy.mapViews,
+    websiteClicks: copy.websiteClicks,
+    directionRequests: copy.directionRequests,
+    phoneCalls: copy.phoneCalls,
+    messages: copy.messages,
+    bookings: copy.bookings,
+    reviewsMetric: copy.reviewsMetric,
+    repliesMetric: copy.repliesMetric,
+    totalLabel: copy.totalLabel,
+    perBranchDay: copy.perBranchDay,
+    dailyAvg: copy.dailyAvg,
+    peak: copy.peak,
+    on: copy.on,
+    scopeTotal: copy.scopeTotal,
+    scopeByBranch: copy.scopeByBranch,
+    noMetricYet: copy.noMetricYet,
+    noMetricHint: copy.noMetricHint,
+  };
+
+  // The daily series carries the countable metrics. These four are window
+  // aggregates from Localith with no per-day breakdown, so they stay as
+  // tiles under the chart rather than pretending to be a trend.
+  const windowCells: { label: string; value: string }[] = [
     { label: copy.publishedPosts, value: String(p.publishedPosts) },
     { label: copy.avgPostingTime, value: String(p.avgPostingTime) },
     { label: copy.avgResponseTime, value: `${p.avgResponseTimeH}h` },
     { label: copy.responseRate, value: `${p.responsePct}%` },
   ];
+
   return (
-    <section aria-label={copy.title} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-[14px] font-bold text-ink">{copy.title}{p.listingName ? ` — ${p.listingName}` : ""}</h3>
-        <p className="text-[11px] text-ink/40">{p.windowLabel ?? copy.last30Days} · {copy.viaLocalith}</p>
+    <div className="space-y-2.5">
+      <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+        <PresenceChart
+          points={points}
+          channelLabels={channelLabels}
+          labels={labels}
+          group="discovery"
+          locale={locale}
+          loading={loading}
+          scopeLabel={scopeLabel}
+        />
+        <PresenceChart
+          points={points}
+          channelLabels={channelLabels}
+          labels={labels}
+          group="actions"
+          locale={locale}
+          loading={loading}
+          scopeLabel={scopeLabel}
+        />
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-        {cells.map((c) => (
-          <div key={c.label} className="rounded-xl bg-ink/[0.03] px-2 py-2 text-center sm:px-3 sm:py-2.5">
-            <p className="text-[16px] font-bold text-ink sm:text-[18px]">{c.value}</p>
-            <p className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-ink/45 sm:text-[10px]">{c.label}</p>
-            {c.sub && <p className="text-[8px] text-ink/30 sm:text-[9px]">{c.sub}</p>}
-          </div>
-        ))}
+      <div className="rounded-2xl border-2 border-white bg-white/80 p-3.5 backdrop-blur-sm sm:p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-[13px] font-bold text-ink">
+            {copy.title}
+            {p.listingName ? ` — ${p.listingName}` : ""}
+          </h3>
+          <p className="text-[10px] text-ink/40">
+            {p.windowLabel ?? copy.last30Days} · {copy.viaLocalith}
+          </p>
+        </div>
+        <p className="mt-0.5 text-[9px] text-ink/35">{copy.periodTotals}</p>
+        <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {windowCells.map((c) => (
+            <div key={c.label} className="rounded-lg bg-ink/[0.03] px-2 py-2 text-center">
+              <p className="text-[14px] font-bold text-ink sm:text-[15px]">{c.value}</p>
+              <p className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-ink/45">{c.label}</p>
+            </div>
+          ))}
+        </div>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -196,6 +261,7 @@ function OverviewPanel() {
   const [channels, setChannels] = useState<ChannelOption[]>([]);
   const [channelId, setChannelId] = useState<string | null>(null);
   const [channelListingIds, setChannelListingIds] = useState<Record<string, string>>({});
+  const [channelLabels, setChannelLabels] = useState<Record<string, string>>({});
   const [overview, setOverview] = useState<Overview | null>(null);
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
   const [presence, setPresence] = useState<PresenceData | null>(null);
@@ -294,6 +360,12 @@ function OverviewPanel() {
           id: c.id,
           label: c.display_name ?? "Google Business",
         })));
+        // Branch names for the chart's "By branch" comparison lines.
+        const labelMap: Record<string, string> = {};
+        for (const c of google as { id: string; display_name: string | null }[]) {
+          if (c.id) labelMap[c.id] = c.display_name ?? "Google Business";
+        }
+        setChannelLabels(labelMap);
         const idMap: Record<string, string> = {};
         for (const c of google as { id: string; listing_id?: string | null }[]) {
           if (c.id && c.listing_id) idMap[c.id] = c.listing_id;
@@ -384,8 +456,17 @@ function OverviewPanel() {
         </div>
       ) : (
         <div className="space-y-5">
-          {/* Google presence — live from Localith even before the first review */}
-          {presence && <PresenceSection presence={presence} />}
+          {/* Google presence — daily trends charted, window totals as tiles */}
+          {presence && (
+            <PresenceSection
+              presence={presence}
+              points={points}
+              channelLabels={channelLabels}
+              scopeLabel={t.dashboard.pulse.allBusinesses}
+              locale={locale}
+              loading={loading}
+            />
+          )}
           {!hasData && !loading && (
             <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-white bg-white/80 py-10 text-center backdrop-blur-sm">
               <p className="text-[14px] font-bold text-ink">No review data yet</p>
