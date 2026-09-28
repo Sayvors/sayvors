@@ -174,12 +174,12 @@ function PresenceSection({ presence }: { presence: PresenceData }) {
         <h3 className="text-[14px] font-bold text-ink">{copy.title}{p.listingName ? ` — ${p.listingName}` : ""}</h3>
         <p className="text-[11px] text-ink/40">{p.windowLabel ?? copy.last30Days} · {copy.viaLocalith}</p>
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {cells.map((c) => (
-          <div key={c.label} className="rounded-xl bg-ink/[0.03] px-3 py-2.5 text-center">
-            <p className="text-[18px] font-bold text-ink">{c.value}</p>
-            <p className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-ink/45">{c.label}</p>
-            {c.sub && <p className="text-[9px] text-ink/30">{c.sub}</p>}
+          <div key={c.label} className="rounded-xl bg-ink/[0.03] px-2 py-2 text-center sm:px-3 sm:py-2.5">
+            <p className="text-[16px] font-bold text-ink sm:text-[18px]">{c.value}</p>
+            <p className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-ink/45 sm:text-[10px]">{c.label}</p>
+            {c.sub && <p className="text-[8px] text-ink/30 sm:text-[9px]">{c.sub}</p>}
           </div>
         ))}
       </div>
@@ -255,7 +255,7 @@ function OverviewPanel() {
   return (
     <div className="h-full overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6">
       {/* Controls */}
-      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
         {channels.length > 1 && (
             <select
               value={channelId ?? ""}
@@ -264,7 +264,7 @@ function OverviewPanel() {
                 setLoading(true);
               }}
               aria-label="Filter by location"
-              className="h-8 rounded-lg border border-deep-violet/[0.1] bg-white px-2 text-[12px] text-ink outline-none transition focus:ring-2 focus:ring-deep-violet/30"
+              className="h-8 w-full rounded-lg border border-deep-violet/[0.1] bg-white px-2 text-[12px] text-ink outline-none transition focus:ring-2 focus:ring-deep-violet/30 sm:w-auto"
             >
               <option value="">All locations</option>
               {channels.map((c) => (
@@ -408,16 +408,16 @@ function OverviewPanel() {
           {overview && !loading && <SummaryStrip overview={overview} />}
 
           {/* Charts row */}
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             <div className="lg:col-span-2">
               {loading ? (
-                <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" aria-hidden />
+                <div className="h-48 animate-pulse rounded-2xl border-2 border-white bg-white/60 sm:h-72" aria-hidden />
               ) : (
                 <MetricChart points={points} />
               )}
             </div>
             <div className="space-y-3">
-              <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm sm:p-5">
                 <h3 className="mb-3 text-[14px] font-bold text-ink">Rating distribution</h3>
                 {loading ? (
                   <div className="space-y-2" aria-hidden>
@@ -429,7 +429,7 @@ function OverviewPanel() {
                   overview && <RatingDistribution distribution={overview.rating_distribution} total={overview.total_reviews} />
                 )}
               </div>
-              <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm sm:p-5">
                 <h3 className="mb-3 text-[14px] font-bold text-ink">Sentiment</h3>
                 {loading ? (
                   <div className="h-3 animate-pulse rounded-full bg-ink/[0.06]" aria-hidden />
