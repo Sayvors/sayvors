@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
@@ -44,7 +44,7 @@ interface LocalithConn {
   average_rating?: number;
 }
 
-/* -- Bulk edit: "All branches" scope. Tabs stay untouched in shape �
+/* ── Bulk edit: "All branches" scope. Tabs stay untouched in shape —
    they receive an optional `bulk` prop (branch count + per-field
    "varies" set) and blank initials; saving fans out per branch. -- */
 
@@ -127,33 +127,51 @@ function CompletenessCard({
         {essentials.map((e) => (
           <li key={e.label} className="flex items-center gap-2 text-[12px]">
             <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${e.done ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-              {e.done ? "?" : "�"}
+              {e.done ? "✓" : "•"}
             </span>
             <span className="font-medium text-ink/70 dark:text-fog/70">{e.label}</span>
-            {e.hint && <span className="text-[11px] font-semibold text-amber-600">� {e.hint}</span>}
+            {e.hint && <span className="text-[11px] font-semibold text-amber-600">· {e.hint}</span>}
           </li>
         ))}
       </ul>
       <p className="mt-3 border-t border-ink/[0.05] pt-2 text-[11px] text-ink/40 dark:text-fog/40">
-        ? {(profile.average_rating ?? 0).toFixed(1)} � {profile.total_reviews ?? 0}{" "}
-        {copy.reviewsLabel} � {copy.completenessFootnote}
+        ★ {(profile.average_rating ?? 0).toFixed(1)} · {profile.total_reviews ?? 0}{" "}
+        {copy.reviewsLabel} · {copy.completenessFootnote}
       </p>
     </div>
   );
 }
 
+// English day names are the wire format: the API matches them case-insensitively
+// against MONDAY..SUNDAY, so they must stay English as object keys. Only the
+// visible label is localised, via DAY_LABEL_KEYS.
 const HOURS_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+const DAY_LABEL_KEYS = {
+  Monday: "dayMonday",
+  Tuesday: "dayTuesday",
+  Wednesday: "dayWednesday",
+  Thursday: "dayThursday",
+  Friday: "dayFriday",
+  Saturday: "daySaturday",
+  Sunday: "daySunday",
+} as const;
+
+const dayLabel = (day: string, copy: LocationsCopy): string => {
+  const key = DAY_LABEL_KEYS[day as keyof typeof DAY_LABEL_KEYS];
+  return key ? copy[key] : day;
+};
 
 type LocationsCopy = ReturnType<typeof useI18n>["t"]["analytics"]["locations"];
 
-/** Location status arrives from the API as an English slug � label it. */
+/** Location status arrives from the API as an English slug → label it. */
 function statusLabel(status: string | null | undefined, copy: LocationsCopy): string {
   if (status === "active") return copy.statusActive;
   if (status === "inactive") return copy.statusInactive;
   return copy.statusUnknown;
 }
 
-/* G��G�� Page G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G�� */
+/* ── Page ───────────────────────────────────────── */
 
 export default function LocationsPage() {
   const { t } = useI18n();
@@ -195,13 +213,13 @@ export default function LocationsPage() {
       });
       setFullProfile(updated as FullProfile);
       const synced = (updated as FullProfile)?.google_synced ?? [];
-      showBanner("ok", synced.length > 0 ? `${okText} � Synced to Google (${synced.join(", ")}).` : okText);
+      showBanner("ok", synced.length > 0 ? `${okText} · Synced to Google (${synced.join(", ")}).` : okText);
     } catch (e) {
       showBanner("err", e instanceof Error ? e.message.slice(0, 160) : "Could not save.");
     }
   };
 
-  // -- Bulk fan-out: same patch ? every branch, per-branch results --
+  // -- Bulk fan-out: same patch → every branch, per-branch results --
   const runBulkProfile = async (
     label: string,
     patch: Record<string, unknown>,
@@ -253,7 +271,7 @@ export default function LocationsPage() {
     } else {
       showBanner(
         "err",
-        `${label} saved to ${ok} of ${total} � failed: ${failed.map((f) => f.name).join(", ")}.`
+        `${label} saved to ${ok} of ${total} — failed: ${failed.map((f) => f.name).join(", ")}.`
       );
     }
     return { ok, failed };
@@ -306,7 +324,7 @@ export default function LocationsPage() {
     } else {
       showBanner(
         "err",
-        `Details saved to ${ok} of ${total} � failed: ${failed.map((f) => f.name).join(", ")}.`
+        `Details saved to ${ok} of ${total} — failed: ${failed.map((f) => f.name).join(", ")}.`
       );
     }
     return { ok, failed };
@@ -380,7 +398,7 @@ export default function LocationsPage() {
     let cancelled = false;
     (async () => {
       try {
-        // Localith snapshots first � they carry the real address/phone/website.
+        // Localith snapshots first — they carry the real address/phone/website.
         // Every connected branch is listed; nothing is hidden or overwritten.
         try {
           const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as LocalithConn[];
@@ -402,7 +420,7 @@ export default function LocationsPage() {
             return;
           }
         } catch {
-          /* no Localith connections � fall through to channels */
+          /* no Localith connections — fall through to channels */
         }
         try {
           const data = await apiFetch("/api/v1/channels/?limit=100");
@@ -492,13 +510,13 @@ export default function LocationsPage() {
      ? { branches: bulkBranches, varies: bulkVaries }
      : null;
 
-   // Bulk mode has no single profile � leave the updates tab behind too.
+   // Bulk mode has no single profile — leave the updates tab behind too.
    useEffect(() => {
      if (isBulk && activeTab === "google-updates") setActiveTab("details");
    }, [isBulk, activeTab]);
 
    // Load the merged profile (Google snapshot + Sayvors store) per location.
-   // Bulk mode has no single profile � tabs use blank templates instead.
+   // Bulk mode has no single profile — tabs use blank templates instead.
    useEffect(() => {
      if (!selectedId || isBulk) {
        setFullProfile(null);
@@ -544,7 +562,7 @@ export default function LocationsPage() {
       const tab = new URLSearchParams(window.location.search).get("tab");
       if (tab && tabs.some((t) => t.key === tab)) setActiveTab(tab);
     } catch {
-      /* non-browser or malformed query � ignore */
+      /* non-browser or malformed query — ignore */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -563,7 +581,7 @@ export default function LocationsPage() {
           </p>
         </div>
         <div className="flex flex-col items-stretch gap-3 xl:flex-row xl:items-center">
-          {/* Location selector dropdown � "All branches" enables bulk edit */}
+          {/* Location selector dropdown — "All branches" enables bulk edit */}
           <div className="relative w-full xl:w-auto xl:min-w-56">
             <select
               value={selectedId ?? ""}
@@ -610,7 +628,7 @@ export default function LocationsPage() {
         </p>
       )}
 
-      {/* Bulk scope banner � unmissable: button labels and receipts repeat it */}
+      {/* Bulk scope banner — unmissable: button labels and receipts repeat it */}
       {isBulk && locations.length > 0 && (
         <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3 text-[12.5px] dark:border-amber-500/40 dark:bg-amber-500/[0.08]">
           <p className="font-bold text-amber-800 dark:text-amber-200">
@@ -634,7 +652,7 @@ export default function LocationsPage() {
         </div>
       )}
 
-      {/* Bulk retry � re-runs the same save for failed branches only */}
+      {/* Bulk retry — re-runs the same save for failed branches only */}
       {lastBulkFail && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
           <span>
@@ -649,7 +667,7 @@ export default function LocationsPage() {
         </div>
       )}
 
-      {/* Bulk confirm sheet � the final guard before a mass edit */}
+      {/* Bulk confirm sheet — the final guard before a mass edit */}
       {confirmBulk && (
         <div
           role="alertdialog"
@@ -668,7 +686,7 @@ export default function LocationsPage() {
             <ul className="mt-3 max-h-48 space-y-1.5 overflow-y-auto rounded-xl bg-ink/[0.03] p-3 text-[12.5px] text-ink/70 dark:bg-fog/[0.04] dark:text-fog/70">
               {confirmBulk.lines.map((line, i) => (
                 <li key={i} className="flex gap-2">
-                  <span aria-hidden className="text-deep-violet">�</span>
+                  <span aria-hidden className="text-deep-violet">•</span>
                   <span className="break-words">{line}</span>
                 </li>
               ))}
@@ -706,7 +724,7 @@ export default function LocationsPage() {
         />
       )}
 
-      {/* Profile completeness (Localith snapshot) � per-branch only */}
+      {/* Profile completeness (Localith snapshot) — per-branch only */}
       {!isBulk && localith && <CompletenessCard profile={localith} fullProfile={fullProfile} copy={copy} />}
 
       {loading ? (
@@ -737,7 +755,7 @@ export default function LocationsPage() {
           </div>
           {!isBulk && locations.length > 1 && (
             <p className="rounded-xl border border-deep-violet/15 bg-deep-violet/[0.04] px-3.5 py-2 text-[12px] text-ink/55 dark:text-fog/55">
-              ?? {copy.bulkTipBefore}{" "}
+              💡 {copy.bulkTipBefore}{" "}
               <button
                 onClick={() => setSelectedId(ALL)}
                 className="font-bold text-deep-violet underline underline-offset-2 outline-none transition hover:text-deep-violet/80 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
@@ -764,7 +782,7 @@ export default function LocationsPage() {
                       const refreshed = await apiFetch(`/api/v1/locations/${selectedId}`);
                       setFullProfile(refreshed as FullProfile);
                     } catch {
-                      /* ignore refresh failure � locations update already applied */
+                      /* ignore refresh failure — locations update already applied */
                     }
                   }
                 }}
@@ -773,8 +791,8 @@ export default function LocationsPage() {
                   bulk
                     ? (data) => {
                         const lines = [
-                          `Phone ? ${data.phone || "(cleared)"}`,
-                          `Website ? ${data.website || "(cleared)"}`,
+                          `Phone → ${data.phone || "(cleared)"}`,
+                          `Website → ${data.website || "(cleared)"}`,
                         ];
                         requestBulkSave(
                           "Apply business details to all branches?",
@@ -795,11 +813,11 @@ export default function LocationsPage() {
                 copy={copy}
                 onSave={(patch) =>
                   isBulk
-                    ? bulkSaveProfile("categories", { categories: patch }, [
-                        `Primary ? ${patch.primary || "(cleared)"}`,
-                        `Additional (${patch.additional.length}): ${patch.additional.join(", ") || "�"}`,
+                    ? bulkSaveProfile(copy.tabCategories, { categories: patch }, [
+                        `${copy.primaryCategory} → ${patch.primary || copy.cleared}`,
+                        `${copy.additionalCategories} (${patch.additional.length}): ${patch.additional.join(", ") || copy.cleared}`,
                       ])
-                    : saveProfile({ categories: patch }, "Categories saved.")
+                    : saveProfile({ categories: patch }, copy.categoriesSaved)
                 }
               />
             )}
@@ -810,8 +828,8 @@ export default function LocationsPage() {
                 copy={copy}
                 onSave={(regular) =>
                   isBulk
-                    ? bulkSaveProfile("hours", { hours: { regular } }, describeHours(regular))
-                    : saveProfile({ hours: { regular } }, "Hours saved.")
+                    ? bulkSaveProfile(copy.tabHours, { hours: { regular } }, describeHours(regular, copy))
+                    : saveProfile({ hours: { regular } }, copy.hoursSaved)
                 }
               />
             )}
@@ -822,13 +840,13 @@ export default function LocationsPage() {
                 copy={copy}
                 onSave={(special) =>
                   isBulk
-                    ? bulkSaveProfile("special hours", { hours: { special } }, [
-                        `Special hours ? ${special.length} entr${special.length === 1 ? "y" : "ies"}`,
+                    ? bulkSaveProfile(copy.specialHoursTitle, { hours: { special } }, [
+                        copy.specialHoursCount.replace("{count}", String(special.length)),
                         ...special.slice(0, 8).map(
                           (e) => `${e.date || "?"}: ${e.hours}${e.reason ? ` (${e.reason})` : ""}`
                         ),
                       ])
-                    : saveProfile({ hours: { special } }, "Special hours saved.")
+                    : saveProfile({ hours: { special } }, copy.specialHoursSaved)
                 }
               />
             )}
@@ -839,11 +857,16 @@ export default function LocationsPage() {
                 copy={copy}
                 onSave={(more) =>
                   isBulk
-                    ? bulkSaveProfile("extra hours", { hours: { more } }, [
-                        `More hours ? ${more.length} entr${more.length === 1 ? "y" : "ies"}`,
-                        ...more.slice(0, 8).map((e) => `${e.type}: ${e.open}�${e.close}`),
+                    ? bulkSaveProfile(copy.tabMoreHours, { hours: { more } }, [
+                        copy.moreHoursCount.replace("{count}", String(more.length)),
+                        ...more
+                          .slice(0, 8)
+                          .map(
+                            (e) =>
+                              `${serviceTypeLabel(e.type, copy)}: ${e.open}–${e.close}`
+                          ),
                       ])
-                    : saveProfile({ hours: { more } }, "More hours saved.")
+                    : saveProfile({ hours: { more } }, copy.moreHoursSaved)
                 }
               />
             )}
@@ -855,7 +878,7 @@ export default function LocationsPage() {
                 onSave={(service_area) =>
                   isBulk
                     ? bulkSaveProfile("service area", { service_area }, [
-                        `Service area ? ${service_area.join(", ") || "(cleared)"}`,
+                        `Service area → ${service_area.join(", ") || "(cleared)"}`,
                       ])
                     : saveProfile({ service_area }, "Service area saved.")
                 }
@@ -872,7 +895,7 @@ export default function LocationsPage() {
                         "attributes",
                         { attributes },
                         Object.keys(attributes).length === 0
-                          ? ["Attributes ? (all removed)"]
+                          ? ["Attributes → (all removed)"]
                           : Object.entries(attributes).map(([k, v]) => `${k}: ${v}`)
                       )
                     : saveProfile({ attributes }, "Attributes saved.")
@@ -888,7 +911,7 @@ export default function LocationsPage() {
                 onSave={(description, openingDate) =>
                   isBulk
                     ? bulkSaveProfile("description", { description, opening_date: openingDate }, [
-                        `Description ? ${description.slice(0, 120)}${description.length > 120 ? "�" : ""}`,
+                        `Description → ${description.slice(0, 120)}${description.length > 120 ? "…" : ""}`,
                       ])
                     : saveProfile({ description, opening_date: openingDate }, "Description saved.")
                 }
@@ -905,7 +928,7 @@ export default function LocationsPage() {
   );
 }
 
-/* G��G�� Tab Panels G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G�� */
+/* ── Tab Panels ──────────────────────────────────── */
 
 function DetailsTab({
   location,
@@ -979,7 +1002,7 @@ function DetailsTab({
         <p className="-mt-2 text-[11px] text-ink/45 dark:text-fog/45">
           {copy.syncedViaLocalith}
           {profile.maps_url && (
-            <> � <a href={profile.maps_url} target="_blank" rel="noreferrer" className="font-semibold text-deep-violet underline underline-offset-2">{copy.viewOnMaps}</a></>
+            <> · <a href={profile.maps_url} target="_blank" rel="noreferrer" className="font-semibold text-deep-violet underline underline-offset-2">{copy.viewOnMaps}</a></>
           )}
         </p>
       )}
@@ -1069,16 +1092,18 @@ function CategoriesTab({ initial, onSave, bulk, copy }: {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <SectionTitle title="Categories" subtitle="Your business categories on Google." />
+      <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <SectionTitle title={copy.tabCategories} subtitle={copy.categoriesSubtitle} />
         <SourceBadge google={false} copy={copy} />
       </div>
-      <Field label="Primary Category" varies={bulk?.varies.has("primary") ?? false}>
-        <input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder="e.g. Software company" className="input-field" />
-        <p className="mt-1 text-[11px] text-ink/40 dark:text-fog/40">One main category � this is how Google classifies and shows your business.</p>
+      <Field label={copy.primaryCategory} varies={bulk?.varies.has("primary") ?? false}>
+        <input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder={copy.primaryCategoryPlaceholder} className="input-field" />
+        <p className="mt-1 text-[11px] text-ink/40 dark:text-fog/40">{copy.primaryCategoryHint}</p>
       </Field>
-      <Field label="Additional Categories" varies={bulk?.varies.has("additional") ?? false}>
-        <p className="mb-2 text-[11px] text-ink/40 dark:text-fog/40">Other categories you also fit. Tap an example to add it:</p>
+      <Field label={copy.additionalCategories} varies={bulk?.varies.has("additional") ?? false}>
+        <p className="mb-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.additionalCategoriesHint}</p>
+        {/* Google's own taxonomy — the values sent to Google must stay in the
+            exact wording Google recognises, so these chips are not translated. */}
         <div className="mb-2 flex flex-wrap gap-1.5">
           {["Restaurant", "Cafe", "Dental clinic", "Pharmacy", "Beauty salon", "Car wash"].filter((c) => !additional.includes(c)).map((c) => (
             <button key={c} onClick={() => setAdditional([...additional, c])} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-medium text-ink/60 transition hover:bg-deep-violet/10 hover:text-deep-violet dark:bg-fog/[0.06] dark:text-fog/60">
@@ -1097,13 +1122,17 @@ function CategoriesTab({ initial, onSave, bulk, copy }: {
           ))}
         </div>
         <div className="grid grid-cols-[1fr_auto] items-center gap-2">
-          <input value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCategory()} placeholder="Add category..." className="input-field" />
-          <button onClick={addCategory} className="btn-secondary">Add</button>
+          <input value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCategory()} placeholder={copy.addCategoryPlaceholder} className="input-field" />
+          <button onClick={addCategory} className="btn-secondary">{copy.add}</button>
         </div>
       </Field>
-      <div className="flex justify-end pt-2">
+      <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
-          {saving ? "Saving..." : bulk ? `Apply to ${bulk.branches.length} branches` : "Save Categories"}
+          {saving
+            ? copy.saving
+            : bulk
+              ? copy.applyToBranches.replace("{count}", String(bulk.branches.length))
+              : copy.saveCategories}
         </button>
       </div>
     </div>
@@ -1143,18 +1172,18 @@ function HoursTab({ initial, onSave, bulk, copy }: {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <SectionTitle title="Regular Hours" subtitle="Set your standard opening hours for each day." />
+      <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <SectionTitle title={copy.regularHours} subtitle={copy.regularHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("hours") ? <VariesBadge /> : null}
           <SourceBadge google={false} copy={copy} />
         </div>
       </div>
-      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Untick Open for closed days. Overnight ranges (e.g. 20:00�02:00) roll over to the next day.</p>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.hoursHint}</p>
       <div className="space-y-2">
         {HOURS_DAYS.map((day) => (
-          <div key={day} className="flex items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
-            <span className="w-24 text-[13px] font-medium text-ink dark:text-fog">{day}</span>
+          <div key={day} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:flex-nowrap dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+            <span className="w-24 shrink-0 text-[13px] font-medium text-ink dark:text-fog">{dayLabel(day, copy)}</span>
             <label className="flex items-center gap-1.5">
               <input
                 type="checkbox"
@@ -1162,23 +1191,27 @@ function HoursTab({ initial, onSave, bulk, copy }: {
                 onChange={(e) => updateDay(day, "closed", !e.target.checked)}
                 className="h-4 w-4 rounded border-ink/20 text-deep-violet focus:ring-deep-violet/40"
               />
-              <span className="text-[12px] text-ink/50 dark:text-fog/50">Open</span>
+              <span className="text-[12px] text-ink/50 dark:text-fog/50">{copy.openLabel}</span>
             </label>
             {!hours[day].closed ? (
               <div className="flex items-center gap-2">
                 <input type="time" value={hours[day].open} onChange={(e) => updateDay(day, "open", e.target.value)} className="input-field w-28" />
-                <span className="text-[12px] text-ink/40">to</span>
+                <span className="text-[12px] text-ink/40">{copy.toLabel}</span>
                 <input type="time" value={hours[day].close} onChange={(e) => updateDay(day, "close", e.target.value)} className="input-field w-28" />
               </div>
             ) : (
-              <span className="text-[12px] font-medium text-ink/30 dark:text-fog/30">Closed</span>
+              <span className="text-[12px] font-medium text-ink/30 dark:text-fog/30">{copy.closedLabel}</span>
             )}
           </div>
         ))}
       </div>
-      <div className="flex justify-end pt-2">
+      <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
-          {saving ? "Saving..." : bulk ? `Apply to ${bulk.branches.length} branches` : "Save Hours"}
+          {saving
+            ? copy.saving
+            : bulk
+              ? copy.applyToBranches.replace("{count}", String(bulk.branches.length))
+              : copy.saveHours}
         </button>
       </div>
     </div>
@@ -1218,35 +1251,58 @@ function SpecialHoursTab({ initial, onSave, bulk, copy }: {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <SectionTitle title="Special / Holiday Hours" subtitle="Override regular hours for specific dates (holidays, events)." />
+      <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <SectionTitle title={copy.specialHoursTitle} subtitle={copy.specialHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("special") ? <VariesBadge /> : null}
           <SourceBadge google={false} copy={copy} />
         </div>
       </div>
-      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. 2026-09-23, hours �closed� for a full-day closure, or �09:00 - 13:00� for a short day.</p>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.specialHoursHint}</p>
       {entries.map((entry, i) => (
-        <div key={i} className="grid grid-cols-[150px_150px_1fr_auto] items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+        <div key={i} className="grid grid-cols-1 items-start gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:grid-cols-[150px_150px_1fr_auto] dark:border-fog/[0.06] dark:bg-fog/[0.02]">
           <input type="date" value={entry.date} onChange={(e) => updateEntry(i, "date", e.target.value)} className="input-field" />
+          {/* "09:00 - 17:00" / "closed" are Google wire values — not translated. */}
           <input value={entry.hours} onChange={(e) => updateEntry(i, "hours", e.target.value)} placeholder="09:00 - 17:00" className="input-field" />
-          <input value={entry.reason} onChange={(e) => updateEntry(i, "reason", e.target.value)} placeholder="Reason (e.g. Holiday)" className="input-field" />
+          <input value={entry.reason} onChange={(e) => updateEntry(i, "reason", e.target.value)} placeholder={copy.reasonPlaceholder} className="input-field" />
           <button onClick={() => removeEntry(i)} className="mt-1 text-ink/30 transition hover:text-red-500 dark:text-fog/30">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
         </div>
       ))}
-      <button onClick={addEntry} className="btn-secondary">+ Add Special Hours</button>
-      <div className="flex justify-end pt-2">
+      <button onClick={addEntry} className="btn-secondary">{copy.addSpecialHours}</button>
+      <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
-          {saving ? "Saving..." : bulk ? `Apply to ${bulk.branches.length} branches` : "Save Special Hours"}
+          {saving
+            ? copy.saving
+            : bulk
+              ? copy.applyToBranches.replace("{count}", String(bulk.branches.length))
+              : copy.saveSpecialHours}
         </button>
       </div>
     </div>
   );
 }
 
+// Google wire values for additionalHoursTypes — stored and sent as-is, so these
+// stay English. MORE_HOURS_TYPE_KEYS only localises the visible option label.
 const MORE_HOURS_OPTIONS = ["Access", "Brunch", "Delivery", "Dinner", "Happy Hour", "Lunch", "Takeout", "Drive-through"];
+
+const MORE_HOURS_TYPE_KEYS = {
+  Access: "typeAccess",
+  Brunch: "typeBrunch",
+  Delivery: "typeDelivery",
+  Dinner: "typeDinner",
+  "Happy Hour": "typeHappyHour",
+  Lunch: "typeLunch",
+  Takeout: "typeTakeout",
+  "Drive-through": "typeDriveThrough",
+} as const;
+
+const serviceTypeLabel = (type: string, copy: LocationsCopy): string => {
+  const key = MORE_HOURS_TYPE_KEYS[type as keyof typeof MORE_HOURS_TYPE_KEYS];
+  return key ? copy[key] : type;
+};
 
 function MoreHoursTab({ initial, onSave, bulk, copy }: {
   initial?: { type: string; open: string; close: string }[];
@@ -1281,34 +1337,41 @@ function MoreHoursTab({ initial, onSave, bulk, copy }: {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <SectionTitle title="More Hours" subtitle="Additional service hours (delivery, drive-through, takeout, etc.)." />
+      <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <SectionTitle title={copy.tabMoreHours} subtitle={copy.moreHoursSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("more") ? <VariesBadge /> : null}
           <SourceBadge google={false} copy={copy} />
         </div>
       </div>
-      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. Delivery 10:00�22:00, Drive-through 08:00�23:00 � pick the service type, then its hours.</p>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.moreHoursHint}</p>
       {entries.length === 0 && (
-        <p className="text-[12px] text-ink/35 dark:text-fog/35">No additional hours set. Add entries for services like delivery or drive-through.</p>
+        <p className="text-[12px] text-ink/35 dark:text-fog/35">{copy.moreHoursEmpty}</p>
       )}
       {entries.map((entry, i) => (
-        <div key={i} className="grid grid-cols-[150px_120px_auto_120px_auto] items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+        <div key={i} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:grid-cols-[150px_120px_auto_120px_auto] dark:border-fog/[0.06] dark:bg-fog/[0.02]">
           <select value={entry.type} onChange={(e) => updateEntry(i, "type", e.target.value)} className="input-field">
-            {MORE_HOURS_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+            {/* value stays the English wire value; only the label is localised */}
+            {MORE_HOURS_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>{serviceTypeLabel(opt, copy)}</option>
+            ))}
           </select>
           <input type="time" value={entry.open} onChange={(e) => updateEntry(i, "open", e.target.value)} className="input-field" />
-          <span className="text-[12px] text-ink/40">to</span>
+          <span className="text-[12px] text-ink/40">{copy.toLabel}</span>
           <input type="time" value={entry.close} onChange={(e) => updateEntry(i, "close", e.target.value)} className="input-field" />
           <button onClick={() => removeEntry(i)} className="text-ink/30 transition hover:text-red-500 dark:text-fog/30">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
         </div>
       ))}
-      <button onClick={addEntry} className="btn-secondary">+ Add More Hours</button>
-      <div className="flex justify-end pt-2">
+      <button onClick={addEntry} className="btn-secondary">{copy.addMoreHours}</button>
+      <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
-          {saving ? "Saving..." : bulk ? `Apply to ${bulk.branches.length} branches` : "Save More Hours"}
+          {saving
+            ? copy.saving
+            : bulk
+              ? copy.applyToBranches.replace("{count}", String(bulk.branches.length))
+              : copy.saveMoreHours}
         </button>
       </div>
     </div>
@@ -1356,7 +1419,7 @@ function ServiceAreaTab({ initial, onSave, bulk, copy }: {
           <SourceBadge google={false} copy={copy} />
         </div>
       </div>
-      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Cities, districts or regions � e.g. Riyadh, Jeddah, Al Malqa district.</p>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Cities, districts or regions — e.g. Riyadh, Jeddah, Al Malqa district.</p>
       <div className="flex flex-wrap gap-2 mb-3">
         {areas.map((area) => (
           <span key={area} className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[12px] font-medium text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">
@@ -1424,7 +1487,7 @@ function AttributesTab({ initial, onSave, bulk, copy }: {
           <SourceBadge google={false} copy={copy} />
         </div>
       </div>
-      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Only well-known Google attributes sync (accessibility, parking, Wi-Fi�). Unknown names are stored but skipped on sync. Tap an example to fill the row:</p>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Only well-known Google attributes sync (accessibility, parking, Wi-Fi…). Unknown names are stored but skipped on sync. Tap an example to fill the row:</p>
       <div className="flex flex-wrap gap-1.5">
         {[["Wheelchair accessible entrance", "yes"], ["Free WiFi", "yes"], ["Outdoor seating", "yes"], ["Accepts credit cards", "yes"]].filter(([k]) => !(k in attrs)).map(([k, v]) => (
           <button key={k} onClick={() => { setNewKey(k); setNewValue(v); }} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-medium text-ink/60 transition hover:bg-deep-violet/10 hover:text-deep-violet dark:bg-fog/[0.06] dark:text-fog/60">
@@ -1511,14 +1574,14 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy }: {
         onChange={(e) => setDesc(e.target.value)}
         rows={6}
         maxLength={750}
-        placeholder="Example: Bright dental clinic in Riyadh � checkups, whitening and braces. Open Mon�Sat 9�6, emergency slots daily."
+        placeholder="Example: Bright dental clinic in Riyadh — checkups, whitening and braces. Open Mon–Sat 9–6, emergency slots daily."
         className="w-full resize-y rounded-xl border border-ink/[0.08] bg-white p-3 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
       />
-      <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">{desc.length}/750 � first ~250 characters show in the Knowledge panel � put the essentials first</p>
+      <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">{desc.length}/750 · first ~250 characters show in the Knowledge panel — put the essentials first</p>
       <div>
         <label className="mb-1 block text-[12px] font-medium text-ink/60 dark:text-fog/60">
           Opening date
-          <span className="ml-1.5 font-normal text-ink/40 dark:text-fog/40">when the business opened � shown on Google</span>
+          <span className="ml-1.5 font-normal text-ink/40 dark:text-fog/40">when the business opened — shown on Google</span>
         </label>
         <input
           type="date"
@@ -1542,7 +1605,7 @@ function GoogleUpdatesTab() {
   return (
       <div className="space-y-5">
         <SectionTitle title="Google Updates" subtitle="Review changes proposed by Google based on external sources." />
-        <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. Google may propose new hours, a different category, or a corrected address � accept or reject each one here.</p>
+        <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. Google may propose new hours, a different category, or a corrected address — accept or reject each one here.</p>
       {updates.length === 0 ? (
         <div className="flex flex-col items-center py-10">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 h-8 w-8 text-ink/20 dark:text-fog/20">
@@ -1570,13 +1633,13 @@ function GoogleUpdatesTab() {
   );
 }
 
-/* G��G�� Add Location Modal G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G�� */
+/* ── Add Location Modal ──────────────────────────── */
 
-/* G��G�� Shared pieces G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G��G�� */
+/* ── Shared pieces ───────────────────────────────── */
 
 /* Add Location Modal (Google create-location workflow, frontend-first).
-   Steps mirror Google's recommended flow: details ? duplicate check ?
-   create ? verification. Server calls are stubbed (TODO) until the direct
+   Steps mirror Google's recommended flow: details → duplicate check →
+   create → verification. Server calls are stubbed (TODO) until the direct
    Google connection lands. "Save draft" persists to localStorage only. */
 
 const CREATE_DRAFT_KEY = "sayvors.locationDraft.v1";
@@ -1617,7 +1680,7 @@ function loadCreateDraft(): LocationDraft {
 type VerifyMethod = "auto" | "email" | "sms" | "call" | "postcard";
 
 const VERIFY_METHODS: { key: VerifyMethod; label: string; hint: string }[] = [
-  { key: "auto", label: "Automatic", hint: "Google verifies instantly when eligible � nothing to do." },
+  { key: "auto", label: "Automatic", hint: "Google verifies instantly when eligible — nothing to do." },
   { key: "email", label: "Email", hint: "A PIN goes to the business email address." },
   { key: "sms", label: "SMS", hint: "A PIN goes to the business phone by text." },
   { key: "call", label: "Phone call", hint: "Google calls the business phone with a PIN." },
@@ -1648,7 +1711,7 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
     setStep(2);
   };
 
-  // TODO: POST /api/v1/locations/check � GoogleLocations duplicate matches.
+  // TODO: POST /api/v1/locations/check — GoogleLocations duplicate matches.
   // Runs for real once Google is connected; until then it only marks the
   // step reviewed so the draft can be completed.
   const runDuplicateCheck = () => {
@@ -1660,15 +1723,15 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
     try {
       localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(draft));
     } catch {
-      /* private mode � draft stays in memory for this session */
+      /* private mode — draft stays in memory for this session */
     } finally {
       setSaving(false);
     }
-    onSaved("Draft saved � it'll pre-fill Create when Google is connected.");
+    onSaved("Draft saved — it'll pre-fill Create when Google is connected.");
   };
 
-  // TODO: POST /api/v1/locations � accounts.locations.create (validateOnly first).
-  // TODO: POST /api/v1/locations/{id}/verification-options ? verify ? complete.
+  // TODO: POST /api/v1/locations — accounts.locations.create (validateOnly first).
+  // TODO: POST /api/v1/locations/{id}/verification-options → verify → complete.
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px]" role="presentation" onClick={onClose}>
@@ -1682,7 +1745,7 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
         <div className="flex items-start justify-between gap-3">
           <SectionTitle title="Add location" subtitle="Create a new Google business location. Saved as a draft until Google is connected." />
           <button onClick={onClose} aria-label="Close" className="rounded-lg px-2 py-1 text-[16px] font-bold text-ink/40 transition hover:bg-ink/[0.04] dark:text-fog/40">
-            �
+            ×
           </button>
         </div>
 
@@ -1695,7 +1758,7 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
             return (
               <li key={label} className="flex flex-1 items-center gap-1.5">
                 <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${done ? "bg-emerald-500 text-white" : active ? "bg-deep-violet text-white" : "bg-ink/[0.08] text-ink/40 dark:bg-fog/[0.08] dark:text-fog/40"}`}>
-                  {done ? "?" : n}
+                  {done ? "✓" : n}
                 </span>
                 <span className={`text-[11px] font-semibold ${active ? "text-deep-violet" : "text-ink/40 dark:text-fog/40"}`}>{label}</span>
                 {n < steps.length && <span className="h-px flex-1 bg-ink/[0.08] dark:bg-fog/[0.08]" aria-hidden />}
@@ -1741,7 +1804,7 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <button onClick={onClose} className="btn-secondary">Cancel</button>
-              <button onClick={nextFromDetails} className="btn-primary">Continue ?</button>
+              <button onClick={nextFromDetails} className="btn-primary">Continue →</button>
             </div>
           </div>
         )}
@@ -1749,7 +1812,7 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
         {step === 2 && (
           <div className="space-y-4">
             <p className="text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">
-              Before creating, Google must be checked for an existing or claimed listing at this address � creating a duplicate can get the listing suspended.
+              Before creating, Google must be checked for an existing or claimed listing at this address — creating a duplicate can get the listing suspended.
             </p>
             {!checked ? (
               <button onClick={runDuplicateCheck} className="btn-secondary w-full">
@@ -1757,12 +1820,12 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
               </button>
             ) : (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">
-                Live duplicate check runs against Google once connected � no live check yet. Your details are kept; you can continue and save the draft.
+                Live duplicate check runs against Google once connected — no live check yet. Your details are kept; you can continue and save the draft.
               </div>
             )}
             <div className="flex justify-between gap-2 pt-1">
-              <button onClick={() => setStep(1)} className="btn-secondary">? Back</button>
-              <button onClick={() => setStep(3)} className="btn-primary">Continue ?</button>
+              <button onClick={() => setStep(1)} className="btn-secondary">← Back</button>
+              <button onClick={() => setStep(3)} className="btn-primary">Continue →</button>
             </div>
           </div>
         )}
@@ -1771,11 +1834,11 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
           <div className="space-y-4">
             <dl className="space-y-1.5 rounded-xl bg-ink/[0.03] p-4 text-[12px] dark:bg-fog/[0.04]">
               {[
-                ["Business name", draft.name || "�"],
-                ["Category", draft.category || "�"],
-                ["Address", [draft.street, draft.city, draft.postalCode, draft.country].filter(Boolean).join(", ") || "�"],
-                ["Phone", draft.phone || "�"],
-                ["Website", draft.website || "�"],
+                ["Business name", draft.name || "—"],
+                ["Category", draft.category || "—"],
+                ["Address", [draft.street, draft.city, draft.postalCode, draft.country].filter(Boolean).join(", ") || "—"],
+                ["Phone", draft.phone || "—"],
+                ["Website", draft.website || "—"],
               ].map(([k, v]) => (
                 <div key={k} className="flex gap-3">
                   <dt className="w-28 shrink-0 font-medium text-ink/50 dark:text-fog/50">{k}</dt>
@@ -1790,7 +1853,7 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
               Create on Google (needs connection)
             </button>
             <div className="flex justify-start pt-1">
-              <button onClick={() => setStep(2)} className="btn-secondary">? Back</button>
+              <button onClick={() => setStep(2)} className="btn-secondary">← Back</button>
             </div>
           </div>
         )}
@@ -1817,14 +1880,14 @@ function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
                 </label>
               ))}
             </div>
-            <Field label="Verification PIN (preview � enter the code Google sends)">
+            <Field label="Verification PIN (preview — enter the code Google sends)">
               <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="6-digit code" className="input-field" />
             </Field>
             <button disabled title="Available once Google is connected" className="btn-secondary w-full cursor-not-allowed opacity-50">
               Complete verification (needs connection)
             </button>
             <div className="flex justify-between gap-2 pt-1">
-              <button onClick={() => setStep(3)} className="btn-secondary">? Back</button>
+              <button onClick={() => setStep(3)} className="btn-secondary">← Back</button>
               <button onClick={onClose} className="btn-primary">Done</button>
             </div>
           </div>
@@ -1858,7 +1921,7 @@ function Field({ label, children, varies }: { label: string; children: React.Rea
 function VariesBadge() {
   return (
     <span
-      title="Different values across branches � saving will overwrite all of them"
+      title="Different values across branches — saving will overwrite all of them"
       className="ml-1.5 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-px align-middle text-[9px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
     >
       varies
@@ -1866,10 +1929,16 @@ function VariesBadge() {
   );
 }
 
-function describeHours(regular: Record<string, { open: string; close: string; closed: boolean }>): string[] {
+function describeHours(
+  regular: Record<string, { open: string; close: string; closed: boolean }>,
+  copy: LocationsCopy
+): string[] {
   const open = Object.entries(regular).filter(([, v]) => !v.closed);
-  if (open.length === 0) return ["Regular hours ? all days closed"];
-  return [`Regular hours ? ${open.map(([d, v]) => `${d.slice(0, 3)} ${v.open || "?"}�${v.close || "?"}`).join(", ")}`];
+  if (open.length === 0) return [copy.hoursAllClosed];
+  const days = open
+    .map(([d, v]) => `${dayLabel(d, copy)} ${v.open || "?"}–${v.close || "?"}`)
+    .join(", ");
+  return [copy.hoursSummary.replace("{days}", days)];
 }
 
 function EmptyState() {
