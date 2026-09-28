@@ -53,7 +53,7 @@ function relativeDate(iso: string | null) {
 function ReviewCard({ review, onReplied }: { review: ReviewInsight; onReplied: () => void }) {
   return (
     <article
-      className="rounded-lg border border-[#DADCE0] bg-white text-left transition hover:bg-[#F8F9FA]"
+      className="min-w-0 rounded-lg border border-[#DADCE0] bg-white text-left transition hover:bg-[#F8F9FA]"
       style={{ fontFamily: "Roboto, Arial, sans-serif" }}
     >
       {/* Header — avatar + name + time */}
@@ -206,12 +206,12 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
 
   return (
     <section aria-label="AI Review Inbox" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <h3 className="text-[14px] font-bold text-ink">
           AI Review Inbox
           <span className="ml-2 text-[11px] font-medium text-ink/40">{total} reviews</span>
         </h3>
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/25" aria-hidden>
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" strokeLinecap="round" />
@@ -222,7 +222,7 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Search reviews..."
             aria-label="Search reviews"
-            className="h-8 w-44 rounded-lg border border-deep-violet/[0.08] bg-deep-violet/[0.03] pl-8 pr-3 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.08]"
+            className="h-8 w-full rounded-lg border border-deep-violet/[0.08] bg-deep-violet/[0.03] pl-8 pr-3 text-[12px] text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:bg-white focus:ring-2 focus:ring-deep-violet/[0.08] sm:w-44"
           />
         </div>
       </div>
@@ -276,7 +276,7 @@ export function ReviewInbox({ channelId, refreshToken }: { channelId: string | n
           <p className="text-[11px] text-ink/35">Try clearing filters or connecting a channel to start collecting reviews.</p>
         </div>
       ) : (
-        <div className="grid items-start gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2">
           {items.map((r) => (
             <ReviewCard key={r.id} review={r} onReplied={onReplied} />
           ))}

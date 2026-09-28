@@ -25,6 +25,7 @@ from .modules.posts.router import router as posts_router
 from .modules.media.router import router as media_router
 from .modules.storage.router import router as storage_router
 from .modules.admin.router import router as admin_router
+from .modules.user_feedback.router import router as feedback_router
 from .modules.email.router import router as email_router
 from .modules.review_engine.router import router as review_engine_router
 from .modules.review_engine.csv_router import router as csv_router
@@ -213,6 +214,7 @@ app.include_router(posts_router)
 app.include_router(media_router)
 app.include_router(storage_router)
 app.include_router(admin_router)
+app.include_router(feedback_router)
 app.include_router(email_router)
 app.include_router(review_engine_router)
 app.include_router(csv_router)

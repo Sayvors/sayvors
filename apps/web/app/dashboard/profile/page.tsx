@@ -8,6 +8,8 @@ import ProfileAccount from "@/components/profile/ProfileAccount";
 import ProfileLimits from "@/components/profile/ProfileLimits";
 import ProfilePreferences from "@/components/profile/ProfilePreferences";
 import LogoLoader from "@/components/LogoLoader";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import { isLocaleCode } from "@/lib/i18n/locales";
 import {
   getProfile,
   getUsage,
@@ -18,6 +20,7 @@ import {
 } from "@/lib/api-profile";
 
 export default function ProfilePage() {
+  const { setLocale } = useI18n();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [usage, setUsage] = useState<UsageItem[]>([]);
   const [usageCached, setUsageCached] = useState(false);
@@ -95,6 +98,7 @@ export default function ProfilePage() {
     try {
       const next = await updatePreferences(theme, language);
       setProfile(next);
+      if (isLocaleCode(language)) setLocale(language, false);
       notify("Preferences saved.");
     } catch (e) {
       notify(e instanceof Error ? e.message : "Could not save preferences.");

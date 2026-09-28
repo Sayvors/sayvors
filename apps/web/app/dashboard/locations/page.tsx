@@ -81,11 +81,11 @@ interface FullProfile {
 
 function SourceBadge({ google }: { google: boolean }) {
   return google ? (
-    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+    <span className="whitespace-nowrap rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
       Synced to Google
     </span>
   ) : (
-    <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.06] dark:text-fog/45">
+    <span className="whitespace-nowrap rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.06] dark:text-fog/45">
       Stored in Sayvors
     </span>
   );
@@ -491,13 +491,14 @@ export default function LocationsPage() {
      return () => { cancelled = true; };
    }, [selectedId]);
 
-   // Use fullProfile.name (actual business name) over localith.listing_name when available.
-   useEffect(() => {
-     if (!fullProfile || !selectedId) return;
-     setLocations((prev) =>
-       prev.map((l) => (l.id === selectedId ? { ...l, name: fullProfile.name } : l))
-     );
-   }, [fullProfile, selectedId]);
+    // Use fullProfile.name (actual business name) over localith.listing_name when available.
+    useEffect(() => {
+      const name = fullProfile?.name?.trim();
+      if (!name || !selectedId) return;
+      setLocations((prev) =>
+        prev.map((l) => (l.id === selectedId ? { ...l, name } : l))
+      );
+    }, [fullProfile, selectedId]);
 
 
    const tabs = [
@@ -524,25 +525,28 @@ export default function LocationsPage() {
   }, []);
 
   return (
-    <div className="h-full overflow-y-auto p-6 space-y-5">
+    <div className="h-full space-y-5 overflow-y-auto p-4 sm:p-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      {/* Stacks until xl. The sidebar eats ~220px, so at 1024 the content column
+          is only ~800px and a side-by-side header still wrapped the subtitle,
+          the status pill and "Create location" onto two lines each. */}
+      <div className="flex flex-col items-start gap-3 xl:flex-row xl:items-start xl:justify-between xl:gap-4">
+        <div className="min-w-0">
           <h1 className="text-[20px] font-bold text-ink dark:text-fog">Locations</h1>
           <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
             Manage your business locations on Google.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col items-stretch gap-3 xl:flex-row xl:items-center">
           {/* Location selector dropdown — "All branches" enables bulk edit */}
-          <div className="relative">
+          <div className="relative w-full xl:w-auto xl:min-w-56">
             <select
               value={selectedId ?? ""}
               onChange={(e) => {
                 setSelectedId(e.target.value);
                 setLastBulkFail(null);
               }}
-              className="w-56 appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className="w-full appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
             >
               {locations.length > 1 && (
                 <option value={ALL}>All branches ({locations.length})</option>
@@ -558,17 +562,19 @@ export default function LocationsPage() {
               <path d="M6 9l6 6 6-6" />
             </svg>
           </div>
-          <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-            {locations.length ? "Google connected" : "Google not connected"}
-          </span>
-          <button
-            onClick={() => setCreateOpen(true)}
-            title="Create a new Google business location"
-            data-tour="add-location"
-            className="rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:opacity-90"
-          >
-            + Create location
-          </button>
+          <div className="flex w-full flex-wrap items-center gap-3 xl:w-auto xl:flex-nowrap">
+            <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+              {locations.length ? "Google connected" : "Google not connected"}
+            </span>
+            <button
+              onClick={() => setCreateOpen(true)}
+              title="Create a new Google business location"
+              data-tour="add-location"
+              className="min-h-9 rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:opacity-90"
+            >
+              + Create location
+            </button>
+          </div>
         </div>
       </div>
 
@@ -683,20 +689,24 @@ export default function LocationsPage() {
       ) : (
         <>
           {/* Tabs (google-updates is per-branch, hidden in bulk) */}
-          <div className="flex gap-1 overflow-x-auto rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
-            {tabs.filter((tab) => !isBulk || tab.key !== "google-updates").map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
-                  activeTab === tab.key
-                    ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog"
-                    : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
+            <div role="tablist" className="flex gap-1 rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
+              {tabs.filter((tab) => !isBulk || tab.key !== "google-updates").map((tab) => (
+                <button
+                  key={tab.key}
+                  role="tab"
+                  aria-selected={activeTab === tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`min-h-9 whitespace-nowrap rounded-lg px-3 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                    activeTab === tab.key
+                      ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog"
+                      : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           </div>
           {!isBulk && locations.length > 1 && (
             <p className="rounded-xl border border-deep-violet/15 bg-deep-violet/[0.04] px-3.5 py-2 text-[12px] text-ink/55 dark:text-fog/55">

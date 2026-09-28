@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import { TOUR_STEPS } from "@/lib/tour/steps";
+import { closeNavDrawer, openNavDrawer, targetsNav } from "@/lib/tour/nav-drawer";
 
 const STORAGE_KEY = "sayvors.tour";
 
@@ -45,6 +46,42 @@ export default function TourProvider({ children }: { children: React.ReactNode }
     const id = window.setTimeout(fn, ms);
     timersRef.current.push(id);
   }, []);
+
+  /** Awaitable delay, tracked so `clearTimers` can still cancel the tour. */
+  const delay = useCallback(
+    (ms: number) =>
+      new Promise<void>((resolve) => {
+        const id = window.setTimeout(resolve, ms);
+        timersRef.current.push(id);
+      }),
+    []
+  );
+
+  /**
+   * Wait for an element to be genuinely on-screen, not merely in the DOM.
+   *
+   * The nav drawer is off-screen on a phone, so `querySelector` finds it
+   * immediately while driver.js spotlights nothing. Polling the bounding box
+   * checks the thing that actually matters, and bounded so a genuinely missing
+   * anchor falls through to the existing centred-popover fallback rather than
+   * hanging the tour.
+   */
+  const waitForOnScreen = useCallback(
+    async (selector: string | null, timeoutMs = 1500): Promise<Element | null> => {
+      if (!selector) return null;
+      const started = Date.now();
+      for (;;) {
+        const el = document.querySelector(selector);
+        if (el) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && r.left >= -1 && r.right <= window.innerWidth + 1) return el;
+        }
+        if (Date.now() - started > timeoutMs) return el;
+        await delay(60);
+      }
+    },
+    [delay]
+  );
 
   const clearTimers = useCallback(() => {
     for (const id of timersRef.current) window.clearTimeout(id);
@@ -86,6 +123,8 @@ export default function TourProvider({ children }: { children: React.ReactNode }
         /* already gone */
       }
       driverRef.current = null;
+      // Exiting mid-tour must not leave the nav covering the page.
+      closeNavDrawer();
       persist(state);
       setPhase("idle");
     },
@@ -104,7 +143,18 @@ export default function TourProvider({ children }: { children: React.ReactNode }
         if (step.route !== pathnameRef.current) {
           router.push(step.route);
         }
-        const el = await waitFor(step.selector);
+        // A step that points into the nav needs the nav to be visible first.
+        // On a phone it is an off-screen drawer, so driver.js would find the
+        // element in the DOM and spotlight nothing — the popover would claim
+        // "This is Connect" beside an empty screen.
+        const navStep = targetsNav(step.selector);
+        if (navStep) openNavDrawer();
+        // Nav steps wait for the anchor to be genuinely on-screen, which means
+        // after the drawer has finished sliding in. Everything else keeps the
+        // original wait, so no step gets slower than it was.
+        const el = navStep
+          ? await waitForOnScreen(step.selector)
+          : await waitFor(step.selector);
         if (!driverRef.current) {
           driverRef.current = driver({
             popoverClass: "sayvors-tour-popover",
@@ -114,6 +164,9 @@ export default function TourProvider({ children }: { children: React.ReactNode }
             showButtons: ["next", "previous"],
             disableActiveInteraction: false,
             onNextClick: () => {
+              // Leaving a nav step: shut the drawer so it does not sit over
+              // the next step's content.
+              if (navStep) closeNavDrawer();
               if (stepRef.current + 1 >= TOUR_STEPS.length) endTour("done");
               else showStepRef.current(stepRef.current + 1);
             },
@@ -133,7 +186,7 @@ export default function TourProvider({ children }: { children: React.ReactNode }
       };
       void go();
     },
-    [router, waitFor, endTour]
+    [router, waitFor, waitForOnScreen, endTour]
   );
   showStepRef.current = showStep;
 

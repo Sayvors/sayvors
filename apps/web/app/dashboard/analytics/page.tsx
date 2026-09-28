@@ -15,22 +15,26 @@ import {
 import { StatCard } from "@/components/analytics/StatCard";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
 import { ReviewInbox } from "@/components/analytics/ReviewInbox";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import InsightsPage from "../insights/page";
 import GrowthPage from "../growth/page";
 import BenchmarkPage from "../benchmark/page";
 
 const RANGES = [7, 30, 90] as const;
 
-function fmtDuration(seconds: number | null) {
+function fmtDuration(seconds: number | null, locale: string, labels: { minutes: string; hours: string; days: string }) {
   if (seconds === null) return "—";
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  if (seconds < 86_400) return `${(seconds / 3600).toFixed(1)}h`;
-  return `${(seconds / 86_400).toFixed(1)}d`;
+  const number = (value: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
+  if (seconds < 3600) return labels.minutes.replace("{value}", number(Math.round(seconds / 60)));
+  if (seconds < 86_400) return labels.hours.replace("{value}", number(Number((seconds / 3600).toFixed(1))));
+  return labels.days.replace("{value}", number(Number((seconds / 86_400).toFixed(1))));
 }
 
 /* ── AI summary strip (rule-based composition from live KPIs) ────── */
 
 function SummaryStrip({ overview }: { overview: Overview }) {
+  const { t, locale } = useI18n();
+  const copy = t.analytics.kpis;
   const p = overview.period;
   const g = overview.google_performance;
   const items: { tone: "good" | "bad" | "info"; text: string }[] = [];
@@ -38,36 +42,39 @@ function SummaryStrip({ overview }: { overview: Overview }) {
   if (p.rating_delta !== null && p.rating_delta !== 0) {
     items.push({
       tone: p.rating_delta > 0 ? "good" : "bad",
-      text: `Average rating ${p.rating_delta > 0 ? "improved" : "dropped"} ${Math.abs(p.rating_delta)} stars vs previous ${p.days} days`,
+      text: (p.rating_delta > 0 ? copy.ratingImproved : copy.ratingDropped)
+        .replace("{value}", new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(Math.abs(p.rating_delta)))
+        .replace("{days}", new Intl.NumberFormat(locale).format(p.days)),
     });
   }
   if (p.reviews_delta_pct !== null && p.reviews_delta_pct !== 0) {
     items.push({
       tone: p.reviews_delta_pct > 0 ? "info" : "bad",
-      text: `Review volume ${p.reviews_delta_pct > 0 ? "up" : "down"} ${Math.abs(p.reviews_delta_pct)}%`,
+      text: (p.reviews_delta_pct > 0 ? copy.reviewVolumeUp : copy.reviewVolumeDown)
+        .replace("{value}", new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(Math.abs(p.reviews_delta_pct))),
     });
   }
   items.push({
     tone: overview.sentiment.positive_pct >= 70 ? "good" : overview.sentiment.negative_pct > 30 ? "bad" : "info",
-    text: `${overview.sentiment.positive_pct}% positive sentiment across all reviews`,
+    text: copy.positiveSentiment.replace("{value}", new Intl.NumberFormat(locale).format(overview.sentiment.positive_pct)),
   });
   if (overview.unanswered > 0) {
     items.push({
       tone: "bad",
       text: overview.unanswered === 1
-        ? "1 review still needs a reply"
-        : `${overview.unanswered} reviews still need a reply`,
+        ? copy.oneReviewNeedsReply
+        : copy.reviewsNeedReply.replace("{count}", new Intl.NumberFormat(locale).format(overview.unanswered)),
     });
   }
   if (g.customer_actions > 0) {
-    items.push({ tone: "good", text: `${g.customer_actions} customer actions from Google this period` });
+    items.push({ tone: "good", text: copy.googleCustomerActions.replace("{count}", new Intl.NumberFormat(locale).format(g.customer_actions)) });
   }
 
   const toneDot = { good: "bg-emerald", bad: "bg-coral", info: "bg-sky" };
 
   return (
     <section
-      aria-label="Business summary"
+      aria-label={copy.businessSummary}
       className="relative overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet to-magenta p-5 text-white shadow-md shadow-deep-violet/20"
     >
       <div className="mb-2.5 flex items-center gap-2">
@@ -77,11 +84,11 @@ function SummaryStrip({ overview }: { overview: Overview }) {
             <path d="M9 21h6" strokeLinecap="round" />
           </svg>
         </span>
-        <h2 className="text-[13px] font-bold tracking-wide">Sayvors AI — Business Intelligence</h2>
+        <h2 className="text-[13px] font-bold tracking-wide">{t.dashboard.briefing.title}</h2>
         <span className="ml-auto flex items-center gap-3 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold">
-          <span title="Reputation score">Reputation {overview.reputation_score}</span>
+          <span title={copy.reputationScore}>{t.dashboard.briefing.reputation} {new Intl.NumberFormat(locale).format(overview.reputation_score)}</span>
           <span className="h-3 w-px bg-white/25" aria-hidden />
-          <span title="Business health score">Health {overview.health_score}</span>
+          <span title={copy.healthScore}>{t.dashboard.briefing.health} {new Intl.NumberFormat(locale).format(overview.health_score)}</span>
         </span>
       </div>
       <ul className="grid gap-1.5 sm:grid-cols-2">
@@ -100,7 +107,7 @@ function SummaryStrip({ overview }: { overview: Overview }) {
 
 interface PresenceData {
   listingName: string;
-  windowLabel: string;
+  windowLabel: string | null;
   searchViews: number;
   mapViews: number;
   websiteClicks: number;
@@ -130,7 +137,7 @@ function presenceFromProfile(prof: {
   const conn = prof?.connection ?? {};
   return {
     listingName: conn.listing_name ?? "",
-    windowLabel: conn.metrics_start && conn.metrics_end ? `${conn.metrics_start} → ${conn.metrics_end}` : "last 30 days",
+    windowLabel: conn.metrics_start && conn.metrics_end ? `${conn.metrics_start} → ${conn.metrics_end}` : null,
     searchViews: num(perf?.googleSearchDesktop) + num(perf?.googleSearchMobile),
     mapViews: num(perf?.googleMapsDesktop) + num(perf?.googleMapsMobile),
     websiteClicks: num(perf?.websiteClicks),
@@ -146,31 +153,33 @@ function presenceFromProfile(prof: {
 }
 
 function PresenceSection({ presence }: { presence: PresenceData }) {
+  const { t } = useI18n();
+  const copy = t.analytics.presence;
   const p = presence;
   const cells: { label: string; value: string; sub?: string }[] = [
-    { label: "Search views", value: String(p.searchViews) },
-    { label: "Map views", value: String(p.mapViews) },
-    { label: "Impressions", value: String(p.searchViews + p.mapViews), sub: "search + maps" },
-    { label: "Website clicks", value: String(p.websiteClicks) },
-    { label: "Direction requests", value: String(p.directionRequests) },
-    { label: "Phone calls", value: String(p.phoneCalls) },
-    { label: "Published posts", value: String(p.publishedPosts) },
-    { label: "Avg posting time", value: String(p.avgPostingTime) },
-    { label: "Avg response time", value: `${p.avgResponseTimeH}h` },
-    { label: "Response percentage", value: `${p.responsePct}%` },
+    { label: copy.searchViews, value: String(p.searchViews) },
+    { label: copy.mapViews, value: String(p.mapViews) },
+    { label: copy.impressions, value: String(p.searchViews + p.mapViews), sub: copy.searchAndMaps },
+    { label: copy.websiteClicks, value: String(p.websiteClicks) },
+    { label: copy.directionRequests, value: String(p.directionRequests) },
+    { label: copy.phoneCalls, value: String(p.phoneCalls) },
+    { label: copy.publishedPosts, value: String(p.publishedPosts) },
+    { label: copy.avgPostingTime, value: String(p.avgPostingTime) },
+    { label: copy.avgResponseTime, value: `${p.avgResponseTimeH}h` },
+    { label: copy.responseRate, value: `${p.responsePct}%` },
   ];
   return (
-    <section className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+    <section aria-label={copy.title} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
       <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-[14px] font-bold text-ink">Google presence{p.listingName ? ` — ${p.listingName}` : ""}</h3>
-        <p className="text-[11px] text-ink/40">{p.windowLabel} · via Localith</p>
+        <h3 className="text-[14px] font-bold text-ink">{copy.title}{p.listingName ? ` — ${p.listingName}` : ""}</h3>
+        <p className="text-[11px] text-ink/40">{p.windowLabel ?? copy.last30Days} · {copy.viaLocalith}</p>
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {cells.map((c) => (
-          <div key={c.label} className="rounded-xl bg-ink/[0.03] px-3 py-2.5 text-center">
-            <p className="text-[18px] font-bold text-ink">{c.value}</p>
-            <p className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-ink/45">{c.label}</p>
-            {c.sub && <p className="text-[9px] text-ink/30">{c.sub}</p>}
+          <div key={c.label} className="rounded-xl bg-ink/[0.03] px-2 py-2 text-center sm:px-3 sm:py-2.5">
+            <p className="text-[16px] font-bold text-ink sm:text-[18px]">{c.value}</p>
+            <p className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-ink/45 sm:text-[10px]">{c.label}</p>
+            {c.sub && <p className="text-[8px] text-ink/30 sm:text-[9px]">{c.sub}</p>}
           </div>
         ))}
       </div>
@@ -181,9 +190,12 @@ function PresenceSection({ presence }: { presence: PresenceData }) {
 /* ── Overview tab ─────────────────────────────────────────────────── */
 
 function OverviewPanel() {
+  const { t, locale } = useI18n();
+  const copy = t.analytics.kpis;
   const [days, setDays] = useState<number>(30);
   const [channels, setChannels] = useState<ChannelOption[]>([]);
   const [channelId, setChannelId] = useState<string | null>(null);
+  const [channelListingIds, setChannelListingIds] = useState<Record<string, string>>({});
   const [overview, setOverview] = useState<Overview | null>(null);
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
   const [presence, setPresence] = useState<PresenceData | null>(null);
@@ -197,13 +209,11 @@ function OverviewPanel() {
     Promise.all([
       fetchOverview(days, channelId),
       fetchTimeseries(days, channelId),
-      apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
     ])
-      .then(([o, t, prof]) => {
+      .then(([o, t]) => {
         if (cancelled) return;
         setOverview(o);
         setPoints(t);
-        setPresence(presenceFromProfile(prof));
         setError(false);
         hasLoadedOnce.current = true;
       })
@@ -218,6 +228,60 @@ function OverviewPanel() {
     };
   }, [days, channelId, refreshToken]);
 
+  // Google presence follows the business selector — each channel maps to its
+  // Localith listing_id, so the snapshot refetches per branch. "All locations"
+  // shows cumulative totals across every branch (additive metrics summed,
+  // rates review-weighted by the backend).
+  useEffect(() => {
+    let cancelled = false;
+    if (channelId) {
+      const listingId = channelListingIds[channelId] ?? null;
+      if (!listingId) {
+        // Native Google channel with no Localith listing — no snapshot to show.
+        setPresence(null);
+        return;
+      }
+      apiFetch(`/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(listingId)}`)
+        .catch(() => null)
+        .then((prof) => {
+          if (!cancelled) setPresence(presenceFromProfile(prof));
+        });
+    } else {
+      apiFetch("/api/v1/integrations/localith/profiles/aggregate")
+        .catch(() => null)
+        .then((agg: Record<string, unknown> | null) => {
+          if (cancelled) return;
+          if (!agg) {
+            setPresence(null);
+            return;
+          }
+          const n = (k: string) => {
+            const v = agg[k];
+            const f = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+            return Number.isFinite(f) ? f : 0;
+          };
+          setPresence({
+            listingName: typeof agg.listing_name === "string" ? agg.listing_name : "",
+            windowLabel: typeof agg.window_label === "string" ? agg.window_label : null,
+            searchViews: n("search_views"),
+            mapViews: n("map_views"),
+            websiteClicks: n("website_clicks"),
+            directionRequests: n("direction_requests"),
+            phoneCalls: n("phone_calls"),
+            publishedPosts: n("published_posts"),
+            avgPostingTime: n("avg_posting_time"),
+            avgResponseTimeH: n("avg_response_time_h"),
+            responsePct: n("response_pct"),
+            totalReviews: n("total_reviews"),
+            averageRating: n("average_rating"),
+          });
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId, channelListingIds]);
+
   useEffect(() => {
     apiFetch("/api/v1/channels/")
       .then((data) => {
@@ -225,11 +289,16 @@ function OverviewPanel() {
           (data.channels ?? []).filter(
             (c: { platform: string }) => c.platform === "google_reviews"
           )
-        ).map((c: { id: string; display_name: string | null }) => ({
+        );
+        setChannels(google.map((c: { id: string; display_name: string | null }) => ({
           id: c.id,
           label: c.display_name ?? "Google Business",
-        }));
-        setChannels(google);
+        })));
+        const idMap: Record<string, string> = {};
+        for (const c of google as { id: string; listing_id?: string | null }[]) {
+          if (c.id && c.listing_id) idMap[c.id] = c.listing_id;
+        }
+        setChannelListingIds(idMap);
       })
       .catch(() => setChannels([]));
   }, []);
@@ -244,7 +313,7 @@ function OverviewPanel() {
   return (
     <div className="h-full overflow-y-auto px-4 pb-4 sm:px-6 sm:pb-6">
       {/* Controls */}
-      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
         {channels.length > 1 && (
             <select
               value={channelId ?? ""}
@@ -253,7 +322,7 @@ function OverviewPanel() {
                 setLoading(true);
               }}
               aria-label="Filter by location"
-              className="h-8 rounded-lg border border-deep-violet/[0.1] bg-white px-2 text-[12px] text-ink outline-none transition focus:ring-2 focus:ring-deep-violet/30"
+              className="h-8 w-full rounded-lg border border-deep-violet/[0.1] bg-white px-2 text-[12px] text-ink outline-none transition focus:ring-2 focus:ring-deep-violet/30 sm:w-auto"
             >
               <option value="">All locations</option>
               {channels.map((c) => (
@@ -337,9 +406,10 @@ function OverviewPanel() {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard
               loading={loading}
-              label="Avg rating"
-              value={overview ? `${overview.avg_rating}` : "0"}
-              sub="out of 5 stars"
+              label={copy.avgRating}
+              value={overview ? new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(overview.avg_rating) : "0"}
+              sub={copy.outOfFiveStars}
+              noPriorData={copy.noPriorData}
               delta={overview?.period.rating_delta}
               deltaSuffix=""
               accent="bg-amber/10 text-amber-600"
@@ -351,9 +421,10 @@ function OverviewPanel() {
             />
             <StatCard
               loading={loading}
-              label="Reviews"
-              value={overview ? String(overview.period.reviews) : "0"}
-              sub={`last ${days} days`}
+              label={copy.reviews}
+              value={overview ? new Intl.NumberFormat(locale).format(overview.period.reviews) : "0"}
+              sub={copy.lastDays.replace("{days}", new Intl.NumberFormat(locale).format(days))}
+              noPriorData={copy.noPriorData}
               delta={overview?.period.reviews_delta_pct}
               accent="bg-deep-violet/10 text-deep-violet"
               icon={
@@ -364,9 +435,10 @@ function OverviewPanel() {
             />
             <StatCard
               loading={loading}
-              label="Response rate"
-              value={overview ? `${overview.response_rate}%` : "0%"}
-              sub={overview && overview.avg_response_seconds !== null ? `avg ${fmtDuration(overview.avg_response_seconds)}` : "no replies yet"}
+              label={copy.responseRate}
+              value={overview ? `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(overview.response_rate)}%` : "0%"}
+              sub={overview && overview.avg_response_seconds !== null ? copy.avgDuration.replace("{duration}", fmtDuration(overview.avg_response_seconds, locale, copy)) : copy.noRepliesYet}
+              noPriorData={copy.noPriorData}
               accent="bg-emerald/10 text-emerald"
               icon={
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5" aria-hidden>
@@ -376,9 +448,10 @@ function OverviewPanel() {
             />
             <StatCard
               loading={loading}
-              label="Customer actions"
-              value={overview ? new Intl.NumberFormat("en").format(overview.google_performance.customer_actions) : "0"}
-              sub="clicks · calls · directions"
+              label={copy.customerActions}
+              value={overview ? new Intl.NumberFormat(locale).format(overview.google_performance.customer_actions) : "0"}
+              sub={copy.actionBreakdown}
+              noPriorData={copy.noPriorData}
               accent="bg-sky/10 text-sky"
               icon={
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5" aria-hidden>
@@ -393,16 +466,16 @@ function OverviewPanel() {
           {overview && !loading && <SummaryStrip overview={overview} />}
 
           {/* Charts row */}
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             <div className="lg:col-span-2">
               {loading ? (
-                <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" aria-hidden />
+                <div className="h-48 animate-pulse rounded-2xl border-2 border-white bg-white/60 sm:h-72" aria-hidden />
               ) : (
                 <MetricChart points={points} />
               )}
             </div>
             <div className="space-y-3">
-              <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm sm:p-5">
                 <h3 className="mb-3 text-[14px] font-bold text-ink">Rating distribution</h3>
                 {loading ? (
                   <div className="space-y-2" aria-hidden>
@@ -414,7 +487,7 @@ function OverviewPanel() {
                   overview && <RatingDistribution distribution={overview.rating_distribution} total={overview.total_reviews} />
                 )}
               </div>
-              <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm sm:p-5">
                 <h3 className="mb-3 text-[14px] font-bold text-ink">Sentiment</h3>
                 {loading ? (
                   <div className="h-3 animate-pulse rounded-full bg-ink/[0.06]" aria-hidden />
@@ -443,16 +516,12 @@ function OverviewPanel() {
 
 /* ── Tab shell (Overview / Insights / Growth / Benchmark) ───────────── */
 
-const TABS = [
-  { id: "overview", label: "Overview" },
-  { id: "insights", label: "Insights" },
-  { id: "growth", label: "Growth" },
-  { id: "benchmark", label: "Benchmark" },
-] as const;
+const TABS = ["overview", "insights", "growth", "benchmark"] as const;
 
-type AnalyticsTab = (typeof TABS)[number]["id"];
+type AnalyticsTab = (typeof TABS)[number];
 
 function AnalyticsShell() {
+  const { t } = useI18n();
   const params = useSearchParams();
   const raw = params.get("tab");
   const tab: AnalyticsTab =
@@ -461,23 +530,28 @@ function AnalyticsShell() {
   return (
     <div className="flex h-full flex-col bg-[#f3f0ff]">
       <div className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6">
-        <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">Analytics</h1>
+        <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">{t.nav.analytics}</h1>
         <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">
-          Reputation, sentiment and Google performance — all in one place.
+          {t.analytics.subtitle}
         </p>
         <div
           role="tablist"
-          aria-label="Analytics sections"
+          aria-label={t.analytics.sections}
           className="mt-3 flex gap-1 overflow-x-auto rounded-xl bg-deep-violet/[0.06] p-1"
         >
-          {TABS.map((t) => {
-            const active = tab === t.id;
+          {TABS.map((tabId) => {
+            const active = tab === tabId;
+            const label = tabId === "overview"
+              ? t.analytics.overview
+              : tabId === "benchmark"
+                ? t.analytics.benchmark
+                : t.nav[tabId];
             return (
               <Link
-                key={t.id}
+                key={tabId}
                 role="tab"
                 aria-selected={active}
-                href={t.id === "overview" ? "/dashboard/analytics" : `/dashboard/analytics?tab=${t.id}`}
+                href={tabId === "overview" ? "/dashboard/analytics" : `/dashboard/analytics?tab=${tabId}`}
                 scroll={false}
                 className={`whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                   active
@@ -485,7 +559,7 @@ function AnalyticsShell() {
                     : "text-ink/45 hover:text-ink/70"
                 }`}
               >
-                {t.label}
+                {label}
               </Link>
             );
           })}

@@ -42,8 +42,8 @@ class PreferencesUpdateRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    category: str = Field(..., min_length=1, max_length=50)
-    stars: int = Field(..., ge=1, le=5)
+    emoji_rating: int = Field(..., ge=1, le=5)
+    message: str | None = Field(None, max_length=2000)
 
 
 class UsageItem(BaseModel):

@@ -28,7 +28,7 @@ interface I18nContextValue {
   locale: LocaleCode;
   dir: "ltr" | "rtl";
   t: Dict;
-  setLocale: (code: LocaleCode) => void;
+  setLocale: (code: LocaleCode, persist?: boolean) => void;
 }
 
 const I18nContext = createContext<I18nContextValue>({
@@ -68,10 +68,11 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   }, [locale]);
 
   const setLocale = useCallback(
-    (code: LocaleCode) => {
+    (code: LocaleCode, persist = true) => {
       setLocaleState((prev) => {
         if (prev === code) return prev;
         saveLocale(code);
+        if (!persist) return code;
         // Persist to profile so it follows the user across devices.
         // Theme is required by the endpoint — read what ThemeProvider stored.
         let theme = "light";

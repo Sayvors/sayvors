@@ -65,7 +65,7 @@ async def write_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        feedback = await service.submit_feedback(user.id, body.category, body.stars, db)
+        feedback = await service.submit_feedback(user.id, body.emoji_rating, body.message, db)
         return {"feedback": feedback}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

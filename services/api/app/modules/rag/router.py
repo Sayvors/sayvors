@@ -586,7 +586,8 @@ async def ask_databank(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Agentic answer: Gemini reasons over tools (vector, keyword, live DB)."""
+    """Agentic answer: the tenant's model reasons over the tools
+    (vector, keyword, live DB)."""
     from ..llm.providers.base import ProviderError
     from .agent import ask_question
 

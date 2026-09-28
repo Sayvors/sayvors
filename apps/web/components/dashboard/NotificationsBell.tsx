@@ -203,7 +203,17 @@ export default function NotificationsBell() {
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 max-h-[70vh] w-80 overflow-hidden rounded-xl border border-deep-violet/[0.08] bg-white shadow-xl dark:border-deep-violet/[0.12] dark:bg-ink">
+        /* On a phone this is a viewport-anchored sheet, not a dropdown.
+           Anchored to the bell it ran off-screen: the bell sits left of
+           centre once the nav collapses, so `right-0` on a 320px panel put
+           225px of it outside a 390px screen — a third of the panel visible.
+           `inset-x-3` cannot overflow whatever the bell is doing, and
+           `sm:` restores the original dropdown untouched. */
+        <div
+          role="dialog"
+          aria-label="Notifications"
+          className="fixed inset-x-3 top-14 z-50 max-h-[70vh] overflow-hidden rounded-xl border border-deep-violet/[0.08] bg-white shadow-xl dark:border-deep-violet/[0.12] dark:bg-ink sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-1 sm:w-80"
+        >
           <div className="flex items-center justify-between border-b border-ink/[0.06] px-3.5 py-2.5 dark:border-fog/[0.06]">
             <p className="text-[13px] font-bold text-ink dark:text-fog">Notifications</p>
             <div className="flex items-center gap-2">

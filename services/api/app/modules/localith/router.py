@@ -193,6 +193,18 @@ async def get_my_profile(
     )
 
 
+@router.get("/profiles/aggregate")
+async def get_profiles_aggregate(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cumulative Google-presence totals across every connected branch.
+
+    Additive metrics are summed; averages/rates are review-weighted.
+    """
+    return await service.aggregate_profiles(db, user.id)
+
+
 @router.put("/connection", response_model=ConnectionResponse)
 async def save_connection(
     body: ConnectionCreate,

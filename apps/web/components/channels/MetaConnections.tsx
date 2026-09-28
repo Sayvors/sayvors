@@ -505,15 +505,15 @@ export default function MetaConnections({
         return (
           <div key={p.key}>
             <div
-              className={`flex items-center gap-4 rounded-xl border bg-white p-4 transition dark:bg-ink ${
+              className={`flex flex-wrap items-center gap-4 rounded-xl border bg-white p-4 transition dark:bg-ink ${
                 activeFilter ? p.key === "whatsapp" ? "border-emerald-200/60 shadow-[0_0_28px_-8px_rgba(16,185,129,0.25)] dark:border-emerald-500/20" : p.key === "facebook" ? "border-blue-200/60 shadow-[0_0_28px_-8px_rgba(37,99,235,0.25)] dark:border-blue-500/20" : p.key === "instagram" ? "border-pink-200/60 shadow-[0_0_28px_-8px_rgba(236,72,153,0.25)] dark:border-pink-500/20" : "border-ink/[0.06] dark:border-fog/[0.06]" : "border-ink/[0.06] dark:border-fog/[0.06]"
               }`}
             >
               <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${p.color} text-[22px] text-white shadow-sm`}>
                 {p.icon}
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-2 text-[14px] font-semibold text-ink dark:text-fog">
+              <div className="min-w-0 flex-1 sm:min-w-[10rem]">
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[14px] font-semibold text-ink dark:text-fog">
                   {p.name}
                   {conn && conn.status !== "revoked" && (
                     <span
@@ -530,17 +530,17 @@ export default function MetaConnections({
                 <p className="truncate text-[12px] text-ink/40 dark:text-fog/40">{label}</p>
               </div>
               {isDisconnected ? (
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2 max-sm:w-full">
                   <button
                     onClick={() => (p.key === "whatsapp" ? connectWhatsApp() : connectOAuth(p.key))}
                     disabled={busy === p.key || (p.key === "whatsapp" && sdkLoading)}
-                    className="rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                    className="min-h-8 rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
                   >
                     {busy === p.key ? "…" : p.key === "whatsapp" && sdkLoading ? "Loading…" : "Connect"}
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     onClick={() => {
                       const current = (assets[p.key] ?? []).filter((a) => a.active).map((a) => a.id);
@@ -614,7 +614,7 @@ export default function MetaConnections({
                 )}
                 {list.length === 0 && <p className="text-[12px] text-ink/40">No assets found yet — connect again or retry.</p>}
                 {list.map((a) => (
-                  <label key={a.id} className="flex cursor-pointer items-center gap-2.5 text-[12px]">
+                  <label key={a.id} className="flex cursor-pointer flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[12px]">
                     <input
                       type="checkbox"
                       checked={(picked[p.key] ?? []).includes(a.id)}
@@ -625,17 +625,17 @@ export default function MetaConnections({
                           : [...current, a.id];
                         setPicked((prev) => ({ ...prev, [p.key]: updated }));
                       }}
-                      className="h-4 w-4 accent-[#5b2d8e]"
+                      className="h-4 w-4 shrink-0 accent-[#5b2d8e]"
                     />
-                    <span className="font-semibold">{a.name ?? a.username ?? a.phone ?? a.external_asset_id}</span>
-                    <span className="text-ink/40">
+                    <span className="min-w-0 break-words font-semibold">{a.name ?? a.username ?? a.phone ?? a.external_asset_id}</span>
+                    <span className="min-w-0 break-words text-ink/40">
                       {a.asset_type}
                       {a.status !== "connected" ? ` · ${a.status}` : ""}
                       {a.active ? " · active" : ""}
                     </span>
                   </label>
                 ))}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => savePick(p.key)}
                     disabled={(picked[p.key] ?? []).length === 0 || busy === `${p.key}-save`}
