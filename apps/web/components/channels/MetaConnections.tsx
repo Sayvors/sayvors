@@ -512,8 +512,8 @@ export default function MetaConnections({
               <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${p.color} text-[22px] text-white shadow-sm`}>
                 {p.icon}
               </div>
-              <div className="min-w-[10rem] flex-1">
-                <p className="flex items-center gap-2 text-[14px] font-semibold text-ink dark:text-fog">
+              <div className="min-w-0 flex-1 sm:min-w-[10rem]">
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[14px] font-semibold text-ink dark:text-fog">
                   {p.name}
                   {conn && conn.status !== "revoked" && (
                     <span
@@ -540,7 +540,7 @@ export default function MetaConnections({
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     onClick={() => {
                       const current = (assets[p.key] ?? []).filter((a) => a.active).map((a) => a.id);
@@ -614,7 +614,7 @@ export default function MetaConnections({
                 )}
                 {list.length === 0 && <p className="text-[12px] text-ink/40">No assets found yet — connect again or retry.</p>}
                 {list.map((a) => (
-                  <label key={a.id} className="flex cursor-pointer items-center gap-2.5 text-[12px]">
+                  <label key={a.id} className="flex cursor-pointer flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[12px]">
                     <input
                       type="checkbox"
                       checked={(picked[p.key] ?? []).includes(a.id)}
@@ -625,17 +625,17 @@ export default function MetaConnections({
                           : [...current, a.id];
                         setPicked((prev) => ({ ...prev, [p.key]: updated }));
                       }}
-                      className="h-4 w-4 accent-[#5b2d8e]"
+                      className="h-4 w-4 shrink-0 accent-[#5b2d8e]"
                     />
-                    <span className="font-semibold">{a.name ?? a.username ?? a.phone ?? a.external_asset_id}</span>
-                    <span className="text-ink/40">
+                    <span className="min-w-0 break-words font-semibold">{a.name ?? a.username ?? a.phone ?? a.external_asset_id}</span>
+                    <span className="min-w-0 break-words text-ink/40">
                       {a.asset_type}
                       {a.status !== "connected" ? ` · ${a.status}` : ""}
                       {a.active ? " · active" : ""}
                     </span>
                   </label>
                 ))}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => savePick(p.key)}
                     disabled={(picked[p.key] ?? []).length === 0 || busy === `${p.key}-save`}

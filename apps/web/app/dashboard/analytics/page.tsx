@@ -195,6 +195,7 @@ function OverviewPanel() {
   const [days, setDays] = useState<number>(30);
   const [channels, setChannels] = useState<ChannelOption[]>([]);
   const [channelId, setChannelId] = useState<string | null>(null);
+  const [channelListingIds, setChannelListingIds] = useState<Record<string, string>>({});
   const [overview, setOverview] = useState<Overview | null>(null);
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
   const [presence, setPresence] = useState<PresenceData | null>(null);
@@ -208,13 +209,11 @@ function OverviewPanel() {
     Promise.all([
       fetchOverview(days, channelId),
       fetchTimeseries(days, channelId),
-      apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
     ])
-      .then(([o, t, prof]) => {
+      .then(([o, t]) => {
         if (cancelled) return;
         setOverview(o);
         setPoints(t);
-        setPresence(presenceFromProfile(prof));
         setError(false);
         hasLoadedOnce.current = true;
       })
@@ -229,6 +228,60 @@ function OverviewPanel() {
     };
   }, [days, channelId, refreshToken]);
 
+  // Google presence follows the business selector — each channel maps to its
+  // Localith listing_id, so the snapshot refetches per branch. "All locations"
+  // shows cumulative totals across every branch (additive metrics summed,
+  // rates review-weighted by the backend).
+  useEffect(() => {
+    let cancelled = false;
+    if (channelId) {
+      const listingId = channelListingIds[channelId] ?? null;
+      if (!listingId) {
+        // Native Google channel with no Localith listing — no snapshot to show.
+        setPresence(null);
+        return;
+      }
+      apiFetch(`/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(listingId)}`)
+        .catch(() => null)
+        .then((prof) => {
+          if (!cancelled) setPresence(presenceFromProfile(prof));
+        });
+    } else {
+      apiFetch("/api/v1/integrations/localith/profiles/aggregate")
+        .catch(() => null)
+        .then((agg: Record<string, unknown> | null) => {
+          if (cancelled) return;
+          if (!agg) {
+            setPresence(null);
+            return;
+          }
+          const n = (k: string) => {
+            const v = agg[k];
+            const f = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+            return Number.isFinite(f) ? f : 0;
+          };
+          setPresence({
+            listingName: typeof agg.listing_name === "string" ? agg.listing_name : "",
+            windowLabel: typeof agg.window_label === "string" ? agg.window_label : null,
+            searchViews: n("search_views"),
+            mapViews: n("map_views"),
+            websiteClicks: n("website_clicks"),
+            directionRequests: n("direction_requests"),
+            phoneCalls: n("phone_calls"),
+            publishedPosts: n("published_posts"),
+            avgPostingTime: n("avg_posting_time"),
+            avgResponseTimeH: n("avg_response_time_h"),
+            responsePct: n("response_pct"),
+            totalReviews: n("total_reviews"),
+            averageRating: n("average_rating"),
+          });
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId, channelListingIds]);
+
   useEffect(() => {
     apiFetch("/api/v1/channels/")
       .then((data) => {
@@ -236,11 +289,16 @@ function OverviewPanel() {
           (data.channels ?? []).filter(
             (c: { platform: string }) => c.platform === "google_reviews"
           )
-        ).map((c: { id: string; display_name: string | null }) => ({
+        );
+        setChannels(google.map((c: { id: string; display_name: string | null }) => ({
           id: c.id,
           label: c.display_name ?? "Google Business",
-        }));
-        setChannels(google);
+        })));
+        const idMap: Record<string, string> = {};
+        for (const c of google as { id: string; listing_id?: string | null }[]) {
+          if (c.id && c.listing_id) idMap[c.id] = c.listing_id;
+        }
+        setChannelListingIds(idMap);
       })
       .catch(() => setChannels([]));
   }, []);

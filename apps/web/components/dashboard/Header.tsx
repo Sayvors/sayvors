@@ -111,7 +111,7 @@ export default function Header() {
         onClick={() => setSearchOpen(true)}
         aria-label={t.header.searchLabel}
         title={`${t.header.searchLabel} (⌘K)`}
-        className="flex h-8 items-center gap-2 rounded-lg border border-deep-violet/[0.08] bg-deep-violet/[0.03] px-2.5 text-[12px] text-ink/40 outline-none transition hover:border-deep-violet/25 hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 sm:w-56 dark:text-fog/40 dark:hover:text-fog/60"
+        className="flex h-8 items-center gap-2 rounded-lg border border-deep-violet/[0.08] bg-deep-violet/[0.03] px-2.5 text-[12px] text-ink/40 outline-none transition hover:border-deep-violet/25 hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 ms-12 md:ms-0 sm:w-56 dark:text-fog/40 dark:hover:text-fog/60"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0" aria-hidden>
           <circle cx="11" cy="11" r="8" />

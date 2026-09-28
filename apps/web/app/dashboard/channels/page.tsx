@@ -150,8 +150,8 @@ function AiReplyControls({
   const enabled = cfg?.enabled ?? false;
   return (
     <div>
-      <div className="flex items-center gap-4">
-        <div className="flex-1">
+      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-4">
+        <div className="min-w-0 flex-1">
           <p className="text-[12px] text-ink/40 dark:text-fog/40">
             {enabled
               ? cfg?.approval_mode === "approval"
@@ -168,26 +168,28 @@ function AiReplyControls({
             </Link>
           )}
         </div>
-        <button
-          onClick={() => onToggleExpand(channel.id)}
-          className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-deep-violet transition hover:bg-deep-violet/[0.06]"
-        >
-          {expanded ? "Close" : "AI settings"}
-        </button>
-        <button
-          onClick={() => onToggle(channel.id, !enabled)}
-          disabled={busy}
-          className={`relative h-6 w-11 rounded-full transition ${
-            enabled ? "bg-emerald-500" : "bg-ink/15 dark:bg-fog/15"
-          } ${busy ? "opacity-50" : ""}`}
-          aria-label={enabled ? "Turn off auto-reply" : "Turn on auto-reply"}
-        >
-          <span
-            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-              enabled ? "left-[22px]" : "left-0.5"
-            }`}
-          />
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={() => onToggleExpand(channel.id)}
+            className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-deep-violet transition hover:bg-deep-violet/[0.06]"
+          >
+            {expanded ? "Close" : "AI settings"}
+          </button>
+          <button
+            onClick={() => onToggle(channel.id, !enabled)}
+            disabled={busy}
+            className={`relative h-6 w-11 shrink-0 rounded-full transition ${
+              enabled ? "bg-emerald-500" : "bg-ink/15 dark:bg-fog/15"
+            } ${busy ? "opacity-50" : ""}`}
+            aria-label={enabled ? "Turn off auto-reply" : "Turn on auto-reply"}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                enabled ? "left-[22px]" : "left-0.5"
+              }`}
+            />
+          </button>
+        </div>
       </div>
 
       {expanded && (
@@ -332,7 +334,7 @@ function LocalithListingRow({
           title={connected ? "Connected" : "Not connected"}
           className={`h-2 w-2 shrink-0 rounded-full ${connected ? "bg-emerald-500" : "bg-ink/20 dark:bg-fog/20"}`}
         />
-        <div className="min-w-[9rem] flex-1">
+        <div className="min-w-0 flex-1 sm:min-w-[9rem]">
           <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 truncate text-[13px] font-semibold text-ink dark:text-fog">
             <span className="truncate">{connected ? conn.listing_name : listing.name}</span>
             {connected ? (
@@ -910,7 +912,7 @@ function ConnectHub() {
   }, [localithListings, localithConns]);
 
   return (
-    <div className="h-full overflow-y-auto p-6 space-y-5">
+    <div className="h-full overflow-y-auto p-4 pb-24 space-y-5 sm:p-6">
       <div>
         <h1 className="text-[20px] font-bold text-ink dark:text-fog">Connect your channels</h1>
         <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
@@ -1139,7 +1141,7 @@ function ConnectHub() {
           aria-label="Confirm Localith disconnect"
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
         >
-          <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink">
+          <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-4 shadow-2xl dark:border-fog/[0.08] dark:bg-ink sm:p-5">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">
               Disconnect{disconnectTarget ? ` “${disconnectTarget.listing_name}”` : " branch"}?
             </h2>
@@ -1147,7 +1149,7 @@ function ConnectHub() {
               All data related to this branch will be <strong className="text-red-600">deleted from the database</strong> — location,
               reviews, stats, drafts and settings. Other branches are untouched. This cannot be undone.
             </p>
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button
                 onClick={() => setConfirmDisconnect(null)}
                 disabled={busyBranch !== null}

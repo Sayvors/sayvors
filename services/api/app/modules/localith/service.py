@@ -182,6 +182,98 @@ async def get_connection(
     return connections[0] if connections else None
 
 
+def _metric_num(value: object) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def aggregate_profiles(db: AsyncSession, user_id: str) -> dict | None:
+    """Cumulative Google-presence totals across every connected branch.
+
+    Additive metrics (views, clicks, calls, posts, reviews) are summed.
+    Rates and averages (response %, response time, posting time, rating)
+    are recomputed as review-weighted averages so multi-branch totals
+    stay meaningful instead of being nonsense sums.
+    """
+    from .models import LocalithConnection
+
+    connections = await list_connections(db, user_id)
+    if not connections:
+        return None
+
+    search = maps = clicks = directions = calls = posts = replies = 0
+    reviews_total = 0
+    rating_weighted = 0.0
+    pct_weighted = 0.0
+    pct_review_weight = 0
+    posting_times: list[float] = []
+    response_times: list[float] = []
+    starts: list[str] = []
+    ends: list[str] = []
+
+    for c in connections:
+        raw_perf = (c.raw_metrics_json or {}).get("listings")
+        perf = (
+            raw_perf[0]
+            if isinstance(raw_perf, list) and raw_perf and isinstance(raw_perf[0], dict)
+            else {}
+        )
+        raw_rev = (c.raw_item_metrics_json or {}).get("listings")
+        rev = (
+            raw_rev[0]
+            if isinstance(raw_rev, list) and raw_rev and isinstance(raw_rev[0], dict)
+            else {}
+        )
+
+        search += int(_metric_num(perf.get("googleSearchDesktop")) + _metric_num(perf.get("googleSearchMobile")))
+        maps += int(_metric_num(perf.get("googleMapsDesktop")) + _metric_num(perf.get("googleMapsMobile")))
+        clicks += int(_metric_num(perf.get("websiteClicks")))
+        directions += int(_metric_num(perf.get("directions")))
+        calls += int(_metric_num(perf.get("callClicks")))
+        posts += int(_metric_num(perf.get("numPublishedPosts")))
+
+        pt = _metric_num(perf.get("avgPostingTime"))
+        if pt > 0:
+            posting_times.append(pt)
+        rt = _metric_num(perf.get("avgReviewResponseTime"))
+        if rt > 0:
+            response_times.append(rt)
+
+        pct = _metric_num(perf.get("reviewResponsePercentage"))
+        n = int(_metric_num(rev.get("numberOfReviews") or c.total_reviews))
+        reviews_total += n
+        rating_weighted += _metric_num(rev.get("averageRating") or c.average_rating) * n
+        pct_weighted += pct * n
+        pct_review_weight += n
+        replies += int(_metric_num(rev.get("numberReplies")))
+
+        if c.metrics_start:
+            starts.append(str(c.metrics_start))
+        if c.metrics_end:
+            ends.append(str(c.metrics_end))
+
+    branches = len(connections)
+    return {
+        "listing_name": f"All businesses ({branches} branch{'es' if branches != 1 else ''})",
+        "branches": branches,
+        "window_label": f"{min(starts)} → {max(ends)}" if starts and ends else None,
+        "search_views": search,
+        "map_views": maps,
+        "website_clicks": clicks,
+        "direction_requests": directions,
+        "phone_calls": calls,
+        "published_posts": posts,
+        "replies": replies,
+        "total_reviews": reviews_total,
+        "average_rating": round(rating_weighted / reviews_total, 2) if reviews_total else None,
+        "avg_posting_time": round(sum(posting_times) / len(posting_times)) if posting_times else None,
+        "avg_response_time_h": round(sum(response_times) / len(response_times), 1) if response_times else None,
+        "response_pct": round(pct_weighted / pct_review_weight) if pct_review_weight else None,
+    }
+
+
 _ACTIVITY_LABELS = (
     ("impressions", "impressions"),
     ("directions", "direction requests"),

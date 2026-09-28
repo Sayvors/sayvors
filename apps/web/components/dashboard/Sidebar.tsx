@@ -165,13 +165,14 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Hamburger — mobile only, fixed so it does not shift page content. */}
+      {/* Hamburger — mobile only, fixed so it does not shift page content.
+          Vertically centered inside the 48px header (top-1 + h-10 = 4+40+4). */}
       <button
         onClick={() => setDrawerOpen(true)}
         aria-label={t.nav.openMenu}
         aria-expanded={drawerOpen}
         aria-controls="dashboard-sidebar"
-        className={`fixed ${dir === "rtl" ? "right-3" : "left-3"} top-3 z-40 flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-[#1e1547] text-white shadow-lg transition hover:bg-[#251b55] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-light md:hidden ${
+        className={`fixed ${dir === "rtl" ? "right-1" : "left-1"} top-1 z-40 flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-[#1e1547] text-white shadow-lg transition hover:bg-[#251b55] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-light md:hidden ${
           drawerOpen ? "pointer-events-none opacity-0" : "opacity-100"
         }`}
       >

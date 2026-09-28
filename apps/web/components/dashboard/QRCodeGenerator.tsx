@@ -121,7 +121,7 @@ export default function QRCodeGenerator() {
   }
 
   return (
-    <section aria-label="QR code generator" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+    <section aria-label="QR code generator" className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm sm:p-5">
       <div className="flex items-center gap-2">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
@@ -137,8 +137,8 @@ export default function QRCodeGenerator() {
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_auto]">
-        <div className="space-y-3">
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-[1fr_auto]">
+        <div className="order-2 space-y-3 sm:order-1">
           <div>
             <label htmlFor="qr-business-select" className="mb-1 block text-[11px] font-semibold text-ink/55">
               Business Profile
@@ -158,23 +158,23 @@ export default function QRCodeGenerator() {
           </div>
 
           {selected && (
-            <div className="rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3">
+            <div className="min-w-0 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3">
               <div className="flex items-center gap-2">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-deep-violet/10 text-deep-violet">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-deep-violet/10 text-deep-violet">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
                     <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
                     <circle cx="12" cy="10" r="3" />
                   </svg>
                 </span>
-                <div className="min-w-0">
-                  <p className="truncate text-[12px] font-bold text-ink">{selected.listing_name}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-[12px] font-bold leading-snug text-ink">{selected.listing_name}</p>
                   {selected.address && (
-                    <p className="truncate text-[10px] text-ink/45">{selected.address}</p>
+                    <p className="mt-0.5 break-words text-[10px] leading-snug text-ink/45">{selected.address}</p>
                   )}
                 </div>
               </div>
               {selected.total_reviews != null && (
-                <div className="mt-2 flex items-center gap-3 text-[10px] text-ink/45">
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink/45">
                   <span className="inline-flex items-center gap-1">
                     <span className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, Math.round(selected.average_rating ?? 0))))}</span>
                     {selected.average_rating?.toFixed(1)}
@@ -195,10 +195,10 @@ export default function QRCodeGenerator() {
         </div>
 
         {selected && (
-          <div className="flex flex-col items-center gap-2">
+          <div className="order-1 flex flex-col items-center gap-2 sm:order-2">
             <div
               ref={qrRef}
-              className="rounded-2xl border-2 border-ink/[0.06] bg-white p-4 shadow-sm"
+              className="w-fit rounded-2xl border-2 border-ink/[0.06] bg-white p-3 shadow-sm sm:p-4"
             >
               <QRCodeSVG
                 value={getReviewUrl(selected)}
@@ -206,6 +206,7 @@ export default function QRCodeGenerator() {
                 bgColor="#ffffff"
                 fgColor="#1a1230"
                 level="H"
+                className="h-auto w-36 sm:w-[180px]"
                 imageSettings={{
                   src: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNWIyZDhlIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMjEgMTBjMCA3LTkgMTMtOSAxM3MtOS02LTktMTNhOSA5IDAgMDExOCAweiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTAiIHI9IjMiLz48L3N2Zz4=",
                   height: 36,
