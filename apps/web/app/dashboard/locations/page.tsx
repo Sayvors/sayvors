@@ -877,10 +877,12 @@ export default function LocationsPage() {
                 copy={copy}
                 onSave={(service_area) =>
                   isBulk
-                    ? bulkSaveProfile("service area", { service_area }, [
-                        `Service area → ${service_area.join(", ") || "(cleared)"}`,
+                    ? bulkSaveProfile(copy.tabServiceArea, { service_area }, [
+                        service_area.length === 0
+                          ? copy.serviceAreaCleared
+                          : copy.serviceAreaSummary.replace("{areas}", service_area.join(", ")),
                       ])
-                    : saveProfile({ service_area }, "Service area saved.")
+                    : saveProfile({ service_area }, copy.serviceAreaSaved)
                 }
               />
             )}
@@ -892,13 +894,13 @@ export default function LocationsPage() {
                 onSave={(attributes) =>
                   isBulk
                     ? bulkSaveProfile(
-                        "attributes",
+                        copy.tabAttributes,
                         { attributes },
                         Object.keys(attributes).length === 0
-                          ? ["Attributes → (all removed)"]
+                          ? [copy.attributesCleared]
                           : Object.entries(attributes).map(([k, v]) => `${k}: ${v}`)
                       )
-                    : saveProfile({ attributes }, "Attributes saved.")
+                    : saveProfile({ attributes }, copy.attributesSaved)
                 }
               />
             )}
@@ -910,15 +912,18 @@ export default function LocationsPage() {
                 copy={copy}
                 onSave={(description, openingDate) =>
                   isBulk
-                    ? bulkSaveProfile("description", { description, opening_date: openingDate }, [
-                        `Description → ${description.slice(0, 120)}${description.length > 120 ? "…" : ""}`,
+                    ? bulkSaveProfile(copy.tabDescription, { description, opening_date: openingDate }, [
+                        copy.descriptionSummary.replace(
+                          "{text}",
+                          `${description.slice(0, 120)}${description.length > 120 ? "…" : ""}`
+                        ),
                       ])
-                    : saveProfile({ description, opening_date: openingDate }, "Description saved.")
+                    : saveProfile({ description, opening_date: openingDate }, copy.descriptionSaved)
                 }
               />
             )}
             {activeTab === "google-updates" && (
-              <GoogleUpdatesTab />
+              <GoogleUpdatesTab copy={copy} />
             )}
           </div>
 
@@ -1412,14 +1417,14 @@ function ServiceAreaTab({ initial, onSave, bulk, copy }: {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <SectionTitle title="Service Area" subtitle="Define the geographic areas your business serves." />
+      <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <SectionTitle title={copy.tabServiceArea} subtitle={copy.serviceAreaSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("service_area") ? <VariesBadge /> : null}
           <SourceBadge google={false} copy={copy} />
         </div>
       </div>
-      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Cities, districts or regions — e.g. Riyadh, Jeddah, Al Malqa district.</p>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.serviceAreaHint}</p>
       <div className="flex flex-wrap gap-2 mb-3">
         {areas.map((area) => (
           <span key={area} className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[12px] font-medium text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">
@@ -1431,17 +1436,31 @@ function ServiceAreaTab({ initial, onSave, bulk, copy }: {
         ))}
       </div>
       <div className="grid grid-cols-[1fr_auto] items-center gap-2">
-        <input value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addArea()} placeholder="e.g. Riyadh, Jeddah, Al Malqa district" className="input-field" />
-        <button onClick={addArea} className="btn-secondary">Add</button>
+        <input value={newArea} onChange={(e) => setNewArea(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addArea()} placeholder={copy.serviceAreaPlaceholder} className="input-field" />
+        <button onClick={addArea} className="btn-secondary">{copy.add}</button>
       </div>
-      <div className="flex justify-end pt-2">
+      <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
-          {saving ? "Saving..." : bulk ? `Apply to ${bulk.branches.length} branches` : "Save Service Area"}
+          {saving
+            ? copy.saving
+            : bulk
+              ? copy.applyToBranches.replace("{count}", String(bulk.branches.length))
+              : copy.saveServiceArea}
         </button>
       </div>
     </div>
   );
 }
+
+// Attribute values are compared against the API's _TRUE/_FALSE sets, so the
+// stored value stays English; only the visible option label is localised.
+const ATTRIBUTE_VALUE_OPTIONS = ["yes", "no", "limited"] as const;
+
+const ATTRIBUTE_VALUE_KEYS = {
+  yes: (c: LocationsCopy) => c.attrYes,
+  no: (c: LocationsCopy) => c.attrNo,
+  limited: (c: LocationsCopy) => c.attrLimited,
+} as const satisfies Record<string, (c: LocationsCopy) => string>;
 
 function AttributesTab({ initial, onSave, bulk, copy }: {
   initial?: Record<string, string>;
@@ -1480,14 +1499,14 @@ function AttributesTab({ initial, onSave, bulk, copy }: {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <SectionTitle title="Attributes" subtitle="Category-specific attributes (accessibility, amenities, payment, etc.)." />
+      <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <SectionTitle title={copy.tabAttributes} subtitle={copy.attributesSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("attributes") ? <VariesBadge /> : null}
           <SourceBadge google={false} copy={copy} />
         </div>
       </div>
-      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">Only well-known Google attributes sync (accessibility, parking, Wi-Fi…). Unknown names are stored but skipped on sync. Tap an example to fill the row:</p>
+      <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.attributesHint}</p>
       <div className="flex flex-wrap gap-1.5">
         {[["Wheelchair accessible entrance", "yes"], ["Free WiFi", "yes"], ["Outdoor seating", "yes"], ["Accepts credit cards", "yes"]].filter(([k]) => !(k in attrs)).map(([k, v]) => (
           <button key={k} onClick={() => { setNewKey(k); setNewValue(v); }} className="rounded-full bg-ink/[0.04] px-2.5 py-1 text-[11px] font-medium text-ink/60 transition hover:bg-deep-violet/10 hover:text-deep-violet dark:bg-fog/[0.06] dark:text-fog/60">
@@ -1496,9 +1515,10 @@ function AttributesTab({ initial, onSave, bulk, copy }: {
         ))}
       </div>
       <div className="space-y-3">
-        {Object.entries(attrs).length === 0 && <p className="text-[12px] text-ink/35 dark:text-fog/35">No attributes stored yet.</p>}
+        {Object.entries(attrs).length === 0 && <p className="text-[12px] text-ink/35 dark:text-fog/35">{copy.attributesEmpty}</p>}
         {Object.entries(attrs).map(([key, value]) => (
           <div key={key} className="grid grid-cols-[1fr_160px_auto] items-center gap-3">
+            {/* key is Google's attribute vocabulary (matched against ATTRIBUTE_IDS) — stays English */}
             <span className="truncate text-[13px] font-medium text-ink dark:text-fog" title={key}>{key}</span>
             <input
               value={value}
@@ -1507,7 +1527,7 @@ function AttributesTab({ initial, onSave, bulk, copy }: {
             />
             <button
               onClick={() => setAttrs(Object.fromEntries(Object.entries(attrs).filter(([k]) => k !== key)))}
-              aria-label={`Remove ${key}`}
+              aria-label={copy.removeAttribute.replace("{name}", key)}
               className="text-ink/30 transition hover:text-red-500 dark:text-fog/30"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
@@ -1516,17 +1536,22 @@ function AttributesTab({ initial, onSave, bulk, copy }: {
         ))}
       </div>
       <div className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[1fr_140px_auto]">
-        <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder="e.g. Wheelchair accessible entrance" className="input-field" />
-        <select value={newValue} onChange={(e) => setNewValue(e.target.value)} aria-label="Attribute value" className="input-field cursor-pointer text-center text-[12px] font-bold">
-          {["yes", "no", "limited"].map((v) => (
-            <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</option>
+        <input value={newKey} onChange={(e) => setNewKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAttr()} placeholder={copy.attributesKeyPlaceholder} className="input-field" />
+        {/* value is matched against the API's _TRUE/_FALSE sets — keep English on the wire, localise the label only */}
+        <select value={newValue} onChange={(e) => setNewValue(e.target.value)} aria-label={copy.attributeValueLabel} className="input-field cursor-pointer text-center text-[12px] font-bold">
+          {ATTRIBUTE_VALUE_OPTIONS.map((v) => (
+            <option key={v} value={v}>{ATTRIBUTE_VALUE_KEYS[v](copy)}</option>
           ))}
         </select>
-        <button onClick={addAttr} className="btn-secondary justify-self-start sm:justify-self-auto">Add</button>
+        <button onClick={addAttr} className="btn-secondary justify-self-start sm:justify-self-auto">{copy.add}</button>
       </div>
-      <div className="flex justify-end pt-2">
+      <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
-          {saving ? "Saving..." : bulk ? `Apply to ${bulk.branches.length} branches` : "Save Attributes"}
+          {saving
+            ? copy.saving
+            : bulk
+              ? copy.applyToBranches.replace("{count}", String(bulk.branches.length))
+              : copy.saveAttributes}
         </button>
       </div>
     </div>
@@ -1562,8 +1587,8 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy }: {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <SectionTitle title="Business Description" subtitle="Tell customers what your business is about." />
+      <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <SectionTitle title={copy.descriptionTitle} subtitle={copy.descriptionSubtitle} />
         <div className="flex items-center gap-2">
           {bulk?.varies.has("description") ? <VariesBadge /> : null}
           <SourceBadge google copy={copy} />
@@ -1574,14 +1599,16 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy }: {
         onChange={(e) => setDesc(e.target.value)}
         rows={6}
         maxLength={750}
-        placeholder="Example: Bright dental clinic in Riyadh — checkups, whitening and braces. Open Mon–Sat 9–6, emergency slots daily."
+        placeholder={copy.descriptionPlaceholder}
         className="w-full resize-y rounded-xl border border-ink/[0.08] bg-white p-3 text-[13px] text-ink outline-none transition placeholder:text-ink/25 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
       />
-      <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">{desc.length}/750 · first ~250 characters show in the Knowledge panel — put the essentials first</p>
+      <p className="text-right text-[11px] text-ink/30 dark:text-fog/30">
+        {copy.descriptionCounter.replace("{count}", String(desc.length))}
+      </p>
       <div>
         <label className="mb-1 block text-[12px] font-medium text-ink/60 dark:text-fog/60">
-          Opening date
-          <span className="ml-1.5 font-normal text-ink/40 dark:text-fog/40">when the business opened — shown on Google</span>
+          {copy.openingDateLabel}
+          <span className="ml-1.5 font-normal text-ink/40 dark:text-fog/40">{copy.openingDateHint}</span>
         </label>
         <input
           type="date"
@@ -1590,41 +1617,45 @@ function DescriptionTab({ initial, initialOpeningDate, onSave, bulk, copy }: {
           className="w-full max-w-xs rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         />
       </div>
-      <div className="flex justify-end pt-2">
+      <div className="pt-2 sm:flex sm:justify-end">
         <button onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
-          {saving ? "Saving..." : bulk ? `Apply to ${bulk.branches.length} branches` : "Save Description"}
+          {saving
+            ? copy.saving
+            : bulk
+              ? copy.applyToBranches.replace("{count}", String(bulk.branches.length))
+              : copy.saveDescription}
         </button>
       </div>
     </div>
   );
 }
 
-function GoogleUpdatesTab() {
+function GoogleUpdatesTab({ copy }: { copy: LocationsCopy }) {
   const [updates, setUpdates] = useState<{ id: string; field: string; current: string; proposed: string; status: string }[]>([]);
 
   return (
       <div className="space-y-5">
-        <SectionTitle title="Google Updates" subtitle="Review changes proposed by Google based on external sources." />
-        <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">e.g. Google may propose new hours, a different category, or a corrected address — accept or reject each one here.</p>
+        <SectionTitle title={copy.tabGoogleUpdates} subtitle={copy.googleUpdatesSubtitle} />
+        <p className="-mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.googleUpdatesHint}</p>
       {updates.length === 0 ? (
         <div className="flex flex-col items-center py-10">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 h-8 w-8 text-ink/20 dark:text-fog/20">
             <path d="M22 11.08V12a10 10 0 11-5.93-9.14" strokeLinecap="round" />
             <path d="M22 4L12 14.01l-3-3" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <p className="text-[13px] text-ink/40 dark:text-fog/40">No pending updates from Google.</p>
+          <p className="text-[13px] text-ink/40 dark:text-fog/40">{copy.googleUpdatesEmpty}</p>
         </div>
       ) : (
         <div className="space-y-2">
           {updates.map((u) => (
-            <div key={u.id} className="flex items-center gap-4 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
-              <div className="flex-1">
+            <div key={u.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-ink/[0.06] bg-ink/[0.02] p-3 sm:flex-nowrap sm:gap-4 dark:border-fog/[0.06] dark:bg-fog/[0.02]">
+              <div className="min-w-0 flex-1">
                 <p className="text-[12px] font-semibold text-ink dark:text-fog">{u.field}</p>
-                <p className="text-[11px] text-ink/40 dark:text-fog/40">Current: {u.current}</p>
-                <p className="text-[11px] text-deep-violet">Proposed: {u.proposed}</p>
+                <p className="text-[11px] text-ink/40 dark:text-fog/40">{copy.currentLabel} {u.current}</p>
+                <p className="text-[11px] text-deep-violet">{copy.proposedLabel} {u.proposed}</p>
               </div>
-              <button className="rounded-lg bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600">Accept</button>
-              <button className="rounded-lg border border-ink/[0.1] px-2.5 py-1 text-[11px] font-semibold text-ink/50 hover:bg-ink/[0.04] dark:text-fog/50">Reject</button>
+              <button className="rounded-lg bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600">{copy.accept}</button>
+              <button className="rounded-lg border border-ink/[0.1] px-2.5 py-1 text-[11px] font-semibold text-ink/50 hover:bg-ink/[0.04] dark:text-fog/50">{copy.reject}</button>
             </div>
           ))}
         </div>
