@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     # X-CSRF-Token double-submit header in split-domain deployments.
     # None = host-only cookies (local dev).
     COOKIE_DOMAIN: str | None = None
+    # Cookie transport flags. Both cookies are hardcoded Secure/SameSite=None
+    # by default, which is correct in production and silently breaks local dev:
+    # a browser refuses a Secure cookie over plain http, so the CSRF cookie
+    # never lands and EVERY non-GET call fails 403 "CSRF validation failed"
+    # while GETs (which skip the check) keep working — a confusing half-broken
+    # app. Set COOKIE_SECURE=false for http://localhost / ngrok-over-http dev.
+    COOKIE_SECURE: bool = True
+    COOKIE_SAMESITE: str = "none"  # none | lax | strict
     ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
 
     # ── File uploads ────────────────────────────────────
