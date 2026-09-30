@@ -622,25 +622,31 @@ async def _sync_connection_inner(
         connections = await list_connections(db, user.id)
         if not connections:
             raise ValueError("Connect a Localith listing before syncing.")
+        # Resolve every branch's identity into plain values up front. A failed
+        # branch rolls the session back below, and rollback expires ORM state:
+        # reading connection.listing_id afterwards would raise MissingGreenlet
+        # instead of syncing the next branch.
+        plan = [
+            (c.listing_id, c.listing_name) for c in connections
+        ]
         totals: dict[str, int | str] = {
             "fetched": 0, "new_reviews": 0, "branches": 0, "errors": 0,
         }
-        for connection in connections:
-            # Plain values up front: rollback() below expires ORM state,
-            # and sync attribute access afterwards raises MissingGreenlet.
-            listing_id = connection.listing_id
-            listing_name = connection.listing_name
-            owner_id = user.id
+        owner_id = user.id
+        for branch_listing_id, branch_listing_name in plan:
             try:
+                connection = await get_connection(db, owner_id, branch_listing_id)
+                if connection is None:
+                    raise ValueError("Connect a Localith listing before syncing.")
                 one = await _sync_single_connection(
-                    user, db, connection, metrics_days_back
+                    owner_id, db, connection, metrics_days_back
                 )
                 totals["fetched"] = int(totals["fetched"]) + int(one.get("fetched", 0))
                 totals["new_reviews"] = int(totals["new_reviews"]) + int(one.get("new_reviews", 0))
                 totals["branches"] = int(totals["branches"]) + 1
             except Exception as e:
                 logger.error(
-                    "Localith sync failed for listing %s: %s", listing_id, e
+                    "Localith sync failed for listing %s: %s", branch_listing_id, e
                 )
                 totals["errors"] = int(totals["errors"]) + 1
                 try:
@@ -649,9 +655,9 @@ async def _sync_connection_inner(
                     pass
                 await notify(
                     db, owner_id, "sync_failed",
-                    f"Sync failed for {listing_name or 'location'}",
+                    f"Sync failed for {branch_listing_name or 'location'}",
                     str(e)[:160],
-                    data={"listing_id": listing_id},
+                    data={"listing_id": branch_listing_id},
                     href="/dashboard/channels",
                 )
                 try:
@@ -663,12 +669,15 @@ async def _sync_connection_inner(
     connection = await get_connection(db, user.id, listing_id)
     if connection is None:
         raise ValueError("Connect a Localith listing before syncing.")
-    return await _sync_single_connection(user, db, connection, metrics_days_back)
+    return await _sync_single_connection(user.id, db, connection, metrics_days_back)
 
 
 async def _sync_single_connection(
-    user: User, db: AsyncSession, connection, metrics_days_back: int = 30
+    user_id: str, db: AsyncSession, connection, metrics_days_back: int = 30
 ) -> dict[str, int | str]:
+    """Sync one branch. Takes the owner's id, not their ORM row: the caller
+    rolls the session back when a branch fails, which expires every loaded
+    object, and a plain string survives that untouched."""
 
     from sqlalchemy.exc import IntegrityError as _IntegrityError
 
@@ -680,12 +689,12 @@ async def _sync_single_connection(
     # The insert runs in a SAVEPOINT so losing the race never disturbs the
     # sync's surrounding transaction.
     key = connection.listing_id
-    channel = await _find_by_key(db, user.id, "google_reviews", key)
+    channel = await _find_by_key(db, user_id, "google_reviews", key)
     if channel is None:
         # Legacy rows predate listing_key: one metadata scan, then heal.
         legacy = await db.execute(
             select(Channel).where(
-                Channel.user_id == user.id,
+                Channel.user_id == user_id,
                 Channel.platform == "google_reviews",
                 Channel.metadata_json.contains(connection.listing_id),
             )
@@ -696,7 +705,7 @@ async def _sync_single_connection(
     if channel is None:
         channel = Channel(
             id=str(uuid.uuid4()),
-            user_id=user.id,
+            user_id=user_id,
             platform="google_reviews",
             platform_user_id=connection.listing_google_id or connection.listing_id,
             display_name=connection.listing_name,
@@ -715,7 +724,7 @@ async def _sync_single_connection(
         except _IntegrityError:
             # Lost the race: discard our copy, reuse the winner's row.
             db.expunge(channel)
-            channel = await _find_by_key(db, user.id, "google_reviews", key)
+            channel = await _find_by_key(db, user_id, "google_reviews", key)
             if channel is None:
                 raise RuntimeError("Channel vanished mid-sync — retry the sync.")
 
@@ -749,7 +758,7 @@ async def _sync_single_connection(
         if insight is None:
             insight = ReviewInsight(
                 id=str(uuid.uuid4()),
-                user_id=user.id,
+                user_id=user_id,
                 channel_id=channel.id,
                 review_id=f"localith:{review_id}",
                 rating=review.rating,
@@ -773,7 +782,7 @@ async def _sync_single_connection(
             if len(pulled) < MAX_PER_SYNC:
                 pulled.append(review)
                 await notify(
-                    db, user.id, "review_pulled",
+                    db, user_id, "review_pulled",
                     f"New ★{review.rating} review from {review.reviewer or 'a customer'}",
                     (review.text or "(star rating only)")[:160],
                     data={"review_id": f"localith:{review_id}", "channel_id": channel.id,
@@ -813,12 +822,12 @@ async def _sync_single_connection(
             # This is what backfills reviews answered before Sayvors stored
             # the text, and what picks up an edit made directly in the Google
             # Business Profile. Runs regardless of `touched` because the reply
-            if review.media and user.id:
+            if review.media and user_id:
                 from ..analytics.review_media import sync_review_media
 
                 try:
                     insight.media = await sync_review_media(
-                        user.id, review.media, insight.media or []
+                        user_id, review.media, insight.media or []
                     )
                     touched = True
                 except Exception as e:  # photos are garnish, never fail a sync
@@ -868,7 +877,7 @@ async def _sync_single_connection(
                     else:
                         title = f"{reviewer} edited their ★{review.rating} review"
                     await notify(
-                        db, user.id, "review_edited",
+                        db, user_id, "review_edited",
                         title,
                         (review.text or "(text removed)")[:160],
                         data={"review_id": f"localith:{review_id}", "channel_id": channel.id,
@@ -884,7 +893,7 @@ async def _sync_single_connection(
     # ids in our `localith:<id>` form — do NOT re-prefix here, or every id stops
     # matching and the sweep buries the whole channel.
     removed_now = await _mark_removed_reviews(
-        db, channel, user.id, _fetched_review_ids(items)
+        db, channel, user_id, _fetched_review_ids(items)
     )
     if removed_now:
         logger.info(
@@ -931,7 +940,7 @@ async def _sync_single_connection(
     if moved:
         title = f"Synced {connection.listing_name or 'location'} — {', '.join(moved)}"
         await notify(
-            db, user.id, "sync_completed",
+            db, user_id, "sync_completed",
             title,
             None,
             data={"listing_id": connection.listing_id, "channel_id": channel.id,
@@ -1048,7 +1057,7 @@ async def _sync_single_connection(
                     "", "failed", str(e)[:2000],
                 )
                 await notify(
-                    db, user.id, "reply_failed",
+                    db, user_id, "reply_failed",
                     f"Could not draft an updated reply for the edited ★{review.rating} review",
                     "Open the Outbox and tap Retry once the AI is reachable.",
                     data={"review_id": full_review_id, "channel_id": channel.id,
@@ -1090,7 +1099,7 @@ async def _sync_single_connection(
                 "", "failed", str(e)[:2000],
             )
             await notify(
-                db, user.id, "reply_failed",
+                db, user_id, "reply_failed",
                 f"Could not draft a reply for ★{review.rating} review",
                 "Open the Outbox and tap Retry once the AI is reachable.",
                 data={"review_id": full_review_id, "channel_id": channel.id,
@@ -1118,7 +1127,7 @@ async def _sync_single_connection(
                     reply_text, "failed", str(e)[:2000],
                 )
                 await notify(
-                    db, user.id, "reply_failed",
+                    db, user_id, "reply_failed",
                     f"Auto-reply failed for ★{review.rating} review",
                     str(e)[:160],
                     data={"review_id": full_review_id, "channel_id": channel.id,
@@ -1140,7 +1149,7 @@ async def _sync_single_connection(
                 insight.previous_rating = None
                 insight.previous_review_text = None
             await notify(
-                db, user.id, "reply_posted",
+                db, user_id, "reply_posted",
                 f"Auto-replied to ★{review.rating} review from {review.reviewer or 'a customer'}",
                 (reply_text or "")[:160],
                 data={"review_id": full_review_id, "channel_id": channel.id,
@@ -1179,7 +1188,7 @@ async def _sync_single_connection(
             await enqueue_event(
                 "review.discovered",
                 {
-                    "user_id": user.id,
+                    "user_id": user_id,
                     "channel_id": channel.id,
                     "review_id": f"localith:{review_id}",
                     "rating": review.rating,

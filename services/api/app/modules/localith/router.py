@@ -141,7 +141,14 @@ async def sync_my_connection(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Localith sync failed: {e}")
+        # Log the cause, return an opaque message — a sync can fail on a DB
+        # or provider fault whose text names tables, hosts and query shapes.
+        import logging
+
+        logging.getLogger(__name__).exception("Localith sync failed: %s", e)
+        raise HTTPException(
+            status_code=502, detail="Localith sync failed — try again in a minute."
+        )
 
 
 @router.get("/connections", response_model=list[ConnectionResponse])

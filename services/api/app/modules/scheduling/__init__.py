@@ -50,29 +50,38 @@ def _stmt(blocking: bool, namespace: str, key: str | int):
 async def take_lock(db: AsyncSession, blocking: bool, namespace: str, key: str | int) -> bool:
     """Take the lock for key. Blocking waits; try-take returns False when
     another worker holds it (caller must SKIP, not wait). Trivially held
-    off-Postgres. Only call try-take on a clean session: a miss ends with
-    a rollback."""
+    off-Postgres.
+
+    Returns False for exactly one reason: the lock is held elsewhere. Every
+    other outcome raises — a statement that fails is a broken connection or a
+    cancelled wait, and the caller must not proceed on a session in that state.
+
+    The statement runs in a SAVEPOINT and this function NEVER rolls the
+    caller's session back. Session.rollback() expires every ORM object loaded
+    in the open transaction (commit does not — we run expire_on_commit=False),
+    so the next plain attribute access on an object the caller already holds
+    triggers a lazy load that AsyncSession cannot await: MissingGreenlet
+    ("greenlet_spawn has not been called"). That surfaced as a 502 "Localith
+    sync failed" for a request whose `User` row was loaded by the auth
+    dependency on this very session. Same isolation notify() uses for inserts.
+    """
     if not is_postgres(db):
         return True
     try:
-        if blocking:
-            await db.execute(_stmt(True, namespace, key))
-            return True
-        row = (await db.execute(_stmt(False, namespace, key))).scalar()
-        if row:
-            return True
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+        async with db.begin_nested():
+            if blocking:
+                await db.execute(_stmt(True, namespace, key))
+                return True
+            row = (await db.execute(_stmt(False, namespace, key))).scalar()
+            # A miss is a successful statement returning false — the
+            # transaction is healthy, so there is nothing to clean up.
+            return bool(row)
     except Exception as e:
-        logger.debug("Advisory lock unavailable, proceeding unlocked: %s", e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        return False
+        logger.error(
+            "Advisory lock statement failed ns=%r key=%r blocking=%s: %s",
+            namespace, key, blocking, e,
+        )
+        raise
 
 
 async def release_lock(db: AsyncSession, namespace: str, key: str | int) -> None:

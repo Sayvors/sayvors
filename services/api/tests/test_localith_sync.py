@@ -322,7 +322,7 @@ def _make_factory(connections, users):
 async def test_sync_all_once_skips_without_key(monkeypatch):
     monkeypatch.setattr(service, "_key_present", lambda: False)
     totals = await localith_worker.sync_all_once(
-        session_factory=_make_factory([SimpleNamespace(user_id="u1")], {})
+        session_factory=_make_factory([SimpleNamespace(user_id="u1", listing_id="a")], {})
     )
     assert totals == {"connections": 0, "fetched": 0, "new_reviews": 0, "errors": 0, "skipped": 0}
 
@@ -345,7 +345,10 @@ async def test_sync_all_once_counts_and_isolates_failures(monkeypatch):
         return {"fetched": 3, "new_reviews": 2}
 
     monkeypatch.setattr(service, "sync_connection", _fake_sync)
-    conns = [SimpleNamespace(user_id="u1"), SimpleNamespace(user_id="bad")]
+    conns = [
+        SimpleNamespace(user_id="u1", listing_id="a"),
+        SimpleNamespace(user_id="bad", listing_id="b"),
+    ]
     users = {"u1": SimpleNamespace(id="u1"), "bad": SimpleNamespace(id="bad")}
     totals = await localith_worker.sync_all_once(
         session_factory=_make_factory(conns, users)
@@ -390,7 +393,9 @@ async def test_sync_all_once_skips_missing_user(monkeypatch):
 
     monkeypatch.setattr(service, "sync_connection", _fake_sync)
     totals = await localith_worker.sync_all_once(
-        session_factory=_make_factory([SimpleNamespace(user_id="ghost")], {})
+        session_factory=_make_factory(
+            [SimpleNamespace(user_id="ghost", listing_id="listing-ghost")], {}
+        )
     )
     assert totals["connections"] == 0
     assert calls == []
@@ -823,7 +828,7 @@ async def test_sync_connection_loops_all_branches(db, user_id, monkeypatch):
 
     seen = []
 
-    async def _fake_single(user, db_, connection, days_back=30):
+    async def _fake_single(user_id, db_, connection, days_back=30):
         seen.append(connection.listing_id)
         return {"fetched": 1, "new_reviews": 2}
 
@@ -969,7 +974,7 @@ async def test_branch_failure_notifies(db, user_id, monkeypatch):
     ))
     await db.commit()
 
-    async def _boom(user, db_, connection, days_back=30):
+    async def _boom(user_id, db_, connection, days_back=30):
         raise RuntimeError("404 Not Found for url ghost")
 
     monkeypatch.setattr(service, "_sync_single_connection", _boom)
