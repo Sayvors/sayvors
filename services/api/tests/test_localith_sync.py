@@ -164,9 +164,64 @@ def test_apply_listing_snapshot_copies_everything():
     assert conn.is_disabled is False
     assert conn.total_reviews == 0
     assert conn.average_rating == 0.0
-    assert conn.last_review_on is None
+    # No lastReviewOn in this payload, so the snapshot must leave the column
+    # alone rather than stamping None over it (see the staleness guard below).
+    assert getattr(conn, "last_review_on", "untouched") == "untouched"
     assert conn.raw_listing_json["id"] == "abc123"
     assert conn.profile_synced_at is not None
+
+
+def test_apply_listing_snapshot_parses_timestamps_to_datetime():
+    """lastReviewOn/lastReplyOn must land as datetimes, never raw strings.
+
+    The columns are TIMESTAMPTZ: assigning the provider's string form raises
+    DataError from asyncpg on the next autoflush, which takes the whole sync
+    pass down with it.
+    """
+    from datetime import datetime as _dt
+
+    conn = SimpleNamespace(listing_name="Makkah")
+    service.apply_listing_snapshot(conn, {
+        "id": "x", "name": "Makkah",
+        "lastReviewOn": "2026-09-28 18:22:13",
+        "lastReplyOn": "2026-09-30T10:28:52Z",
+    })
+    assert isinstance(conn.last_review_on, _dt)
+    assert isinstance(conn.last_reply_on, _dt)
+    assert conn.last_review_on.year == 2026 and conn.last_review_on.month == 9
+
+
+def test_apply_listing_snapshot_never_erases_with_a_lagging_read():
+    """A read-back that still serves the PREVIOUS values must not clobber ours.
+
+    The provider is eventually consistent: immediately after a PATCH the
+    detail endpoint still returns the old phone/website. Writing that back
+    silently reverted the merchant's own successful edit, so the "no phone
+    number" alert came straight back and only a later background sync could
+    repair it.
+    """
+    conn = SimpleNamespace(
+        listing_name="Makkah", phone_number="+966 55 123 4567",
+        website_url="https://sayvors.com/", address="Azziziya",
+    )
+    service.apply_listing_snapshot(conn, {
+        "id": "x", "name": "Makkah",
+        "phoneNumber": None, "websiteUrl": None, "address": None,
+    })
+    assert conn.phone_number == "+966 55 123 4567"
+    assert conn.website_url == "https://sayvors.com/"
+    assert conn.address == "Azziziya"
+
+
+def test_apply_listing_snapshot_still_applies_real_values():
+    """The guard must not block a genuine update."""
+    conn = SimpleNamespace(listing_name="Makkah", phone_number=None, website_url=None)
+    service.apply_listing_snapshot(conn, {
+        "id": "x", "name": "Makkah",
+        "phoneNumber": "+92 346 0561173", "websiteUrl": "https://sayvors.com/",
+    })
+    assert conn.phone_number == "+92 346 0561173"
+    assert conn.website_url == "https://sayvors.com/"
 
 
 def test_parse_dt_edge_cases():

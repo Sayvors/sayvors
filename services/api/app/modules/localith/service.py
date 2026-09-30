@@ -139,25 +139,44 @@ def _as_bool(value: object) -> bool | None:
 
 
 def apply_listing_snapshot(connection, raw: dict) -> None:
-    """Copy a raw listing detail payload onto a LocalithConnection."""
+    """Copy a raw listing detail payload onto a LocalithConnection.
+
+    Empty fields never overwrite a value we already hold. The provider is
+    eventually consistent: right after a PATCH the read-back still returns the
+    PREVIOUS value, so writing it back silently reverted our own successful
+    update (the merchant edited the phone, the alert came straight back, and
+    only a later background sync could repair it). Guarding every field means
+    a lagging read can never erase a good write.
+    """
     norm = embedsocial.normalize_listing(raw)
     connection.listing_name = norm["name"] or connection.listing_name
     if norm["google_id"]:
         connection.listing_google_id = str(norm["google_id"])
-    connection.address = norm["address"]
-    connection.phone_number = norm["phone_number"]
-    connection.website_url = norm["website_url"]
-    connection.maps_url = norm["maps_url"]
-    connection.store_code = norm["store_code"]
-    connection.is_verified = _as_bool(norm["is_verified"])
-    connection.is_disabled = _as_bool(norm["is_disabled"])
-    connection.is_suspended = _as_bool(norm["is_suspended"])
+    if norm["address"]:
+        connection.address = norm["address"]
+    if norm["phone_number"]:
+        connection.phone_number = norm["phone_number"]
+    if norm["website_url"]:
+        connection.website_url = norm["website_url"]
+    if norm["maps_url"]:
+        connection.maps_url = norm["maps_url"]
+    if norm["store_code"]:
+        connection.store_code = norm["store_code"]
+    if norm["is_verified"] is not None:
+        connection.is_verified = _as_bool(norm["is_verified"])
+    if norm["is_disabled"] is not None:
+        connection.is_disabled = _as_bool(norm["is_disabled"])
+    if norm["is_suspended"] is not None:
+        connection.is_suspended = _as_bool(norm["is_suspended"])
     connection.total_reviews = _as_int(norm["total_reviews"])
     connection.average_rating = _as_float(norm["average_rating"])
-    connection.last_review_on = _parse_dt(norm["last_review_on"])
-    connection.last_reply_on = _parse_dt(norm["last_reply_on"])
+    if norm["last_review_on"]:
+        connection.last_review_on = _parse_dt(norm["last_review_on"])
+    if norm["last_reply_on"]:
+        connection.last_reply_on = _parse_dt(norm["last_reply_on"])
     connection.raw_listing_json = raw
     connection.profile_synced_at = datetime.now(timezone.utc)
+
 
 
 async def list_connections(db: AsyncSession, user_id: str) -> list:
