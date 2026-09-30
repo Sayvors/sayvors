@@ -184,6 +184,7 @@ const ar: Dict = {
       addressReadOnlyTitle: "العنوان متزامن من Google — عدّله من لوحة Google Business",
       fieldPhone: "الهاتف",
       fieldWebsite: "الموقع الإلكتروني",
+      notSet: "غير محدد",
       fieldStatus: "الحالة",
       statusActive: "نشط",
       statusInactive: "غير نشط",

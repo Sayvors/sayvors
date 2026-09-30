@@ -53,6 +53,14 @@ const ALL = "__all__";
 interface BulkScope {
   branches: { id: string; name: string }[];
   varies: Set<string>;
+  /**
+   * Per-branch current value for the fields that live on the Google-synced
+   * connection row (phone / website). In "All branches" mode there is no single
+   * profile to prefill from, so the inputs start blank — without this the
+   * merchant sees empty fields next to a filled-in "varies" badge and cannot
+   * tell what each branch actually holds.
+   */
+  fieldValues?: Record<string, Record<string, string>>;
 }
 
 interface BulkFailed {
@@ -506,9 +514,25 @@ export default function LocationsPage() {
      return set;
    }, [isBulk, locations, localithConns, bulkProfiles]);
 
-   const bulk: BulkScope | null = isBulk
-     ? { branches: bulkBranches, varies: bulkVaries }
-     : null;
+const bulk: BulkScope | null = isBulk
+      ? {
+          branches: bulkBranches,
+          varies: bulkVaries,
+          fieldValues: Object.fromEntries(
+            ["phone", "website"].map((f) => [
+              f,
+              Object.fromEntries(
+                locations.map((l) => {
+                  const c = localithConns[l.id];
+                  const v = f === "phone" ? c?.phone_number : c?.website_url;
+                  return [l.id, (v ?? "").trim()];
+                })
+              ),
+            ])
+          ),
+        }
+      : null;
+
 
    // Bulk mode has no single profile — leave the updates tab behind too.
    useEffect(() => {
@@ -1030,9 +1054,23 @@ function DetailsTab({
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label={copy.fieldPhone} varies={bulk?.varies.has("phone") ?? false}>
           <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+966 55 000 0000" className="input-field" />
+          {bulk?.fieldValues?.phone ? (
+            <BranchValues
+              branches={bulk.branches}
+              values={bulk.fieldValues.phone}
+              missingLabel={copy.notSet}
+            />
+          ) : null}
         </Field>
         <Field label={copy.fieldWebsite} varies={bulk?.varies.has("website") ?? false}>
           <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://..." className="input-field" />
+          {bulk?.fieldValues?.website ? (
+            <BranchValues
+              branches={bulk.branches}
+              values={bulk.fieldValues.website}
+              missingLabel={copy.notSet}
+            />
+          ) : null}
         </Field>
       </div>
       {!bulk && (
@@ -1957,6 +1995,44 @@ function VariesBadge() {
     >
       varies
     </span>
+  );
+}
+
+/**
+ * The value each branch currently holds, listed under the input in
+ * "All branches" mode. The inputs start blank there (no single profile to
+ * prefill from), so this is the only place the merchant can see what is
+ * actually set per branch — and, after a save, proof it landed.
+ */
+function BranchValues({
+  branches,
+  values,
+  missingLabel,
+}: {
+  branches: { id: string; name: string }[];
+  values: Record<string, string>;
+  missingLabel: string;
+}) {
+  if (branches.length < 2) return null;
+  return (
+    <ul className="mt-1.5 space-y-0.5 rounded-lg bg-ink/[0.03] p-2 dark:bg-fog/[0.04]">
+      {branches.map((b) => {
+        const v = (values[b.id] ?? "").trim();
+        return (
+          <li key={b.id} className="flex items-baseline gap-2 text-[11px] leading-snug">
+            <span className="min-w-0 flex-1 truncate text-ink/50 dark:text-fog/50">
+              {b.name}
+            </span>
+            <span
+              className={`shrink-0 tabular-nums ${v ? "font-medium text-ink/70 dark:text-fog/70" : "italic text-ink/30 dark:text-fog/30"}`}
+              dir="ltr"
+            >
+              {v || missingLabel}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

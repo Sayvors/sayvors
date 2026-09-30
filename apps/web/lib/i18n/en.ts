@@ -183,6 +183,7 @@ const en = {
       addressReadOnlyTitle: "Address is synced from Google — edit it in your Google Business dashboard",
       fieldPhone: "Phone",
       fieldWebsite: "Website",
+      notSet: "not set",
       fieldStatus: "Status",
       statusActive: "active",
       statusInactive: "inactive",
