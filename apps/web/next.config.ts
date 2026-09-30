@@ -10,6 +10,20 @@ const nextConfig: NextConfig = {
   // subdomain is randomly reassigned on every restart — hence the wildcard.
   // Dev-only: has no effect on `next build` / `next start`.
   allowedDevOrigins: ["*.ngrok-free.app", "*.ngrok.io", "*.trycloudflare.com"],
+  // Same-origin /api/* proxy to the FastAPI backend. Lets the SPA point
+  // NEXT_PUBLIC_API_URL at the PAGE origin (e.g. the ngrok HTTPS tunnel used
+  // for Meta Embedded Signup testing) so auth + csrf_token cookies are set on
+  // the page's own origin — cross-origin cookie jars can't be read by
+  // document.cookie, which silently breaks CSRF double-submit (403 on POSTs).
+  // Dormant in production: the SPA calls the API by absolute URL there.
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: "http://localhost:8000/api/:path*",
+      },
+    ];
+  },
   images: {
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 60 * 60 * 24 * 30,
