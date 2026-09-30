@@ -426,6 +426,22 @@ async def test_event_requires_start_date(db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_offer_requires_start_and_end_dates(db, user_id):
+    with pytest.raises(ValueError, match="both start and end dates"):
+        await posts.create_post(db, user_id, _draft(post_type="offer"))
+    with pytest.raises(ValueError, match="after its start date"):
+        await posts.create_post(
+            db, user_id,
+            _draft(post_type="offer", start_date=_future(48), end_date=_future(24)),
+        )
+    res = await posts.create_post(
+        db, user_id,
+        _draft(post_type="offer", start_date=_future(24), end_date=_future(48)),
+    )
+    assert res["post"]["start_date"] and res["post"]["end_date"]
+
+
+@pytest.mark.asyncio
 async def test_offer_maps_coupon_terms_cta_to_google(monkeypatch, db, user_id):
     await _connection(db, user_id)
     calls = []
@@ -440,6 +456,7 @@ async def test_offer_maps_coupon_terms_cta_to_google(monkeypatch, db, user_id):
     created = await posts.create_post(
         db, user_id,
         _draft(post_type="offer", title="20% Off",
+               start_date=_future(24), end_date=_future(48),
                coupon_code="SAVE20", terms_conditions="Dine-in only.",
                cta_type="shop", cta_url="https://shop.example.com"),
     )

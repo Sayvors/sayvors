@@ -376,15 +376,17 @@ function PostsInner() {
   const targetIds = view.kind === "create"
     ? selectedLocIds.filter(Boolean)
     : [postLocationId];
-  // Per-type rules mirror Google: events need start + end date & time.
+  // Per-type rules mirror Google: both events and offers need a complete,
+  // chronological start/end interval.
   const typeErr = (() => {
-    if (postType !== "event") return null;
-    if (!eventStart) return "Events need a start date and time.";
-    if (!eventEnd) return "Events need an end date and time.";
+    if (postType !== "event" && postType !== "offer") return null;
+    const noun = postType === "offer" ? "Offers" : "Events";
+    if (!eventStart) return `${noun} need a start date and time.`;
+    if (!eventEnd) return `${noun} need an end date and time.`;
     const s = new Date(eventStart).getTime();
     const e = new Date(eventEnd).getTime();
-    if (Number.isNaN(s) || Number.isNaN(e)) return "Pick valid event dates.";
-    if (e <= s) return "Event end must be after its start.";
+    if (Number.isNaN(s) || Number.isNaN(e)) return `Pick valid ${postType} dates.`;
+    if (e <= s) return `${noun} end must be after the start.`;
     return null;
   })();
   const valid = title.trim() && businessName.trim() && description.trim() && targetIds.length > 0 && targetIds.every(Boolean) && (!scheduleEnabled || scheduledAt) && !deleteErr && !typeErr;
@@ -426,7 +428,7 @@ function PostsInner() {
               title: title.trim(),
               post_type: postType,
               description: description.trim(),
-              start_date: postType === "event" && eventStart ? new Date(eventStart).toISOString() : null,
+              start_date: (postType === "event" || postType === "offer") && eventStart ? new Date(eventStart).toISOString() : null,
               end_date: (postType === "event" || postType === "offer") && eventEnd ? new Date(eventEnd).toISOString() : null,
               coupon_code: postType === "offer" && coupon.trim() ? coupon.trim() : null,
               terms_conditions: postType === "offer" && terms.trim() ? terms.trim() : null,
@@ -483,7 +485,7 @@ function PostsInner() {
         title: title.trim(),
         post_type: postType,
         description: description.trim(),
-        start_date: postType === "event" && eventStart ? new Date(eventStart).toISOString() : null,
+        start_date: (postType === "event" || postType === "offer") && eventStart ? new Date(eventStart).toISOString() : null,
         end_date: (postType === "event" || postType === "offer") && eventEnd ? new Date(eventEnd).toISOString() : null,
         coupon_code: postType === "offer" && coupon.trim() ? coupon.trim() : null,
         terms_conditions: postType === "offer" && terms.trim() ? terms.trim() : null,
@@ -1093,14 +1095,14 @@ function PostForm(props: {
           </div>
           <textarea value={p.description} onChange={(e) => p.setDescription(e.target.value)} rows={4} maxLength={1500} placeholder="Full post text customers will see... — or generate it with AI" className="input-field resize-y" />
         </div>
-        {p.postType === "event" && (
+        {(p.postType === "event" || p.postType === "offer") && (
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-[12px] font-medium text-ink/50">Event start *</label>
+              <label className="mb-1 block text-[12px] font-medium text-ink/50">{p.postType === "offer" ? "Offer starts *" : "Event start *"}</label>
               <input type="datetime-local" value={p.eventStart} onChange={(e) => p.setEventStart(e.target.value)} className="input-field" />
             </div>
             <div>
-              <label className="mb-1 block text-[12px] font-medium text-ink/50">Event end *</label>
+              <label className="mb-1 block text-[12px] font-medium text-ink/50">{p.postType === "offer" ? "Offer ends *" : "Event end *"}</label>
               <input type="datetime-local" value={p.eventEnd} onChange={(e) => p.setEventEnd(e.target.value)} className="input-field" />
             </div>
           </div>
@@ -1111,10 +1113,6 @@ function PostForm(props: {
               <div>
                 <label className="mb-1 block text-[12px] font-medium text-ink/50">Coupon code</label>
                 <input value={p.coupon} onChange={(e) => p.setCoupon(e.target.value)} maxLength={64} placeholder="e.g. SAVE20" className="input-field" />
-              </div>
-              <div>
-                <label className="mb-1 block text-[12px] font-medium text-ink/50">Offer end</label>
-                <input type="datetime-local" value={p.eventEnd} onChange={(e) => p.setEventEnd(e.target.value)} className="input-field" />
               </div>
             </div>
             <div>
