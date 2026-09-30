@@ -282,6 +282,145 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         )
 
 
+async def _handle_message_history(event: dict, data: dict) -> None:
+    """Persist historical messages from SMB App Data sync (no AI reply)."""
+    from ..models import ChannelMessage
+
+    phone_number_id = event.get("external_asset_id") or ""
+    wamid = event.get("external_event_id") or ""
+    from_wa = data.get("from") or ""
+    text = data.get("text")
+    msg_type = data.get("msg_type") or "text"
+    if not from_wa or not phone_number_id:
+        return
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, phone_number_id)
+        if asset is None:
+            return
+        tenant_id = asset.tenant_id
+
+        # Idempotent: skip if already stored
+        existing = (
+            await db.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.platform_message_id == wamid,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return
+
+        channel = await _channel_for(db, tenant_id, phone_number_id, asset.phone)
+        db.add(ChannelMessage(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_message_id=wamid[:200] or None,
+            direction="inbound",
+            content=text if text else f"[{msg_type} message]",
+            content_type=msg_type,
+            status="delivered",
+        ))
+        await db.commit()
+
+
+async def _handle_message_echo(event: dict, data: dict) -> None:
+    """Persist Business app echo messages as outbound (no AI reply)."""
+    from ..models import ChannelMessage
+
+    phone_number_id = event.get("external_asset_id") or ""
+    wamid = event.get("external_event_id") or ""
+    text = data.get("text")
+    msg_type = data.get("msg_type") or "text"
+    to_wa = data.get("to") or ""
+    if not phone_number_id:
+        return
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, phone_number_id)
+        if asset is None:
+            return
+        tenant_id = asset.tenant_id
+
+        existing = (
+            await db.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.platform_message_id == wamid,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return
+
+        channel = await _channel_for(db, tenant_id, phone_number_id, asset.phone)
+        db.add(ChannelMessage(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_message_id=wamid[:200] or None,
+            direction="outbound",
+            content=text if text else f"[{msg_type} message]",
+            content_type=msg_type,
+            status="delivered",
+        ))
+        await db.commit()
+
+
+async def _handle_smb_contacts(event: dict, data: dict) -> None:
+    """Receive SMB contacts sync data. Store for future use."""
+    phone_number_id = event.get("external_asset_id") or ""
+    contacts = data.get("contacts", [])
+    if not phone_number_id:
+        return
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, phone_number_id)
+        if asset is None:
+            return
+        # Append contacts to asset metadata (capped to avoid unbounded growth)
+        existing_contacts = (asset.asset_metadata or {}).get("smb_contacts", [])
+        merged = existing_contacts + contacts
+        # Keep last 10000 contacts to bound JSON column size
+        if len(merged) > 10000:
+            merged = merged[-10000:]
+        asset.asset_metadata = {
+            **(asset.asset_metadata or {}),
+            "smb_contacts": merged,
+        }
+        db.add(asset)
+        # Update connection sync status
+        conn = asset.connection
+        if conn:
+            meta = dict(conn.connection_metadata or {})
+            meta["smb_sync_status"] = "contacts_received"
+            conn.connection_metadata = meta
+            db.add(conn)
+        await db.commit()
+        logger.info(
+            "SMB contacts synced phone=%s count=%d",
+            phone_number_id, len(contacts),
+        )
+
+
+async def _handle_connection_disconnect(event: dict, data: dict) -> None:
+    """Handle PARTNER_REMOVED: revoke the coexistence connection."""
+    phone_number_id = event.get("external_asset_id") or ""
+    if not phone_number_id:
+        return
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, phone_number_id)
+        if asset is None:
+            return
+        tenant_id = asset.tenant_id
+        # Delegate to the existing disconnect service
+        from .service import disconnect as meta_disconnect
+        await meta_disconnect(db, tenant_id, "whatsapp", revoke=False)
+        logger.info(
+            "WhatsApp coexistence disconnected (PARTNER_REMOVED) tenant=%s",
+            tenant_id,
+        )
+
+
 async def _handle_message_status(event: dict, data: dict) -> None:
     """Mirror Cloud API delivery/read/failure states onto outbound rows."""
     from ..models import ChannelMessage
@@ -332,6 +471,14 @@ async def _process_message(value: bytes | None) -> None:
             await _handle_message_received(event, payload)
         elif event_type == "message.status":
             await _handle_message_status(event, payload)
+        elif event_type == "message.history":
+            await _handle_message_history(event, payload)
+        elif event_type == "message.echo":
+            await _handle_message_echo(event, payload)
+        elif event_type == "smb.contacts":
+            await _handle_smb_contacts(event, payload)
+        elif event_type == "connection.disconnect":
+            await _handle_connection_disconnect(event, payload)
         else:
             logger.debug("Ignoring meta event type %r on %s", event_type, TOPIC)
     except Exception as e:
