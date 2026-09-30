@@ -154,6 +154,10 @@ async def lifespan(app: FastAPI):
     analytics_consumer_task = asyncio.create_task(run_analytics_consumer())
     performance_sync_task = asyncio.create_task(run_performance_sync_worker())
 
+    # Start the Meta events consumer (WhatsApp messages -> AI reply -> send)
+    from .modules.channels.meta.consumer import run_meta_events_consumer
+    meta_consumer_task = asyncio.create_task(run_meta_events_consumer())
+
     # Start the outbox worker (drains events to Kafka)
     from .modules.outbox.worker import OutboxWorker
     outbox_worker = OutboxWorker()
@@ -167,6 +171,7 @@ async def lifespan(app: FastAPI):
     localith_sync_task.cancel()
     posts_publish_task.cancel()
     analytics_consumer_task.cancel()
+    meta_consumer_task.cancel()
     performance_sync_task.cancel()
     await outbox_worker.stop()
     try:
