@@ -4,6 +4,26 @@ Production path: **Embedded Signup v4** (client onboarding), not manual
 Graph API Explorer tokens. Sayvors acts as Tech Provider: the client adds
 their own payment method; Meta bills the client.
 
+## Two Embedded Signup configurations
+
+Meta scopes the two onboarding flows to **different Builder configurations**,
+so they cannot share a single `config_id`:
+
+| Flow | Button | Setting | What the merchant gets |
+|---|---|---|---|
+| Standard | "Create new" | `META_WHATSAPP_CONFIG_ID` | A new number registered on a Sayvors WABA |
+| Coexistence | "Connect existing" | `META_WHATSAPP_COEXISTENCE_CONFIG_ID` | Keeps their own number **and** their own WhatsApp Business App; Sayvors is added alongside |
+
+`build_auth_entry` returns both as `fb_config_id` and `fb_coexistence_config_id`;
+the frontend picks one from the `mode` the button passed. Coexistence also uses
+a different `extras` shape (`featureType: "whatsapp_business_app_onboarding"`
+instead of `feature: "app_only_install"`), because Meta's v4 app-only install
+would move the number off the merchant's app.
+
+Leaving `META_WHATSAPP_COEXISTENCE_CONFIG_ID` unset silently falls back to the
+standard config, which opens the **new-number** onboarding for a merchant who
+chose "Connect existing" — a confusing dead end. Set it explicitly.
+
 ## Tenant flow
 
 ```
@@ -37,7 +57,8 @@ rest). Subscribe to the `account_update` field to learn new ids.
 
 `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_API_VERSION` (default `v26.0`),
 `META_OAUTH_REDIRECT_URI`, `META_WEBHOOK_VERIFY_TOKEN`,
-`META_WHATSAPP_CONFIG_ID` (Embedded Signup Builder configuration id).
+`META_WHATSAPP_CONFIG_ID` (standard Embedded Signup Builder configuration id),
+`META_WHATSAPP_COEXISTENCE_CONFIG_ID` (Coexistence Builder configuration id).
 
 ## Tenant onboarding checklist
 

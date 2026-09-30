@@ -129,6 +129,8 @@ export default function MetaConnections({
   const [pinDraft, setPinDraft] = useState("");
   // phone_number_id awaiting registration (null = nothing pending).
   const [pendingReg, setPendingReg] = useState<string | null>(null);
+  // WhatsApp onboarding mode selection
+  const [waMode, setWaMode] = useState<"standard" | "coexistence" | null>(null);
   const params = useSearchParams();
   const urlProvider = (params?.get("provider") as MetaProvider | null) ?? null;
   const activeFilter = urlProvider;
@@ -199,7 +201,7 @@ export default function MetaConnections({
     }
   };
 
-  const connectWhatsApp = async () => {
+  const connectWhatsApp = async (mode: "standard" | "coexistence") => {
     // Meta's JS SDK hard-throws on non-HTTPS origins ("FB.login can no longer
     // be called from http pages"), which surfaces as a Next.js console-error
     // overlay and a dead popup. localhost is exempt; anything else needs TLS.
@@ -267,6 +269,10 @@ export default function MetaConnections({
       // Capture the Embedded Signup session payload (waba/phone/business ids).
       const session: Record<string, unknown> = {};
       const onSignupEvent = (resp: Record<string, unknown>) => {
+        // Diagnostic: Meta reports wizard failures here too, with
+        // data.error_message / data.error_type — the only place the
+        // generic "Sorry, something went wrong" page explains itself.
+        console.info("[Meta ES] session event", resp);
         const data = (resp.data ?? resp) as Record<string, unknown>;
         for (const k of ["waba_id", "phone_number_id", "business_id"]) {
           if (typeof data[k] === "string") session[k] = data[k];
@@ -274,6 +280,14 @@ export default function MetaConnections({
       };
       try {
         window.FB.Event?.subscribe("WA_EMBEDDED_SIGNUP", onSignupEvent);
+        if (mode === "coexistence") {
+          try {
+            window.FB.Event?.subscribe(
+              "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
+              onSignupEvent
+            );
+          } catch { /* older SDK */ }
+        }
       } catch {
         /* older SDK — continue without session capture */
       }
@@ -284,8 +298,18 @@ export default function MetaConnections({
         authResponse?: { code?: string; accessToken?: string } | null;
         status?: string;
       }) => {
+        // Diagnostic: see exactly what Meta handed back (code, error, cancel).
+        console.info("[Meta ES] login response", loginResp);
         try {
           window.FB?.Event?.unsubscribe("WA_EMBEDDED_SIGNUP", onSignupEvent);
+          if (mode === "coexistence") {
+            try {
+              window.FB?.Event?.unsubscribe(
+                "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
+                onSignupEvent
+              );
+            } catch { /* ignore */ }
+          }
         } catch {
           /* ignore */
         }
@@ -303,6 +327,7 @@ export default function MetaConnections({
             phone_number_id: (session.phone_number_id as string) ?? null,
             business_id: (session.business_id as string) ?? null,
             pin: pinDraft || null,
+            mode,
           });
           if (res.needs_pin) {
             // Connected, but the number cannot send until Meta has a 2-step
@@ -319,7 +344,17 @@ export default function MetaConnections({
             );
           } else {
             setPendingReg(null);
-            onNotice("ok", `WhatsApp connected and number registered! ${res.assets_found} asset(s) found — pick which number to use.`);
+            if (mode === "coexistence") {
+              onNotice(
+                "ok",
+                `WhatsApp connected (coexistence mode). Contact and history sync is in progress — this may take up to 24 hours.`
+              );
+            } else {
+              onNotice(
+                "ok",
+                `WhatsApp connected and number registered! ${res.assets_found} asset(s) found — pick which number to use.`
+              );
+            }
           }
           setPicked((prev) => {
             const updated = { ...prev, ["whatsapp"]: [] };
@@ -335,14 +370,24 @@ export default function MetaConnections({
       };
       // v4 Tech Provider flow: Meta requires app_only_install extras with the
       // solution id. Plain Embedded Signup keeps the simpler extras shape.
-      const extras: Record<string, unknown> = entry.solution_id
-        ? {
-            feature: "app_only_install",
-            version: 4,
-            sessionInfoVersion: 4,
-            setup: { solutionID: entry.solution_id },
-          }
-        : { setup: {}, sessionInfoVersion: "3" };
+      // Coexistence uses a different featureType.
+      let extras: Record<string, unknown>;
+      if (mode === "coexistence") {
+        extras = {
+          setup: {},
+          featureType: "whatsapp_business_app_onboarding",
+          sessionInfoVersion: "3",
+        };
+      } else if (entry.solution_id) {
+        extras = {
+          feature: "app_only_install",
+          version: 4,
+          sessionInfoVersion: 4,
+          setup: { solutionID: entry.solution_id },
+        };
+      } else {
+        extras = { setup: {}, sessionInfoVersion: "3" };
+      }
 
       // v4 delivers the session payload as a window message as well — capture
       // both channels so waba/phone/business ids are never missed.
@@ -364,13 +409,29 @@ export default function MetaConnections({
       };
       window.addEventListener("message", onSignupMessage);
 
+      // Coexistence uses its own Embedded Signup configuration: the merchant
+      // keeps their number and their WhatsApp Business App, so Meta must not
+      // show the new-number onboarding. Standard keeps the original config.
+      const configId =
+        mode === "coexistence"
+          ? entry.fb_coexistence_config_id || entry.fb_config_id
+          : entry.fb_config_id;
+
+      console.log("=== WHATSAPP ONBOARDING DEBUG ===");
+      console.log("mode:", mode);
+      console.log("config_id:", configId);
+      console.log("standard_config_id:", entry.fb_config_id);
+      console.log("coexistence_config_id:", entry.fb_coexistence_config_id);
+      console.log("solution_id:", entry.solution_id);
+      console.log("extras:", JSON.stringify(extras, null, 2));
+
       window.FB.login(
         (loginResp) => {
           window.removeEventListener("message", onSignupMessage);
           void onLogin(loginResp);
         },
         {
-          config_id: entry.fb_config_id,
+          config_id: configId,
           response_type: "code",
           override_default_response_type: true,
           extras,
@@ -530,15 +591,41 @@ export default function MetaConnections({
                 <p className="truncate text-[12px] text-ink/40 dark:text-fog/40">{label}</p>
               </div>
               {isDisconnected ? (
-                <div className="flex shrink-0 items-center gap-2 max-sm:w-full">
-                  <button
-                    onClick={() => (p.key === "whatsapp" ? connectWhatsApp() : connectOAuth(p.key))}
-                    disabled={busy === p.key || (p.key === "whatsapp" && sdkLoading)}
-                    className="min-h-8 rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-                  >
-                    {busy === p.key ? "…" : p.key === "whatsapp" && sdkLoading ? "Loading…" : "Connect"}
-                  </button>
-                </div>
+                <>
+                  <div className="flex shrink-0 items-center gap-2 max-sm:w-full">
+                    {p.key === "whatsapp" ? (
+                      <>
+                        <button
+                          onClick={() => { setWaMode("standard"); connectWhatsApp("standard"); }}
+                          disabled={busy === "whatsapp" || sdkLoading}
+                          className="min-h-8 rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                        >
+                          {busy === "whatsapp" && waMode === "standard" ? "…" : "Create new"}
+                        </button>
+                        <button
+                          onClick={() => { setWaMode("coexistence"); connectWhatsApp("coexistence"); }}
+                          disabled={busy === "whatsapp" || sdkLoading}
+                          className="min-h-8 rounded-lg border border-deep-violet/30 px-3.5 py-1.5 text-[12px] font-semibold text-deep-violet transition hover:bg-deep-violet/10 disabled:opacity-50"
+                        >
+                          {busy === "whatsapp" && waMode === "coexistence" ? "…" : "Connect existing"}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => connectOAuth(p.key)}
+                        disabled={busy === p.key}
+                        className="min-h-8 rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                      >
+                        {busy === p.key ? "…" : "Connect"}
+                      </button>
+                    )}
+                  </div>
+                  {p.key === "whatsapp" && (
+                    <p className="text-[10px] text-ink/30 dark:text-fog/30 mt-1">
+                      &ldquo;Create new&rdquo; registers a fresh number. &ldquo;Connect existing&rdquo; links a number already active on the WhatsApp Business app.
+                    </p>
+                  )}
+                </>
               ) : (
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button

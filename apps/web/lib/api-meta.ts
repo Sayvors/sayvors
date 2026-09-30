@@ -34,7 +34,15 @@ export interface MetaConnectEntry {
   provider: string;
   auth_url?: string | null;
   fb_app_id?: string | null;
+  /** Embedded Signup config for the standard (new number) flow. */
   fb_config_id?: string | null;
+  /**
+   * Embedded Signup config for the Coexistence flow ("Connect existing",
+   * the customer keeps their number + WhatsApp Business App). Meta scopes
+   * this to a separate Builder configuration, so the two flows cannot
+   * share one config_id. Server falls back to fb_config_id when unset.
+   */
+  fb_coexistence_config_id?: string | null;
   graph_api_version?: string | null;
   solution_id?: string | null;
   state: string;
@@ -55,6 +63,8 @@ export const postWhatsAppSession = (body: {
   business_id?: string | null;
   /** 6-digit two-step PIN. Without it Meta refuses to register the number. */
   pin?: string | null;
+  /** Onboarding mode: 'standard' (new number) or 'coexistence' (existing Business app number) */
+  mode?: "standard" | "coexistence" | null;
 }): Promise<{
   connected: boolean;
   assets_found: number;

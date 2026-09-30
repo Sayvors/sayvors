@@ -149,6 +149,14 @@ class Settings(BaseSettings):
     # Embedded Signup v4 Builder configuration id (App Dashboard ->
     # WhatsApp -> Embedded Signup Builder). Frontend passes it to FB.login.
     META_WHATSAPP_CONFIG_ID: str = ""
+    # Separate Builder configuration for WhatsApp Coexistence ("Connect
+    # existing" — the customer keeps their number and their own WhatsApp
+    # Business App). Meta scopes the two flows to different configurations,
+    # so they cannot share one config_id. Empty = fall back to
+    # META_WHATSAPP_CONFIG_ID, which is only correct if Meta has since
+    # merged the flows — otherwise coexistence silently opens the standard
+    # (new-number) onboarding and the merchant never sees their app.
+    META_WHATSAPP_COEXISTENCE_CONFIG_ID: str = ""
     # Tech Provider solution id (Tech Provider Portal -> Solutions). When
     # set, the frontend uses the v4 app_only_install FB.login extras.
     META_SOLUTION_ID: str = ""

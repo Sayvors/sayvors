@@ -26,6 +26,15 @@ class WhatsAppAdapter(MetaProviderAdapter):
         return {
             "fb_app_id": settings.META_APP_ID,
             "fb_config_id": settings.META_WHATSAPP_CONFIG_ID,
+            # Coexistence ("Connect existing") runs a different Builder
+            # configuration — the merchant keeps their own number and app, so
+            # Meta must not show the new-number onboarding. The frontend picks
+            # this one when the tenant chose coexistence. Falls back to the
+            # standard config only if it was left unset.
+            "fb_coexistence_config_id": (
+                settings.META_WHATSAPP_COEXISTENCE_CONFIG_ID
+                or settings.META_WHATSAPP_CONFIG_ID
+            ),
             "graph_api_version": settings.META_GRAPH_API_VERSION or "v26.0",
             # v4 Tech Provider flow extras (app_only_install). Empty when the
             # tenant isn't a Tech Provider — the frontend falls back to the
@@ -145,6 +154,25 @@ class WhatsAppAdapter(MetaProviderAdapter):
         data = resp.json()
         msgs = data.get("messages", [])
         return msgs[0].get("id", "") if msgs else ""
+
+    async def sync_smb_app_data(
+        self, phone_number_id: str, token: str, sync_type: str
+    ) -> None:
+        """Trigger SMB App Data sync (contacts or history).
+
+        Must be called within 24h of coexistence onboarding.
+        sync_type: "smb_app_state_sync" (contacts) or "history" (messages).
+        """
+        await self._graph(
+            "POST",
+            f"/{phone_number_id}/smb_app_data",
+            token,
+            json={"messaging_product": "whatsapp", "sync_type": sync_type},
+        )
+        logger.info(
+            "WhatsApp SMB app data sync triggered phone=%s type=%s",
+            phone_number_id, sync_type,
+        )
 
     async def validate_connection(self, connection, credentials: dict) -> tuple[bool, str]:
         token = credentials.get("access_token", "")
