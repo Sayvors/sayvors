@@ -177,18 +177,30 @@ async def meta_sdk(request: Request):
     if body is not None:
         # No trailing slash — the route is registered without one, and the
         # rewrite replaces the full escaped URL (including its trailing \/).
-        scheme, netloc = request.url.scheme, request.url.netloc
-        # Behind the dev tunnel chain (ngrok -> Next /api proxy) uvicorn honors
-        # X-Forwarded-Proto: https while the Host is localhost — but the API
-        # never serves TLS locally, so https://localhost:8000 is unreachable
-        # (connection refused -> bundle never loads -> fbAsyncInit never fires
-        # -> SDK timeout). Force http for local hosts.
-        if scheme == "https" and netloc.startswith(("localhost", "127.0.0.1")):
+        #
+        # The rewritten URL must be one the BROWSER can reach, not one this
+        # server can reach. Behind a proxy (ngrok -> Next /api rewrite -> us)
+        # every header points at the hop before us, so prefer the forwarded
+        # origin the client actually used. Falling back to `request.url` yields
+        # http://localhost:8000, which the tunnel page cannot load — the bundle
+        # fails, fbAsyncInit never fires, and Facebook sign-in silently
+        # disables itself.
+        scheme = (
+            request.headers.get("x-forwarded-proto")
+            or request.url.scheme
+        ).split(",")[0].strip()
+        netloc = (
+            request.headers.get("x-forwarded-host")
+            or request.headers.get("host")
+            or request.url.netloc
+        ).split(",")[0].strip()
+        # An https page can only load an https script, and a loopback API is
+        # not reachable from a tunnel anyway — so a forwarded origin wins, but
+        # a bare loopback host falls back to http rather than https (we serve no
+        # TLS locally, so https://localhost:8000 would be refused).
+        if netloc.startswith(("localhost", "127.0.0.1")):
             scheme = "http"
-        proxy_base = (
-            f"{scheme}://{netloc}"
-            "/api/v1/meta/connect-sdk-bundle"
-        )
+        proxy_base = f"{scheme}://{netloc}/api/v1/meta/connect-sdk-bundle"
         body = body.replace(
             _FB_BUNDLE_URL_ESCAPED, proxy_base.replace("/", "\\/")
         )
