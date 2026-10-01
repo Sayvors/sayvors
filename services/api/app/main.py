@@ -195,6 +195,7 @@ app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limi
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "Authorization", "X-CSRF-Token", "X-Requested-With"],

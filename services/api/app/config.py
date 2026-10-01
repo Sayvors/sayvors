@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # "production" arms the fail-closed startup validation below.
     ENVIRONMENT: str = "development"
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    # Optional regex for rotating dev-tunnel origins (e.g. free-tier ngrok
+    # gives the frontend a new subdomain on every restart). Starlette echoes
+    # the actual origin for regex matches, so credentials still work.
+    CORS_ORIGIN_REGEX: str | None = None
     REDIS_URL: str = "redis://localhost:6379/0"
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
 
