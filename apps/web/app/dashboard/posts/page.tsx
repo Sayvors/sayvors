@@ -176,7 +176,7 @@ function PostsInner() {
         } catch {
           /* fall through to channels */
         }
-        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         const googleChannels = (data.channels ?? [])
           .filter((channel: { platform: string }) => channel.platform === "google_reviews")
           .map((channel: { id: string; display_name: string | null }) => ({
@@ -438,7 +438,7 @@ function PostsInner() {
       let nextOverlay = deleteOverlay;
       for (const lid of list) {
         try {
-          const res = await apiFetch("/api/v1/posts/", {
+          const res = await apiFetch("/api/v1/posts", {
             method: "POST",
             body: JSON.stringify({
               listing_id: lid,

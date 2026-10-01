@@ -163,7 +163,7 @@ function ReviewsInner() {
           if (!cancelled && Array.isArray(conns) && conns.length > 0) {
             const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
             try {
-              const ch = await apiFetch("/api/v1/channels/?limit=100");
+              const ch = await apiFetch("/api/v1/channels?limit=100");
               const names: Record<string, string> = {};
               // listing_id -> channel id, so a group (keyed on listing_id) can
               // be resolved to the channel the reviews API filters by.
@@ -188,7 +188,7 @@ function ReviewsInner() {
         } catch {
           /* no Localith connections — fall through to channels */
         }
-        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         const googleChannels = (data.channels ?? [])
           .filter((channel: { platform: string }) => channel.platform === "google_reviews")
           .map((channel: { id: string; display_name: string | null }) => ({
@@ -255,7 +255,7 @@ function ReviewsInner() {
     let ids: string[] = locations.map((l) => l.channelId).filter(Boolean) as string[];
     if (ids.length === 0) {
       try {
-        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         ids = (data.channels ?? [])
           .filter((c: { platform: string }) => c.platform === "google_reviews")
           .map((c: { id: string }) => c.id);

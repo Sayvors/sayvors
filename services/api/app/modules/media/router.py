@@ -53,7 +53,7 @@ def _out(result: dict) -> MediaOut:
     return MediaOut(**result["media"])
 
 
-@router.get("/", response_model=list[MediaOut])
+@router.get("", response_model=list[MediaOut])
 async def list_media(
     listing_id: str | None = Query(None, max_length=64),
     user: User = Depends(get_current_user),

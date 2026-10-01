@@ -146,7 +146,7 @@ function MediaInner() {
         } catch {
           /* fall through to channels */
         }
-        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         const googleChannels = (data.channels ?? [])
           .filter((channel: { platform: string }) => channel.platform === "google_reviews")
           .map((channel: { id: string; display_name: string | null }) => ({
@@ -252,7 +252,7 @@ function MediaInner() {
         imageUrl = up.image_url as string;
         if (up.type === "VIDEO" || up.type === "PHOTO") mediaType = up.type;
       }
-      await apiFetch("/api/v1/media/", {
+      await apiFetch("/api/v1/media", {
         method: "POST",
         body: JSON.stringify({
           listing_id: selectedId,

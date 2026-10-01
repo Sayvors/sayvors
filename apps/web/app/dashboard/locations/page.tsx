@@ -463,7 +463,7 @@ export default function LocationsPage() {
           /* no Localith connections — fall through to channels */
         }
         try {
-          const data = await apiFetch("/api/v1/channels/?limit=100");
+          const data = await apiFetch("/api/v1/channels?limit=100");
           const googleChannels = (data.channels ?? [])
             .filter((channel: { platform: string }) => channel.platform === "google_reviews")
             .map((channel: { id: string; display_name: string | null; status: string }) => ({

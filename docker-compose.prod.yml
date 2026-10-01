@@ -31,7 +31,12 @@ services:
     # unique index (user_id, platform, listing_key), so racers can never twin
     # rows. Set UVICORN_WORKERS in .env.prod (default 2). On a 4GB box use 3
     # and raise mem_limit below to ~1536m; on 2GB keep 2.
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"
+    # Trust Caddy's X-Forwarded-Proto so the API knows it is behind https.
+    # Without it uvicorn reports scheme=http (default forwarded-allow-ips is
+    # 127.0.0.1; Caddy connects from a container IP), which breaks Secure
+    # cookies/CSRF and any absolute redirect. Only Caddy can reach this port —
+    # it is unpublished, so "*" is scoped to the compose network.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*' --workers ${UVICORN_WORKERS:-2}"
     depends_on:
       redis:
         condition: service_healthy

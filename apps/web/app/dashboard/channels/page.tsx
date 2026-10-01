@@ -634,7 +634,7 @@ function ConnectHub() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         if (cancelled) return;
         setChannels(data.channels ?? []);
         const configs: Record<string, AutoReply> = {};

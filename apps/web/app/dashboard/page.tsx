@@ -155,7 +155,7 @@ function AttentionQueue() {
         const [overview, connsData, channelData] = await Promise.all([
           fetchOverview(30, null).catch(() => null),
           apiFetch("/api/v1/integrations/localith/connections").catch(() => null),
-          apiFetch("/api/v1/channels/?limit=100").catch(() => null),
+          apiFetch("/api/v1/channels?limit=100").catch(() => null),
         ]);
         const conns = (Array.isArray(connsData) ? connsData : []) as {
           listing_name?: string; phone_number?: string | null; website_url?: string | null;
@@ -280,7 +280,7 @@ function AttentionQueue() {
               const [postRows, mediaRows] = await Promise.all([
                 (async () => {
                   try {
-                    const d = await apiFetch(`/api/v1/posts/?listing_id=${encodeURIComponent(lid)}`);
+                    const d = await apiFetch(`/api/v1/posts?listing_id=${encodeURIComponent(lid)}`);
                     return (Array.isArray(d) ? d : []) as Record<string, unknown>[];
                   } catch {
                     return [] as Record<string, unknown>[];
@@ -288,7 +288,7 @@ function AttentionQueue() {
                 })(),
                 (async () => {
                   try {
-                    const d = await apiFetch(`/api/v1/media/?listing_id=${encodeURIComponent(lid)}`);
+                    const d = await apiFetch(`/api/v1/media?listing_id=${encodeURIComponent(lid)}`);
                     const arr = Array.isArray(d) ? d : (d as { media?: unknown }).media;
                     return (Array.isArray(arr) ? arr : []) as Record<string, unknown>[];
                   } catch {
@@ -1111,7 +1111,7 @@ function BusinessPulse() {
     let cancelled = false;
     async function loadPulse() {
       try {
-        const channelData = await apiFetch("/api/v1/channels/?limit=100");
+        const channelData = await apiFetch("/api/v1/channels?limit=100");
         const rawChannels: DashboardChannel[] = (channelData.channels ?? []).filter(
           (channel: DashboardChannel) => channel.platform === "google_reviews"
         );

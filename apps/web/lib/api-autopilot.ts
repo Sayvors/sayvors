@@ -20,7 +20,7 @@ export interface PilotChannel {
  * Per-channel fine-tuning stays on the Automations page.
  */
 export async function fetchPilotChannels(): Promise<PilotChannel[]> {
-  const data = await apiFetch("/api/v1/channels/?limit=100");
+  const data = await apiFetch("/api/v1/channels?limit=100");
   const google: { id: string; display_name: string | null; platform: string }[] = (
     data.channels ?? []
   ).filter((c: { platform: string }) => c.platform === "google_reviews");

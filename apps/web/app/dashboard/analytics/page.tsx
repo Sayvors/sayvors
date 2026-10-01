@@ -349,7 +349,7 @@ function OverviewPanel() {
   }, [channelId, channelListingIds]);
 
   useEffect(() => {
-    apiFetch("/api/v1/channels/")
+    apiFetch("/api/v1/channels")
       .then((data) => {
         const google = dedupeBusinesses(
           (data.channels ?? []).filter(

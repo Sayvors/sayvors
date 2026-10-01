@@ -76,7 +76,7 @@ export default function ServicesPage() {
   useEffect(() => {
     async function load() {
       try {
-        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         const google = (data.channels ?? []).filter((channel: Channel & { platform: string }) => channel.platform === "google_reviews");
         setChannels(google);
         setSelectedId(google.length ? ALL_BRANCHES : "");

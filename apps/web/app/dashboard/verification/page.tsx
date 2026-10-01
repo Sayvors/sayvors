@@ -30,7 +30,7 @@ export default function VerificationPage() {
   useEffect(() => {
     async function loadChannels() {
       try {
-        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         const google = (data.channels ?? []).filter((channel: Channel & { platform: string }) => channel.platform === "google_reviews");
         setChannels(google);
         setSelectedId(google[0]?.id ?? "");

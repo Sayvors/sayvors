@@ -199,7 +199,7 @@ export default function SettingsPage() {
     (async () => {
       try {
         const [chData, diaData, toneData, prof] = await Promise.all([
-          apiFetch("/api/v1/channels/?limit=100"),
+          apiFetch("/api/v1/channels?limit=100"),
           apiFetch("/api/v1/review-engine/dialects").catch(() => ({})),
           apiFetch("/api/v1/review-engine/tones").catch(() => []),
           getProfile().catch(() => null),

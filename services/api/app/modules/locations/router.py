@@ -28,7 +28,7 @@ from .schemas import (
 router = APIRouter(prefix="/api/v1/locations", tags=["locations"])
 
 
-@router.get("/", response_model=list[LocationSummary])
+@router.get("", response_model=list[LocationSummary])
 async def list_locations(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
