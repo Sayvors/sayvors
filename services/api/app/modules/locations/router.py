@@ -1,10 +1,14 @@
 """Locations API — list, read and update business locations.
 
 GET    /api/v1/locations/                list (Localith listing + Google channels)
+GET    /api/v1/locations/groups          named sets of listings for bulk actions
+POST   /api/v1/locations/groups          create a group
+PATCH  /api/v1/locations/groups/{id}     rename / change members
+DELETE /api/v1/locations/groups/{id}     delete a group
 GET    /api/v1/locations/{listing_id}    merged profile (Google snapshot + local store)
 PUT    /api/v1/locations/{listing_id}    update (description pushes to Google)
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +16,14 @@ from ...core.deps import get_current_user, get_db
 from ..channels.models import Channel
 from ..users.models import User
 from . import service
-from .schemas import LocationProfileOut, LocationSummary, LocationUpdate
+from .schemas import (
+    LocationGroupIn,
+    LocationGroupOut,
+    LocationGroupUpdate,
+    LocationProfileOut,
+    LocationSummary,
+    LocationUpdate,
+)
 
 router = APIRouter(prefix="/api/v1/locations", tags=["locations"])
 
@@ -59,6 +70,54 @@ async def list_locations(
                 source="channel",
             ))
     return out
+
+
+# Declared before /{listing_id} so "groups" is never swallowed as a listing ID.
+@router.get("/groups", response_model=list[LocationGroupOut])
+async def list_location_groups(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.list_groups(db, user.id)
+
+
+@router.post("/groups", response_model=LocationGroupOut, status_code=201)
+async def create_location_group(
+    body: LocationGroupIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await service.create_group(db, user.id, body.name, body.listing_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.patch("/groups/{group_id}", response_model=LocationGroupOut)
+async def update_location_group(
+    group_id: str,
+    body: LocationGroupUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        out = await service.update_group(db, user.id, group_id, body.name, body.listing_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if out is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return out
+
+
+@router.delete("/groups/{group_id}", status_code=204)
+async def delete_location_group(
+    group_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not await service.delete_group(db, user.id, group_id):
+        raise HTTPException(status_code=404, detail="Group not found")
+    return Response(status_code=204)
 
 
 @router.get("/{listing_id}", response_model=LocationProfileOut)

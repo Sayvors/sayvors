@@ -31,6 +31,13 @@ interface LocationOption {
   status: string;
 }
 
+interface LocationGroup {
+  id: string;
+  name: string;
+  listing_ids: string[];
+  position: number;
+}
+
 interface LocalithConn {
   listing_id: string;
   listing_name: string;
@@ -49,6 +56,11 @@ interface LocalithConn {
    "varies" set) and blank initials; saving fans out per branch. -- */
 
 const ALL = "__all__";
+/* Groups ride in the same <select> as single locations and "All branches".
+   A group value is prefixed so it can never collide with a listing ID. */
+const GROUP_PREFIX = "__group__:";
+const groupValue = (id: string) => `${GROUP_PREFIX}${id}`;
+const parseGroupValue = (v: string) => (v.startsWith(GROUP_PREFIX) ? v.slice(GROUP_PREFIX.length) : null);
 
 interface BulkScope {
   branches: { id: string; name: string }[];
@@ -206,9 +218,29 @@ export default function LocationsPage() {
     failed: BulkFailed[];
     onRetry: () => void;
   }>(null);
+  const [groups, setGroups] = useState<LocationGroup[]>([]);
+  const [groupsOpen, setGroupsOpen] = useState(false);
 
-  const isBulk = selectedId === ALL;
-  const bulkBranches = isBulk ? locations.map((l) => ({ id: l.id, name: l.name })) : [];
+  const selectedGroupId = selectedId ? parseGroupValue(selectedId) : null;
+  const selectedGroup = selectedGroupId
+    ? groups.find((g) => g.id === selectedGroupId) ?? null
+    : null;
+  const isBulk = selectedId === ALL || selectedGroup !== null;
+  /* A group narrows the bulk scope to its own members. Locations the group
+     references but that are no longer connected are dropped rather than
+     shown as permanently failing. Memoised because the bulk-profile effect
+     keys on it — a fresh array each render would refetch on every keystroke. */
+  const bulkBranches = useMemo(
+    () =>
+      isBulk
+        ? (selectedGroup
+            ? locations
+                .filter((l) => selectedGroup.listing_ids.includes(l.id))
+                .map((l) => ({ id: l.id, name: l.name }))
+            : locations.map((l) => ({ id: l.id, name: l.name })))
+        : [],
+    [isBulk, selectedGroup, locations],
+  );
 
   const showBanner = (kind: "ok" | "err", text: string) => setBanner({ kind, text });
 
@@ -465,19 +497,21 @@ export default function LocationsPage() {
      });
    }, [selectedId, localithConns, isBulk]);
 
-   // Bulk mode: load every branch profile for "varies" comparison.
+   // Bulk mode: load every branch profile in scope for "varies" comparison.
    useEffect(() => {
-     if (!isBulk || locations.length === 0) {
+     const scope = bulkBranches;
+     if (!isBulk || scope.length === 0) {
        setBulkProfiles({});
        return;
      }
      let cancelled = false;
      (async () => {
        const entries = await Promise.all(
-         locations.map(async (l) => {
+         scope.map(async (l) => {
            try {
              const data = await apiFetch(`/api/v1/locations/${l.id}`);
              return [l.id, data as FullProfile] as const;
+
            } catch {
              return null;
            }
@@ -490,13 +524,13 @@ export default function LocationsPage() {
        }
      })();
      return () => { cancelled = true; };
-   }, [isBulk, locations]);
+    }, [isBulk, bulkBranches]);
 
    // Per-field "varies across branches" set for bulk mode.
    const bulkVaries = useMemo(() => {
      const set = new Set<string>();
-     if (!isBulk || locations.length < 2) return set;
-     const ids = locations.map((l) => l.id);
+     if (!isBulk || bulkBranches.length < 2) return set;
+     const ids = bulkBranches.map((b) => b.id);
      const differs = (fn: (id: string) => unknown) => {
        const vals = ids.map((id) => JSON.stringify(fn(id) ?? null));
        return new Set(vals).size > 1;
@@ -512,7 +546,7 @@ export default function LocationsPage() {
      if (differs((id) => bulkProfiles[id]?.attributes ?? {})) set.add("attributes");
      if (differs((id) => bulkProfiles[id]?.description || "")) set.add("description");
      return set;
-   }, [isBulk, locations, localithConns, bulkProfiles]);
+    }, [isBulk, bulkBranches, localithConns, bulkProfiles]);
 
 const bulk: BulkScope | null = isBulk
       ? {
@@ -522,7 +556,7 @@ const bulk: BulkScope | null = isBulk
             ["phone", "website"].map((f) => [
               f,
               Object.fromEntries(
-                locations.map((l) => {
+                bulkBranches.map((l) => {
                   const c = localithConns[l.id];
                   const v = f === "phone" ? c?.phone_number : c?.website_url;
                   return [l.id, (v ?? "").trim()];
@@ -580,6 +614,21 @@ const bulk: BulkScope | null = isBulk
     { key: "google-updates", label: copy.tabGoogleUpdates },
   ];
 
+  // Groups are shared across pages, so fetch once on mount and refresh from
+  // the modal. A failure here must not block the page — groups are optional.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiFetch("/api/v1/locations/groups");
+        if (!cancelled && Array.isArray(data)) setGroups(data as LocationGroup[]);
+      } catch {
+        /* groups unavailable — the dropdown just won't list any */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Deep links: /dashboard/locations?tab=hours etc.
   useEffect(() => {
     try {
@@ -618,6 +667,11 @@ const bulk: BulkScope | null = isBulk
               {locations.length > 1 && (
                 <option value={ALL}>{copy.allBranches.replace("{count}", String(locations.length))}</option>
               )}
+              {groups.map((g) => (
+                <option key={g.id} value={groupValue(g.id)}>
+                  {g.name} ({g.listing_ids.filter((id) => locations.some((l) => l.id === id)).length})
+                </option>
+              ))}
               {locations.map((loc) => (
                 <option key={loc.id} value={loc.id}>
                   {loc.name}
@@ -630,6 +684,17 @@ const bulk: BulkScope | null = isBulk
             </svg>
           </div>
           <div className="flex w-full flex-wrap items-center gap-3 xl:w-auto xl:flex-nowrap">
+            <button
+              onClick={() => setGroupsOpen(true)}
+              className="min-h-9 rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 hover:bg-ink/[0.02] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+            >
+              {copy.manageGroups}
+              {groups.length > 0 && (
+                <span className="ms-1.5 rounded-full bg-deep-violet/10 px-1.5 py-0.5 text-[10px] font-bold text-deep-violet">
+                  {groups.length}
+                </span>
+              )}
+            </button>
             <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
               {locations.length ? copy.googleConnected : copy.googleNotConnected}
             </span>
@@ -735,6 +800,26 @@ const bulk: BulkScope | null = isBulk
             </div>
           </div>
         </div>
+      )}
+
+      {/* Location groups — create, rename, reassign members */}
+      {groupsOpen && (
+        <GroupsModal
+          groups={groups}
+          locations={locations}
+          copy={copy}
+          onClose={() => setGroupsOpen(false)}
+          onChanged={(next) => {
+            setGroups(next);
+            /* If the open group just lost members or was deleted, fall back
+               to a single location rather than an empty bulk scope. */
+            if (selectedGroupId) {
+              const still = next.find((g) => g.id === selectedGroupId);
+              if (!still) setSelectedId(locations[0]?.id ?? null);
+              else if (!locations.some((l) => l.id === still.listing_ids[0])) setSelectedId(locations[0]?.id ?? null);
+            }
+          }}
+        />
       )}
 
       {/* Add-location wizard (Google create workflow, draft-only until Google connects) */}
@@ -1755,6 +1840,191 @@ const VERIFY_METHODS: { key: VerifyMethod; label: string; hint: string }[] = [
   { key: "call", label: "Phone call", hint: "Google calls the business phone with a PIN." },
   { key: "postcard", label: "Postcard", hint: "A PIN arrives by mail in several days." },
 ];
+
+function GroupsModal({
+  groups,
+  locations,
+  copy,
+  onClose,
+  onChanged,
+}: {
+  groups: LocationGroup[];
+  locations: LocationOption[];
+  copy: LocationsCopy;
+  onClose: () => void;
+  onChanged: (next: LocationGroup[]) => void;
+}) {
+  const [name, setName] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const editing = editingId ? groups.find((g) => g.id === editingId) ?? null : null;
+
+  const startEdit = (g: LocationGroup) => {
+    setEditingId(g.id);
+    setName(g.name);
+    setPicked(g.listing_ids);
+    setError(null);
+  };
+
+  const reset = () => {
+    setEditingId(null);
+    setName("");
+    setPicked([]);
+    setError(null);
+  };
+
+  const toggle = (id: string) =>
+    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  /* Group members that are no longer connected still show as checked-but-
+     missing rather than vanishing, so an accidental disconnect doesn't
+     silently rewrite somebody's group. */
+  const missingIds = editing
+    ? editing.listing_ids.filter((id) => !locations.some((l) => l.id === id))
+    : [];
+
+  const save = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (picked.length === 0) {
+      setError(copy.groupNeedsLocations);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const next = editingId
+        ? await apiFetch(`/api/v1/locations/groups/${editingId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ name: trimmed, listing_ids: picked }),
+          })
+        : await apiFetch("/api/v1/locations/groups", {
+            method: "POST",
+            body: JSON.stringify({ name: trimmed, listing_ids: picked }),
+          });
+      onChanged(editingId ? groups.map((g) => (g.id === editingId ? (next as LocationGroup) : g)) : [...groups, next as LocationGroup]);
+      reset();
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : "";
+      setError(/already have a group/i.test(detail) ? copy.groupNameTaken : detail || copy.groupNameTaken);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (g: LocationGroup) => {
+    if (!window.confirm(copy.groupDeleteConfirm)) return;
+    setBusy(true);
+    try {
+      await apiFetch(`/api/v1/locations/groups/${g.id}`, { method: "DELETE" });
+      onChanged(groups.filter((x) => x.id !== g.id));
+      if (editingId === g.id) reset();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px]" role="presentation" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={copy.manageGroupsTitle}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <SectionTitle title={copy.manageGroupsTitle} subtitle={copy.manageGroupsSubtitle} />
+          <button onClick={onClose} aria-label="Close" className="rounded-lg px-2 py-1 text-[16px] font-bold text-ink/40 transition hover:bg-ink/[0.04] dark:text-fog/40">
+            ×
+          </button>
+        </div>
+
+        {groups.length > 0 && (
+          <ul className="mb-4 space-y-1.5">
+            {groups.map((g) => {
+              const live = g.listing_ids.filter((id) => locations.some((l) => l.id === id));
+              return (
+                <li key={g.id} className="flex items-center gap-2 rounded-xl border border-ink/[0.06] px-3 py-2 dark:border-fog/[0.06]">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-semibold text-ink dark:text-fog">{g.name}</p>
+                    <p className="text-[11px] text-ink/45 dark:text-fog/45">
+                      {live.length === 0 ? copy.groupEmpty : `${live.length} · ${live.map((id) => locations.find((l) => l.id === id)?.name ?? id).join(", ")}`}
+                    </p>
+                  </div>
+                  <button onClick={() => startEdit(g)} className="rounded-lg px-2 py-1 text-[12px] font-semibold text-ink/55 transition hover:bg-ink/[0.04] dark:text-fog/55">
+                    {copy.groupEdit}
+                  </button>
+                  <button onClick={() => remove(g)} disabled={busy} className="rounded-lg px-2 py-1 text-[12px] font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-40 dark:text-red-400">
+                    {copy.groupDelete}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <div className="space-y-3 border-t border-ink/[0.06] pt-4 dark:border-fog/[0.06]">
+          <label className="block">
+            <span className="mb-1 block text-[12px] font-medium text-ink/60 dark:text-fog/60">{copy.groupName}</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={copy.groupNamePlaceholder}
+              className="input-field w-full"
+            />
+          </label>
+
+          <div>
+            <p className="mb-1.5 text-[12px] font-medium text-ink/60 dark:text-fog/60">{copy.groupLocations}</p>
+            {locations.length === 0 ? (
+              <p className="text-[12px] text-ink/45 dark:text-fog/45">{copy.groupNoLocationsYet}</p>
+            ) : (
+              <ul className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-ink/[0.06] p-2 dark:border-fog/[0.06]">
+                {locations.map((l) => (
+                  <li key={l.id}>
+                    <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.04]">
+                      <input
+                        type="checkbox"
+                        checked={picked.includes(l.id)}
+                        onChange={() => toggle(l.id)}
+                        className="h-4 w-4 accent-deep-violet"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-ink dark:text-fog">{l.name}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {missingIds.length > 0 && (
+              <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                {missingIds.length} no longer connected
+              </p>
+            )}
+          </div>
+
+          {error && <p className="text-[12px] font-medium text-red-600 dark:text-red-400">{error}</p>}
+
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={save} disabled={busy} className="btn-primary disabled:opacity-50">
+              {editing ? copy.groupSave : copy.newGroup}
+            </button>
+            {editing && (
+              <button onClick={reset} className="rounded-xl px-3 py-2 text-[12px] font-semibold text-ink/55 transition hover:bg-ink/[0.04] dark:text-fog/55">
+                {copy.groupCancel}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AddLocationModal({ onClose, onSaved }: { onClose: () => void; onSaved: (text: string) => void }) {
   const [step, setStep] = useState(1);

@@ -6,9 +6,17 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import LogoLoader from "@/components/LogoLoader";
 import LocationMultiSelect, { type MultiSelectCopy } from "@/components/LocationMultiSelect";
 
-const ALL_BRANCHES = "__all__";
+import {
+  ALL_BRANCHES,
+  groupLiveCount,
+  groupTargets,
+  groupValue,
+  parseGroupValue,
+  useLocationGroups,
+  type LocationGroup,
+} from "@/lib/location-groups";
 
-type Channel = { id: string; display_name: string | null };
+type Channel = { id: string; display_name: string | null; listing_id?: string | null };
 type Service = { id: string; channel_id: string; name: string; category: string; description: string | null; is_offered: boolean; source: string };
 
 type ServicesCopy = ReturnType<typeof useI18n>["t"]["dashboard"]["services"];
@@ -30,16 +38,39 @@ export default function ServicesPage() {
   // Bulk add: every checked branch gets the service (skip-dup by name).
   const [addLocIds, setAddLocIds] = useState<string[]>([]);
 
-  const isAll = selectedId === ALL_BRANCHES;
+  const { groups } = useLocationGroups();
+  // Groups key on Localith listing_id; this page keys on channel id.
+  const listingMap: Record<string, string> = Object.fromEntries(
+    channels.filter((c) => c.listing_id).map((c) => [c.listing_id as string, c.id]),
+  );
+  const selectedGroupId = parseGroupValue(selectedId);
+  const selectedGroup = selectedGroupId ? groups.find((g) => g.id === selectedGroupId) ?? null : null;
+  const groupChannelIds = groupTargets(selectedGroup, listingMap, channels.map((c) => c.id));
+
+  const isAll = selectedId === ALL_BRANCHES || selectedGroup !== null;
+  const scopeIds = selectedGroup ? groupChannelIds : channels.map((c) => c.id);
   const branchNames: Record<string, string> = Object.fromEntries(channels.map((c) => [c.id, c.display_name || copy.unnamedLocation]));
   const toggleLoc = (id: string) =>
     setAddLocIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   const selectAllLocs = () =>
-    setAddLocIds((prev) => prev.length === channels.length && channels.length > 0 ? [] : channels.map((c) => c.id));
-  // Entering All-branches view defaults to everywhere — the bulk case.
+    setAddLocIds((prev) => prev.length === scopeIds.length && scopeIds.length > 0 ? [] : scopeIds);
+  // Group ticks add to the current selection so a group plus one extra
+  // branch still works, matching the Posts picker.
+  const selectGroupLocs = (channelIds: string[]) =>
+    setAddLocIds((prev) => {
+      const allOn = channelIds.every((id) => prev.includes(id));
+      return allOn ? prev.filter((id) => !channelIds.includes(id)) : [...new Set([...prev, ...channelIds])];
+    });
+  // Groups for the picker need channel IDs, resolved through listing_id.
+  const pickerGroups = groups
+    .map((g) => ({ id: g.id, name: g.name, memberIds: groupTargets(g, listingMap, channels.map((c) => c.id)) }))
+    .filter((g) => g.memberIds.length > 0);
+  // Entering All-branches (or a group) view defaults to its members — the bulk case.
   const onScopeChange = (id: string) => {
     setSelectedId(id);
-    setAddLocIds(id === ALL_BRANCHES ? channels.map((c) => c.id) : [id].filter(Boolean));
+    const gid = parseGroupValue(id);
+    const g = gid ? groups.find((x) => x.id === gid) ?? null : null;
+    setAddLocIds(g ? groupTargets(g, listingMap, channels.map((c) => c.id)) : id === ALL_BRANCHES ? channels.map((c) => c.id) : [id].filter(Boolean));
   };
 
   useEffect(() => {
@@ -58,8 +89,13 @@ export default function ServicesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadServices(scopeId: string, list: Channel[]) {
-    const targets = scopeId === ALL_BRANCHES ? list : list.filter((c) => c.id === scopeId);
+  async function loadServices(scopeId: string, list: Channel[], groupIds?: string[]) {
+    const targets =
+      scopeId === ALL_BRANCHES
+        ? list
+        : groupIds
+          ? list.filter((c) => groupIds.includes(c.id))
+          : list.filter((c) => c.id === scopeId);
     if (targets.length === 0) { setServices([]); return; }
     try {
       const lists = await Promise.all(targets.map(async (c) => {
@@ -74,7 +110,12 @@ export default function ServicesPage() {
   // `copy` is a fresh object each render, so it is deliberately not a dependency;
   // it is only read for the error fallback above.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void loadServices(selectedId, channels); }, [selectedId, channels]);
+  // Joined into a string so the effect keys on the group's resolved members
+  // (which arrive after mount) rather than on a fresh array each render.
+  const groupChannelKey = groupChannelIds.join(",");
+  useEffect(() => {
+    void loadServices(selectedId, channels, selectedGroup ? groupChannelKey.split(",").filter(Boolean) : undefined);
+  }, [selectedId, channels, selectedGroup, groupChannelKey]);
 
   async function addService() {
     const targets = (isAll ? addLocIds : [selectedId]).filter(Boolean);
@@ -108,7 +149,7 @@ export default function ServicesPage() {
         if (!firstErr) firstErr = error instanceof Error ? error.message.slice(0, 140) : copy.errRequest;
       }
     }
-    await loadServices(selectedId, channels);
+    await loadServices(selectedId, channels, selectedGroup ? groupChannelIds : undefined);
     setName("");
     setDescription("");
     const n = targets.length;
@@ -156,6 +197,8 @@ export default function ServicesPage() {
                   channels={channels}
                   onChange={onScopeChange}
                   copy={copy}
+                  groups={groups}
+                  listingMap={listingMap}
                 />
                 <StatsRow services={services} copy={copy} />
                 <AddServiceForm
@@ -164,6 +207,7 @@ export default function ServicesPage() {
                   isAll={isAll} channels={channels}
                   selectedIds={isAll ? addLocIds : [selectedId].filter(Boolean)}
                   onToggleLoc={toggleLoc} onSelectAll={selectAllLocs}
+                  onSelectGroup={selectGroupLocs} groups={pickerGroups} groupsLabel="Groups"
                   saving={saving}
                   canSave={!!name.trim() && (isAll ? addLocIds.length > 0 : !!selectedId)}
                   onAdd={() => void addService()}
@@ -194,11 +238,13 @@ function PageHeader({ connected, copy }: { connected: boolean; copy: ServicesCop
   );
 }
 
-function LocationPicker({ selectedId, channels, onChange, copy }: {
+function LocationPicker({ selectedId, channels, onChange, copy, groups, listingMap }: {
   selectedId: string;
   channels: Channel[];
   onChange: (id: string) => void;
   copy: ServicesCopy;
+  groups: LocationGroup[];
+  listingMap: Record<string, string>;
 }) {
   return (
     <div className="rounded-3xl border border-white bg-white/80 p-5">
@@ -207,6 +253,14 @@ function LocationPicker({ selectedId, channels, onChange, copy }: {
         <select value={selectedId} onChange={(event) => onChange(event.target.value)} className="input-field mt-2">
           <option value="">{copy.noLocationData}</option>
           {channels.length > 0 && <option value={ALL_BRANCHES}>{copy.allBranches.replace("{count}", String(channels.length))}</option>}
+          {groups
+            .map((g) => ({ id: g.id, name: g.name, n: groupLiveCount(g, listingMap) }))
+            .filter((g) => g.n > 0)
+            .map((g) => (
+              <option key={g.id} value={groupValue(g.id)}>
+                {g.name} ({g.n})
+              </option>
+            ))}
           {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.display_name || copy.unnamedLocation}</option>)}
         </select>
       </label>
@@ -224,11 +278,12 @@ function StatsRow({ services, copy }: { services: Service[]; copy: ServicesCopy 
   );
 }
 
-function AddServiceForm({ name, category, description, onName, onCategory, onDescription, isAll, channels, selectedIds, onToggleLoc, onSelectAll, saving, canSave, onAdd, copy, multiSelectCopy }: {
+function AddServiceForm({ name, category, description, onName, onCategory, onDescription, isAll, channels, selectedIds, onToggleLoc, onSelectAll, onSelectGroup, groups, groupsLabel, saving, canSave, onAdd, copy, multiSelectCopy }: {
   name: string; category: string; description: string;
   onName: (v: string) => void; onCategory: (v: string) => void; onDescription: (v: string) => void;
   isAll: boolean; channels: Channel[];
   selectedIds: string[]; onToggleLoc: (id: string) => void; onSelectAll: () => void;
+  onSelectGroup: (ids: string[]) => void; groups: { id: string; name: string; memberIds: string[] }[]; groupsLabel: string;
   saving: boolean; canSave: boolean;
   onAdd: () => void;
   copy: ServicesCopy;
@@ -249,6 +304,9 @@ function AddServiceForm({ name, category, description, onName, onCategory, onDes
               selectedIds={selectedIds}
               onToggle={onToggleLoc}
               onSelectAll={onSelectAll}
+              onSelectGroup={onSelectGroup}
+              groups={groups}
+              groupsLabel={groupsLabel}
               copy={multiSelectCopy}
             />
           </span>

@@ -106,6 +106,101 @@ async def test_description_pushes_to_google(monkeypatch, db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_create_group_keeps_members_and_position(db, user_id):
+    first = await locations.create_group(db, user_id, "North Riyadh", ["loc-1", "loc-2", "loc-1"])
+    second = await locations.create_group(db, user_id, "South", ["loc-3"])
+    # Duplicates collapse so a double-ticked checkbox can't double-apply.
+    assert first["listing_ids"] == ["loc-1", "loc-2"]
+    assert first["position"] == 0
+    assert second["position"] == 1
+    listed = await locations.list_groups(db, user_id)
+    assert [g["name"] for g in listed] == ["North Riyadh", "South"]
+
+
+@pytest.mark.asyncio
+async def test_group_rejects_duplicate_name_and_empty_members(db, user_id):
+    await locations.create_group(db, user_id, "North Riyadh", ["loc-1"])
+    with pytest.raises(ValueError, match="already have a group"):
+        await locations.create_group(db, user_id, "  north riyadh  ", ["loc-2"])
+    with pytest.raises(ValueError, match="at least one"):
+        await locations.create_group(db, user_id, "Empty", [])
+
+
+@pytest.mark.asyncio
+async def test_update_group_renames_and_replaces_members(db, user_id):
+    created = await locations.create_group(db, user_id, "North", ["loc-1", "loc-2"])
+    out = await locations.update_group(db, user_id, created["id"], "North Riyadh", ["loc-2", "loc-3"])
+    assert out["name"] == "North Riyadh"
+    assert out["listing_ids"] == ["loc-2", "loc-3"]
+    with pytest.raises(ValueError, match="at least one"):
+        await locations.update_group(db, user_id, created["id"], None, [])
+    # Name-only edit leaves members alone.
+    renamed = await locations.update_group(db, user_id, created["id"], "North 2", None)
+    assert renamed["listing_ids"] == ["loc-2", "loc-3"]
+
+
+@pytest.mark.asyncio
+async def test_delete_group_and_missing_group_is_none(db, user_id):
+    created = await locations.create_group(db, user_id, "Temp", ["loc-1"])
+    assert await locations.delete_group(db, user_id, created["id"]) is True
+    assert await locations.list_groups(db, user_id) == []
+    # Deleting twice is a no-op, not an error, so a stale UI can't 500.
+    assert await locations.delete_group(db, user_id, created["id"]) is False
+    assert await locations.update_group(db, user_id, created["id"], "x", None) is None
+
+
+def test_groups_routes_round_trip(client):
+    """Router level: the /groups routes must not be swallowed by /{listing_id}."""
+    created = client.post(
+        "/api/v1/locations/groups",
+        json={"name": "North Riyadh", "listing_ids": ["loc-1", "loc-2"]},
+    )
+    assert created.status_code == 201, created.text
+    gid = created.json()["id"]
+
+    listed = client.get("/api/v1/locations/groups")
+    assert listed.status_code == 200, listed.text
+    assert [g["name"] for g in listed.json()] == ["North Riyadh"]
+
+    # "groups" is declared before /{listing_id}, so GET /locations/groups is
+    # the list route rather than a profile lookup for a listing called "groups"
+    # (which is what the earlier 200 assertion above proves).
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/v1/locations/groups" in paths
+    assert "/api/v1/locations/groups/{group_id}" in paths
+
+    patched = client.patch(
+        f"/api/v1/locations/groups/{gid}", json={"name": "North Riyadh 2"}
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["name"] == "North Riyadh 2"
+    # Members untouched by a name-only patch.
+    assert patched.json()["listing_ids"] == ["loc-1", "loc-2"]
+
+    assert client.post(
+        "/api/v1/locations/groups", json={"name": "Empty", "listing_ids": []}
+    ).status_code == 400
+    # Duplicate name, different case and surrounding space, is rejected too.
+    assert client.post(
+        "/api/v1/locations/groups",
+        json={"name": "  north riyadh 2 ", "listing_ids": ["a"]},
+    ).status_code == 400
+
+    assert client.delete(f"/api/v1/locations/groups/{gid}").status_code == 204
+    assert client.get("/api/v1/locations/groups").json() == []
+    assert client.delete(f"/api/v1/locations/groups/{gid}").status_code == 404
+    assert client.patch(
+        f"/api/v1/locations/groups/{gid}", json={"name": "gone"}
+    ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_groups_are_scoped_per_user(db, user_id, other_user_id):
+    await locations.create_group(db, user_id, "Mine", ["loc-1"])
+    assert await locations.list_groups(db, other_user_id) == []
+
+
+@pytest.mark.asyncio
 async def test_update_without_connection_stores_locally(monkeypatch, db, user_id):
     def _boom(*a, **k):
         raise AssertionError("must not call Google without a connection")

@@ -9,6 +9,9 @@ import { streamReviewReply, type StreamEvent } from "@/lib/api-review-engine";
 import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateReply, type ReviewInsight, type ReviewReplyDTO } from "@/lib/api-analytics";
 import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
 import MeaningInspector from "@/components/reviews/MeaningInspector";
+import AskForReview from "@/components/dashboard/AskForReview";
+import QRCodeGenerator from "@/components/dashboard/QRCodeGenerator";
+import { ALL_BRANCHES, groupValue, parseGroupValue, useLocationGroups } from "@/lib/location-groups";
 
 type ReviewTab = "all" | "unanswered" | "replied" | "positive" | "negative" | "need_approval" | "flagged" | "edited" | "removed" | "abusive" | "needs_human";
 
@@ -25,7 +28,7 @@ type HeldOutCounts = {
   unclassified: number;
   total: number;
 };
-type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" };
+type View = { kind: "list" } | { kind: "detail"; id: string } | { kind: "star"; stars: number; from: "list" | "intelligence" } | { kind: "intelligence" } | { kind: "ask" };
 
 interface ReviewItem {
   id: string;
@@ -90,9 +93,8 @@ export default function ReviewsPage() {
   );
 }
 
-const ALL_BRANCHES = "__all__";
-
 function ReviewsInner() {
+  const { groups } = useLocationGroups();
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
@@ -113,6 +115,8 @@ function ReviewsInner() {
     }
   }, [searchParams, initialTabSet]);
   const [view, setView] = useState<View>({ kind: "list" });
+  // listing_id -> channel id, for resolving a group to review channels.
+  const [listingChannels, setListingChannels] = useState<Record<string, string>>({});
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [replyDraft, setReplyDraft] = useState("");
   const [replying, setReplying] = useState(false);
@@ -136,6 +140,19 @@ function ReviewsInner() {
   const abortRef = useRef<AbortController | null>(null);
   const [channelNames, setChannelNames] = useState<Record<string, string>>({});
 
+  // Groups key on listing_id, which is also what this page's locations are, so
+  // resolving a group only means picking its members' review channels.
+  const selectedGroupId = parseGroupValue(selectedId);
+  const selectedGroup = selectedGroupId
+    ? groups.find((g) => g.id === selectedGroupId) ?? null
+    : null;
+  const groupChannels = selectedGroup
+    ? locations
+        .filter((l) => selectedGroup.listing_ids.includes(l.id))
+        .map((l) => listingChannels[l.id] ?? l.channelId)
+        .filter(Boolean) as string[]
+    : [];
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -148,10 +165,17 @@ function ReviewsInner() {
             try {
               const ch = await apiFetch("/api/v1/channels/?limit=100");
               const names: Record<string, string> = {};
+              // listing_id -> channel id, so a group (keyed on listing_id) can
+              // be resolved to the channel the reviews API filters by.
+              const byListing: Record<string, string> = {};
               for (const channel of ch.channels ?? []) {
                 if (channel?.id) names[channel.id] = channel.display_name ?? "Google location";
+                if (channel?.id && channel?.listing_id) byListing[channel.listing_id] = channel.id;
               }
-              if (!cancelled) setChannelNames(names);
+              if (!cancelled) {
+                setChannelNames(names);
+                setListingChannels(byListing);
+              }
             } catch {
               /* names stay empty — location name is used as fallback */
             }
@@ -193,21 +217,36 @@ function ReviewsInner() {
     return () => { cancelled = true; };
   }, []);
 
-  const loadInsights = async (channelId?: string) => {
-    const base = channelId ? `channel_id=${encodeURIComponent(channelId)}&` : "";
-    // Two calls on purpose. The API hides reviews Google no longer returns, so
-    // the Removed tab would always be empty if we only asked for the default
-    // set. Both land in one list; `removed` on the item decides which tab shows
-    // it, and the counts below keep the two apart.
-    const [live, gone] = await Promise.all([
-      apiFetch(`/api/v1/analytics/reviews/insights?${base}limit=200`),
-      apiFetch(`/api/v1/analytics/reviews/insights?${base}limit=200&removed=true`),
-    ]);
+  const loadInsights = async (channelIds?: string[]) => {
+    // No channel filter = every branch (All branches). A group passes its
+    // members' channels and we merge the pages, because the API takes one
+    // channel at a time and a group is by definition several.
+    const ids = channelIds && channelIds.length > 0 ? channelIds : [undefined];
+    const pages = await Promise.all(
+      ids.map(async (channelId) => {
+        const base = channelId ? `channel_id=${encodeURIComponent(channelId)}&` : "";
+        // Two calls on purpose. The API hides reviews Google no longer returns, so
+        // the Removed tab would always be empty if we only asked for the default
+        // set. Both land in one list; `removed` on the item decides which tab shows
+        // it, and the counts below keep the two apart.
+        const [live, gone] = await Promise.all([
+          apiFetch(`/api/v1/analytics/reviews/insights?${base}limit=200`),
+          apiFetch(`/api/v1/analytics/reviews/insights?${base}limit=200&removed=true`),
+        ]);
+        return [...(live.items ?? []), ...(gone.items ?? [])];
+      }),
+    );
     const fallback = locations.find((l) => l.id === selectedId)?.name ?? "";
-    return [
-      ...mapInsights(live.items, channelNames, fallback),
-      ...mapInsights(gone.items, channelNames, fallback),
-    ];
+    // The same review can arrive from overlapping calls; keep the first copy.
+    const seen = new Set<string>();
+    const merged: ReviewInsight[] = [];
+    for (const item of pages.flat()) {
+      const key = String((item as { id?: string }).id ?? "");
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      merged.push(item as ReviewInsight);
+    }
+    return mapInsights(merged, channelNames, fallback);
   };
 
   const loadPendingReplies = async () => {
@@ -255,7 +294,7 @@ function ReviewsInner() {
         }
       }
       const loc = locations.find((l) => l.id === selectedId);
-      const items = await loadInsights(loc?.channelId);
+      const items = await loadInsights(selectedGroup ? groupChannels : loc?.channelId ? [loc.channelId] : undefined);
       setReviews(items);
       await loadPendingReplies();
       if (withSync) setBanner({ kind: "ok", text: "Reconciled with Localith." });
@@ -272,7 +311,7 @@ function ReviewsInner() {
     (async () => {
       try {
         const loc = locations.find((l) => l.id === selectedId);
-        const items = await loadInsights(loc?.channelId);
+        const items = await loadInsights(selectedGroup ? groupChannels : loc?.channelId ? [loc.channelId] : undefined);
         if (!cancelled) setReviews(items);
         await loadPendingReplies();
       } catch {
@@ -281,7 +320,9 @@ function ReviewsInner() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+    // Also re-runs when the group's members or their channels resolve, which
+    // land after mount — keying on the joined IDs covers that.
+  }, [selectedId, selectedGroup?.id, groupChannels.join(",")]);
 
   // `reviews` holds live AND removed rows; every count below is over the live
   // set only, so a review Google dropped never inflates a number the merchant
@@ -822,6 +863,14 @@ function ReviewsInner() {
               <select value={selectedId ?? ""} onChange={(e) => { setSelectedId(e.target.value); setPage(1); setView({ kind: "list" }); }}
                 className="w-52 appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog">
                 <option value={ALL_BRANCHES}>All branches{locations.length > 0 ? ` (${locations.length})` : ""}</option>
+                {groups
+                  .map((g) => ({
+                    id: g.id,
+                    name: g.name,
+                    n: g.listing_ids.filter((id) => locations.some((l) => l.id === id)).length,
+                  }))
+                  .filter((g) => g.n > 0)
+                  .map((g) => <option key={g.id} value={groupValue(g.id)}>{g.name} ({g.n})</option>)}
                 {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
               <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -1246,6 +1295,30 @@ function ReviewsInner() {
                       <StatCard label="Unanswered" value={String(counts.unanswered)} />
                       <StatCard label="Flagged" value={String(counts.flagged)} />
                     </div>
+                    {/* Ask for reviews — the growth side of the same job. Lives
+                        here rather than on the dashboard: a merchant comes to
+                        this page to work their reviews, so "get more of them"
+                        belongs beside the counts that motivate it. */}
+                    <button
+                      onClick={() => setView({ kind: "ask" })}
+                      className="block w-full rounded-2xl border border-ink/[0.06] bg-white p-4 text-left transition hover:border-deep-violet/25 hover:bg-deep-violet/[0.02] dark:border-fog/[0.06] dark:bg-ink"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                            <rect x="3" y="3" width="7" height="7" rx="1" />
+                            <rect x="14" y="3" width="7" height="7" rx="1" />
+                            <rect x="3" y="14" width="7" height="7" rx="1" />
+                            <path d="M14 14h3v3h-3zM21 14v.01M14 21v.01M21 21v.01M18 18h.01" />
+                          </svg>
+                        </span>
+                        <div className="min-w-0">
+                          <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Ask for a review</h3>
+                          <p className="text-[11px] leading-snug text-ink/35">Share a link with contacts, or print a QR for the counter.</p>
+                        </div>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto h-3.5 w-3.5 shrink-0 text-ink/30"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      </div>
+                    </button>
                     <div className="rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
                       <h3 className="text-[13px] font-semibold text-ink dark:text-fog">Reviews trend</h3>
                       <p className="text-[11px] text-ink/35">Last 6 months · this {analytics.thisMonth} / last {analytics.lastMonth}.</p>
@@ -1902,6 +1975,23 @@ function ReviewsInner() {
               setIntelMonth={setIntelMonth}
             />
           )}
+
+          {view.kind === "ask" && (
+            <>
+              <nav className="mb-4 flex items-center gap-1.5 text-[12px] text-ink/40 dark:text-fog/40">
+                <button onClick={() => setView({ kind: "list" })} className="font-medium hover:text-deep-violet">Reviews</button>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                <span className="font-semibold text-ink dark:text-fog">Ask for a review</span>
+              </nav>
+              {/* Two ways to get more reviews: share a link with contacts, or
+                  put the QR on the counter. Both lived on the dashboard, where
+                  they competed with the numbers for the same attention. */}
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <AskForReview />
+                <QRCodeGenerator />
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -2384,7 +2474,8 @@ function IntelligencePage({ intelligence: intel, total, locationName, aiMeta, ai
                   <span className="h-1.5 w-1.5 rounded-full bg-[#34A853]" /> Verified numbers
                 </span>
               )}
-            </div>
+        </div>
+
             <p className="mt-1 text-[13px] leading-5 text-[#5F6368]">
               <span className="font-medium text-[#202124]">{locationName || "All locations"}</span>
               <span className="mx-1.5 text-[#DADCE0]">•</span>

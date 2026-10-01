@@ -186,6 +186,43 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limit=100_000_000)
 
+# Starlette's default trailing-slash handling answers /api/v1/locations with a
+# 307 to an ABSOLUTE URL built from the Host header. Behind the dev tunnel that
+# Host is the ngrok origin while the API believes it is localhost:8000, so the
+# browser is bounced to https://localhost:8000/... and the request dies — which
+# is why the location list and the dashboard review count come back empty.
+#
+# Rewriting the path in-place means the route is matched without a redirect ever
+# leaving the server. Only paths that would otherwise 404 are touched, so a
+# genuine 404 still 404s and no existing route changes behaviour.
+class _ResolveSlashWithoutRedirect:
+    """Match the other slash form in place rather than redirecting to it."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("method") in ("GET", "HEAD"):
+            path = scope.get("path", "")
+            # Scoped to bare list endpoints under /api/v1/ — the routes declared
+            # with a trailing slash that callers reach without one. Anything
+            # deeper (/api/v1/locations/groups/{id}) or outside /api/ is left
+            # alone: appending a slash there would turn a 404 into a redirect,
+            # which is the opposite of what this middleware is for.
+            if (
+                path.startswith("/api/v1/")
+                and not path.endswith("/")
+                and path.count("/") <= 3
+                and "." not in path.rsplit("/", 1)[-1]
+            ):
+                scope = dict(scope)
+                scope["path"] = path + "/"
+                scope["raw_path"] = scope.get("raw_path", b"") + b"/"
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_ResolveSlashWithoutRedirect)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,

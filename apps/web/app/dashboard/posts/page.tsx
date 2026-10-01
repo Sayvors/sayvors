@@ -5,6 +5,7 @@ import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import LocationMultiSelect from "@/components/LocationMultiSelect";
+import { useLocationGroups } from "@/lib/location-groups";
 
 // ── Future backend contract for scheduled deletion (UI-first: the UI
 // speaks it today; the backend ignores unknown fields until it lands).
@@ -69,6 +70,7 @@ export default function PostsPage() {
 }
 
 function PostsInner() {
+  const { groups } = useLocationGroups();
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -270,6 +272,23 @@ function PostsInner() {
   const selectAllCreateLocs = () => {
     setSelectedLocIds((prev) => prev.length === locations.length && locations.length > 0 ? [] : locations.map((l) => l.id));
   };
+
+  /* Ticking a group in the picker adds its members to the current selection
+     rather than replacing it, so a group plus one extra branch still works. */
+  const selectGroupCreateLocs = (memberIds: string[]) => {
+    setSelectedLocIds((prev) => {
+      const allOn = memberIds.every((id) => prev.includes(id));
+      return allOn
+        ? prev.filter((id) => !memberIds.includes(id))
+        : [...new Set([...prev, ...memberIds])];
+    });
+  };
+
+  /* Posts key locations on listing_id, same as groups do, so a group only
+     needs its members intersected with the connected locations. */
+  const pickerGroups = groups
+    .map((g) => ({ id: g.id, name: g.name, memberIds: g.listing_ids.filter((id) => locations.some((l) => l.id === id)) }))
+    .filter((g) => g.memberIds.length > 0);
 
   const openDetail = (id: string, editing = false) => {
     const p = posts.find((x) => x.id === id);
@@ -742,6 +761,7 @@ function PostsInner() {
               title={title} setTitle={setTitle}
               postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
               multi selectedIds={selectedLocIds} onToggleLoc={toggleCreateLoc} onSelectAll={selectAllCreateLocs}
+                  onSelectGroup={selectGroupCreateLocs} groups={pickerGroups} groupsLabel="Groups"
               businessName={businessName} setBusinessName={setBusinessName}
               postType={postType} setPostType={setPostType}
               description={description} setDescription={setDescription}
@@ -786,6 +806,7 @@ function PostsInner() {
                   title={title} setTitle={setTitle}
                   postLocationId={postLocationId} setPostLocationId={setPostLocationId} locations={locations}
                   multi={false} selectedIds={[]} onToggleLoc={() => {}} onSelectAll={() => {}}
+              onSelectGroup={selectGroupCreateLocs} groups={pickerGroups} groupsLabel="Groups"
                   businessName={businessName} setBusinessName={setBusinessName}
                   postType={postType} setPostType={setPostType}
                   description={description} setDescription={setDescription}
@@ -997,6 +1018,7 @@ function PostForm(props: {
   title: string; setTitle: (v: string) => void;
   postLocationId: string; setPostLocationId: (v: string) => void; locations: LocationOption[];
   multi: boolean; selectedIds: string[]; onToggleLoc: (id: string) => void; onSelectAll: () => void;
+  onSelectGroup: (memberIds: string[]) => void; groups: { id: string; name: string; memberIds: string[] }[]; groupsLabel: string;
   businessName: string; setBusinessName: (v: string) => void;
   postType: "update" | "offer" | "event"; setPostType: (v: "update" | "offer" | "event") => void;
   description: string; setDescription: (v: string) => void;
@@ -1063,6 +1085,9 @@ function PostForm(props: {
                 selectedIds={p.selectedIds}
                 onToggle={p.onToggleLoc}
                 onSelectAll={p.onSelectAll}
+                onSelectGroup={p.onSelectGroup}
+                groups={p.groups}
+                groupsLabel={p.groupsLabel}
               />
             ) : (
               <select value={p.postLocationId} onChange={(e) => p.setPostLocationId(e.target.value)} className="input-field">

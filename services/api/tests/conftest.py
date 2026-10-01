@@ -71,6 +71,12 @@ def user_id():
     return "test-user-0000-0000-0000-000000000001"
 
 
+@pytest.fixture
+def other_user_id():
+    """A second account, for checking rows never leak across users."""
+    return "test-user-0000-0000-0000-000000000002"
+
+
 @pytest_asyncio.fixture
 async def channel_id(db, user_id):
     channel = Channel(

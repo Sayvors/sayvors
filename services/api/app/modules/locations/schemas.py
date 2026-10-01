@@ -31,6 +31,23 @@ class LocationUpdate(BaseModel):
     opening_date: date | None = Field(None, description="Business opening date (YYYY-MM-DD)")
 
 
+class LocationGroupIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    listing_ids: list[str] = []
+
+
+class LocationGroupOut(BaseModel):
+    id: str
+    name: str
+    listing_ids: list[str] = []
+    position: int = 0
+
+
+class LocationGroupUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    listing_ids: list[str] | None = None
+
+
 class LocationProfileOut(BaseModel):
     listing_id: str
     name: str
