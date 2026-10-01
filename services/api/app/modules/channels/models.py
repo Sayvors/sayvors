@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...database import Base
@@ -62,6 +72,11 @@ class Channel(Base):
 
 class ChannelMessage(Base):
     __tablename__ = "channel_messages"
+    __table_args__ = (
+        # Thread lookup scans (channel_id, contact_phone) newest-first, and the
+        # inbox needs it to be a real index rather than a table scan.
+        Index("ix_channel_messages_thread", "channel_id", "contact_phone", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     channel_id: Mapped[str] = mapped_column(
@@ -76,6 +91,17 @@ class ChannelMessage(Base):
         default="sent",
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Who the message is with, in the platform's own addressing. Inbound rows
+    # carry the sender; outbound rows carry the recipient, which is what lets a
+    # reply be threaded under the same contact as the question it answers.
+    #
+    # NULL means "sender unknown" — rows written before this column existed. The
+    # inbox groups those into one "Unknown" thread rather than dropping them,
+    # because they still contain the real conversation text.
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Best-known display name. WhatsApp only sends a profile name on some
+    # payloads, so this is often NULL and the UI falls back to the phone.
+    contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

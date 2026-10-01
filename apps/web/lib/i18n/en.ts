@@ -17,6 +17,7 @@ const en = {
     connect: "Connect",
     autoReply: "Auto-Reply",
     outbox: "Outbox",
+    inbox: "Inbox",
     usage: "Usage",
     billing: "Billing",
     googleBusiness: "Google Business",

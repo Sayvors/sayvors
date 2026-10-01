@@ -22,6 +22,10 @@ from .schemas import (
     ChannelMessageResponse,
     ChannelMessageSend,
     ChannelResponse,
+    InboxSendRequest,
+    InboxSendResponse,
+    InboxThread,
+    InboxThreadListResponse,
     ReviewReplyEdit,
     ReviewReplyGenerate,
     ReviewReplyListResponse,
@@ -33,12 +37,15 @@ from .schemas import (
     VerificationResponse,
 )
 from .service import (
+    UNKNOWN_THREAD_KEY,
     create_channel,
     delete_channel,
     get_channel,
     handle_webhook,
     list_channels,
+    list_inbox_threads,
     list_messages,
+    list_thread_messages,
     send_message,
     verify_webhook_signature,
 )
@@ -102,7 +109,7 @@ async def connect_channel(
     return _channel_response(channel)
 
 
-@router.get("/", response_model=ChannelListResponse)
+@router.get("", response_model=ChannelListResponse)
 async def get_channels(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -286,8 +293,12 @@ async def send_to_channel(
 ):
     try:
         msg = await send_message(channel_id, body, user, db)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Channel not found")
+    except ValueError as exc:
+        message = str(exc)
+        if message == "Channel not found":
+            raise HTTPException(status_code=404, detail=message)
+        # A missing recipient is a bad request, not a missing channel.
+        raise HTTPException(status_code=422, detail=message)
     return ChannelMessageResponse(
         id=msg.id,
         channel_id=msg.channel_id,
@@ -297,6 +308,8 @@ async def send_to_channel(
         content_type=msg.content_type,
         status=msg.status,
         error=msg.error,
+        contact_phone=msg.contact_phone,
+        contact_name=msg.contact_name,
         created_at=msg.created_at.isoformat(),
     )
 
@@ -321,11 +334,122 @@ async def get_channel_messages(
                 content_type=m.content_type,
                 status=m.status,
                 error=m.error,
+                contact_phone=m.contact_phone,
+                contact_name=m.contact_name,
                 created_at=m.created_at.isoformat(),
             )
             for m in msgs
         ],
         total=total,
+    )
+
+
+# ── Inbox ───────────────────────────────────────────────────────────────
+#
+# Declared before /{channel_id} so "inbox" is not read as a channel ID.
+
+_inbox_router = APIRouter(prefix="/api/v1/inbox", tags=["inbox"])
+
+
+@_inbox_router.get("/threads", response_model=InboxThreadListResponse)
+async def inbox_threads(
+    search: str | None = Query(None, max_length=200),
+    limit: int = Query(100, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    threads = await list_inbox_threads(user, db, search=search, limit=limit)
+    return InboxThreadListResponse(threads=[InboxThread(**t) for t in threads], total=len(threads))
+
+
+@_inbox_router.get("/threads/{channel_id}/{contact_phone}", response_model=ChannelMessageListResponse)
+async def inbox_thread_messages(
+    channel_id: str,
+    contact_phone: str,
+    limit: int = Query(200, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Messages in one thread, oldest first.
+
+    `contact_phone` is the literal string "unknown" for the catch-all thread
+    holding pre-migration rows with no sender.
+    """
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    msgs = await list_thread_messages(user, db, channel_id, phone, limit=limit)
+    if not msgs:
+        # Distinguish "no such channel" (404) from "empty thread" (200, empty).
+        channel = await get_channel(channel_id, user, db)
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
+    return ChannelMessageListResponse(
+        messages=[
+            ChannelMessageResponse(
+                id=m.id,
+                channel_id=m.channel_id,
+                platform_message_id=m.platform_message_id,
+                direction=m.direction,
+                content=m.content,
+                content_type=m.content_type,
+                status=m.status,
+                error=m.error,
+                contact_phone=m.contact_phone,
+                contact_name=m.contact_name,
+                created_at=m.created_at.isoformat(),
+            )
+            for m in msgs
+        ],
+        total=len(msgs),
+    )
+
+
+@_inbox_router.post("/send", response_model=InboxSendResponse)
+async def inbox_send(
+    body: InboxSendRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a message to a contact.
+
+    Always 200 with `sent: false` and the provider's reason when WhatsApp
+    rejects it — an out-of-window send is a normal outcome, not a server fault,
+    and the thread shows it as failed rather than pretending it went out.
+    """
+    try:
+        msg = await send_message(
+            body.channel_id,
+            ChannelMessageSend(
+                content=body.content,
+                content_type="text",
+                contact_phone=body.contact_phone,
+                contact_name=body.contact_name,
+            ),
+            user,
+            db,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == "Channel not found":
+            raise HTTPException(status_code=404, detail=message)
+        raise HTTPException(status_code=422, detail=message)
+
+    failed = msg.status == "failed"
+    return InboxSendResponse(
+        message=ChannelMessageResponse(
+            id=msg.id,
+            channel_id=msg.channel_id,
+            platform_message_id=msg.platform_message_id,
+            direction=msg.direction,
+            content=msg.content,
+            content_type=msg.content_type,
+            status=msg.status,
+            error=msg.error,
+            contact_phone=msg.contact_phone,
+            contact_name=msg.contact_name,
+            created_at=msg.created_at.isoformat(),
+        ),
+        sent=not failed,
+        error=msg.error,
     )
 
 

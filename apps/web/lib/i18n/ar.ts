@@ -19,6 +19,7 @@ const ar: Dict = {
     connect: "القنوات",
     autoReply: "الرد التلقائي",
     outbox: "صندوق الصادر",
+    inbox: "الرسائل",
     usage: "الاستخدام",
     billing: "الفوترة",
     googleBusiness: "الملف التجاري على Google",

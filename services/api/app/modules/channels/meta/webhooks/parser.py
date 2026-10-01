@@ -41,6 +41,14 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             "msg_type": msg.get("type"),
                             "text": ((msg.get("text") or {}).get("body")),
                             "context": msg.get("context"),
+                            # WhatsApp sends the sender's saved contact name on
+                            # some payloads only. Carried through so the inbox can
+                            # show "Ahmed Khan" instead of a bare number.
+                            "profile_name": (
+                                (msg["contacts"][0].get("profile") or {}).get("name")
+                                if msg.get("contacts")
+                                else None
+                            ),
                         },
                     }
                 )
@@ -87,6 +95,11 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             "msg_type": msg.get("type"),
                             "text": ((msg.get("text") or {}).get("body")),
                             "context": msg.get("context"),
+                            "profile_name": (
+                                (msg["contacts"][0].get("profile") or {}).get("name")
+                                if msg.get("contacts")
+                                else None
+                            ),
                         },
                     })
             # Coexistence: SMB contacts sync

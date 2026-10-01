@@ -48,6 +48,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "tools",
     items: [
+      { key: "inbox", icon: <InboxIcon />, href: "/dashboard/inbox" },
       { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
       { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
       { key: "outbox", icon: <OutboxIcon />, href: "/dashboard/outbox" },
@@ -447,6 +448,15 @@ function ChartIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M18 20V10" /><path d="M12 20V4" /><path d="M6 20v-6" />
+    </svg>
+  );
+}
+
+function InboxIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12h5l2 3h4l2-3h5" />
+      <path d="M5.5 5h13l2.5 7v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6l2.5-7z" />
     </svg>
   );
 }

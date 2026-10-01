@@ -76,6 +76,10 @@ class ServiceResponse(BaseModel):
 class ChannelMessageSend(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
     content_type: str = "text"
+    # Required to send. The channel alone doesn't identify a recipient — a
+    # WhatsApp number serves every customer on it.
+    contact_phone: str = Field(..., min_length=1, max_length=32)
+    contact_name: str | None = Field(None, max_length=120)
 
 
 class ChannelMessageResponse(BaseModel):
@@ -87,12 +91,58 @@ class ChannelMessageResponse(BaseModel):
     content_type: str
     status: str
     error: str | None = None
+    contact_phone: str | None = None
+    contact_name: str | None = None
     created_at: str
 
 
 class ChannelMessageListResponse(BaseModel):
     messages: list[ChannelMessageResponse]
     total: int
+
+
+class InboxThread(BaseModel):
+    """One customer conversation on one channel.
+
+    `key` is the frontend's stable identifier: the contact's phone, or
+    `unknown` for rows written before contact_phone existed. Those unattributed
+    rows are collected into a single catch-all thread rather than discarded —
+    the text is real even when the sender is not recoverable.
+    """
+
+    key: str
+    contact_phone: str | None = None
+    display_name: str | None = None
+    channel_id: str
+    channel_name: str | None = None
+    last_message: str
+    last_message_at: str
+    last_direction: str
+    message_count: int
+    # Inbound messages with no outbound reply after them. Computed per thread so
+    # the badge matches the conversation the user is about to open.
+    unread: int = 0
+    is_unknown: bool = False
+
+
+class InboxThreadListResponse(BaseModel):
+    threads: list[InboxThread]
+    total: int
+
+
+class InboxSendRequest(BaseModel):
+    channel_id: str = Field(..., min_length=1)
+    contact_phone: str = Field(..., min_length=1, max_length=32)
+    contact_name: str | None = Field(None, max_length=120)
+    content: str = Field(..., min_length=1, max_length=10000)
+
+
+class InboxSendResponse(BaseModel):
+    message: ChannelMessageResponse
+    # False means the row is stored as failed; `error` explains why. The UI
+    # shows that rather than pretending the message went out.
+    sent: bool
+    error: str | None = None
 
 
 class AutoReplyConfigUpdate(BaseModel):

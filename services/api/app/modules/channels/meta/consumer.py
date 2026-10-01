@@ -205,6 +205,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 content=text if text else f"[{msg_type} message]",
                 content_type=msg_type,
                 status="delivered",
+                contact_phone=from_wa or None,
+                contact_name=data.get("profile_name") or None,
             )
         )
         await db.commit()
@@ -260,6 +262,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     content=reply,
                     status="failed",
                     error=str(e)[:500],
+                    contact_phone=from_wa or None,
                 )
             )
             await db.commit()
@@ -273,6 +276,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 direction="outbound",
                 content=reply,
                 status="sent",
+                contact_phone=from_wa or None,
             )
         )
         await db.commit()
@@ -320,6 +324,8 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             content=text if text else f"[{msg_type} message]",
             content_type=msg_type,
             status="delivered",
+            contact_phone=from_wa or None,
+            contact_name=data.get("profile_name") or None,
         ))
         await db.commit()
 
@@ -361,6 +367,9 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
             content=text if text else f"[{msg_type} message]",
             content_type=msg_type,
             status="delivered",
+            # An echo is a message the business sent from the WhatsApp app, so
+            # `to` is the customer — the same contact the thread is keyed on.
+            contact_phone=to_wa or None,
         ))
         await db.commit()
 
