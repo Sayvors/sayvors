@@ -175,15 +175,28 @@ class WhatsAppAdapter(MetaProviderAdapter):
         )
 
     async def validate_connection(self, connection, credentials: dict) -> tuple[bool, str]:
+        """True when the token can still read the business's WABAs.
+
+        /debug_token self-inspection is NOT usable here: the Embedded Signup
+        code exchange yields a business token, and Graph answers a business
+        token passed as the caller credential on /debug_token with a 400 —
+        which marked fresh, working connections "needs_reauth" while the same
+        token was fine for messaging. Ask for something we actually use.
+        """
         token = credentials.get("access_token", "")
         if not token:
             return False, "missing token"
+        business_id = (
+            getattr(connection, "meta_business_id", None)
+            or (connection.connection_metadata or {}).get("business_id")
+        )
+        if not business_id:
+            return False, "no business id on connection"
         try:
-            resp = await self._graph("GET", "/debug_token", token, params={"input_token": token})
-            info = resp.json().get("data", {})
-            if not info.get("is_valid"):
-                return False, "token invalid"
-            return True, "token valid"
+            resp = await self._graph(
+                "GET", f"/{business_id}/owned_whatsapp_business_accounts", token
+            )
         except MetaAPIError as e:
             logger.warning("WhatsApp validate failed: graph error %s", e.status_code)
             return False, f"graph error {e.status_code}"
+        return True, f"{len(resp.json().get('data', []))} WABA(s) visible"
