@@ -564,10 +564,16 @@ async def validate_connection(
 async def disconnect(
     provider: str,
     revoke: bool = Query(False),
+    delete_data: bool = Query(
+        False,
+        description="Permanently delete this provider's channels, messages and assets",
+    ),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if provider not in ("whatsapp", "facebook", "instagram"):
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
-    await _service.disconnect(db, user.id, provider, revoke=revoke)
-    return {"disconnected": True, "provider": provider}
+    result = await _service.disconnect(
+        db, user.id, provider, revoke=revoke, delete_data=delete_data
+    )
+    return {"disconnected": True, "provider": provider, **result}

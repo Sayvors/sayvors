@@ -107,5 +107,8 @@ export const discoverInstagram = (): Promise<{ assets: MetaAsset[] }> =>
 export const validateMeta = (provider: MetaProvider) =>
   apiFetch(`/api/v1/meta/${provider}/validate`, { method: "POST" });
 
-export const disconnectMeta = (provider: MetaProvider) =>
-  apiFetch(`/api/v1/meta/${provider}/disconnect`, { method: "DELETE" });
+export const disconnectMeta = (provider: MetaProvider, opts?: { deleteData?: boolean }) =>
+  apiFetch(
+    `/api/v1/meta/${provider}/disconnect${opts?.deleteData ? "?delete_data=true" : ""}`,
+    { method: "DELETE" },
+  );
