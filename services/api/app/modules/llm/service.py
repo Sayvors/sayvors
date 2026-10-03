@@ -89,7 +89,13 @@ async def _load_history(conv_id: str, db: AsyncSession) -> list[LLMMessage]:
         .limit(MAX_HISTORY_MESSAGES)
     )
     messages = list(reversed(result.scalars().all()))
-    return [LLMMessage(role=m.role, content=m.content) for m in messages]
+    from .providers.base import merge_consecutive
+
+    # Same qwen3 hazard as the WhatsApp consumer: users double-send before
+    # the reply lands, and consecutive user turns yield an empty completion.
+    return merge_consecutive(
+        [LLMMessage(role=m.role, content=m.content) for m in messages]
+    )
 
 
 def _resolve_model(model_id: str) -> tuple[str, str]:

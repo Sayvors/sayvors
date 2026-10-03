@@ -1,3 +1,4 @@
+import functools
 import hashlib
 import hmac
 import json
@@ -15,8 +16,9 @@ from .models import Channel, ChannelMessage
 from .schemas import ChannelCreate, ChannelMessageSend
 
 
+@functools.lru_cache(maxsize=1)
 def _get_fernet():
-    """Lazy-load Fernet for token encryption.
+    """Lazy-load Fernet for token encryption (derived once per process).
 
     Primary key: CHANNEL_ENCRYPTION_KEY (dedicated, independent of the JWT
     signing secret — leaking one must not unlock the other). When unset, the

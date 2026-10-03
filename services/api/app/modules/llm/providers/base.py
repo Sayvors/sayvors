@@ -17,6 +17,25 @@ class LLMMessage:
     content: str
 
 
+def merge_consecutive(messages: list[LLMMessage]) -> list[LLMMessage]:
+    """Fold back-to-back same-role messages into one.
+
+    Real chat histories are not strictly alternating: a customer often sends
+    "Hi", "Bro what the hell", "Hi" before any reply lands. Some chat
+    templates choke on that — qwen3 on Groq silently returns a 1-token EMPTY
+    completion (finish=stop) for two consecutive user turns, which looked
+    like "the AI stopped replying". Merging is lossless for the model and
+    keeps every provider happy.
+    """
+    merged: list[LLMMessage] = []
+    for m in messages:
+        if merged and merged[-1].role == m.role:
+            merged[-1].content = f"{merged[-1].content}\n{m.content}"
+        else:
+            merged.append(LLMMessage(role=m.role, content=m.content))
+    return merged
+
+
 @dataclass
 class ToolParameter:
     """One JSON-schema property of a tool's input object."""

@@ -182,3 +182,27 @@ async def test_replied_keeps_edit_flag_until_posted(db, user_id, channel_id, mon
     assert row.edited_at is None
     assert row.previous_rating is None
     assert row.previous_review_text is None
+
+
+def test_merge_consecutive_folds_same_role_turns():
+    """qwen3 on Groq returns an EMPTY 1-token completion for consecutive
+    same-role turns (a customer firing "Hi / Bro what the hell / Hi"), so
+    the history must be folded before it reaches the provider."""
+    from app.modules.llm.providers.base import LLMMessage, merge_consecutive
+
+    history = [
+        LLMMessage(role="user", content="Hi"),
+        LLMMessage(role="user", content="Bro what the hell"),
+        LLMMessage(role="assistant", content="Hey!"),
+        LLMMessage(role="assistant", content="What's up?"),
+        LLMMessage(role="user", content="hi"),
+    ]
+    merged = merge_consecutive(history)
+
+    assert [m.role for m in merged] == ["user", "assistant", "user"]
+    assert merged[0].content == "Hi\nBro what the hell"
+    assert merged[1].content == "Hey!\nWhat's up?"
+    assert merged[2].content == "hi"
+    # input is not mutated
+    assert history[0].content == "Hi"
+    assert merge_consecutive([]) == []
