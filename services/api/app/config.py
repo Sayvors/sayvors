@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     # gives the frontend a new subdomain on every restart). Starlette echoes
     # the actual origin for regex matches, so credentials still work.
     CORS_ORIGIN_REGEX: str | None = None
+    # Queue/poll workers (WhatsApp AI replies, reviews auto-reply, syncs,
+    # publishers, Kafka consumers, outbox drainer) run inside the API process
+    # when true — the dev default so one uvicorn process is self-sufficient.
+    # The worker deployment (docker-compose worker service, `python -m
+    # app.workers`) sets this false on the api so HTTP traffic can never
+    # delay message replies.
+    RUN_BACKGROUND_WORKERS: bool = True
     REDIS_URL: str = "redis://localhost:6379/0"
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
 

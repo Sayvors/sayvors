@@ -131,50 +131,50 @@ async def lifespan(app: FastAPI):
         pass
 
     # Schedule periodic retention cleanup (startup-only runs never fire again
-    # on long-lived pods)
+    # on long-lived pods). Auth housekeeping stays HTTP-adjacent on purpose.
     import asyncio
     from .modules.auth.service import run_retention_loop
     retention_task = asyncio.create_task(run_retention_loop())
 
-    # Start the Google Reviews auto-reply polling worker
-    from .modules.channels.reviews_worker import run_google_reviews_worker
-    reviews_task = asyncio.create_task(run_google_reviews_worker())
+    # Queue/poll workers (AI replies, syncs, publishers, Kafka consumers)
+    # belong OUTSIDE the HTTP process: in the worker deployment they run via
+    # `python -m app.workers` and the api sets RUN_BACKGROUND_WORKERS=false,
+    # so dashboard traffic can never delay the webhook -> AI reply pipeline.
+    # Dev keeps the default true — one uvicorn process still does everything.
+    bg_tasks: list[asyncio.Task] = []
+    outbox_worker = None
+    if settings.RUN_BACKGROUND_WORKERS:
+        from .modules.channels.reviews_worker import run_google_reviews_worker
+        from .modules.localith.worker import run_localith_sync_worker
+        from .modules.posts.worker import run_post_publish_worker
+        from .modules.analytics.consumer import run_analytics_consumer
+        from .modules.analytics.performance import run_performance_sync_worker
+        from .modules.channels.meta.consumer import run_meta_events_consumer
+        from .modules.outbox.worker import OutboxWorker
 
-    # Start the Localith background auto-sync (profile + reviews + metrics)
-    from .modules.localith.worker import run_localith_sync_worker
-    localith_sync_task = asyncio.create_task(run_localith_sync_worker())
+        bg_tasks.append(asyncio.create_task(run_google_reviews_worker()))
+        bg_tasks.append(asyncio.create_task(run_localith_sync_worker()))
+        bg_tasks.append(asyncio.create_task(run_post_publish_worker()))
+        bg_tasks.append(asyncio.create_task(run_analytics_consumer()))
+        bg_tasks.append(asyncio.create_task(run_performance_sync_worker()))
+        bg_tasks.append(asyncio.create_task(run_meta_events_consumer()))
 
-    # Start the scheduled-post publisher (due posts -> Google)
-    from .modules.posts.worker import run_post_publish_worker
-    posts_publish_task = asyncio.create_task(run_post_publish_worker())
-
-    # Start the analytics pipeline: Kafka consumer (review enrichment +
-    # daily rollups) and Google performance metrics sync worker
-    from .modules.analytics.consumer import run_analytics_consumer
-    from .modules.analytics.performance import run_performance_sync_worker
-    analytics_consumer_task = asyncio.create_task(run_analytics_consumer())
-    performance_sync_task = asyncio.create_task(run_performance_sync_worker())
-
-    # Start the Meta events consumer (WhatsApp messages -> AI reply -> send)
-    from .modules.channels.meta.consumer import run_meta_events_consumer
-    meta_consumer_task = asyncio.create_task(run_meta_events_consumer())
-
-    # Start the outbox worker (drains events to Kafka)
-    from .modules.outbox.worker import OutboxWorker
-    outbox_worker = OutboxWorker()
-    await outbox_worker.start()
+        outbox_worker = OutboxWorker()
+        await outbox_worker.start()
+    else:
+        log.info(
+            "RUN_BACKGROUND_WORKERS=false — queue/poll workers run in the "
+            "worker deployment"
+        )
 
     yield
 
     # Shutdown
     retention_task.cancel()
-    reviews_task.cancel()
-    localith_sync_task.cancel()
-    posts_publish_task.cancel()
-    analytics_consumer_task.cancel()
-    meta_consumer_task.cancel()
-    performance_sync_task.cancel()
-    await outbox_worker.stop()
+    for task in bg_tasks:
+        task.cancel()
+    if outbox_worker is not None:
+        await outbox_worker.stop()
     try:
         from .modules.kafka.client import get_kafka_producer
         producer = await get_kafka_producer()
