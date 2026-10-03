@@ -85,7 +85,7 @@ async def _generate_reply(db, channel, tenant_id: str, text: str) -> str:
     to surface the failure; nothing is sent on error.
     """
     from ..models import ChannelMessage
-    from ...llm.providers.base import LLMMessage, LLMRequest
+    from ...llm.providers.base import LLMMessage, LLMRequest, merge_consecutive
     from ...llm.providers.registry import get_provider_for_model
     from ...llm.service import _resolve_model, resolve_tenant_model
 
@@ -99,24 +99,34 @@ async def _generate_reply(db, channel, tenant_id: str, text: str) -> str:
             .limit(_HISTORY_MESSAGES)
         )
     ).scalars().all()
-    history = [
+    # Customers fire "Hi / Hi / hello" before any reply lands — consecutive
+    # same-role turns must be folded or qwen3 returns an empty completion.
+    history = merge_consecutive([
         LLMMessage(
             role="user" if m.direction == "inbound" else "assistant",
             content=m.content,
         )
         for m in reversed(rows)
-    ]
+    ])
 
     from ...users.models import User
 
     user = (await db.execute(select(User).where(User.id == tenant_id))).scalar_one()
+
+    # Business card (distilled from the tenant's databank) — lets the
+    # assistant answer "what can you do for me?" without searching the
+    # databank. Never raises; "" when no card exists yet.
+    from ...profile.business_profile import prompt_block
+
+    business_card = await prompt_block(tenant_id, db)
 
     api_model, _provider_key = _resolve_model(model_id)
     provider = get_provider_for_model(model_id)
     req = LLMRequest(
         model=api_model,
         messages=history,
-        system_prompt=_system_prompt(user),
+        system_prompt=_system_prompt(user)
+        + (f"\n\n{business_card}" if business_card else ""),
         temperature=_REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
         stream=False,

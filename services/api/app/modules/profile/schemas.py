@@ -57,3 +57,27 @@ class UsageItem(BaseModel):
 class UsageResponse(BaseModel):
     items: list[UsageItem]
     cached: bool = False
+
+
+class BusinessProfileData(BaseModel):
+    id: str
+    summary: str | None = None
+    domain: str | None = None
+    products_services: str | None = None
+    not_offered_and_policies: str | None = None
+    audience_languages: str | None = None
+    source: str = "auto"
+    generated_at: str | None = None
+    updated_at: str | None = None
+
+
+class BusinessProfileResponse(BaseModel):
+    profile: BusinessProfileData | None = None
+
+
+class BusinessProfileUpdateRequest(BaseModel):
+    summary: str | None = Field(None, max_length=2000)
+    domain: str | None = Field(None, max_length=200)
+    products_services: str | None = Field(None, max_length=2000)
+    not_offered_and_policies: str | None = Field(None, max_length=2000)
+    audience_languages: str | None = Field(None, max_length=500)

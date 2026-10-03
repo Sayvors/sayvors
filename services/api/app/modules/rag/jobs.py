@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 SEMAPHORE = asyncio.Semaphore(4)
 _worker_task: asyncio.Task | None = None
 _running = False
+# Fire-and-forget business-profile refreshes — kept referenced so the event
+# loop never garbage-collects a task mid-flight (asyncio requirement).
+_profile_tasks: set[asyncio.Task] = set()
 
 
 async def enqueue_job(job_id: str) -> None:
@@ -143,6 +146,7 @@ async def _process_job(job_id: str) -> None:
                 job.stage = "Done"
                 await db.commit()
                 await set_progress(job_id, 100, "Done")
+                _maybe_refresh_business_profile(job.user_id)
             except Exception as e:
                 logger.exception("Job %s failed", job_id)
                 job.status = "failed"
@@ -150,6 +154,33 @@ async def _process_job(job_id: str) -> None:
                 job.stage = "Failed"
                 await db.commit()
                 await set_progress(job_id, job.progress, "Failed")
+
+
+def _maybe_refresh_business_profile(user_id: str | None) -> None:
+    """After a successful ingest, ask the LLM to (re)distill the tenant's
+    business card from the fresh content. Fire-and-forget with its own DB
+    session so the ingest job never waits on an LLM call, and a failure
+    here can never mark a job failed. The service itself skips edited
+    cards and debounces multi-file uploads."""
+    if not user_id:
+        return
+
+    async def _run() -> None:
+        try:
+            from ...modules.profile.business_profile import generate_business_profile
+
+            async with async_session() as session:
+                await generate_business_profile(user_id, session, force=False)
+            logger.info("Business profile refreshed for %s", user_id)
+        except ValueError as e:
+            # No model enabled / nothing to generate from — expected states.
+            logger.info("Business profile refresh skipped for %s: %s", user_id, e)
+        except Exception:
+            logger.exception("Business profile refresh failed for %s", user_id)
+
+    task = asyncio.create_task(_run())
+    _profile_tasks.add(task)
+    task.add_done_callback(_profile_tasks.discard)
 
 
 async def _process_document_job(job: IngestJob, db) -> None:
