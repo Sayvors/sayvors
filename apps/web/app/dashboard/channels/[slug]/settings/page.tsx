@@ -5,7 +5,21 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import { channels, agents } from "@/lib/channel-data";
+import { getProfile, updateResponseStyle } from "@/lib/api-profile";
 import { ChannelLogo } from "@/components/dashboard/ChannelLogos";
+
+const RESPONSE_STYLE_OPTIONS = [
+  {
+    value: "concise",
+    label: "Concise",
+    desc: "Send clear, compact responses as a single message.",
+  },
+  {
+    value: "human",
+    label: "Human-like",
+    desc: "Use natural short WhatsApp messages when appropriate.",
+  },
+] as const;
 
 function Dropdown({
   label,
@@ -105,6 +119,43 @@ export default function ChannelSettingsPage() {
   const [offlineMsg, setOfflineMsg] = useState("We're currently offline. Leave a message and we'll get back to you!");
   const [typingIndicator, setTypingIndicator] = useState(true);
 
+  // Response style is a real tenant-level setting (per account, applies to
+  // every WhatsApp reply) — the rest of this page is still display-only.
+  const isWhatsApp = slug === "whatsapp";
+  const [responseStyle, setResponseStyle] = useState<string>("concise");
+  const [styleStatus, setStyleStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  useEffect(() => {
+    if (!isWhatsApp) return;
+    let cancelled = false;
+    getProfile()
+      .then((profile) => {
+        if (!cancelled && profile) {
+          setResponseStyle(profile.response_style === "human" ? "human" : "concise");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isWhatsApp]);
+
+  async function chooseResponseStyle(style: string) {
+    if (style === responseStyle || styleStatus === "saving") return;
+    const previous = responseStyle;
+    setResponseStyle(style);
+    setStyleStatus("saving");
+    try {
+      await updateResponseStyle(style);
+      setStyleStatus("saved");
+      setTimeout(() => setStyleStatus("idle"), 2500);
+    } catch {
+      setResponseStyle(previous);
+      setStyleStatus("error");
+      setTimeout(() => setStyleStatus("idle"), 4000);
+    }
+  }
+
   if (!channel) {
     return (
       <div className="flex h-full items-center justify-center p-6">
@@ -192,8 +243,67 @@ export default function ChannelSettingsPage() {
             />
           </section>
 
-          {/* ── Divider ── */}
-          <div className="border-t border-deep-violet/10" />
+          {/* ── Response Style (WhatsApp only) ── */}
+          {isWhatsApp && (
+            <>
+              <div className="border-t border-deep-violet/10" />
+              <section>
+                <div className="mb-1 flex items-center justify-between">
+                  <h2 className="text-[15px] font-bold text-ink">Response style</h2>
+                  {styleStatus === "saving" && (
+                    <span className="text-[12px] text-ink/50">Saving&hellip;</span>
+                  )}
+                  {styleStatus === "saved" && (
+                    <span className="text-[12px] font-semibold text-emerald-600">
+                      Saved &mdash; applies to new messages
+                    </span>
+                  )}
+                  {styleStatus === "error" && (
+                    <span className="text-[12px] font-semibold text-red-600">
+                      Couldn&rsquo;t save &mdash; try again
+                    </span>
+                  )}
+                </div>
+                <p className="mb-4 text-[13px] text-ink/60">
+                  How the AI&rsquo;s replies are delivered to your customers on WhatsApp.
+                </p>
+                <div className="space-y-3">
+                  {RESPONSE_STYLE_OPTIONS.map((opt) => {
+                    const selected = responseStyle === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        onClick={() => chooseResponseStyle(opt.value)}
+                        disabled={styleStatus === "saving"}
+                        className={`flex w-full items-start gap-3 rounded-xl border-2 p-4 text-left transition disabled:opacity-70 ${
+                          selected
+                            ? "border-deep-violet bg-white shadow-md shadow-deep-violet/10"
+                            : "border-white bg-white/80 hover:border-deep-violet/20 hover:bg-white"
+                        }`}
+                      >
+                        <span
+                          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+                            selected ? "border-deep-violet" : "border-ink/25"
+                          }`}
+                        >
+                          {selected && <span className="h-2.5 w-2.5 rounded-full bg-deep-violet" />}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[14px] font-semibold text-ink">{opt.label}</span>
+                          <span className="mt-0.5 block text-[12px] text-ink/60">{opt.desc}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {responseStyle === "human" && (
+                  <div className="mt-3 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-[12px] leading-relaxed text-amber-800">
+                    ⚠️ Human-like responses may send multiple WhatsApp messages for a single response, which can increase WhatsApp messaging usage and costs.
+                  </div>
+                )}
+              </section>
+            </>
+          )}
 
           {/* ── Divider ── */}
           <div className="border-t border-deep-violet/10" />

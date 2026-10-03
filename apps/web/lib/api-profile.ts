@@ -19,6 +19,10 @@ export interface Profile {
   country: string | null;
   theme: string;
   language: string;
+  /** WhatsApp response delivery: "concise" | "human" */
+  response_style: string;
+  /** WhatsApp voice notes tier: "off" | "simple" | "advanced" (engine is admin-managed) */
+  voice_replies: string;
   plan: string;
   member_since: string;
   feedback: Record<string, number>;
@@ -62,6 +66,22 @@ export async function updatePreferences(theme: string, language: string): Promis
   return apiFetch("/api/v1/profile/preferences", {
     method: "PATCH",
     body: JSON.stringify({ theme, language }),
+  });
+}
+
+/** WhatsApp response style. Takes effect for messages sent after the save. */
+export async function updateResponseStyle(responseStyle: string): Promise<Profile> {
+  return apiFetch("/api/v1/profile/response-style", {
+    method: "PUT",
+    body: JSON.stringify({ response_style: responseStyle }),
+  });
+}
+
+/** WhatsApp voice replies tier. Takes effect for messages sent after the save. */
+export async function updateVoiceReplies(voiceReplies: string): Promise<Profile> {
+  return apiFetch("/api/v1/profile/voice-replies", {
+    method: "PUT",
+    body: JSON.stringify({ voice_replies: voiceReplies }),
   });
 }
 

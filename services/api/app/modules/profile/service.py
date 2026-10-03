@@ -124,6 +124,8 @@ def _serialize(user: User, feedback: dict[str, int]) -> dict:
         "country": user.country,
         "theme": user.theme or "light",
         "language": user.language or "en",
+        "response_style": getattr(user, "response_style", None) or "concise",
+        "voice_replies": getattr(user, "voice_replies", None) or "off",
         "plan": "pro",
         "member_since": member_since,
         "feedback": feedback,
@@ -195,6 +197,52 @@ async def update_preferences(user_id: str, theme: str, language: str, db: AsyncS
         user_id,
         email=user.email,
         metadata={"theme": theme, "language": language},
+    )
+
+    return await get_profile(user_id, db)
+
+
+async def update_response_style(user_id: str, response_style: str, db: AsyncSession) -> dict:
+    """Persist the tenant's WhatsApp response style (same write path as
+    preferences: DB commit -> cache invalidate -> outbox event)."""
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise ValueError("User not found")
+    user.response_style = response_style
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    await db.commit()
+
+    await _cache_delete(_profile_key(user_id))
+
+    await _emit(
+        "response_style.updated",
+        user_id,
+        email=user.email,
+        metadata={"response_style": response_style},
+    )
+
+    return await get_profile(user_id, db)
+
+
+async def update_voice_replies(user_id: str, voice_replies: str, db: AsyncSession) -> dict:
+    """Persist the tenant's WhatsApp voice replies tier (same write path as
+    preferences). The engine behind each tier is admin-managed."""
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise ValueError("User not found")
+    user.voice_replies = voice_replies
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    await db.commit()
+
+    await _cache_delete(_profile_key(user_id))
+
+    await _emit(
+        "voice_replies.updated",
+        user_id,
+        email=user.email,
+        metadata={"voice_replies": voice_replies},
     )
 
     return await get_profile(user_id, db)

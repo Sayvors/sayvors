@@ -18,9 +18,14 @@ class ProfileResponse(BaseModel):
     country: str | None = None
     theme: str = "light"
     language: str = "en"
+    response_style: str = "concise"
+    voice_replies: str = "off"
     plan: str = "pro"
     member_since: str
-    feedback: dict[str, int] = {}
+    # Actual service shape: a list of {emoji_rating, message, created_at}
+    # rows. (Was declared dict[str, int] — every profile response 500'd on
+    # serialization because of it.)
+    feedback: list[dict] = []
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -39,6 +44,27 @@ class ProfileUpdateRequest(BaseModel):
 class PreferencesUpdateRequest(BaseModel):
     theme: str = Field(..., pattern="^(light|dark|system)$")
     language: str = Field(..., pattern="^(en|es|fr|de|ar|zh|ja|ur)$")
+
+
+class ResponseStyleUpdateRequest(BaseModel):
+    """Tenant-level WhatsApp response style ("concise" | "human").
+
+    Extensible string, not a boolean — new styles are added to the pattern
+    without a migration.
+    """
+
+    response_style: str = Field(..., pattern="^(concise|human)$")
+
+
+class VoiceRepliesUpdateRequest(BaseModel):
+    """Tenant-level WhatsApp voice replies tier.
+
+    "off" never sends voice notes; "simple"/"advanced" allow them when the
+    customer seems confused. The engine behind each tier is admin-managed
+    (voice_model_configs) — tenants never see provider names.
+    """
+
+    voice_replies: str = Field(..., pattern="^(off|simple|advanced)$")
 
 
 class FeedbackRequest(BaseModel):

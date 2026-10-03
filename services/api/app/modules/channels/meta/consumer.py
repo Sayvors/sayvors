@@ -36,6 +36,9 @@ GROUP_ID = "meta-events-replier"
 _REPLY_MAX_TOKENS = 600
 _REPLY_TEMPERATURE = 0.5
 _HISTORY_MESSAGES = 10
+# Pace between human-style message parts so they arrive in order and read
+# like a person typing, without noticeably delaying the reply.
+_MESSAGE_GAP_SECONDS = 0.8
 
 
 async def _resolve_asset(db, external_asset_id: str) -> MetaAsset | None:
@@ -67,8 +70,23 @@ def _system_prompt(user) -> str:
     if user.business_doesnt_sell:
         lines.append(f"We do NOT sell: {user.business_doesnt_sell}")
     lines += [
-        "Style: concise and human — 1 to 4 short sentences, plain text "
-        "(WhatsApp), no markdown formatting, at most one question.",
+        "Style: you are a real human agent chatting on WhatsApp — warm, "
+        "brief, 1 to 3 short sentences, plain text, no markdown. Vary your "
+        "wording; never repeat the same explanation twice.",
+        "Every reply moves the chat forward: after answering, ask ONE short "
+        "question that helps the customer — e.g. 'What are you looking to "
+        "build?', 'Shall I connect you with the team?', 'Anything else I "
+        "can help you with?'. A flat statement with no question feels like "
+        "a bot.",
+        "If the request is outside what we offer: acknowledge it kindly in "
+        "one short sentence, then pivot to what we CAN do and ask what "
+        "they need. Do not lecture about what the company is.",
+        "If the customer seems frustrated or confused: acknowledge it, "
+        "simplify, and offer to explain by voice note or connect the team.",
+        "When a customer shows interest in the services, get their details: "
+        "ask their name and what they need, so the team can follow up.",
+        "If the customer is clearly saying goodbye, a short warm sign-off "
+        "is fine without a question.",
         "Language: reply in the language the customer wrote in "
         "(Arabic or English; match their script exactly).",
         "Never invent prices, stock, opening hours or policies you were "
@@ -219,6 +237,11 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 contact_name=data.get("profile_name") or None,
             )
         )
+        # The customer wrote again: any pending one-shot follow-up closes —
+        # nothing is owed anymore.
+        from .thread_state import clear_awaiting
+
+        await clear_awaiting(db, channel.id, from_wa)
         await db.commit()
 
         token = decrypt_connection_token(asset.connection) if asset.connection else None
@@ -234,6 +257,34 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 msg_type, wamid[:32],
             )
             return
+
+        # get_adapter returns a process-level singleton shared with the HTTP
+        # routers — used in place, never closed (its httpx client lives as
+        # long as the app).
+        adapter = get_adapter("whatsapp")
+
+        # Mark the inbound message read and show the typing dots while the
+        # reply is prepared (classification + generation take seconds). The
+        # Cloud API has no "recording audio" variant — text dots are what
+        # exists. Best-effort: failure here changes nothing downstream.
+        await adapter.send_typing_indicator(phone_number_id, token, wamid)
+
+        # Conversation stats BEFORE the reply: language + confusion decide
+        # whether this reply goes out as a voice note. Failure degrades to
+        # the script heuristic — the text reply always still goes.
+        from .thread_stats import classify_thread
+        from .thread_state import apply_classification, clear_confusion
+
+        stats = await classify_thread(db, channel.id, from_wa)
+        await apply_classification(db, channel.id, from_wa, stats)
+        await db.commit()
+        # Rollout diagnosis: makes "why did/didn't voice fire?" answerable
+        # from the logs alone (tier, and what the classifier decided).
+        logger.info(
+            "WhatsApp thread classified wamid=%s language=%s confused=%s "
+            "awaiting=%s", wamid[:32], stats.get("language"),
+            stats.get("confused"), stats.get("awaiting_user"),
+        )
 
         try:
             reply = await _generate_reply(db, channel, tenant_id, text)
@@ -251,48 +302,172 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             )
             return
 
-        # get_adapter returns a process-level singleton shared with the HTTP
-        # routers — used in place, never closed (its httpx client lives as
-        # long as the app).
-        adapter = get_adapter("whatsapp")
-        try:
-            provider_msg_id = await adapter.send_text_message(
-                phone_number_id, token, from_wa, reply
-            )
-        except MetaAPIError as e:
-            logger.error(
-                "WhatsApp send failed from=+%s: %s %s",
-                from_wa[-6:], e.status_code, str(e)[:200],
-            )
-            db.add(
-                ChannelMessage(
-                    id=str(uuid.uuid4()),
-                    channel_id=channel.id,
-                    direction="outbound",
-                    content=reply,
-                    status="failed",
-                    error=str(e)[:500],
-                    contact_phone=from_wa or None,
+        # Tenant delivery config — one indexed read for both knobs: response
+        # style (text shape) and voice replies tier (voice notes when the
+        # customer seems confused). Missing rows/columns degrade to defaults.
+        from ...users.models import User
+        from .response_style import normalize_response_style, render_response
+        from .voice import as_voice_note, normalize_voice_tier, synthesize_voice_note
+
+        style_row = (
+            await db.execute(
+                select(User.response_style, User.voice_replies).where(
+                    User.id == tenant_id
                 )
             )
-            await db.commit()
-            return
-
-        db.add(
-            ChannelMessage(
-                id=str(uuid.uuid4()),
-                channel_id=channel.id,
-                platform_message_id=provider_msg_id[:200] or None,
-                direction="outbound",
-                content=reply,
-                status="sent",
-                contact_phone=from_wa or None,
-            )
+        ).first()
+        response_style = normalize_response_style(
+            style_row.response_style if style_row else None
         )
-        await db.commit()
+        voice_tier = normalize_voice_tier(
+            style_row.voice_replies if style_row else None
+        )
+
+        # Voice escape hatch: a confused customer gets the reply as a voice
+        # note in their own language. Any problem (no engine for the tier,
+        # unsupported language, Meta rejection) falls back to the text path —
+        # a voice failure may never cost the customer their reply.
+        voice_sent = False
+        confused = bool(stats.get("confused"))
+        if confused and voice_tier == "off":
+            # Rollout diagnosis: this is the "customer clearly confused but
+            # no voice" case — the tier knob is the usual culprit.
+            logger.info(
+                "Voice skipped — tenant tier is OFF from=+%s wamid=%s "
+                "(set it in WhatsApp channel settings)", from_wa[-6:], wamid[:32],
+            )
+        if voice_tier != "off" and confused:
+            voice = await synthesize_voice_note(
+                db, voice_tier, stats.get("language") or "en", reply,
+                tenant_id=tenant_id,
+            )
+            if voice is not None:
+                audio_bytes, mime_type = voice
+                try:
+                    # Meta renders only Ogg/Opus as a real voice note (mic
+                    # bubble + waveform); other audio arrives as a media
+                    # file. Convert when we can, send anyway when we can't.
+                    audio_bytes, mime_type, is_voice = await as_voice_note(
+                        audio_bytes, mime_type
+                    )
+                    media_id = await adapter.upload_media(
+                        phone_number_id, token, audio_bytes, mime_type
+                    )
+                    provider_msg_id = await adapter.send_voice_note(
+                        phone_number_id, token, from_wa, media_id,
+                        voice=is_voice,
+                    )
+                except Exception as e:  # noqa: BLE001 — MetaAPIError, httpx, anything
+                    # Network blips raise httpx.HTTPError, not MetaAPIError —
+                    # catch everything: a voice problem may never cost the
+                    # customer their reply.
+                    logger.error(
+                        "WhatsApp voice send failed from=+%s: %s %s — "
+                        "falling back to text",
+                        from_wa[-6:], type(e).__name__, str(e)[:200],
+                    )
+                else:
+                    db.add(
+                        ChannelMessage(
+                            id=str(uuid.uuid4()),
+                            channel_id=channel.id,
+                            platform_message_id=provider_msg_id[:200] or None,
+                            direction="outbound",
+                            content=reply,  # transcript of what was spoken
+                            content_type="audio",
+                            status="sent",
+                            contact_phone=from_wa or None,
+                        )
+                    )
+                    # The voice note is the remedy for the confusion that
+                    # triggered it — once delivered, the AI goes back to
+                    # text mode. Fresh confusion (after this note) starts
+                    # the cycle again; classify_thread also ignores history
+                    # older than this note for the same reason.
+                    await clear_confusion(db, channel.id, from_wa)
+                    await db.commit()
+                    logger.info(
+                        "WhatsApp AI voice note sent to=+%s wamid=%s "
+                        "language=%s provider_msg=%s",
+                        from_wa[-6:], wamid[:32], stats.get("language"),
+                        provider_msg_id[:32],
+                    )
+                    voice_sent = True
+            else:
+                logger.info(
+                    "Voice unavailable for tier=%s language=%s — replying "
+                    "as text", voice_tier, stats.get("language"),
+                )
+
+        messages: list[str] = []
+        if not voice_sent:
+            # Tenant response style decides text delivery — one message, or
+            # a short natural sequence. Rendering happens after reasoning
+            # and never touches it: same agent, same reply, different shape.
+            messages = await render_response(
+                response_style, reply, tenant_id, db
+            )
+            if not messages:
+                logger.warning(
+                    "WhatsApp AI reply rendered to zero messages — skipping "
+                    "send wamid=%s from=+%s", wamid[:32], from_wa[-6:],
+                )
+                return
+
+            for index, part in enumerate(messages):
+                try:
+                    provider_msg_id = await adapter.send_text_message(
+                        phone_number_id, token, from_wa, part
+                    )
+                except MetaAPIError as e:
+                    logger.error(
+                        "WhatsApp send failed from=+%s: %s %s",
+                        from_wa[-6:], e.status_code, str(e)[:200],
+                    )
+                    db.add(
+                        ChannelMessage(
+                            id=str(uuid.uuid4()),
+                            channel_id=channel.id,
+                            direction="outbound",
+                            content=part,
+                            status="failed",
+                            error=str(e)[:500],
+                            contact_phone=from_wa or None,
+                        )
+                    )
+                    await db.commit()
+                    # Later parts would land without their context — stop.
+                    return
+                db.add(
+                    ChannelMessage(
+                        id=str(uuid.uuid4()),
+                        channel_id=channel.id,
+                        platform_message_id=provider_msg_id[:200] or None,
+                        direction="outbound",
+                        content=part,
+                        status="sent",
+                        contact_phone=from_wa or None,
+                    )
+                )
+                await db.commit()
+                if index < len(messages) - 1:
+                    await asyncio.sleep(_MESSAGE_GAP_SECONDS)
+
+        # One-shot follow-up: when the reply ends by asking the customer
+        # something, open the 60s window for exactly one gentle nudge
+        # (armed now, closed by their next message, never sent twice).
+        from .thread_state import arm_followup
+
+        final_text = reply if voice_sent else messages[-1]
+        if final_text.rstrip().endswith(("?", "؟", "?")):
+            await arm_followup(db, channel.id, from_wa)
+            await db.commit()
+
         logger.info(
-            "WhatsApp AI reply sent to=+%s wamid=%s provider_msg=%s",
+            "WhatsApp AI reply sent to=+%s wamid=%s provider_msg=%s parts=%d%s",
             from_wa[-6:], wamid[:32], provider_msg_id[:32],
+            1 if voice_sent else len(messages),
+            " (voice)" if voice_sent else "",
         )
 
 

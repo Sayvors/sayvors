@@ -245,3 +245,40 @@ class ReviewReply(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class WhatsAppThreadState(Base):
+    """Per-conversation stats for one WhatsApp customer.
+
+    A thread is (channel, contact_phone) — the same key the inbox groups on.
+    The consumer refreshes `language` and `confused` from a small classifier
+    call on every inbound message; `awaiting_since`/`followup_sent` drive the
+    ONE gentle follow-up when the AI asked the customer something and they
+    went quiet. `followup_sent=True` guarantees a second nudge is never sent
+    until the user replies (which resets both fields).
+    """
+
+    __tablename__ = "whatsapp_thread_states"
+    __table_args__ = (
+        UniqueConstraint("channel_id", "contact_phone", name="uq_wa_thread_channel_phone"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    channel_id: Mapped[str] = mapped_column(
+        ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    contact_phone: Mapped[str] = mapped_column(String(32), index=True)
+    # Customer's language as detected from their own words ("en", "ar",
+    # "ur", "ps", "hi", "bn", ...). Drives the voice-note language.
+    language: Mapped[str] = mapped_column(String(16), default="en")
+    confused: Mapped[bool] = mapped_column(Boolean, default=False)
+    confused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set when the AI's reply asked the customer something; cleared the
+    # moment any inbound message from the contact arrives.
+    awaiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    followup_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

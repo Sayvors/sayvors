@@ -8,7 +8,7 @@ number, and persists WABA + phone_number assets.
 import logging
 
 from .....config import settings
-from .base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter
+from .base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter, graph_base
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +154,71 @@ class WhatsAppAdapter(MetaProviderAdapter):
         data = resp.json()
         msgs = data.get("messages", [])
         return msgs[0].get("id", "") if msgs else ""
+
+    async def upload_media(
+        self, phone_number_id: str, token: str, data: bytes, mime_type: str
+    ) -> str:
+        """Upload media for this number; returns the media id for sends."""
+        resp = await self._http.post(
+            f"{graph_base()}/{phone_number_id}/media",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"messaging_product": "whatsapp", "type": mime_type},
+            files={"file": ("audio", data, mime_type)},
+        )
+        if resp.status_code >= 400:
+            raise MetaAPIError(
+                f"WhatsApp media upload failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json().get("id", "")
+
+    async def send_voice_note(
+        self, phone_number_id: str, token: str, to: str, media_id: str,
+        voice: bool = True,
+    ) -> str:
+        """Send an uploaded audio. voice=True (Ogg/Opus required) renders as
+        a real voice note — mic bubble, waveform, hands-free playback —
+        instead of a generic media file. Returns message id."""
+        audio: dict = {"id": media_id}
+        if voice:
+            audio["voice"] = True
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "audio",
+                "audio": audio,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_typing_indicator(
+        self, phone_number_id: str, token: str, message_id: str
+    ) -> bool:
+        """Mark the inbound message read and show the typing dots while we
+        prepare the reply (the Cloud API has no 'recording audio' variant).
+        Best-effort: False on any failure — cosmetics must never break a
+        reply."""
+        try:
+            await self._http.post(
+                f"{graph_base()}/{phone_number_id}/messages",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "messaging_product": "whatsapp",
+                    "status": "read",
+                    "message_id": message_id,
+                    "typing_indicator": {"type": "text"},
+                },
+            )
+            return True
+        except Exception as e:
+            logger.info("Typing indicator failed: %s: %s", type(e).__name__, str(e)[:120])
+            return False
 
     async def sync_smb_app_data(
         self, phone_number_id: str, token: str, sync_type: str

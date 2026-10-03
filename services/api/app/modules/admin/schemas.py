@@ -84,6 +84,39 @@ class AdminUsageOverview(BaseModel):
     daily: list[UsageDayRow] = []
 
 
+class VoiceEngineUsageRow(BaseModel):
+    engine: str  # voice:<provider>:<tier>, e.g. voice:edge:simple
+    provider: str = ""
+    api_model: str = ""  # voice/model name, e.g. en-US-JennyNeural
+    notes: int = 0
+    calls: int = 0
+    chars: int = 0
+    failures: int = 0
+    avg_latency_ms: int = 0
+
+
+class VoiceUsageTotals(BaseModel):
+    notes: int = 0
+    calls: int = 0
+    failed: int = 0
+    chars: int = 0
+    avg_latency_ms: int = 0
+    active_engines: int = 0
+
+
+class VoiceUsageDayRow(BaseModel):
+    day: str
+    notes: int = 0
+    chars: int = 0
+
+
+class AdminVoiceUsageOverview(BaseModel):
+    days: int = 30
+    totals: VoiceUsageTotals
+    per_engine: list[VoiceEngineUsageRow] = []
+    daily: list[VoiceUsageDayRow] = []
+
+
 class LlmProviderStatus(BaseModel):
     provider: str
     key_source: str  # database | none | disabled

@@ -10,7 +10,9 @@ from .schemas import (
     PreferencesUpdateRequest,
     ProfileResponse,
     ProfileUpdateRequest,
+    ResponseStyleUpdateRequest,
     UsageResponse,
+    VoiceRepliesUpdateRequest,
 )
 
 router = APIRouter(prefix="/api/v1/profile", tags=["profile"])
@@ -46,6 +48,38 @@ async def patch_preferences(
 ):
     try:
         return await service.update_preferences(user.id, body.theme, body.language, db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/response-style", response_model=ProfileResponse)
+async def put_response_style(
+    body: ResponseStyleUpdateRequest,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the tenant's WhatsApp response style. Takes effect for messages
+    sent after the save — the consumer reads it per incoming message."""
+    try:
+        return await service.update_response_style(
+            user.id, body.response_style, db
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/voice-replies", response_model=ProfileResponse)
+async def put_voice_replies(
+    body: VoiceRepliesUpdateRequest,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the tenant's WhatsApp voice replies tier ("off" | "simple" |
+    "advanced"). Which engine serves each tier is admin-managed."""
+    try:
+        return await service.update_voice_replies(
+            user.id, body.voice_replies, db
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

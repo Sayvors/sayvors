@@ -6,9 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps for asyncpg / cryptography / pillow-style builds
+# System deps for asyncpg / cryptography / pillow-style builds, plus ffmpeg
+# (converts Edge-tier mp3 voice audio to Ogg/Opus so WhatsApp renders it as a
+# real voice note rather than a media file).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libpq-dev curl \
+    build-essential libpq-dev curl ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 # Build context is the REPO ROOT (see deploy-staging.yml): the API imports

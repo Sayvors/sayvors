@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { adminFetch } from "@/lib/admin-api";
 
@@ -23,6 +24,22 @@ interface UsageOverview {
   per_tenant: TenantRow[];
   per_model: ModelRow[];
   daily: { day: string; total_tokens: number; calls: number }[];
+}
+interface VoiceEngineRow {
+  engine: string;
+  provider: string;
+  api_model: string;
+  notes: number;
+  calls: number;
+  chars: number;
+  failures: number;
+  avg_latency_ms: number;
+}
+interface VoiceUsageOverview {
+  days: number;
+  totals: { notes: number; calls: number; failed: number; chars: number; avg_latency_ms: number; active_engines: number };
+  per_engine: VoiceEngineRow[];
+  daily: { day: string; notes: number; chars: number }[];
 }
 
 function CompactArea({ points }: { points: { x: string; y: number }[] }) {
@@ -61,6 +78,79 @@ function CompactArea({ points }: { points: { x: string; y: number }[] }) {
   );
 }
 
+function prettyEngine(engine: string): { provider: string; tier: string } {
+  const parts = engine.split(":");
+  if (parts.length >= 3) return { provider: parts[1] || "?", tier: parts.slice(2).join(":") || "?" };
+  return { provider: engine || "?", tier: "" };
+}
+
+/** Horizontal bars: one row per voice engine, scaled by notes. */
+function EngineBars({ rows }: { rows: VoiceEngineRow[] }) {
+  const max = Math.max(1, ...rows.map((r) => r.notes));
+  return (
+    <div className="mt-3 space-y-2.5">
+      {rows.map((r) => {
+        const { provider, tier } = prettyEngine(r.engine);
+        return (
+          <div key={r.engine} className="group" title={`${r.notes} notes · ${r.chars.toLocaleString()} chars · ${r.failures} failed · avg ${fmtMs(r.avg_latency_ms)}`}>
+            <div className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="min-w-0 truncate font-semibold text-ink">
+                {provider}
+                {tier && <span className="ml-1.5 rounded-full bg-ink/[0.05] px-1.5 py-0.5 text-[10px] font-bold text-ink/55">{tier}</span>}
+                {r.api_model && <span className="ml-1 truncate font-normal text-ink/40">{r.api_model}</span>}
+              </span>
+              <span className="shrink-0 tabular-nums text-ink/50">
+                {r.notes} notes · {fmt(r.chars)} chars
+                {r.failures > 0 && <span className="ml-1 font-bold text-red-500">{r.failures} failed</span>}
+              </span>
+            </div>
+            <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-ink/[0.06]">
+              <div
+                className="h-full rounded-full bg-deep-violet transition-all group-hover:bg-violet-600"
+                style={{ width: `${Math.max(3, (r.notes / max) * 100)}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Vertical bars: voice notes per day. */
+function VoiceDailyBars({ days }: { days: { day: string; notes: number; chars: number }[] }) {
+  const W = 520;
+  const H = 110;
+  const PAD = 28;
+  const BASE = H - 18;
+  const max = Math.max(1, ...days.map((d) => d.notes));
+  const n = days.length;
+  const slot = (W - PAD * 2) / Math.max(1, n);
+  const bw = Math.max(2, Math.min(20, slot * 0.55));
+  const bh = (v: number) => Math.max(v > 0 ? 2 : 0, (v / max) * (BASE - 20));
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 w-full text-ink" role="img" aria-label="Voice notes per day">
+      <line x1={PAD} x2={W - PAD} y1={BASE} y2={BASE} stroke="currentColor" strokeOpacity={0.12} />
+      <text x={PAD - 4} y={BASE - (BASE - 20) + 3} textAnchor="end" fontSize={8.5} fill="currentColor" opacity={0.4}>
+        {max}
+      </text>
+      {days.map((d, i) => {
+        const h = bh(d.notes);
+        const x = PAD + slot * i + (slot - bw) / 2;
+        return (
+          <g key={d.day}>
+            <rect x={x.toFixed(1)} y={(BASE - h).toFixed(1)} width={bw.toFixed(1)} height={h.toFixed(1)} rx={Math.min(3, bw / 2)} fill="#5b2d8e" opacity={d.notes ? 0.85 : 0.15}>
+              <title>{`${d.day}: ${d.notes} notes · ${d.chars.toLocaleString()} chars`}</title>
+            </rect>
+          </g>
+        );
+      })}
+      <text x={PAD} y={H - 4} fontSize={8.5} fill="currentColor" opacity={0.35}>{days[0]?.day.slice(5) ?? ""}</text>
+      <text x={W - PAD} y={H - 4} textAnchor="end" fontSize={8.5} fill="currentColor" opacity={0.35}>{days[n - 1]?.day.slice(5) ?? ""}</text>
+    </svg>
+  );
+}
+
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -78,6 +168,8 @@ function pct(part: number, whole: number): number {
 export default function UsagePage() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<UsageOverview | null>(null);
+  const [voice, setVoice] = useState<VoiceUsageOverview | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -85,8 +177,19 @@ export default function UsagePage() {
   const load = useCallback(async (d: number) => {
     setLoading(true);
     setError(null);
+    setVoiceError(null);
     try {
-      setData(await adminFetch<UsageOverview>(`/api/v1/admin/usage/overview?days=${d}`));
+      const [usage, voiceData] = await Promise.all([
+        adminFetch<UsageOverview>(`/api/v1/admin/usage/overview?days=${d}`),
+        // Voice slice is optional — an older API without /usage/voice
+        // must not blank the token view.
+        adminFetch<VoiceUsageOverview>(`/api/v1/admin/usage/voice?days=${d}`).catch((e) => {
+          setVoiceError(e instanceof Error ? e.message : "Voice usage unavailable");
+          return null;
+        }),
+      ]);
+      setData(usage);
+      setVoice(voiceData);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load usage");
       setData(null);
@@ -321,6 +424,66 @@ export default function UsagePage() {
                 </p>
               )}
             </div>
+          </div>
+
+          {/* voice models — TTS engine usage with bar charts */}
+          <div className="rounded-[6px] border-2 border-white bg-white/80 p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h2 className="text-[13px] font-bold leading-none text-ink">Voice models</h2>
+                <p className="mt-1 text-[11px] leading-none text-ink/45">WhatsApp voice notes — notes & characters per TTS engine</p>
+              </div>
+              {voice && (
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="rounded-full bg-ink/[0.04] px-2 py-1 text-[11px] font-semibold tabular-nums text-ink/50">
+                    {voice.totals.notes.toLocaleString()} notes · {fmt(voice.totals.chars)} chars
+                  </span>
+                  <Link href="/voice" className="rounded-full bg-deep-violet px-2.5 py-1 text-[11px] font-bold text-white transition hover:bg-violet-600">
+                    Manage engines
+                  </Link>
+                </span>
+              )}
+            </div>
+            {voiceError && !voice ? (
+              <p className="mt-3 rounded-xl bg-ink/[0.03] px-3 py-4 text-center text-[11px] text-ink/40">
+                Voice usage unavailable ({voiceError}) — restart the API to pick up the voice metering endpoint.
+              </p>
+            ) : voice && voice.totals.calls === 0 ? (
+              <p className="mt-3 rounded-xl bg-ink/[0.03] px-3 py-4 text-center text-[11px] text-ink/40">
+                No voice notes in this period — enable voice replies per tenant to see engine usage here.
+              </p>
+            ) : voice ? (
+              <>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    { label: "Voice notes", value: voice.totals.notes.toLocaleString(), sub: `${voice.totals.failed} failed` },
+                    { label: "Chars spoken", value: fmt(voice.totals.chars), sub: `${voice.totals.calls.toLocaleString()} synth calls` },
+                    { label: "Engines used", value: String(voice.totals.active_engines), sub: `${voice.per_engine.length} configured rows` },
+                    { label: "Avg latency", value: fmtMs(voice.totals.avg_latency_ms), sub: "per synthesis" },
+                  ].map((c) => (
+                    <div key={c.label} className="rounded-xl bg-ink/[0.02] px-3 py-2 ring-1 ring-ink/[0.04]">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</p>
+                      <p className="mt-0.5 text-[16px] font-bold leading-none tabular-nums text-ink">{c.value}</p>
+                      <p className="mt-1 text-[11px] leading-none text-ink/45">{c.sub}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 grid gap-3 lg:grid-cols-5">
+                  <div className="lg:col-span-3">
+                    <h3 className="text-[12px] font-bold text-ink">Notes per engine</h3>
+                    <EngineBars rows={voice.per_engine} />
+                  </div>
+                  <div className="lg:col-span-2">
+                    <h3 className="text-[12px] font-bold text-ink">Daily voice notes</h3>
+                    {voice.daily.length === 0 ? (
+                      <p className="mt-3 rounded-xl bg-ink/[0.03] px-3 py-6 text-center text-[11px] text-ink/40">No daily data.</p>
+                    ) : (
+                      <VoiceDailyBars days={voice.daily} />
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : null}
           </div>
 
           {/* per tenant — compact table */}

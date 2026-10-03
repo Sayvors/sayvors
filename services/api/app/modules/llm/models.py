@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...database import Base
@@ -86,6 +86,47 @@ class ModelConfig(Base):
     context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_output: Mapped[int | None] = mapped_column(Integer, nullable=True)
     supports_stream: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class VoiceModelConfig(Base):
+    """Admin-managed text-to-speech engine for WhatsApp voice notes.
+
+    Mirrors the LLM model curation: the database is the single source of
+    truth — tenants never name a provider, they pick a tier ("simple" /
+    "advanced") and the admin decides which engine serves that tier.
+
+    provider "edge" needs no key (Microsoft Edge voices, free);
+    "elevenlabs" / "openai" are ready for when an admin adds keys.
+    `languages` is a comma-separated list of BCP-47 prefixes the engine can
+    speak ("ar", "en", "ur", ...) or "*" for everything.
+    """
+
+    __tablename__ = "voice_model_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    label: Mapped[str] = mapped_column(String(120))
+    provider: Mapped[str] = mapped_column(String(32), default="edge")
+    api_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    api_model: Mapped[str | None] = mapped_column(String(200), nullable=True)  # engine/voice override
+    # Voice identity pin (e.g. Fish reference_id). Without it Fish picks an
+    # arbitrary default per request — the tenant would hear a different
+    # persona in every voice note. Pinned = persistent across conversations.
+    reference_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Optional per-language voice pins, {"ur": "<reference_id>", "ar": ...}.
+    # A pin for the customer's language wins; everyone else hears the
+    # multilingual `reference_id` above. Empty/None = one voice for all.
+    language_references: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Provider API key, Fernet-encrypted at rest; set/rotated via the admin
+    # API, never in code.
+    key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tier: Mapped[str] = mapped_column(String(16), default="simple")  # "simple" | "advanced"
+    languages: Mapped[str] = mapped_column(String(500), default="*")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

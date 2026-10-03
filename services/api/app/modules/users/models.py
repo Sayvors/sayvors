@@ -32,6 +32,15 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     theme: Mapped[str] = mapped_column(String(20), default="light")
     language: Mapped[str] = mapped_column(String(10), default="en")
+    # How the WhatsApp response renderer delivers one logical AI response:
+    # "concise" = a single message, "human" = 1..N natural chat messages.
+    # Extensible string, not a boolean — new styles must not need a migration.
+    response_style: Mapped[str] = mapped_column(String(16), default="concise", server_default="concise")
+    # Voice replies tier for WhatsApp: "off" never sends voice notes;
+    # "simple"/"advanced" allow them (when the user seems confused), with the
+    # actual engine resolved from the admin-managed voice models. Admin
+    # decides which provider powers each tier — tenants never see it.
+    voice_replies: Mapped[str] = mapped_column(String(16), default="off", server_default="off")
     # Google identity (sign-in with Google). Non-NULL google_sub ⇒ the account
     # authenticates via Google; password_hash stays a random unusable value.
     google_sub: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
