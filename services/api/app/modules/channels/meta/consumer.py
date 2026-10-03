@@ -196,6 +196,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
     from_wa = data.get("from") or ""
     text = data.get("text")
     msg_type = data.get("msg_type") or "text"
+    if msg_type == "reaction":
+        text = (data.get("reaction") or {}).get("emoji") or text
     if not from_wa or not phone_number_id:
         return
 
@@ -480,6 +482,8 @@ async def _handle_message_history(event: dict, data: dict) -> None:
     from_wa = data.get("from") or ""
     text = data.get("text")
     msg_type = data.get("msg_type") or "text"
+    if msg_type == "reaction":
+        text = (data.get("reaction") or {}).get("emoji") or text
     if not from_wa or not phone_number_id:
         return
 
@@ -524,6 +528,8 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
     text = data.get("text")
     msg_type = data.get("msg_type") or "text"
     to_wa = data.get("to") or ""
+    if msg_type == "reaction":
+        text = (data.get("reaction") or {}).get("emoji") or text
     if not phone_number_id:
         return
 

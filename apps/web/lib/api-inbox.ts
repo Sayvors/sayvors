@@ -15,6 +15,7 @@ export interface InboxThread {
   display_name: string | null;
   channel_id: string;
   channel_name: string | null;
+  platform: string | null;
   last_message: string;
   last_message_at: string;
   last_direction: string;

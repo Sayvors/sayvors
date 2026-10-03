@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import LogoLoader from "@/components/LogoLoader";
 import {
   fetchInboxThreads,
@@ -9,15 +10,22 @@ import {
   type InboxMessage,
   type InboxThread,
 } from "@/lib/api-inbox";
+import { platformMeta } from "@/lib/platform";
 
 type Filter = "all" | "unread" | "unknown";
+
+const QUICK_REPLIES = [
+  "Thanks for reaching out! How can I help?",
+  "Sure, give me a moment to check that.",
+  "Could you share more details?",
+  "All set — anything else I can do for you?",
+];
 
 /** "+966500000001" / "966500000001" -> "+966 50 000 0001" for scannability. */
 function formatPhone(phone: string | null): string {
   if (!phone) return "Unknown sender";
   const p = phone.startsWith("+") ? phone : `+${phone}`;
   if (p.length <= 8) return p;
-  // Keep the country code readable, group the rest in threes from the right.
   const head = p.slice(0, 4);
   const rest = p.slice(4);
   return head + " " + rest.replace(/(\d{1,3})(?=(\d{3})+$)/g, "$1 ").trim();
@@ -55,11 +63,33 @@ function dayLabel(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
-  if (sameDay) return "Today";
+  if (d.toDateString() === today.toDateString()) return "Today";
   const yesterday = new Date(today.getTime() - 86400000);
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
   return d.toLocaleDateString("en", { month: "short", day: "numeric" });
+}
+
+function PlatformBadge({ platform }: { platform: string | null }) {
+  const meta = platformMeta(platform);
+  if (!meta.icon) return null;
+  return (
+    <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-white dark:bg-ink">
+      <Image src={meta.icon} alt={meta.label} width={14} height={14} className="rounded-full" />
+    </span>
+  );
+}
+
+function StatusTick({ message }: { message: InboxMessage }) {
+  if (message.status === "failed") {
+    return <span className="font-bold text-red-400">!</span>;
+  }
+  const color = message.status === "read" ? "text-sky-300" : "text-white/70";
+  const double = message.status === "delivered" || message.status === "read";
+  return (
+    <span className={color}>
+      {double ? "✓✓" : "✓"}
+    </span>
+  );
 }
 
 export default function InboxPage() {
@@ -68,19 +98,38 @@ export default function InboxPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [pinned, setPinned] = useState<Set<string>>(() => {
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem("sayvors.inbox.pinned") : null;
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
 
   const [messages, setMessages] = useState<InboxMessage[]>([]);
-  // Which thread `messages` belongs to. Loading is derived from this rather
-  // than a separate boolean: while the key does not match, the panel is still
-  // fetching and the previous thread's messages must not be shown against the
-  // new heading.
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [threadQuery, setThreadQuery] = useState("");
+  const [showInfo, setShowInfo] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const togglePin = (compositeKey: string) => {
+    setPinned((prev) => {
+      const next = new Set(prev);
+      if (next.has(compositeKey)) next.delete(compositeKey);
+      else next.add(compositeKey);
+      try {
+        localStorage.setItem("sayvors.inbox.pinned", JSON.stringify([...next]));
+      } catch {}
+      return next;
+    });
+  };
 
   const loadThreads = useCallback(async (q: string) => {
     setLoading(true);
@@ -95,29 +144,21 @@ export default function InboxPage() {
   }, []);
 
   useEffect(() => {
-    // Debounced so typing does not fire a request per keystroke.
     const t = setTimeout(() => void loadThreads(search), 250);
     return () => clearTimeout(t);
   }, [search, loadThreads]);
 
   const selected = useMemo(
-    () => threads.find((t) => t.key === selectedKey) ?? null,
+    () => threads.find((t) => `${t.channel_id}:${t.key}` === selectedKey) ?? null,
     [threads, selectedKey],
   );
 
-  // Auto-open the newest real thread so the page is never a dead list. Derived
-  // during render rather than in an effect, so there is no second render pass
-  // and no chance of the list flashing empty.
   const effectiveSelected = useMemo(() => {
     if (selected) return selected;
     if (threads.length === 0) return null;
     return threads.find((t) => !t.is_unknown) ?? threads[0];
   }, [selected, threads]);
 
-  // Identify the open thread, and ignore a fetch that finished after the user
-  // moved on. The `cancelled` flag alone can't do that: the effect re-runs on
-  // key change, but two keys can share a channel and channel_id, so a late
-  // response for the previous key would still look current.
   const requestedKey = useRef<string | null>(null);
   const target = effectiveSelected;
   const targetKey = target ? `${target.channel_id}:${target.key}` : null;
@@ -142,27 +183,39 @@ export default function InboxPage() {
       }
     })();
     return () => { cancelled = true; };
-    // Keyed on the composite so switching contacts on the same channel reloads.
-    // `target` is derived from `targetKey`, so keying on the key alone is both
-    // correct and what makes this effect re-run when the contact changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetKey]);
 
-  // Keep the newest message in view as the thread grows.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, targetKey]);
 
-  const visible = useMemo(() => {
-    if (filter === "unread") return threads.filter((t) => t.unread > 0);
-    if (filter === "unknown") return threads.filter((t) => t.is_unknown);
-    return threads;
-  }, [threads, filter]);
+  const platformsPresent = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of threads) if (t.platform) set.add(t.platform);
+    return [...set];
+  }, [threads]);
 
-  const unreadTotal = useMemo(
-    () => threads.reduce((sum, t) => sum + t.unread, 0),
-    [threads],
-  );
+  const visible = useMemo(() => {
+    let rows = threads;
+    if (filter === "unread") rows = rows.filter((t) => t.unread > 0);
+    if (filter === "unknown") rows = rows.filter((t) => t.is_unknown);
+    if (platformFilter !== "all") rows = rows.filter((t) => t.platform === platformFilter);
+    return [...rows].sort((a, b) => {
+      const ap = pinned.has(`${a.channel_id}:${a.key}`) ? 0 : 1;
+      const bp = pinned.has(`${b.channel_id}:${b.key}`) ? 0 : 1;
+      return ap - bp;
+    });
+  }, [threads, filter, platformFilter, pinned]);
+
+  const unreadTotal = useMemo(() => threads.reduce((s, t) => s + t.unread, 0), [threads]);
+
+  const threadView = useMemo(() => {
+    const q = threadQuery.trim().toLowerCase();
+    if (!q) return messages;
+    return messages.filter((m) => m.content.toLowerCase().includes(q));
+  }, [messages, threadQuery]);
 
   const send = async () => {
     const text = draft.trim();
@@ -178,12 +231,10 @@ export default function InboxPage() {
         content: text,
       });
       setDraft("");
-      // The failed row comes back from the server, so the thread shows exactly
-      // what was stored rather than an optimistic bubble.
       setMessages((prev) => [...prev, result.message]);
       setThreads((prev) =>
         prev.map((t) =>
-          t.key === thread.key
+          `${t.channel_id}:${t.key}` === `${thread.channel_id}:${thread.key}`
             ? {
                 ...t,
                 unread: 0,
@@ -204,6 +255,7 @@ export default function InboxPage() {
   };
 
   const canSend = !!target && !target.is_unknown && !!draft.trim() && !sending;
+  const openThread = !!target;
 
   return (
     <div className="flex h-full flex-col p-4 sm:p-6">
@@ -211,7 +263,7 @@ export default function InboxPage() {
         <div>
           <h1 className="text-[20px] font-bold text-ink dark:text-fog">Inbox</h1>
           <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
-            Every WhatsApp conversation across your connected numbers.
+            Every conversation across your connected numbers.
           </p>
         </div>
         <button
@@ -222,18 +274,18 @@ export default function InboxPage() {
         </button>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
+      <div className={`relative grid min-h-0 flex-1 gap-4 ${showInfo ? "lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)_minmax(0,260px)]" : "lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]"}`}>
         {/* Thread list */}
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
+        <div className={`${openThread ? "hidden lg:flex" : "flex"} min-h-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}>
           <div className="border-b border-ink/[0.06] p-3 dark:border-fog/[0.06]">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search messages"
-              aria-label="Search messages"
+              placeholder="Search conversations"
+              aria-label="Search conversations"
               className="input-field w-full"
             />
-            <div className="mt-2 flex gap-1">
+            <div className="mt-2 flex flex-wrap items-center gap-1">
               {([
                 { key: "all", label: "All" },
                 { key: "unread", label: `Unread${unreadTotal ? ` (${unreadTotal})` : ""}` },
@@ -244,14 +296,25 @@ export default function InboxPage() {
                   onClick={() => setFilter(f.key)}
                   aria-pressed={filter === f.key}
                   className={`rounded-lg px-2 py-1 text-[11px] font-semibold transition ${
-                    filter === f.key
-                      ? "bg-deep-violet/10 text-deep-violet"
-                      : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
+                    filter === f.key ? "bg-deep-violet/10 text-deep-violet" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
                   }`}
                 >
                   {f.label}
                 </button>
               ))}
+              <select
+                value={platformFilter}
+                onChange={(e) => setPlatformFilter(e.target.value)}
+                aria-label="Filter by platform"
+                className="ml-auto rounded-lg border border-ink/[0.08] bg-white px-2 py-1 text-[11px] font-semibold text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              >
+                <option value="all">All platforms</option>
+                {platformsPresent.map((p) => (
+                  <option key={p} value={p}>
+                    {platformMeta(p).label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -260,54 +323,56 @@ export default function InboxPage() {
               <div className="flex justify-center py-16"><LogoLoader size={28} /></div>
             ) : visible.length === 0 ? (
               <p className="px-4 py-10 text-center text-[12px] text-ink/40">
-                {search
-                  ? "No conversations match that search."
-                  : "No messages yet. Once customers message your number they appear here."}
+                {search ? "No conversations match that search." : "No messages yet. Once customers message your number they appear here."}
               </p>
             ) : (
               <ul>
                 {visible.map((t) => {
-                  const active = `${t.channel_id}:${t.key}` === targetKey;
+                  const composite = `${t.channel_id}:${t.key}`;
+                  const active = composite === targetKey;
+                  const isPinned = pinned.has(composite);
                   return (
-                    <li key={`${t.channel_id}:${t.key}`}>
-                      <button
-                        onClick={() => { setSelectedKey(t.key); setSendError(null); }}
-                        aria-current={active}
-                        className={`flex w-full items-start gap-3 border-b border-ink/[0.04] px-3 py-3 text-left transition dark:border-fog/[0.04] ${
-                          active ? "bg-deep-violet/[0.06]" : "hover:bg-ink/[0.02] dark:hover:bg-fog/[0.03]"
-                        }`}
-                      >
-                        <span
-                          aria-hidden
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[11px] font-bold text-deep-violet"
+                    <li key={composite}>
+                      <div className={`flex items-start border-b border-ink/[0.04] dark:border-fog/[0.04] ${active ? "bg-deep-violet/[0.06]" : "hover:bg-ink/[0.02] dark:hover:bg-fog/[0.03]"}`}>
+                        <button
+                          onClick={() => { setSelectedKey(composite); setSendError(null); }}
+                          aria-current={active}
+                          className="flex min-w-0 flex-1 items-start gap-3 px-3 py-3 text-left"
                         >
-                          {initials(t.display_name, t.contact_phone)}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-baseline justify-between gap-2">
-                            <span className="truncate text-[13px] font-semibold text-ink dark:text-fog">
-                              {t.display_name || "Unknown sender"}
-                            </span>
-                            <span className="shrink-0 text-[11px] text-ink/35 dark:text-fog/35">
-                              {relative(t.last_message_at)}
-                            </span>
+                          <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-deep-violet/10 text-[11px] font-bold text-deep-violet" aria-hidden>
+                            {initials(t.display_name, t.contact_phone)}
+                            <PlatformBadge platform={t.platform} />
                           </span>
-                          <span className="mt-0.5 flex items-center gap-1.5">
-                            <span className="truncate text-[12px] text-ink/50 dark:text-fog/50">
-                              {t.last_direction === "outbound" ? "You: " : ""}
-                              {t.last_message}
-                            </span>
-                            {t.unread > 0 && (
-                              <span
-                                className="ml-auto shrink-0 rounded-full bg-deep-violet px-1.5 text-[10px] font-bold text-white"
-                                aria-label={`${t.unread} unread`}
-                              >
-                                {t.unread}
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-baseline justify-between gap-2">
+                              <span className="truncate text-[13px] font-semibold text-ink dark:text-fog">
+                                {t.display_name || "Unknown sender"}
                               </span>
-                            )}
+                              <span className="shrink-0 text-[11px] text-ink/35 dark:text-fog/35">
+                                {relative(t.last_message_at)}
+                              </span>
+                            </span>
+                            <span className="mt-0.5 flex items-center gap-1.5">
+                              <span className="truncate text-[12px] text-ink/50 dark:text-fog/50">
+                                {t.last_direction === "outbound" ? "You: " : ""}
+                                {t.last_message}
+                              </span>
+                              {t.unread > 0 && (
+                                <span className="ml-auto shrink-0 rounded-full bg-deep-violet px-1.5 text-[10px] font-bold text-white" aria-label={`${t.unread} unread`}>
+                                  {t.unread}
+                                </span>
+                              )}
+                            </span>
                           </span>
-                        </span>
-                      </button>
+                        </button>
+                        <button
+                          onClick={() => togglePin(composite)}
+                          aria-label={isPinned ? "Unpin thread" : "Pin thread"}
+                          className={`px-2 py-3 text-[13px] ${isPinned ? "text-deep-violet" : "text-ink/20 hover:text-ink/50"}`}
+                        >
+                          📌
+                        </button>
+                      </div>
                     </li>
                   );
                 })}
@@ -317,49 +382,90 @@ export default function InboxPage() {
         </div>
 
         {/* Thread detail */}
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
+        <div className={`${openThread ? "flex" : "hidden lg:flex"} min-h-0 flex-col overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink`}>
           {!target ? (
             <div className="flex flex-1 items-center justify-center px-6 text-center text-[13px] text-ink/40">
               Select a conversation to read it.
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-3 border-b border-ink/[0.06] px-4 py-3 dark:border-fog/[0.06]">
-                <span
-                  aria-hidden
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-deep-violet/10 text-[11px] font-bold text-deep-violet"
+              <div className="flex items-center gap-3 border-b border-ink/[0.06] px-3 py-3 dark:border-fog/[0.06]">
+                <button
+                  onClick={() => setSelectedKey(null)}
+                  aria-label="Back to conversations"
+                  className="rounded-lg px-2 py-1 text-[13px] font-semibold text-deep-violet lg:hidden"
                 >
-                  {initials(target.display_name, target.contact_phone)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[14px] font-semibold text-ink dark:text-fog">
-                    {target.display_name || "Unknown sender"}
-                  </p>
-                  <p className="truncate text-[11px] text-ink/45 dark:text-fog/45">
-                    {formatPhone(target.contact_phone)}
-                    {target.channel_name ? ` · ${target.channel_name}` : ""}
-                  </p>
-                </div>
+                  ← Back
+                </button>
+                <button
+                  onClick={() => setShowInfo((v) => !v)}
+                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl p-1.5 text-left transition hover:bg-ink/[0.04] dark:hover:bg-fog/[0.05]"
+                  aria-label="View contact profile"
+                >
+                  <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-deep-violet/10 text-[11px] font-bold text-deep-violet ring-1 ring-deep-violet/10" aria-hidden>
+                    {initials(target.display_name, target.contact_phone)}
+                    <PlatformBadge platform={target.platform} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <p className="truncate text-[14px] font-semibold text-ink dark:text-fog">
+                      {target.display_name || "Unknown sender"}
+                    </p>
+                    <p className="truncate text-[11px] text-ink/45 dark:text-fog/45">
+                      {formatPhone(target.contact_phone)}
+                      {target.channel_name ? ` · ${target.channel_name}` : ""}
+                    </p>
+                  </span>
+                </button>
                 {target.is_unknown && (
-                  <span className="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700">
+                  <span className="hidden shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700 sm:inline">
                     Sender not recorded
                   </span>
                 )}
               </div>
 
+              <div className="border-b border-ink/[0.04] px-3 py-2 dark:border-fog/[0.04]">
+                <input
+                  value={threadQuery}
+                  onChange={(e) => setThreadQuery(e.target.value)}
+                  placeholder="Search in conversation…"
+                  aria-label="Search in conversation"
+                  className="input-field w-full"
+                />
+              </div>
+
               <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
                 {loadedKey !== targetKey ? (
                   <div className="flex justify-center py-16"><LogoLoader size={24} /></div>
-                ) : messages.length === 0 ? (
-                  <p className="py-10 text-center text-[12px] text-ink/40">No messages.</p>
+                ) : threadView.length === 0 ? (
+                  <p className="py-10 text-center text-[12px] text-ink/40">
+                    {threadQuery ? "No messages match." : "No messages."}
+                  </p>
                 ) : (
-                  messages.map((m, i) => {
-                    // A day divider whenever the date changes between messages.
+                  threadView.map((m, i) => {
                     const showDay =
                       i === 0 ||
-                      new Date(messages[i - 1].created_at).toDateString() !==
-                        new Date(m.created_at).toDateString();
+                      new Date(threadView[i - 1].created_at).toDateString() !== new Date(m.created_at).toDateString();
                     const mine = m.direction === "outbound";
+                    if (m.content_type === "reaction") {
+                      const emoji = m.content.startsWith("[") ? "👍" : m.content;
+                      return (
+                        <div key={m.id}>
+                          {showDay && (
+                            <p className="my-3 text-center text-[11px] font-semibold text-ink/30 dark:text-fog/30">
+                              {dayLabel(m.created_at)}
+                            </p>
+                          )}
+                          <div className={`mb-2 flex ${mine ? "justify-end" : "justify-start"}`}>
+                            <span
+                              title={`Reacted ${clockTime(m.created_at)}`}
+                              className="rounded-full bg-ink/[0.05] px-3 py-1 text-[20px] leading-7 dark:bg-fog/[0.08]"
+                            >
+                              {emoji}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
                     return (
                       <div key={m.id}>
                         {showDay && (
@@ -379,16 +485,13 @@ export default function InboxPage() {
                           >
                             <p className="whitespace-pre-wrap break-words text-[13px]">{m.content}</p>
                             <p
-                              className={`mt-1 text-right text-[10px] ${
-                                mine
-                                  ? m.status === "failed"
-                                    ? "text-red-500"
-                                    : "text-white/70"
-                                  : "text-ink/35 dark:text-fog/35"
+                              className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
+                                mine ? (m.status === "failed" ? "text-red-500" : "text-white/70") : "text-ink/35 dark:text-fog/35"
                               }`}
                             >
                               {clockTime(m.created_at)}
-                              {mine && m.status === "failed" ? " Â· not sent" : ""}
+                              {mine && <StatusTick message={m} />}
+                              {mine && m.status === "failed" ? " · not sent" : ""}
                             </p>
                             {mine && m.status === "failed" && m.error && (
                               <p className="mt-1 border-t border-red-200 pt-1 text-[11px] text-red-600 dark:border-red-900 dark:text-red-300">
@@ -405,13 +508,21 @@ export default function InboxPage() {
 
               <div className="border-t border-ink/[0.06] p-3 dark:border-fog/[0.06]">
                 {sendError && (
-                  <p
-                    role="status"
-                    className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-700 dark:bg-red-950/40 dark:text-red-300"
-                  >
+                  <p role="status" className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-700 dark:bg-red-950/40 dark:text-red-300">
                     {sendError}
                   </p>
                 )}
+                <div className="mb-2 flex gap-1.5 overflow-x-auto">
+                  {QUICK_REPLIES.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => setDraft(q)}
+                      className="shrink-0 rounded-full border border-ink/[0.08] px-2.5 py-1 text-[11px] text-ink/60 transition hover:border-deep-violet/40 hover:text-deep-violet dark:border-fog/[0.1] dark:text-fog/60"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
                 {target.is_unknown ? (
                   <p className="text-[12px] text-ink/45 dark:text-fog/45">
                     These messages predate contact tracking, so there is no number to reply to.
@@ -422,30 +533,76 @@ export default function InboxPage() {
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
                       onKeyDown={(e) => {
-                        // Enter sends; Shift+Enter is a newline.
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
                           void send();
                         }
                       }}
                       rows={2}
-                      placeholder="Write a replyâ€¦"
+                      placeholder="Write a reply…"
                       aria-label="Write a reply"
                       className="input-field flex-1 resize-none"
                     />
                     <button onClick={() => void send()} disabled={!canSend} className="btn-primary disabled:opacity-40">
-                      {sending ? "Sendingâ€¦" : "Send"}
+                      {sending ? "Sending…" : "Send"}
                     </button>
                   </div>
                 )}
                 <p className="mt-1.5 text-[11px] text-ink/35 dark:text-fog/35">
-                  WhatsApp only allows replies within 24 hours of a customer&apos;s message. Outside
-                  that window the send is rejected and shown here as failed.
+                  WhatsApp only allows replies within 24 hours of a customer&apos;s message. Outside that window the send is rejected and shown here as failed.
                 </p>
               </div>
             </>
           )}
         </div>
+
+        {/* Contact info sidebar */}
+        <aside className={`${showInfo ? "flex" : "hidden"} absolute inset-0 z-20 min-h-0 flex-col overflow-y-auto rounded-2xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink lg:static lg:z-auto`}>
+          <div className="mb-3 flex items-center justify-between lg:hidden">
+            <p className="text-[13px] font-bold text-ink dark:text-fog">Contact profile</p>
+            <button onClick={() => setShowInfo(false)} aria-label="Close contact profile" className="rounded-lg px-2 py-1 text-[13px] font-semibold text-deep-violet">
+              Close
+            </button>
+          </div>
+          {!target ? (
+            <p className="text-[12px] text-ink/40">Select a conversation to see contact details.</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-col items-center text-center">
+                <span className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-deep-violet/10 text-[16px] font-bold text-deep-violet ring-1 ring-deep-violet/10" aria-hidden>
+                  {initials(target.display_name, target.contact_phone)}
+                  <PlatformBadge platform={target.platform} />
+                </span>
+                <p className="mt-2 text-[14px] font-semibold text-ink dark:text-fog">
+                  {target.display_name || "Unknown sender"}
+                </p>
+                <p className="text-[12px] text-ink/45 dark:text-fog/45">{formatPhone(target.contact_phone)}</p>
+              </div>
+              <dl className="space-y-2 text-[12px]">
+                <div className="flex justify-between">
+                  <dt className="text-ink/45 dark:text-fog/45">Platform</dt>
+                  <dd className="font-semibold text-ink dark:text-fog">{platformMeta(target.platform).label}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-ink/45 dark:text-fog/45">Channel</dt>
+                  <dd className="truncate font-semibold text-ink dark:text-fog">{target.channel_name ?? "—"}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-ink/45 dark:text-fog/45">Messages</dt>
+                  <dd className="font-semibold text-ink dark:text-fog">{target.message_count}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-ink/45 dark:text-fog/45">Unread</dt>
+                  <dd className="font-semibold text-ink dark:text-fog">{target.unread}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-ink/45 dark:text-fog/45">Last activity</dt>
+                  <dd className="font-semibold text-ink dark:text-fog">{relative(target.last_message_at)}</dd>
+                </div>
+              </dl>
+            </div>
+          )}
+        </aside>
       </div>
 
       {error && (

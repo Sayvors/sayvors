@@ -39,6 +39,12 @@ const en = {
     openMenu: "Open menu",
     closeMenu: "Close menu",
     mainNavigation: "Main navigation",
+    postsMedia: "Posts & Media",
+    advanced: "Advanced",
+    automations: "Automations",
+    benchmark: "Benchmark",
+    profile: "Profile",
+    settings: "Settings",
   },
   account: {
     menu: "Account menu",

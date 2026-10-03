@@ -41,6 +41,12 @@ const ar: Dict = {
     openMenu: "فتح القائمة",
     closeMenu: "إغلاق القائمة",
     mainNavigation: "التنقل الرئيسي",
+    postsMedia: "المنشورات والوسائط",
+    advanced: "متقدم",
+    automations: "الأتمتة",
+    benchmark: "المقارنة المرجعية",
+    profile: "الملف الشخصي",
+    settings: "الإعدادات",
   },
   account: {
     menu: "قائمة الحساب",

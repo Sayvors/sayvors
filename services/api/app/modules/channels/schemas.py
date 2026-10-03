@@ -115,6 +115,7 @@ class InboxThread(BaseModel):
     display_name: str | None = None
     channel_id: str
     channel_name: str | None = None
+    platform: str | None = None
     last_message: str
     last_message_at: str
     last_direction: str

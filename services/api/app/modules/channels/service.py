@@ -471,6 +471,7 @@ async def list_inbox_threads(
                 "display_name": name or phone,
                 "channel_id": channel_id,
                 "channel_name": by_id[channel_id].display_name,
+                "platform": by_id[channel_id].platform,
                 "last_message": (last_row.content or "")[:280],
                 "last_message_at": last_at.isoformat() if last_at else None,
                 "last_direction": last_row.direction,

@@ -12,59 +12,43 @@ interface NavItem {
   key: string;
   icon: React.ReactNode;
   href: string;
-  /** Legacy paths that should also highlight this item. */
-  aliases?: string[];
 }
 
-interface NavGroup {
-  label?: string;
-  items: NavItem[];
-}
-
-const NAV_GROUPS: NavGroup[] = [
-  {
-    items: [
-      { key: "dashboard", icon: <LayoutIcon />, href: "/dashboard" },
-      {
-        key: "analytics",
-        icon: <ChartIcon />,
-        href: "/dashboard/analytics",
-        aliases: ["/dashboard/insights", "/dashboard/growth", "/dashboard/benchmark"],
-      },
-    ],
-  },
-  {
-    label: "googleBusiness",
-    items: [
-      { key: "locations", icon: <LocationIcon />, href: "/dashboard/locations" },
-      { key: "services", icon: <WrenchIcon />, href: "/dashboard/services" },
-      { key: "media", icon: <PhotoIcon />, href: "/dashboard/media" },
-      { key: "posts", icon: <MegaphoneIcon />, href: "/dashboard/posts" },
-      { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
-      { key: "issues", icon: <ChecklistIcon />, href: "/dashboard/issues" },
-      { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
-    ],
-  },
-  {
-    label: "tools",
-    items: [
-      { key: "inbox", icon: <InboxIcon />, href: "/dashboard/inbox" },
-      { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
-      { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
-      { key: "outbox", icon: <OutboxIcon />, href: "/dashboard/outbox" },
-      { key: "usage", icon: <ChartIcon />, href: "/dashboard/usage" },
-      { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
-    ],
-  },
+// The eight surfaces people live in day to day. Everything else folds into
+// the "Advanced" drawer at the bottom so the everyday nav stays scannable.
+const MAIN_ITEMS: NavItem[] = [
+  { key: "dashboard", icon: <LayoutIcon />, href: "/dashboard" },
+  { key: "analytics", icon: <ChartIcon />, href: "/dashboard/analytics" },
+  { key: "locations", icon: <LocationIcon />, href: "/dashboard/locations" },
+  { key: "services", icon: <WrenchIcon />, href: "/dashboard/services" },
+  { key: "postsMedia", icon: <MegaphoneIcon />, href: "/dashboard/posts-media" },
+  { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
+  { key: "inbox", icon: <InboxIcon />, href: "/dashboard/inbox" },
+  { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
 ];
+
+const ADVANCED_ITEMS: NavItem[] = [
+  { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
+  { key: "automations", icon: <ZapIcon />, href: "/dashboard/automations" },
+  { key: "outbox", icon: <OutboxIcon />, href: "/dashboard/outbox" },
+  { key: "notifications", icon: <BellIcon />, href: "/dashboard/notifications" },
+  { key: "insights", icon: <BulbIcon />, href: "/dashboard/insights" },
+  { key: "growth", icon: <TrendingIcon />, href: "/dashboard/growth" },
+  { key: "benchmark", icon: <TrophyIcon />, href: "/dashboard/benchmark" },
+  { key: "issues", icon: <ChecklistIcon />, href: "/dashboard/issues" },
+  { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
+  { key: "usage", icon: <GaugeIcon />, href: "/dashboard/usage" },
+  { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
+  { key: "profile", icon: <UserIcon />, href: "/dashboard/profile" },
+  { key: "settings", icon: <GearIcon />, href: "/dashboard/settings" },
+];
+
+const ADVANCED_OPEN_KEY = "sayvors.sidebar.advanced-open";
 
 function isActive(pathname: string, item: NavItem) {
   const { href } = item;
   if (href === "/dashboard") return pathname === "/dashboard";
-  if (pathname === href || pathname.startsWith(`${href}/`)) return true;
-  return (item.aliases ?? []).some(
-    (alias) => pathname === alias || pathname.startsWith(`${alias}/`)
-  );
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export default function Sidebar() {
@@ -74,6 +58,7 @@ export default function Sidebar() {
   // inline sidebar is 56% of a 390px phone, permanently, before any content.
   const [isMobile, setIsMobile] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
@@ -110,10 +95,13 @@ export default function Sidebar() {
 
   // The guided tour points at nav items. On a phone those live in the drawer,
   // so the tour asks for it to open rather than spotlighting something the
-  // user cannot see. No-op on desktop, where the nav is already inline.
+  // user cannot see. No-op on desktop, where the nav is already inline. An
+  // item the tour targets may sit inside the collapsed Advanced section, so
+  // opening also unfolds it.
   useEffect(() => {
     const onOpen = () => {
       if (isMobile) setDrawerOpen(true);
+      setAdvancedOpen(true);
     };
     const onClose = () => setDrawerOpen(false);
     window.addEventListener(NAV_DRAWER_EVENTS.OPEN, onOpen);
@@ -136,6 +124,34 @@ export default function Sidebar() {
   const initials = user
     ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U"
     : "U";
+
+  // Remember the Advanced choice, then surface it anyway when the user is on
+  // an Advanced page — a collapsed section hiding the active item reads as a
+  // broken highlight.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(ADVANCED_OPEN_KEY) === "1") setAdvancedOpen(true);
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a nav highlight hidden under a closed section reads as broken
+    if (ADVANCED_ITEMS.some((item) => isActive(pathname, item))) setAdvancedOpen(true);
+  }, [pathname]);
+
+  const toggleAdvanced = () => {
+    setAdvancedOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(ADVANCED_OPEN_KEY, next ? "1" : "0");
+      } catch {
+        /* storage unavailable */
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -164,6 +180,9 @@ export default function Sidebar() {
   // visibility on `collapsed` alone would render it icon-only for no reason.
   const rail = collapsed && !isMobile;
 
+  const labelFor = (item: NavItem) =>
+    (t.nav as Record<string, string>)[item.key] ?? item.key;
+
   return (
     <>
       {/* Hamburger — mobile only, fixed so it does not shift page content.
@@ -173,7 +192,7 @@ export default function Sidebar() {
         aria-label={t.nav.openMenu}
         aria-expanded={drawerOpen}
         aria-controls="dashboard-sidebar"
-        className={`fixed ${dir === "rtl" ? "right-1" : "left-1"} top-1 z-40 flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-[#1e1547] text-white shadow-lg transition hover:bg-[#251b55] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-light md:hidden ${
+        className={`fixed ${dir === "rtl" ? "right-1" : "left-1"} top-1 z-40 flex h-10 w-10 items-center justify-center rounded-xl border border-ink/[0.08] bg-white text-ink shadow-lg transition hover:bg-fog focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-white/10 dark:bg-[#1e1547] dark:text-white dark:hover:bg-[#251b55] md:hidden ${
           drawerOpen ? "pointer-events-none opacity-0" : "opacity-100"
         }`}
       >
@@ -195,7 +214,7 @@ export default function Sidebar() {
       <aside
         id="dashboard-sidebar"
         aria-hidden={isMobile && !drawerOpen ? true : undefined}
-        className={`flex h-screen flex-col ${dir === "rtl" ? "border-l" : "border-r"} border-white/[0.08] transition-all duration-200 ${
+        className={`flex h-screen flex-col ${dir === "rtl" ? "border-l" : "border-r"} border-ink/[0.06] bg-white transition-all duration-200 dark:border-fog/[0.08] dark:bg-[#151030] ${
           isMobile
             ? `fixed inset-y-0 ${dir === "rtl" ? "right-0" : "left-0"} z-50 w-[248px] shadow-2xl ${
                 drawerOpen ? "translate-x-0" : dir === "rtl" ? "translate-x-full" : "-translate-x-full"
@@ -204,20 +223,22 @@ export default function Sidebar() {
               ? "w-[56px]"
               : "w-[220px]"
         }`}
-        style={{ background: "linear-gradient(180deg, #1e1547 0%, #151030 100%)" }}
       >
       {/* Logo */}
-      <div className="flex h-11 items-center gap-2 border-b border-white/[0.08] px-3">
+      <div className="flex h-12 items-center gap-2 border-b border-ink/[0.05] px-3 dark:border-fog/[0.06]">
         <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-5 w-auto" />
         {/* The drawer is always wide, so the wordmark shows even when the
-            inline rail is collapsed. */}
+            inline rail is collapsed. Dark wordmark = white, for the dark theme. */}
         {(!collapsed || isMobile) && (
-          <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={110} height={18} className="h-4 w-auto brightness-0 invert" />
+          <>
+            <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={110} height={18} className="h-4 w-auto dark:hidden" />
+            <Image src="/Sayvors_Wordmark_Dark.png" alt="Sayvors" width={110} height={18} className="hidden h-4 w-auto dark:block" />
+          </>
         )}
         <button
           onClick={() => setDrawerOpen(false)}
           aria-label={t.nav.closeMenu}
-          className="ml-auto flex h-7 w-7 items-center justify-center rounded-md text-white/40 outline-none transition hover:bg-white/[0.08] hover:text-white/70 focus-visible:ring-2 focus-visible:ring-violet-light/60 md:hidden"
+          className="ml-auto flex h-7 w-7 items-center justify-center rounded-md text-ink/30 outline-none transition hover:bg-ink/[0.05] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/40 dark:hover:bg-fog/[0.08] dark:hover:text-fog/70 md:hidden"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4">
             <path d="M6 6l12 12M18 6L6 18" />
@@ -227,80 +248,70 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 pt-3 pb-4" aria-label={t.nav.mainNavigation}>
-        {NAV_GROUPS.map((group, gi) => (
-          <div key={gi}>
-            {group.label && !rail && (
-              <p className="mb-1 px-2.5 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-widest text-white/25">
-                {t.nav[group.label as keyof typeof t.nav]}
-              </p>
+        <div className="space-y-0.5">
+          {MAIN_ITEMS.map((item) => (
+            <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
+          ))}
+        </div>
+
+        {/* Advanced — the long tail, folded away by default. */}
+        <div className="mt-3 border-t border-ink/[0.05] pt-3 dark:border-fog/[0.06]">
+          <button
+            onClick={toggleAdvanced}
+            aria-expanded={advancedOpen}
+            title={rail ? t.nav.advanced : undefined}
+            className={`flex w-full items-center rounded-lg px-2.5 py-2 text-ink/35 outline-none transition hover:bg-ink/[0.04] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/35 dark:hover:bg-fog/[0.06] dark:hover:text-fog/60 ${
+              rail ? "justify-center" : "gap-2"
+            }`}
+          >
+            {!rail && (
+              <span className="flex-1 text-start text-[10px] font-semibold uppercase tracking-widest">
+                {t.nav.advanced}
+              </span>
             )}
-            {group.label && rail && gi > 0 && (
-              <div className="mx-2 my-2 border-t border-white/[0.06]" />
-            )}
-            <div className="space-y-0.5">
-              {group.items.map((item) => {
-                const label = (t.nav as Record<string, string>)[item.key] ?? item.key;
-                const active = isActive(pathname, item);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    data-tour={`nav-${item.key}`}
-                    aria-current={active ? "page" : undefined}
-                    title={rail ? label : undefined}
-                    className={`group relative flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
-                      active
-                        ? "bg-white/[0.1] text-white"
-                        : "text-white/50 hover:bg-white/[0.08] hover:text-white"
-                    }`}
-                  >
-                    <span
-                      aria-hidden
-                      className={`absolute ${dir === "rtl" ? "right-0 rounded-l-full" : "left-0 rounded-r-full"} top-1/2 h-4 w-[3px] -translate-y-1/2 bg-gradient-to-b from-violet-light to-magenta transition-opacity ${
-                        active ? "opacity-100" : "opacity-0"
-                      }`}
-                    />
-                    <span
-                      className={`h-4 w-4 shrink-0 transition-colors ${
-                        active ? "text-white" : "text-white/30 group-hover:text-white/60"
-                      }`}
-                    >
-                      {item.icon}
-                    </span>
-                    {!rail && <span className="flex-1 truncate">{label}</span>}
-                  </Link>
-                );
-              })}
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden
+              className={`h-3.5 w-3.5 shrink-0 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
+            >
+              <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {advancedOpen && (
+            <div className="mt-0.5 space-y-0.5">
+              {ADVANCED_ITEMS.map((item) => (
+                <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
+              ))}
             </div>
-            {gi < NAV_GROUPS.length - 1 && (
-              <div className="mx-2 my-2 border-t border-white/[0.06]" />
-            )}
-          </div>
-        ))}
+          )}
+        </div>
       </nav>
 
       {/* Account + collapse */}
-      <div ref={menuRef} className="relative border-t border-white/[0.08]">
+      <div ref={menuRef} className="relative border-t border-ink/[0.05] dark:border-fog/[0.06]">
         {menuOpen && (
           <div
-            className={`absolute bottom-full z-50 mb-2 overflow-hidden rounded-lg border border-white/10 bg-[#221b4d] shadow-xl ${
+            className={`absolute bottom-full z-50 mb-2 overflow-hidden rounded-xl border border-ink/[0.08] bg-white shadow-xl dark:border-fog/[0.08] dark:bg-[#221b4d] ${
               rail ? (dir === "rtl" ? "right-12 w-48" : "left-12 w-48") : "inset-x-2"
             }`}
           >
-            <div className="border-b border-white/[0.08] px-3 py-2.5">
-              <p className="truncate text-[13px] font-medium text-white">
+            <div className="border-b border-ink/[0.06] px-3 py-2.5 dark:border-fog/[0.08]">
+              <p className="truncate text-[13px] font-medium text-ink dark:text-white">
                 {displayName}
               </p>
-              <p className="truncate text-[11px] text-white/40">{user?.email ?? ""}</p>
+              <p className="truncate text-[11px] text-ink/40 dark:text-fog/40">{user?.email ?? ""}</p>
             </div>
             <div className="py-1">
               <SidebarMenuLink href="/dashboard/profile" label={t.account.myProfile} />
               <SidebarMenuLink href="/dashboard/settings" label={t.account.settings} />
             </div>
-            <div className="border-t border-white/[0.08] py-1">
+            <div className="border-t border-ink/[0.06] py-1 dark:border-fog/[0.08]">
               <button
                 onClick={() => logout()}
-                className="flex w-full items-center px-3 py-2 text-[12px] text-coral transition hover:bg-white/[0.06]"
+                className="flex w-full items-center px-3 py-2 text-[12px] text-coral transition hover:bg-coral/[0.07]"
               >
                 {t.account.signOut}
               </button>
@@ -313,7 +324,7 @@ export default function Sidebar() {
             aria-label={isMobile ? t.nav.closeMenu : t.account.menu}
             aria-expanded={isMobile ? drawerOpen : menuOpen}
             title={!isMobile && collapsed ? displayName : undefined}
-            className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1.5 outline-none transition hover:bg-white/[0.08] focus-visible:ring-2 focus-visible:ring-violet-light/60 ${
+            className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1.5 outline-none transition hover:bg-ink/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:hover:bg-fog/[0.06] ${
               collapsed ? "justify-center" : ""
             }`}
           >
@@ -322,10 +333,10 @@ export default function Sidebar() {
             </span>
             {!collapsed && (
               <span className="min-w-0 flex-1 text-start">
-                <span className="block truncate text-[12px] font-medium text-white">
+                <span className="block truncate text-[12px] font-medium text-ink dark:text-fog">
                   {displayName}
                 </span>
-                <span className="block truncate text-[10px] text-white/40">
+                <span className="block truncate text-[10px] text-ink/40 dark:text-fog/40">
                   {user?.email ?? ""}
                 </span>
               </span>
@@ -337,7 +348,7 @@ export default function Sidebar() {
             title={collapsed ? t.nav.expand : t.nav.collapse}
             /* The drawer is already the compact form on a phone — a collapse
                toggle there would collapse what is off-screen twice over. */
-            className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/25 outline-none transition hover:bg-white/[0.08] hover:text-white/50 focus-visible:ring-2 focus-visible:ring-violet-light/60 md:flex"
+            className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink/25 outline-none transition hover:bg-ink/[0.05] hover:text-ink/50 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/25 dark:hover:bg-fog/[0.08] dark:hover:text-fog/50 md:flex"
           >
             <svg
               viewBox="0 0 16 16"
@@ -356,11 +367,56 @@ export default function Sidebar() {
   );
 }
 
+function NavRow({
+  item,
+  active,
+  rail,
+  dir,
+  label,
+}: {
+  item: NavItem;
+  active: boolean;
+  rail: boolean;
+  dir: "ltr" | "rtl";
+  label: string;
+}) {
+  return (
+    <Link
+      href={item.href}
+      data-tour={`nav-${item.key}`}
+      aria-current={active ? "page" : undefined}
+      title={rail ? label : undefined}
+      className={`group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/30 ${
+        active
+          ? "bg-deep-violet/[0.07] text-deep-violet dark:bg-violet-light/[0.14] dark:text-violet-soft"
+          : "text-ink/55 hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
+      }`}
+    >
+      <span
+        aria-hidden
+        className={`absolute ${dir === "rtl" ? "right-0 rounded-l-full" : "left-0 rounded-r-full"} top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-deep-violet transition-opacity dark:bg-violet-light ${
+          active ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      <span
+        className={`h-4 w-4 shrink-0 transition-colors ${
+          active
+            ? "text-deep-violet dark:text-violet-soft"
+            : "text-ink/30 group-hover:text-ink/60 dark:text-fog/30 dark:group-hover:text-fog/60"
+        }`}
+      >
+        {item.icon}
+      </span>
+      {!rail && <span className="flex-1 truncate">{label}</span>}
+    </Link>
+  );
+}
+
 function SidebarMenuLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href}
-      className="flex w-full items-center px-3 py-2 text-[12px] text-white/60 transition hover:bg-white/[0.06] hover:text-white"
+      className="flex w-full items-center px-3 py-2 text-[12px] text-ink/60 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/60 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
     >
       {label}
     </Link>
@@ -393,16 +449,6 @@ function WrenchIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
-    </svg>
-  );
-}
-
-function PhotoIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-      <circle cx="8.5" cy="8.5" r="1.5" />
-      <path d="M21 15l-5-5L5 21" />
     </svg>
   );
 }
@@ -495,6 +541,83 @@ function CardIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <rect x="2" y="5" width="20" height="14" rx="2" />
       <path d="M2 10h20" />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 01-3.4 0" />
+    </svg>
+  );
+}
+
+function ZapIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  );
+}
+
+function BulbIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 18h6" />
+      <path d="M10 22h4" />
+      <path d="M12 2a7 7 0 00-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0012 2z" />
+    </svg>
+  );
+}
+
+function TrendingIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+      <polyline points="17 6 23 6 23 12" />
+    </svg>
+  );
+}
+
+function TrophyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+      <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+      <path d="M4 22h16" />
+      <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+      <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+      <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+    </svg>
+  );
+}
+
+function GaugeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 15l3.5-3.5" />
+      <path d="M20.3 18a9.5 9.5 0 10-16.6 0" />
+      <circle cx="12" cy="15" r="1" />
+    </svg>
+  );
+}
+
+function UserIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
     </svg>
   );
 }

@@ -49,6 +49,8 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                                 if msg.get("contacts")
                                 else None
                             ),
+                            # Reactions carry their emoji here, not in text.
+                            "reaction": msg.get("reaction"),
                         },
                     }
                 )
@@ -100,6 +102,7 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                                 if msg.get("contacts")
                                 else None
                             ),
+                            "reaction": msg.get("reaction"),
                         },
                     })
             # Coexistence: SMB contacts sync
@@ -126,6 +129,7 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             "msg_type": msg.get("type"),
                             "text": ((msg.get("text") or {}).get("body")),
                             "context": msg.get("context"),
+                            "reaction": msg.get("reaction"),
                         },
                     })
     return [e for e in events if e["external_event_id"]]
