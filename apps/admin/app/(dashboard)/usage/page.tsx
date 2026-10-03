@@ -92,7 +92,7 @@ function EngineBars({ rows }: { rows: VoiceEngineRow[] }) {
       {rows.map((r) => {
         const { provider, tier } = prettyEngine(r.engine);
         return (
-          <div key={r.engine} className="group" title={`${r.notes} notes · ${r.chars.toLocaleString()} chars · ${r.failures} failed · avg ${fmtMs(r.avg_latency_ms)}`}>
+          <div key={`${r.engine}::${r.api_model}`} className="group" title={`${r.notes} notes · ${r.chars.toLocaleString()} chars · ${r.failures} failed · avg ${fmtMs(r.avg_latency_ms)}`}>
             <div className="flex items-center justify-between gap-2 text-[11px]">
               <span className="min-w-0 truncate font-semibold text-ink">
                 {provider}
