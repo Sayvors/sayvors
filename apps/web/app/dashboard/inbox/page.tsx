@@ -246,7 +246,13 @@ export default function InboxPage() {
             : t,
         ),
       );
-      if (!result.sent) setSendError(result.error || "WhatsApp rejected this message.");
+      if (!result.sent)
+        setSendError(
+          result.error ||
+            (target?.platform === "instagram"
+              ? "Instagram rejected this message."
+              : "WhatsApp rejected this message."),
+        );
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "Could not send the message.");
     } finally {
@@ -411,7 +417,10 @@ export default function InboxPage() {
                       {target.display_name || "Unknown sender"}
                     </p>
                     <p className="truncate text-[11px] text-ink/45 dark:text-fog/45">
-                      {formatPhone(target.contact_phone)}
+                      {/* An IGSID is not a phone number — no formatting. */}
+                      {target.platform === "instagram"
+                        ? target.contact_phone
+                        : formatPhone(target.contact_phone)}
                       {target.channel_name ? ` · ${target.channel_name}` : ""}
                     </p>
                   </span>
@@ -576,7 +585,11 @@ export default function InboxPage() {
                 <p className="mt-2 text-[14px] font-semibold text-ink dark:text-fog">
                   {target.display_name || "Unknown sender"}
                 </p>
-                <p className="text-[12px] text-ink/45 dark:text-fog/45">{formatPhone(target.contact_phone)}</p>
+                <p className="text-[12px] text-ink/45 dark:text-fog/45">
+                  {target.platform === "instagram"
+                    ? target.contact_phone
+                    : formatPhone(target.contact_phone)}
+                </p>
               </div>
               <dl className="space-y-2 text-[12px]">
                 <div className="flex justify-between">

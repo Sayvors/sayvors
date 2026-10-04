@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   MetaAsset,
@@ -632,6 +632,41 @@ export default function MetaConnections({
     }
   };
 
+  // Open the asset picker pre-selecting whatever is already active — the
+  // Manage button and the post-OAuth auto-open share this.
+  const openPicker = (provider: MetaProvider) => {
+    const current = (assets[provider] ?? []).filter((a) => a.active).map((a) => a.id);
+    setPicked((prev) => ({ ...prev, [provider]: current }));
+    setPicking(provider);
+  };
+
+  // The OAuth callback redirects back with meta_connected / next in the URL.
+  // Act on them instead of asking the tenant to hunt for the Manage button:
+  // Facebook connect opens the Page picker; the Instagram hand-off runs
+  // discovery itself and opens its picker. Params are stripped so a refresh
+  // never re-triggers the flow. (WhatsApp never lands here — its Embedded
+  // Signup popup opens the picker directly.)
+  const oauthLandingHandled = useRef(false);
+  useEffect(() => {
+    if (oauthLandingHandled.current) return;
+    const connected = params.get("meta_connected");
+    if (!connected) return;
+    oauthLandingHandled.current = true;
+    try {
+      window.history.replaceState(null, "", window.location.pathname);
+    } catch {
+      /* keep params — worst case a refresh re-opens a picker */
+    }
+    if (connected === "facebook") {
+      if (params.get("next") === "instagram_select") {
+        void discoverIg();
+      } else {
+        openPicker("facebook");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const providersToShow = activeFilter ? PROVIDERS.filter((p) => p.key === activeFilter) : PROVIDERS;
 
   return (
@@ -754,10 +789,28 @@ export default function MetaConnections({
                 </>
               ) : (
                 <div className="flex flex-wrap items-center gap-1.5">
+                  {/* Next step, on the card: Facebook connected but no Page
+                      picked, or Instagram connected but nothing discovered. */}
+                  {p.key === "facebook" && active.length === 0 && (
+                    <button
+                      onClick={() => openPicker("facebook")}
+                      className="min-h-8 rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90"
+                    >
+                      Pick your Pages
+                    </button>
+                  )}
+                  {p.key === "instagram" && list.length === 0 && (
+                    <button
+                      onClick={discoverIg}
+                      disabled={busy === "instagram-discover"}
+                      className="min-h-8 rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                    >
+                      {busy === "instagram-discover" ? "Discovering…" : "Discover from my Pages"}
+                    </button>
+                  )}
                   <button
                     onClick={() => {
-                      const current = (assets[p.key] ?? []).filter((a) => a.active).map((a) => a.id);
-                      setPicked((prev) => ({ ...prev, [p.key]: current }));
+                      openPicker(p.key);
                       setPicking(picking === p.key ? null : p.key);
                     }}
                     className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:text-fog/60"
