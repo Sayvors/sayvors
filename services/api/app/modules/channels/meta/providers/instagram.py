@@ -107,3 +107,47 @@ class InstagramAdapter(MetaProviderAdapter):
             return (True, "ok") if resp.status_code == 200 else (False, "invalid token")
         except MetaAPIError as e:
             return False, f"graph error {e.status_code}"
+
+    # ── Messaging ────────────────────────────────────────────
+    # IG DMs ride the PARENT FACEBOOK PAGE's token (page-linked
+    # messaging): POST /{page-id}/messages with the customer's IGSID as
+    # the recipient. No messaging_product field — that is what makes
+    # Meta route it to Instagram instead of Messenger.
+
+    IG_TEXT_MAX_BYTES = 1000  # Meta: UTF-8 text, 1000 bytes or fewer.
+
+    async def send_text_message(
+        self, page_id: str, page_token: str, igsid: str, text: str
+    ) -> str:
+        # Byte-safe truncation: a str slice can still blow past Meta's
+        # byte cap for Arabic/CJK-heavy replies, so truncate the encoding.
+        body = text.encode("utf-8")[: self.IG_TEXT_MAX_BYTES].decode(
+            "utf-8", errors="ignore"
+        )
+        resp = await self._graph(
+            "POST", f"/{page_id}/messages", page_token,
+            json={"recipient": {"id": igsid}, "message": {"text": body}},
+        )
+        return resp.json().get("message_id", "")
+
+    async def send_typing_indicator(
+        self, page_id: str, page_token: str, igsid: str
+    ) -> bool:
+        try:
+            await self._graph(
+                "POST", f"/{page_id}/messages", page_token,
+                json={"recipient": {"id": igsid}, "sender_action": "typing_on"},
+            )
+            return True
+        except MetaAPIError:
+            return False
+
+    async def get_contact_profile(self, page_token: str, igsid: str) -> dict:
+        """Best-effort name/username for the inbox — {} on any failure."""
+        try:
+            resp = await self._graph(
+                "GET", f"/{igsid}", page_token, params={"fields": "name,username"},
+            )
+            return resp.json() or {}
+        except MetaAPIError:
+            return {}

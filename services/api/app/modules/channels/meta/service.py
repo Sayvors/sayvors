@@ -264,7 +264,69 @@ async def select_assets(
         "Meta assets selected provider=%s tenant=%s count=%d",
         provider, tenant_id, len(activated),
     )
+    # Already committed: a Graph hiccup here must never roll back the
+    # tenant's selection — the next select retries the subscription.
+    await _subscribe_messaging_webhooks(db, activated)
     return activated
+
+
+async def get_instagram_page_credentials(
+    db: AsyncSession, asset: MetaAsset
+) -> tuple[str, str]:
+    """(page_id, page_token) for an ig_account asset's parent Page.
+
+    IG messaging rides the parent Page's token — the IG connection only
+    holds a user token. `parent_asset_id` is the only link (SET NULL when
+    the Page row is deleted), hence the empty pair as the failure value.
+    """
+    if not asset.parent_asset_id:
+        return "", ""
+    page = (
+        await db.execute(
+            select(MetaAsset).where(MetaAsset.id == asset.parent_asset_id)
+        )
+    ).scalar_one_or_none()
+    if page is None:
+        return "", ""
+    return page.external_asset_id, (page.asset_metadata or {}).get(
+        "page_access_token", ""
+    )
+
+
+async def _subscribe_messaging_webhooks(
+    db: AsyncSession, assets: list[MetaAsset]
+) -> None:
+    """Best-effort: point Meta's webhooks at us for messaging on the Pages
+    behind the selected assets — directly (facebook select) or as an IG
+    account's parent (instagram select).
+
+    subscribed_apps REPLACES the whole subscribed-field list, so always pass
+    the complete set: feed/mention keep the review and post features working
+    alongside messages. Failures only warn — the selection is committed and
+    a resubscribe happens on the next select.
+    """
+    pages: dict[str, str] = {}
+    for asset in assets:
+        if asset.asset_type == "page":
+            token = (asset.asset_metadata or {}).get("page_access_token", "")
+            if token:
+                pages[asset.external_asset_id] = token
+        elif asset.asset_type == "ig_account":
+            page_id, token = await get_instagram_page_credentials(db, asset)
+            if page_id and token:
+                pages[page_id] = token
+    if not pages:
+        return
+    adapter = get_adapter("facebook")
+    for page_id, token in pages.items():
+        try:
+            await adapter.subscribe_page(
+                page_id, token, fields=["messages", "feed", "mention"]
+            )
+        except Exception as e:  # noqa: BLE001 — webhook setup must not block selection
+            logger.warning(
+                "Page webhook subscription failed page=%s: %s", page_id, e
+            )
 
 
 # ── Instagram discovery (via selected Facebook Pages) ───

@@ -41,7 +41,9 @@ _HISTORY_MESSAGES = 10
 _MESSAGE_GAP_SECONDS = 0.8
 
 
-async def _resolve_asset(db, external_asset_id: str) -> MetaAsset | None:
+async def _resolve_asset(
+    db, external_asset_id: str, provider: str = "whatsapp"
+) -> MetaAsset | None:
     """Authoritative asset for an event. Kafka payloads are untrusted —
     anyone with topic access can forge tenant_id, so consumers re-resolve
     ownership from the DB and ignore the payload claim."""
@@ -50,18 +52,18 @@ async def _resolve_asset(db, external_asset_id: str) -> MetaAsset | None:
             select(MetaAsset)
             .options(selectinload(MetaAsset.connection))
             .where(
-                MetaAsset.provider == "whatsapp",
+                MetaAsset.provider == provider,
                 MetaAsset.external_asset_id == (external_asset_id or ""),
             )
         )
     ).scalar_one_or_none()
 
 
-def _system_prompt(user) -> str:
-    """WhatsApp assistant prompt grounded in the tenant's business profile."""
+def _system_prompt(user, platform: str = "WhatsApp") -> str:
+    """Assistant prompt grounded in the tenant's business profile."""
     name = (user.business_name or f"{user.first_name} {user.last_name}").strip()
     lines = [
-        f"You are the AI customer assistant for {name}, replying on WhatsApp.",
+        f"You are the AI customer assistant for {name}, replying on {platform}.",
     ]
     if user.business_description:
         lines.append(f"About the business: {user.business_description}")
@@ -96,7 +98,9 @@ def _system_prompt(user) -> str:
     return "\n".join(lines)
 
 
-async def _generate_reply(db, channel, tenant_id: str, text: str) -> str:
+async def _generate_reply(
+    db, channel, tenant_id: str, text: str, platform: str = "WhatsApp"
+) -> str:
     """Generate an AI reply from recent conversation history + business profile.
 
     Raises ValueError (no model enabled) / ProviderError — callers decide how
@@ -143,29 +147,33 @@ async def _generate_reply(db, channel, tenant_id: str, text: str) -> str:
     req = LLMRequest(
         model=api_model,
         messages=history,
-        system_prompt=_system_prompt(user)
+        system_prompt=_system_prompt(user, platform=platform)
         + (f"\n\n{business_card}" if business_card else ""),
         temperature=_REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
         stream=False,
         tenant_id=tenant_id,
         model_id=model_id,
-        purpose="whatsapp.auto_reply",
+        purpose=f"{platform.lower()}.auto_reply",
         channel_id=channel.id,
     )
     resp = await provider.complete(req)
     return (resp.content or "").strip()
 
 
-async def _channel_for(db, tenant_id: str, phone_number_id: str, display_name):
-    """Get-or-create the channels row for this WhatsApp number."""
+async def _channel_for(
+    db, tenant_id: str, phone_number_id: str, display_name,
+    platform: str = "whatsapp",
+):
+    """Get-or-create the channels row for this Meta asset (WhatsApp number
+    or Instagram business account)."""
     from ..models import Channel
 
     channel = (
         await db.execute(
             select(Channel).where(
                 Channel.user_id == tenant_id,
-                Channel.platform == "whatsapp",
+                Channel.platform == platform,
                 Channel.platform_user_id == phone_number_id,
             )
         )
@@ -174,7 +182,7 @@ async def _channel_for(db, tenant_id: str, phone_number_id: str, display_name):
         channel = Channel(
             id=str(uuid.uuid4()),
             user_id=tenant_id,
-            platform="whatsapp",
+            platform=platform,
             platform_user_id=phone_number_id,
             display_name=display_name,
             status="active",
@@ -648,6 +656,227 @@ async def _handle_message_status(event: dict, data: dict) -> None:
         await db.commit()
 
 
+async def _handle_instagram_echo(event: dict, data: dict) -> None:
+    """Merchant-sent DM (Meta inbox / IG app) → outbound row, no AI reply.
+
+    Meta never echoes an app's own API sends back to it, so is_echo means
+    a human replied on another surface — history, not a trigger.
+    """
+    from ..models import ChannelMessage
+
+    raw = data.get("raw") or {}
+    mid = event.get("external_event_id") or ""
+    ig_account_id = event.get("external_asset_id") or ""
+    to_contact = (raw.get("recipient") or {}).get("id") or ""
+    text = (raw.get("message") or {}).get("text")
+    if not ig_account_id or not to_contact:
+        return
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, ig_account_id, provider="instagram")
+        if asset is None:
+            return
+        existing = (
+            await db.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.platform_message_id == mid,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return
+        channel = await _channel_for(
+            db, asset.tenant_id, ig_account_id, asset.username,
+            platform="instagram",
+        )
+        db.add(ChannelMessage(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_message_id=mid[:200] or None,
+            direction="outbound",
+            content=text if text else "[non-text message]",
+            content_type="text",
+            status="sent",
+            contact_phone=to_contact or None,
+        ))
+        await db.commit()
+
+
+async def _handle_instagram_message(event: dict, data: dict) -> None:
+    """Instagram DM in → persist, then AI-reply + send via the parent Page.
+
+    Mirrors the WhatsApp handler minus voice / classification / follow-ups.
+    The send rides the parent Facebook Page's token — the IG connection
+    holds no usable messaging credential of its own.
+    """
+    from ..models import ChannelMessage
+    from .providers.base import MetaAPIError
+    from .providers.instagram import InstagramAdapter
+    from .service import get_instagram_page_credentials
+
+    ig_account_id = event.get("external_asset_id") or ""
+    mid = event.get("external_event_id") or ""
+    raw = data.get("raw") or {}
+    message = raw.get("message") or {}
+    text = message.get("text")
+    igsid = (raw.get("sender") or {}).get("id") or ""
+    # Only the messages field carries DMs to answer — messaging_handovers
+    # (a human took over) and standby (a human agent owns the thread)
+    # share the sender/message shape and must never trigger the AI.
+    if data.get("field") != "messages":
+        return
+    if not ig_account_id or not igsid:
+        return
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, ig_account_id, provider="instagram")
+        if asset is None:
+            logger.warning(
+                "Dropping instagram message %s for unknown asset %s",
+                mid[:32], ig_account_id,
+            )
+            return
+        tenant_id = asset.tenant_id
+
+        # Idempotent replay: Kafka redelivery must not twin the row.
+        existing = (
+            await db.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.platform_message_id == mid,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return
+
+        channel = await _channel_for(
+            db, tenant_id, ig_account_id, asset.username,
+            platform="instagram",
+        )
+        db.add(ChannelMessage(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_message_id=mid[:200] or None,
+            direction="inbound",
+            content=text if text else "[non-text message]",
+            content_type="text",
+            status="delivered",
+            contact_phone=igsid or None,
+        ))
+        await db.commit()
+
+        page_id, page_token = await get_instagram_page_credentials(db, asset)
+        if not page_id or not page_token:
+            logger.info(
+                "Instagram AI reply skipped (no parent Page token on asset %s) "
+                "mid=%s from=+%s", ig_account_id, mid[:32], igsid[-6:],
+            )
+            return
+
+        adapter = InstagramAdapter()
+
+        # Typing dots while the reply is prepared — best-effort, exactly
+        # like WhatsApp: failure here changes nothing downstream.
+        await adapter.send_typing_indicator(page_id, page_token, igsid)
+
+        # Best-effort contact name so the inbox shows a person, not a bare
+        # IGSID. One Graph read on the inbound message, never blocking.
+        if text:
+            profile = await adapter.get_contact_profile(page_token, igsid)
+            name = profile.get("name") or profile.get("username")
+            if name:
+                row = (
+                    await db.execute(
+                        select(ChannelMessage).where(
+                            ChannelMessage.platform_message_id == mid,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if row is not None and not row.contact_name:
+                    row.contact_name = name[:120]
+                    db.add(row)
+                    await db.commit()
+
+        try:
+            reply = await _generate_reply(
+                db, channel, tenant_id, text or "", platform="Instagram"
+            )
+        except Exception as e:
+            logger.warning(
+                "Instagram AI reply generation failed mid=%s: %s: %s",
+                mid[:32], type(e).__name__, str(e)[:200],
+            )
+            return
+
+        if not reply:
+            logger.warning(
+                "Instagram AI reply was empty — skipping send mid=%s", mid[:32],
+            )
+            return
+
+        # Same response-style rendering as WhatsApp: default "concise" is a
+        # single DM; multi-part styles double as defense against Meta's
+        # 1000-byte per-message cap.
+        from ...users.models import User
+        from .response_style import normalize_response_style, render_response
+
+        style_row = (
+            await db.execute(
+                select(User.response_style).where(User.id == tenant_id)
+            )
+        ).first()
+        response_style = normalize_response_style(
+            style_row.response_style if style_row else None
+        )
+        messages = await render_response(response_style, reply, tenant_id, db)
+        if not messages:
+            logger.warning(
+                "Instagram AI reply rendered to zero messages — skipping "
+                "send mid=%s from=+%s", mid[:32], igsid[-6:],
+            )
+            return
+
+        for index, part in enumerate(messages):
+            try:
+                provider_msg_id = await adapter.send_text_message(
+                    page_id, page_token, igsid, part
+                )
+            except MetaAPIError as e:
+                logger.error(
+                    "Instagram send failed from=+%s: %s %s",
+                    igsid[-6:], e.status_code, str(e)[:200],
+                )
+                db.add(ChannelMessage(
+                    id=str(uuid.uuid4()),
+                    channel_id=channel.id,
+                    direction="outbound",
+                    content=part,
+                    status="failed",
+                    error=str(e)[:500],
+                    contact_phone=igsid or None,
+                ))
+                await db.commit()
+                # Later parts would land without their context — stop.
+                return
+            db.add(ChannelMessage(
+                id=str(uuid.uuid4()),
+                channel_id=channel.id,
+                platform_message_id=provider_msg_id[:200] or None,
+                direction="outbound",
+                content=part,
+                status="sent",
+                contact_phone=igsid or None,
+            ))
+            await db.commit()
+            if index < len(messages) - 1:
+                await asyncio.sleep(_MESSAGE_GAP_SECONDS)
+
+        logger.info(
+            "Instagram AI reply sent to=+%s mid=%s parts=%d",
+            igsid[-6:], mid[:32], len(messages),
+        )
+
+
 async def _process_message(value: bytes | None) -> None:
     if value is None:
         return
@@ -665,22 +894,38 @@ async def _process_message(value: bytes | None) -> None:
     payload = event.get("payload") or {}
 
     try:
-        if event.get("provider") != "whatsapp":
-            logger.debug("Ignoring non-whatsapp meta event %r", event_type)
-        elif event_type == "message.received":
-            await _handle_message_received(event, payload)
-        elif event_type == "message.status":
-            await _handle_message_status(event, payload)
-        elif event_type == "message.history":
-            await _handle_message_history(event, payload)
-        elif event_type == "message.echo":
-            await _handle_message_echo(event, payload)
-        elif event_type == "smb.contacts":
-            await _handle_smb_contacts(event, payload)
-        elif event_type == "connection.disconnect":
-            await _handle_connection_disconnect(event, payload)
+        provider = event.get("provider")
+        if provider == "whatsapp":
+            if event_type == "message.received":
+                await _handle_message_received(event, payload)
+            elif event_type == "message.status":
+                await _handle_message_status(event, payload)
+            elif event_type == "message.history":
+                await _handle_message_history(event, payload)
+            elif event_type == "message.echo":
+                await _handle_message_echo(event, payload)
+            elif event_type == "smb.contacts":
+                await _handle_smb_contacts(event, payload)
+            elif event_type == "connection.disconnect":
+                await _handle_connection_disconnect(event, payload)
+            else:
+                logger.debug("Ignoring meta event type %r on %s", event_type, TOPIC)
+        elif provider == "instagram":
+            if event_type == "message.received":
+                # Merchant replies from Meta's inbox / the IG app arrive as
+                # is_echo — history, not something to auto-answer.
+                if ((payload.get("raw") or {}).get("message") or {}).get("is_echo"):
+                    await _handle_instagram_echo(event, payload)
+                else:
+                    await _handle_instagram_message(event, payload)
+            else:
+                logger.debug(
+                    "Ignoring instagram event type %r on %s", event_type, TOPIC
+                )
         else:
-            logger.debug("Ignoring meta event type %r on %s", event_type, TOPIC)
+            # Messenger (object=page) stays parsed + ledgered, unanswered —
+            # its own 24h-window/handover semantics are a later phase.
+            logger.debug("Ignoring non-whatsapp meta event %r", event_type)
     except Exception as e:
         logger.exception("Failed processing %s event: %s", event_type, e)
 

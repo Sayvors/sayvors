@@ -227,8 +227,8 @@ async def send_message(
 ) -> ChannelMessage:
     """Send a message to a contact and record the result.
 
-    The row is written with the outcome, never optimistically: a message that
-    WhatsApp rejected must not read as "sent" in the inbox. Meta's 24-hour
+    The row is written with the outcome, never optimistically: a message the
+    provider rejected must not read as "sent" in the inbox. Meta's 24-hour
     customer-service window is enforced by Meta, not here, so an out-of-window
     send comes back as a failed row carrying Meta's own error text.
     """
@@ -252,9 +252,14 @@ async def send_message(
     )
 
     try:
-        provider_msg_id, error = await _dispatch_whatsapp(
-            db, user, channel, contact_phone, body.content
-        )
+        if channel.platform == "instagram":
+            provider_msg_id, error = await _dispatch_instagram(
+                db, user, channel, contact_phone, body.content
+            )
+        else:
+            provider_msg_id, error = await _dispatch_whatsapp(
+                db, user, channel, contact_phone, body.content
+            )
     except Exception as exc:  # noqa: BLE001 - recorded on the row, not raised
         provider_msg_id, error = "", str(exc)[:500]
 
@@ -321,6 +326,62 @@ async def _dispatch_whatsapp(
         return "", detail[:500]
     if not provider_msg_id:
         return "", "WhatsApp accepted the request but returned no message id."
+    return provider_msg_id, ""
+
+
+async def _dispatch_instagram(
+    db: AsyncSession,
+    user: User,
+    channel: Channel,
+    to: str,
+    text: str,
+) -> tuple[str, str]:
+    """(provider_message_id, error) for Instagram DMs. `to` is the
+    customer's IGSID.
+
+    Sends ride the parent Facebook Page's token — the IG connection holds a
+    user token, useless for messaging — so unlike the WhatsApp path there is
+    no connection-token decryption here, just the parent asset lookup.
+    """
+    from .meta.models import MetaAsset
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.instagram import InstagramAdapter
+    from .meta.service import get_instagram_page_credentials
+
+    ig_account_id = channel.platform_user_id
+    if not ig_account_id:
+        return "", "This channel has no Instagram account attached."
+
+    result = await db.execute(
+        select(MetaAsset).where(
+            MetaAsset.tenant_id == user.id,
+            MetaAsset.provider == "instagram",
+            MetaAsset.external_asset_id == ig_account_id,
+        )
+    )
+    asset = result.scalar_one_or_none()
+    if asset is None:
+        return "", "No Instagram account is connected for this channel."
+    if not asset.active:
+        return "", "This Instagram account is not active."
+
+    page_id, page_token = await get_instagram_page_credentials(db, asset)
+    if not page_id or not page_token:
+        return (
+            "",
+            "The Facebook Page linked to this Instagram account has no page "
+            "token. Reconnect Instagram.",
+        )
+
+    try:
+        provider_msg_id = await InstagramAdapter().send_text_message(
+            page_id, page_token, to, text
+        )
+    except MetaAPIError as exc:
+        detail = f"{exc.status_code}: {exc}" if exc.status_code else str(exc)
+        return "", detail[:500]
+    if not provider_msg_id:
+        return "", "Instagram accepted the request but returned no message id."
     return provider_msg_id, ""
 
 

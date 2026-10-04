@@ -174,7 +174,13 @@ def _parse_page(payload: dict) -> list[dict]:
                 events.append(
                     {
                         "external_asset_id": page_id,
-                        "external_event_id": value.get("mid", f"msg-{entry.get('time', '')}"),
+                        # The mid lives inside value.message, not on value —
+                        # a stable id is what makes replay dedupe work.
+                        "external_event_id": (
+                            (value.get("message") or {}).get("mid")
+                            or value.get("mid")
+                            or f"msg-{entry.get('time', '')}"
+                        ),
                         "event_type": "message.received",
                         "occurred_at": _now_iso(),
                         "data": {"raw": value},
@@ -211,7 +217,13 @@ def _parse_instagram(payload: dict) -> list[dict]:
                 events.append(
                     {
                         "external_asset_id": ig_id,
-                        "external_event_id": value.get("mid", f"{field}-{entry.get('time', '')}"),
+                        # The mid lives inside value.message, not on value —
+                        # a stable id is what makes replay dedupe work.
+                        "external_event_id": (
+                            (value.get("message") or {}).get("mid")
+                            or value.get("mid")
+                            or f"{field}-{entry.get('time', '')}"
+                        ),
                         "event_type": "message.received",
                         "occurred_at": _now_iso(),
                         "data": {"field": field, "raw": value},
