@@ -7,9 +7,22 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 
 logger = logging.getLogger(__name__)
+
+# Voice TTS metering lives in the same events table (dotted purpose), but
+# characters-spoken are not LLM tokens — the token overviews below exclude
+# anything under this prefix; the admin voice endpoint serves that slice.
+VOICE_PURPOSE_PREFIX = "voice."
+
+
+def _non_voice():
+    """Filter keeping legacy NULL-purpose rows while dropping voice events."""
+    from .models import LLMUsageEvent
+
+    return or_(LLMUsageEvent.purpose.is_(None),
+               ~LLMUsageEvent.purpose.like(VOICE_PURPOSE_PREFIX + "%"))
 
 # Overridable in tests (defaults to the production session factory).
 _session_factory = None
@@ -77,7 +90,8 @@ async def get_tenant_summary(db, tenant_id: str, days: int = 30) -> dict:
     from .models import LLMUsageEvent
 
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    base = [LLMUsageEvent.tenant_id == tenant_id, LLMUsageEvent.created_at >= since]
+    base = [LLMUsageEvent.tenant_id == tenant_id, LLMUsageEvent.created_at >= since,
+            _non_voice()]
 
     totals = (await db.execute(
         select(func.count().label("calls"),
@@ -146,7 +160,7 @@ async def get_admin_overview(db, days: int = 30, limit: int = 50) -> dict:
     from .models import LLMUsageEvent
 
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    base = [LLMUsageEvent.created_at >= since]
+    base = [LLMUsageEvent.created_at >= since, _non_voice()]
 
     totals = (await db.execute(
         select(func.count().label("calls"),
@@ -207,5 +221,108 @@ async def get_admin_overview(db, days: int = 30, limit: int = 50) -> dict:
         "per_model": [{"model": m.model_id or m.api_model, "api_model": m.api_model,
                        "calls": m.calls, "total_tokens": int(m.total)} for m in per_model],
         "daily": [{"day": str(d.day), "total_tokens": int(d.total), "calls": d.calls}
+                  for d in daily],
+    }
+
+
+def record_voice_event(tenant_id: str | None, provider: str, model_id: str,
+                       api_model: str, chars: int, latency_ms: int,
+                       status: str = "ok", error: str | None = None):
+    """Meter one TTS synthesis — fire-and-forget, never raises.
+
+    Same events table as LLM calls (purpose "voice.tts"); characters spoken
+    land in completion/total so per-engine char bars are possible, while the
+    token overviews above exclude the voice.* prefix.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None  # no loop (tests/shell) — skip silently
+    task = loop.create_task(_insert_voice_event(
+        tenant_id, provider, model_id, api_model, chars, latency_ms, status, error))
+    _pending.add(task)
+    task.add_done_callback(_pending.discard)
+    return task
+
+
+async def _insert_voice_event(tenant_id: str | None, provider: str, model_id: str,
+                              api_model: str, chars: int, latency_ms: int,
+                              status: str, error: str | None) -> None:
+    try:
+        from .models import LLMUsageEvent
+
+        async with _get_session_factory()() as db:
+            db.add(LLMUsageEvent(
+                tenant_id=tenant_id,
+                provider=provider or "unknown",
+                model_id=model_id,
+                api_model=api_model or "",
+                purpose="voice.tts",
+                prompt_tokens=0,
+                completion_tokens=max(0, int(chars or 0)),
+                total_tokens=max(0, int(chars or 0)),
+                latency_ms=max(0, int(latency_ms or 0)),
+                status=status,
+                error=(error or "")[:300] or None,
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Voice usage insert failed (metering only): %s", e)
+
+
+async def get_voice_overview(db, days: int = 30) -> dict:
+    """Voice-model (TTS) metering for the admin dashboard: totals +
+    per-engine bars + daily series. Only purpose "voice.tts" rows."""
+    from .models import LLMUsageEvent
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    base = [LLMUsageEvent.created_at >= since,
+            LLMUsageEvent.purpose == "voice.tts"]
+    ok = LLMUsageEvent.status == "ok"
+
+    totals = (await db.execute(
+        select(func.count().label("calls"),
+               func.coalesce(func.sum(case((ok, 1), else_=0)), 0).label("notes"),
+               func.coalesce(func.sum(case((ok, LLMUsageEvent.total_tokens), else_=0)), 0).label("chars"),
+               func.coalesce(func.sum(case((~ok, 1), else_=0)), 0).label("failed"),
+               func.coalesce(func.avg(LLMUsageEvent.latency_ms), 0).label("avg_ms"),
+               func.count(func.distinct(LLMUsageEvent.model_id)).label("engines"))
+        .select_from(LLMUsageEvent).where(*base)
+    )).one()
+
+    per_engine = (await db.execute(
+        select(LLMUsageEvent.model_id, LLMUsageEvent.api_model, LLMUsageEvent.provider,
+               func.count().label("calls"),
+               func.coalesce(func.sum(case((ok, 1), else_=0)), 0).label("notes"),
+               func.coalesce(func.sum(case((ok, LLMUsageEvent.total_tokens), else_=0)), 0).label("chars"),
+               func.coalesce(func.sum(case((~ok, 1), else_=0)), 0).label("failures"),
+               func.coalesce(func.avg(LLMUsageEvent.latency_ms), 0).label("avg_ms"))
+        .select_from(LLMUsageEvent).where(*base)
+        .group_by(LLMUsageEvent.model_id, LLMUsageEvent.api_model, LLMUsageEvent.provider)
+        .order_by(func.sum(case((ok, 1), else_=0)).desc())
+    )).all()
+
+    daily = (await db.execute(
+        select(func.date(LLMUsageEvent.created_at).label("day"),
+               func.coalesce(func.sum(case((ok, 1), else_=0)), 0).label("notes"),
+               func.coalesce(func.sum(case((ok, LLMUsageEvent.total_tokens), else_=0)), 0).label("chars"))
+        .select_from(LLMUsageEvent).where(*base)
+        .group_by(func.date(LLMUsageEvent.created_at))
+        .order_by("day")
+    )).all()
+
+    return {
+        "days": days,
+        "totals": {"notes": int(totals.notes), "calls": totals.calls,
+                   "failed": int(totals.failed), "chars": int(totals.chars),
+                   "avg_latency_ms": int(totals.avg_ms),
+                   "active_engines": int(totals.engines)},
+        "per_engine": [{"engine": e.model_id or "voice:unknown",
+                        "provider": e.provider or "",
+                        "api_model": e.api_model or "",
+                        "notes": int(e.notes), "calls": e.calls,
+                        "chars": int(e.chars), "failures": int(e.failures),
+                        "avg_latency_ms": int(e.avg_ms)} for e in per_engine],
+        "daily": [{"day": str(d.day), "notes": int(d.notes), "chars": int(d.chars)}
                   for d in daily],
     }

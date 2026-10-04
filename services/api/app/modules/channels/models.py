@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...database import Base
@@ -62,6 +72,11 @@ class Channel(Base):
 
 class ChannelMessage(Base):
     __tablename__ = "channel_messages"
+    __table_args__ = (
+        # Thread lookup scans (channel_id, contact_phone) newest-first, and the
+        # inbox needs it to be a real index rather than a table scan.
+        Index("ix_channel_messages_thread", "channel_id", "contact_phone", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     channel_id: Mapped[str] = mapped_column(
@@ -76,6 +91,17 @@ class ChannelMessage(Base):
         default="sent",
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Who the message is with, in the platform's own addressing. Inbound rows
+    # carry the sender; outbound rows carry the recipient, which is what lets a
+    # reply be threaded under the same contact as the question it answers.
+    #
+    # NULL means "sender unknown" — rows written before this column existed. The
+    # inbox groups those into one "Unknown" thread rather than dropping them,
+    # because they still contain the real conversation text.
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Best-known display name. WhatsApp only sends a profile name on some
+    # payloads, so this is often NULL and the UI falls back to the phone.
+    contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -218,4 +244,41 @@ class ReviewReply(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class WhatsAppThreadState(Base):
+    """Per-conversation stats for one WhatsApp customer.
+
+    A thread is (channel, contact_phone) — the same key the inbox groups on.
+    The consumer refreshes `language` and `confused` from a small classifier
+    call on every inbound message; `awaiting_since`/`followup_sent` drive the
+    ONE gentle follow-up when the AI asked the customer something and they
+    went quiet. `followup_sent=True` guarantees a second nudge is never sent
+    until the user replies (which resets both fields).
+    """
+
+    __tablename__ = "whatsapp_thread_states"
+    __table_args__ = (
+        UniqueConstraint("channel_id", "contact_phone", name="uq_wa_thread_channel_phone"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    channel_id: Mapped[str] = mapped_column(
+        ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    contact_phone: Mapped[str] = mapped_column(String(32), index=True)
+    # Customer's language as detected from their own words ("en", "ar",
+    # "ur", "ps", "hi", "bn", ...). Drives the voice-note language.
+    language: Mapped[str] = mapped_column(String(16), default="en")
+    confused: Mapped[bool] = mapped_column(Boolean, default=False)
+    confused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set when the AI's reply asked the customer something; cleared the
+    # moment any inbound message from the contact arrives.
+    awaiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    followup_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )

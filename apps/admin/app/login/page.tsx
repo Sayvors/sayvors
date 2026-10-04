@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { adminLogin, setAdminToken } from "@/lib/admin-api";
+import { adminLogin } from "@/lib/admin-api";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -17,7 +17,9 @@ export default function AdminLoginPage() {
     setError(null);
     try {
       const res = await adminLogin(password);
-      setAdminToken(res.access_token);
+      if (!res || typeof res.expires_in_minutes !== "number") {
+        throw new Error("Unexpected login response. Please try again.");
+      }
       router.replace("/overview");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");

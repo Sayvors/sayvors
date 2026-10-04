@@ -45,8 +45,10 @@ async def sync_all_once(session_factory=None) -> dict:
             logger.error("Localith auto-sync: could not list connections: %s", e)
             totals["errors"] += 1
             return totals
-        for connection in connections:
-            listing_id = getattr(connection, "listing_id", None)
+        # Plain values up front: the rollback below expires ORM state, and
+        # reading connection.listing_id afterwards raises MissingGreenlet.
+        plan = [(c.listing_id, c.user_id) for c in connections]
+        for listing_id, owner_id in plan:
             # Single-flight: another worker (or a manual sync) is on this
             # branch — skip instead of piling on.
             held = await localith_service._try_acquire_sync_lock(db, listing_id)
@@ -54,7 +56,7 @@ async def sync_all_once(session_factory=None) -> dict:
                 totals["skipped"] += 1
                 continue
             try:
-                user = await db.get(User, connection.user_id)
+                user = await db.get(User, owner_id)
                 if user is None:
                     continue
                 totals["connections"] += 1

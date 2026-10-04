@@ -52,7 +52,7 @@ async def create_post(
     )
 
 
-@router.get("/", response_model=list[PostOut])
+@router.get("", response_model=list[PostOut])
 async def list_posts(
     listing_id: str | None = Query(None, max_length=64),
     user: User = Depends(get_current_user),

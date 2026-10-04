@@ -86,7 +86,7 @@ export default function OnboardingPage() {
   // Check real connection state + callback result (we return here after Google OAuth)
   const checkGoogle = useCallback(async () => {
     try {
-      const data = await apiFetch("/api/v1/channels/?limit=100");
+      const data = await apiFetch("/api/v1/channels?limit=100");
       const has = (data.channels ?? []).some(
         (c: { platform: string; status: string }) => c.platform === "google_reviews" && c.status === "active"
       );

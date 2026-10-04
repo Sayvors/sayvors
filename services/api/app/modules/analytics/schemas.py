@@ -55,9 +55,15 @@ class TimeseriesPoint(BaseModel):
     negative_count: int
     replies_count: int
     impressions_maps: int
+    # Search impressions, messages and bookings live in the `extra` JSON blob
+    # (see analytics/performance.py) — surfaced here so the presence chart can
+    # plot every metric on one axis set instead of a subset.
+    impressions_search: int = 0
     website_clicks: int
     call_clicks: int
     direction_requests: int
+    messages: int = 0
+    bookings: int = 0
 
 
 class TimeseriesResponse(BaseModel):

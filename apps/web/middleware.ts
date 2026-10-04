@@ -46,10 +46,17 @@ export function middleware(request: NextRequest) {
   // and its account/status fetches all live on accounts.google.com.
   const gsi = "https://accounts.google.com";
   const scriptExtras = isProd ? " 'unsafe-inline'" : " 'unsafe-eval' 'unsafe-inline'";
+  // Dev tunnel chain (ngrok -> Next /api rewrite -> API): the proxied Meta SDK
+  // bootstrap rewrites its bundle URL to the API's local address
+  // (http://localhost:8000 — same destination as next.config.ts rewrites),
+  // which neither 'self' (tunnel page origin) nor apiUrl (tunnel origin)
+  // covers. Mixed-content is exempt for localhost; only CSP needed the entry.
+  // Prod loads the SDK straight from the API host, so no entry there.
+  const devSdk = isProd ? "" : " http://localhost:8000";
   const csp = [
     "default-src 'self'",
     // API host: serves the proxied Meta SDK script (cross-origin script tag).
-    `script-src 'self' ${apiUrl} ${gsi}${scriptExtras}`,
+    `script-src 'self' ${apiUrl} ${gsi}${devSdk}${scriptExtras}`,
     `style-src 'self' 'unsafe-inline' ${gsi}`,
     `img-src 'self' data: blob: ${gsi} https://www.gstatic.com`,
     "font-src 'self' data:",

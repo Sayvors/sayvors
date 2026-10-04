@@ -96,7 +96,7 @@ export default function ReviewPlaygroundPage() {
         const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
         const token = getAccessToken();
         const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-        const ch = await fetch(`${API}/api/v1/channels/?limit=100`, { headers: h, credentials: "include" }).then((r) => (r.ok ? r.json() : []));
+        const ch = await fetch(`${API}/api/v1/channels?limit=100`, { headers: h, credentials: "include" }).then((r) => (r.ok ? r.json() : []));
         setChannels(Array.isArray(ch) ? ch : ch?.channels ?? []);
         const list: ChannelOpt[] = Array.isArray(ch) ? ch : ch?.channels ?? [];
         if (list.length > 0) setChannelId((prev) => prev || list[0].id);

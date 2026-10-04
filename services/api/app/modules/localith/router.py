@@ -6,6 +6,10 @@ account. The tenant's API key is account-wide, so setting it writes the
 same ciphertext to every connection row the user owns.
 """
 
+import logging
+import re
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
@@ -19,6 +23,8 @@ from ..locations.models import LocationProfile
 from ..users.models import User
 from . import service
 from .models import LocalithConnection
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/integrations/localith", tags=["localith"])
 
@@ -141,7 +147,14 @@ async def sync_my_connection(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Localith sync failed: {e}")
+        # Log the cause, return an opaque message — a sync can fail on a DB
+        # or provider fault whose text names tables, hosts and query shapes.
+        import logging
+
+        logging.getLogger(__name__).exception("Localith sync failed: %s", e)
+        raise HTTPException(
+            status_code=502, detail="Localith sync failed — try again in a minute."
+        )
 
 
 @router.get("/connections", response_model=list[ConnectionResponse])
@@ -296,7 +309,14 @@ async def update_my_listing(
     listing_id: str | None = None,
 ):
     """Update the connected listing (writes back to Google via Localith),
-    then refresh the stored profile snapshot."""
+    then refresh the stored profile snapshot.
+
+    The immediate re-read is deliberately optimistic: the provider is
+    eventually consistent and still serves the previous values, so a
+    merchant's own edit is trusted over the lagged read-back. Otherwise
+    Sayvors stores the old value and the edit appears to have done nothing
+    until a later background sync repaired it.
+    """
     import asyncio
 
     c = await service.get_connection(db, user.id, listing_id)
@@ -311,10 +331,21 @@ async def update_my_listing(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Localith update failed: {e}")
+
+    # Trust the write: reflect what the merchant just submitted.
+    if fields.get("name"):
+        c.listing_name = fields["name"]
+    if fields.get("phone_number"):
+        c.phone_number = fields["phone_number"]
+    if fields.get("website_url"):
+        c.website_url = fields["website_url"]
+
     try:
         detail = await service.get_listing_detail(c.listing_id)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Updated, but re-fetch failed: {e}")
+    except Exception:
+        # The write landed; a failed re-read must not report failure.
+        detail = None
+        logger.warning("Listing updated but re-fetch failed listing=%s", c.listing_id)
     if detail:
         service.apply_listing_snapshot(c, detail)
     c.last_synced_at = service.now_utc()

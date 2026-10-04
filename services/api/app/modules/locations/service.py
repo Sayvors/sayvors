@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.providers import GOOGLE, locations_write_provider
 from ..localith.models import LocalithConnection
-from .models import LocationProfile
+from .models import LocationGroup, LocationProfile
 
 logger = logging.getLogger(__name__)
 
@@ -290,4 +290,115 @@ async def update_profile(
         pushed = ["description"]
     out = await get_profile(db, user_id, listing_id)
     out["google_synced"] = pushed
+    return out
+
+
+# --- location groups -------------------------------------------------------
+#
+# Groups are pure bookkeeping: a name plus the listing IDs it covers. The
+# frontend expands a group into the same "scope" shape it already builds for
+# "All branches", so nothing downstream needs to know groups exist.
+
+
+async def list_groups(db: AsyncSession, user_id: str) -> list[dict]:
+    result = await db.execute(
+        select(LocationGroup)
+        .where(LocationGroup.user_id == user_id)
+        .order_by(LocationGroup.position, LocationGroup.created_at)
+    )
+    return [
+        {
+            "id": g.id,
+            "name": g.name,
+            "listing_ids": list(g.listing_ids or []),
+            "position": g.position,
+        }
+        for g in result.scalars().all()
+    ]
+
+
+async def create_group(db: AsyncSession, user_id: str, name: str, listing_ids: list[str]) -> dict:
+    result = await db.execute(
+        select(LocationGroup).where(LocationGroup.user_id == user_id)
+    )
+    existing = list(result.scalars().all())
+    taken = {g.name.strip().lower() for g in existing}
+    name = name.strip()
+    if name.lower() in taken:
+        raise ValueError(f"You already have a group called {name!r}")
+    if not listing_ids:
+        raise ValueError("Pick at least one location for the group")
+
+    group = LocationGroup(
+        user_id=user_id,
+        name=name,
+        listing_ids=_dedupe(listing_ids),
+        position=len(existing),
+    )
+    db.add(group)
+    await db.commit()
+    return {
+        "id": group.id,
+        "name": group.name,
+        "listing_ids": list(group.listing_ids or []),
+        "position": group.position,
+    }
+
+
+async def update_group(
+    db: AsyncSession, user_id: str, group_id: str, name: str | None, listing_ids: list[str] | None
+) -> dict | None:
+    group = await _group(db, user_id, group_id)
+    if group is None:
+        return None
+    if name is not None:
+        name = name.strip()
+        result = await db.execute(
+            select(LocationGroup).where(
+                LocationGroup.user_id == user_id, LocationGroup.id != group_id
+            )
+        )
+        if name.lower() in {g.name.strip().lower() for g in result.scalars().all()}:
+            raise ValueError(f"You already have a group called {name!r}")
+        group.name = name
+    if listing_ids is not None:
+        if not listing_ids:
+            raise ValueError("A group needs at least one location")
+        group.listing_ids = _dedupe(listing_ids)
+    group.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {
+        "id": group.id,
+        "name": group.name,
+        "listing_ids": list(group.listing_ids or []),
+        "position": group.position,
+    }
+
+
+async def delete_group(db: AsyncSession, user_id: str, group_id: str) -> bool:
+    group = await _group(db, user_id, group_id)
+    if group is None:
+        return False
+    await db.delete(group)
+    await db.commit()
+    return True
+
+
+async def _group(db: AsyncSession, user_id: str, group_id: str) -> LocationGroup | None:
+    result = await db.execute(
+        select(LocationGroup).where(
+            LocationGroup.user_id == user_id, LocationGroup.id == group_id
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _dedupe(listing_ids: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in listing_ids:
+        lid = str(raw).strip()
+        if lid and lid not in seen:
+            seen.add(lid)
+            out.append(lid)
     return out

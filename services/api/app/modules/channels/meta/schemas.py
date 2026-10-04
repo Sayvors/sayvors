@@ -77,6 +77,11 @@ class MetaWhatsAppSession(BaseModel):
         pattern=r"^\d{6}$",
         description="6-digit two-step verification PIN for the number",
     )
+    mode: str | None = Field(
+        None,
+        pattern=r"^(standard|coexistence)$",
+        description="Onboarding mode: 'standard' (new number) or 'coexistence' (existing Business app number)",
+    )
 
 
 class MetaRegisterNumberRequest(BaseModel):

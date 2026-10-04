@@ -203,6 +203,18 @@ async def get_timeseries(
     """Daily rollup series for charts (reviews, sentiment, impressions, actions)."""
     uid = user.id
     rows = await service.get_timeseries(db, uid, channel_id, days)
+
+    def _extra_int(row, key: str) -> int:
+        # Search impressions / messages / bookings ride in the `extra` JSON
+        # blob; tolerate a non-dict or junk value rather than 500-ing a chart.
+        extra = getattr(row, "extra", None)
+        if not isinstance(extra, dict):
+            return 0
+        try:
+            return int(extra.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
     return TimeseriesResponse(
         points=[
             TimeseriesPoint(
@@ -215,9 +227,12 @@ async def get_timeseries(
                 negative_count=row.negative_count,
                 replies_count=row.replies_count,
                 impressions_maps=row.impressions_maps_desktop + row.impressions_maps_mobile,
+                impressions_search=_extra_int(row, "impressions_search"),
                 website_clicks=row.website_clicks,
                 call_clicks=row.call_clicks,
                 direction_requests=row.direction_requests,
+                messages=_extra_int(row, "messages"),
+                bookings=_extra_int(row, "bookings"),
             )
             for row in rows
         ]

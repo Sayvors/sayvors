@@ -11,6 +11,12 @@ import {
   type DatabankDoc,
   type DocumentPreview,
 } from "@/lib/api-rag";
+import {
+  getBusinessProfile,
+  saveBusinessProfile,
+  regenerateBusinessProfile,
+  type BusinessProfileData,
+} from "@/lib/api-business-profile";
 
 type Databank = {
   id: string;
@@ -115,6 +121,251 @@ function FileIcon({ type }: { type?: string }) {
         <path d="M14 2v6h6" />
       </svg>
     </span>
+  );
+}
+
+const PROFILE_FIELD_META = [
+  { key: "domain", label: "Domain", placeholder: "e.g. Food & Restaurant", textarea: false },
+  { key: "products_services", label: "Offers / products", placeholder: "e.g. shawarma, mixed grill, catering", textarea: true },
+  { key: "not_offered_and_policies", label: "Not offered & policies", placeholder: "e.g. no alcohol, halal only, pickup until 11pm", textarea: true },
+  { key: "audience_languages", label: "Audience & languages", placeholder: "e.g. local families and offices; Arabic & English", textarea: false },
+] as const;
+
+function BusinessProfileCard() {
+  const [profile, setProfile] = useState<BusinessProfileData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const data = await getBusinessProfile();
+        if (!cancelled) setProfile(data);
+      } catch {
+        /* the card is optional chrome — stay empty on failure */
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function startEdit() {
+    const next: Record<string, string> = {};
+    for (const f of PROFILE_FIELD_META) next[f.key] = (profile?.[f.key] as string) ?? "";
+    next.summary = profile?.summary ?? "";
+    setForm(next);
+    setError(null);
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await saveBusinessProfile(form);
+      setProfile(updated);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    setError(null);
+    try {
+      const updated = await regenerateBusinessProfile();
+      setProfile(updated);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not generate");
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  const isEdited = profile?.source === "edited";
+  const busy = saving || regenerating;
+
+  return (
+    <div className="rounded-[20px] border border-white bg-white shadow-[0_12px_32px_rgba(58,39,120,0.08)] dark:border-fog/[0.08] dark:bg-ink">
+      <div className="flex flex-col gap-3 border-b border-ink/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-fog/[0.08]">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-[#6d28d9] text-white shadow-sm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-4.5 w-4.5">
+              <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+            </svg>
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-[15px] font-bold leading-tight text-ink dark:text-fog">Business profile</h2>
+              {profile && (
+                <span
+                  title={isEdited ? "You edited this card — AI regeneration never overwrites your text" : "Generated from your databank uploads"}
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    isEdited
+                      ? "bg-sky-50 text-sky-700 ring-1 ring-sky-200/60"
+                      : "bg-violet-50 text-violet-700 ring-1 ring-violet-200/60"
+                  }`}
+                >
+                  {isEdited ? "Edited by you" : "Auto-generated"}
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] font-medium text-ink/40 dark:text-fog/40">
+              What your AI knows about your business — used to answer customers instantly.
+            </p>
+          </div>
+        </div>
+        {!editing && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleRegenerate()}
+              disabled={busy}
+              title="Re-read your databank and refresh the card (your edits are never overwritten)"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-ink/10 bg-white px-3 py-2 text-[11px] font-bold text-ink/60 transition hover:bg-ink/[0.03] disabled:opacity-50 dark:border-fog/10 dark:bg-transparent dark:text-fog/60 dark:hover:bg-fog/[0.04]"
+            >
+              {regenerating ? (
+                <>
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet" />
+                  Reading your files…
+                </>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
+                    <path d="M21 12a9 9 0 11-9-9" strokeLinecap="round" />
+                    <path d="M9 9l3-3 3 3M9 15l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  {profile ? "Regenerate" : "Generate"}
+                </>
+              )}
+            </button>
+            {profile && (
+              <button
+                type="button"
+                onClick={startEdit}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-deep-violet px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-3.5 w-3.5">
+                  <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z" />
+                </svg>
+                Edit
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <p className="mx-5 mt-3 rounded-xl bg-red-50 px-3 py-2 text-[12px] font-medium text-red-600 ring-1 ring-red-200/60">
+          {error}
+        </p>
+      )}
+
+      {editing ? (
+        <div className="space-y-3 px-5 py-4">
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-ink/40">Summary</label>
+            <textarea
+              value={form.summary ?? ""}
+              onChange={(e) => setForm({ ...form, summary: e.target.value })}
+              rows={3}
+              placeholder="2–3 sentences on what the business does"
+              className="mt-1 w-full resize-none rounded-xl border border-ink/10 bg-ink/[0.02] px-3 py-2 text-[12px] font-medium text-ink placeholder:text-ink/30 outline-none focus:border-deep-violet/40 focus:bg-white dark:border-fog/10 dark:bg-transparent dark:text-fog"
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {PROFILE_FIELD_META.map((f) => (
+              <div key={f.key}>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-ink/40">{f.label}</label>
+                {f.textarea ? (
+                  <textarea
+                    value={form[f.key] ?? ""}
+                    onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                    rows={2}
+                    placeholder={f.placeholder}
+                    className="mt-1 w-full resize-none rounded-xl border border-ink/10 bg-ink/[0.02] px-3 py-2 text-[12px] font-medium text-ink placeholder:text-ink/30 outline-none focus:border-deep-violet/40 focus:bg-white dark:border-fog/10 dark:bg-transparent dark:text-fog"
+                  />
+                ) : (
+                  <input
+                    value={form[f.key] ?? ""}
+                    onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                    placeholder={f.placeholder}
+                    className="mt-1 w-full rounded-xl border border-ink/10 bg-ink/[0.02] px-3 py-2 text-[12px] font-medium text-ink placeholder:text-ink/30 outline-none focus:border-deep-violet/40 focus:bg-white dark:border-fog/10 dark:bg-transparent dark:text-fog"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              disabled={saving}
+              className="rounded-xl px-4 py-2 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+            >
+              {saving && <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />}
+              Save profile
+            </button>
+          </div>
+        </div>
+      ) : loading ? (
+        <div className="space-y-2 px-5 py-5">
+          <div className="h-4 w-3/4 animate-pulse rounded bg-ink/[0.06]" />
+          <div className="h-4 w-1/2 animate-pulse rounded bg-ink/[0.04]" />
+        </div>
+      ) : profile ? (
+        <div className="px-5 py-4">
+          {profile.summary ? (
+            <p className="text-[13px] leading-relaxed text-ink/80 dark:text-fog/80">{profile.summary}</p>
+          ) : (
+            <p className="text-[12px] italic text-ink/35">No summary yet — edit or regenerate.</p>
+          )}
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {PROFILE_FIELD_META.map((f) => {
+              const value = (profile[f.key] as string) ?? "";
+              return (
+                <div key={f.key} className="rounded-xl bg-ink/[0.03] px-3 py-2.5 dark:bg-fog/[0.05]">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-ink/35">{f.label}</div>
+                  <div className={`mt-0.5 text-[12px] leading-relaxed ${value ? "text-ink/75 dark:text-fog/75" : "italic text-ink/30"}`}>
+                    {value || "Not set"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-start gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="max-w-lg text-[12px] leading-relaxed text-ink/50 dark:text-fog/50">
+            Your AI doesn&apos;t have a business card yet. Upload files to a databank and generate one — it lets your
+            assistant answer &ldquo;what can you do for me?&rdquo; instantly, without searching your documents.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -336,6 +587,9 @@ export default function DatabankPage() {
             </span>
           </div>
         </div>
+
+        {/* Business profile card — AI grounding facts, editable */}
+        <BusinessProfileCard />
 
         {/* Databank Grid */}
         <div>

@@ -11,9 +11,14 @@ import {
   type TopicsResponse,
 } from "@/lib/api-analytics";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 
-function TrendChip({ trend }: { trend: number | null }) {
-  if (trend === null) return <span className="text-[10px] font-medium text-ink/30">new</span>;
+type InsightsCopy = ReturnType<typeof useI18n>["t"]["analytics"]["insights"];
+
+function TrendChip({ trend, copy }: { trend: number | null; copy: InsightsCopy }) {
+  if (trend === null) {
+    return <span className="text-[10px] font-medium text-ink/30">{copy.badgeNew}</span>;
+  }
   const up = trend > 0;
   const flat = trend === 0;
   return (
@@ -38,12 +43,21 @@ const SEVERITY_BADGE: Record<string, string> = {
   low: "bg-ink/[0.05] text-ink/50",
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  emerging: "Emerging",
-  increasing: "Increasing",
-  decreasing: "Decreasing",
-  recurring: "Recurring",
-};
+/** Severity / status arrive from the API as English slugs — label them here. */
+function severityLabel(severity: string, copy: InsightsCopy): string {
+  if (severity === "high") return copy.severityHigh;
+  if (severity === "medium") return copy.severityMedium;
+  if (severity === "low") return copy.severityLow;
+  return severity;
+}
+
+function statusLabel(status: string, copy: InsightsCopy): string {
+  if (status === "emerging") return copy.statusEmerging;
+  if (status === "increasing") return copy.statusIncreasing;
+  if (status === "decreasing") return copy.statusDecreasing;
+  if (status === "recurring") return copy.statusRecurring;
+  return status;
+}
 
 function SkeletonList({ rows = 5 }: { rows?: number }) {
   return (
@@ -65,7 +79,15 @@ function HeroStat({ label, value, sub }: { label: string; value: string; sub: st
   );
 }
 
-function MomentumBars({ items, days }: { items: { name: string; trend: number | null }[]; days: number }) {
+function MomentumBars({
+  items,
+  days,
+  copy,
+}: {
+  items: { name: string; trend: number | null }[];
+  days: number;
+  copy: InsightsCopy;
+}) {
   const movers = items
     .filter((t) => t.trend !== null && t.trend !== 0)
     .sort((a, b) => Math.abs(b.trend as number) - Math.abs(a.trend as number))
@@ -73,9 +95,9 @@ function MomentumBars({ items, days }: { items: { name: string; trend: number | 
   if (movers.length === 0) return null;
   const max = Math.max(...movers.map((m) => Math.abs(m.trend as number)), 1);
   return (
-    <section aria-label="Momentum" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-      <h3 className="text-[14px] font-bold text-ink">Momentum</h3>
-      <p className="text-[11px] text-ink/45">Biggest movers vs the previous {days} days — right is growing, left is fading.</p>
+    <section aria-label={copy.momentum} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+      <h3 className="text-[14px] font-bold text-ink">{copy.momentum}</h3>
+      <p className="text-[11px] text-ink/45">{copy.momentumSub.replace("{days}", String(days))}</p>
       <ul className="mt-3 space-y-2">
         {movers.map((m) => {
           const v = m.trend as number;
@@ -104,6 +126,8 @@ function MomentumBars({ items, days }: { items: { name: string; trend: number | 
 }
 
 export default function InsightsPage() {
+  const { t } = useI18n();
+  const copy = t.analytics.insights;
   const [days, setDays] = useState<number>(30);
   const [channelId, setChannelId] = useState<string | null>(null);
   const channels = useGoogleChannels();
@@ -143,10 +167,8 @@ export default function InsightsPage() {
     <div className="h-full overflow-y-auto bg-[#f3f0ff] p-4 sm:p-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">Insights</h1>
-          <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">
-            What customers talk about — topics, problems and products, ranked by AI.
-          </p>
+          <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">{copy.title}</h1>
+          <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">{copy.subtitle}</p>
         </div>
         <RangeChannelControls
           days={days}
@@ -165,7 +187,7 @@ export default function InsightsPage() {
 
       {error && !loading ? (
         <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
-          <p className="text-[13px] font-semibold text-ink/60">Couldn&apos;t load insights.</p>
+          <p className="text-[13px] font-semibold text-ink/60">{copy.loadError}</p>
           <button
             onClick={() => {
               setError(false);
@@ -174,15 +196,13 @@ export default function InsightsPage() {
             }}
             className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90"
           >
-            Retry
+            {copy.retry}
           </button>
         </div>
       ) : !hasData && !loading ? (
         <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
-          <p className="text-[14px] font-bold text-ink">No topic data yet</p>
-          <p className="max-w-sm text-[12px] text-ink/50">
-            Once reviews flow through the AI pipeline, topics, problems and products appear here automatically.
-          </p>
+          <p className="text-[14px] font-bold text-ink">{copy.emptyTitle}</p>
+          <p className="max-w-sm text-[12px] text-ink/50">{copy.emptyBody}</p>
         </div>
       ) : (
         <>
@@ -193,24 +213,30 @@ export default function InsightsPage() {
             return (
               <div className="mb-3 flex flex-col gap-2 rounded-2xl border-2 border-white bg-white/80 p-3 backdrop-blur-sm sm:flex-row">
                 <HeroStat
-                  label="Most loved"
+                  label={copy.mostLoved}
                   value={products?.most_loved ?? "—"}
-                  sub="highest praise among products"
+                  sub={copy.mostLovedSub}
                 />
                 <HeroStat
-                  label="Fix first"
-                  value={topProblem?.name ?? (problems && problems.problems.length === 0 ? "Nothing — all clear" : "—")}
-                  sub={topProblem ? `impact ${topProblem.impact_score} · ${topProblem.mentions} mentions` : "no problems detected"}
+                  label={copy.fixFirst}
+                  value={topProblem?.name ?? (problems && problems.problems.length === 0 ? copy.nothingAllClear : "—")}
+                  sub={
+                    topProblem
+                      ? copy.impactMentions
+                          .replace("{impact}", String(topProblem.impact_score))
+                          .replace("{mentions}", String(topProblem.mentions))
+                      : copy.noProblemsDetected
+                  }
                 />
                 <HeroStat
-                  label="Fastest growing"
+                  label={copy.fastestGrowing}
                   value={products?.fastest_growing ?? "—"}
-                  sub="rising mention volume"
+                  sub={copy.fastestGrowingSub}
                 />
                 <HeroStat
-                  label="Emerging topics"
+                  label={copy.emergingTopics}
                   value={loading ? "…" : String(emergingTopics)}
-                  sub="new this period"
+                  sub={copy.newThisPeriod}
                 />
               </div>
             );
@@ -221,27 +247,33 @@ export default function InsightsPage() {
             return (
               <div className="mb-3 flex flex-wrap items-center gap-3 rounded-2xl border-2 border-coral/20 bg-coral/[0.04] p-4 backdrop-blur-sm">
                 <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${SEVERITY_BADGE[topProblem.severity]}`}>
-                  {topProblem.severity}
+                  {severityLabel(topProblem.severity, copy)}
                 </span>
                 <p className="min-w-0 flex-1 text-[12.5px] text-ink">
                   <strong className="capitalize">{topProblem.name}</strong>
-                  <span className="text-ink/55"> — {topProblem.mentions} mentions · {STATUS_LABEL[topProblem.status] ?? topProblem.status} · </span>
-                  <TrendChip trend={topProblem.trend_pct} />
+                  <span className="text-ink/55">
+                    {" — "}
+                    {copy.mentionsShort.replace("{mentions}", String(topProblem.mentions))}
+                    {" · "}
+                    {statusLabel(topProblem.status, copy)}
+                    {" · "}
+                  </span>
+                  <TrendChip trend={topProblem.trend_pct} copy={copy} />
                 </p>
                 <Link href="/dashboard/reviews" className="shrink-0 rounded-lg bg-coral px-3 py-1.5 text-[11px] font-bold text-white transition hover:bg-coral/90">
-                  Read the reviews →
+                  {copy.readReviews}
                 </Link>
               </div>
             );
           })()}
           <div className="grid gap-3 lg:grid-cols-3">
           {/* Topics */}
-          <section aria-label="Topics" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-            <h3 className="mb-4 text-[14px] font-bold text-ink">Topics</h3>
+          <section aria-label={copy.topics} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+            <h3 className="mb-4 text-[14px] font-bold text-ink">{copy.topics}</h3>
             {loading || !topics ? (
               <SkeletonList />
             ) : topics.topics.length === 0 ? (
-              <p className="py-6 text-center text-[12px] text-ink/35">No topics detected yet</p>
+              <p className="py-6 text-center text-[12px] text-ink/35">{copy.noTopics}</p>
             ) : (
               <ul className="space-y-3">
                 {topics.topics.slice(0, 8).map((t) => {
@@ -252,17 +284,24 @@ export default function InsightsPage() {
                         <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold capitalize text-ink/80">
                           {t.name}
                           {t.emerging && (
-                            <span className="rounded bg-sky/10 px-1 py-px text-[9px] font-bold uppercase text-sky">new</span>
+                            <span className="rounded bg-sky/10 px-1 py-px text-[9px] font-bold uppercase text-sky">{copy.badgeNew}</span>
                           )}
                         </p>
-                        <div className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-ink/[0.05]" role="img" aria-label={`${t.positive} positive, ${t.neutral} neutral, ${t.negative} negative`}>
+                        <div
+                          className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-ink/[0.05]"
+                          role="img"
+                          aria-label={copy.sentimentSplit
+                            .replace("{positive}", String(t.positive))
+                            .replace("{neutral}", String(t.neutral))
+                            .replace("{negative}", String(t.negative))}
+                        >
                           <div className="h-full bg-emerald" style={{ width: `${(t.positive / total) * 100}%` }} />
                           <div className="h-full bg-amber-400" style={{ width: `${(t.neutral / total) * 100}%` }} />
                           <div className="h-full bg-coral" style={{ width: `${(t.negative / total) * 100}%` }} />
                         </div>
                       </div>
                       <span className="text-[11px] tabular-nums text-ink/40">{t.mentions}</span>
-                      <TrendChip trend={t.trend_pct} />
+                      <TrendChip trend={t.trend_pct} copy={copy} />
                     </li>
                   );
                 })}
@@ -271,14 +310,14 @@ export default function InsightsPage() {
           </section>
 
           {/* Problems */}
-          <section aria-label="Problems" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-            <h3 className="mb-4 text-[14px] font-bold text-ink">Problems</h3>
+          <section aria-label={copy.problems} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+            <h3 className="mb-4 text-[14px] font-bold text-ink">{copy.problems}</h3>
             {loading || !problems ? (
               <SkeletonList />
             ) : problems.problems.length === 0 ? (
               <div className="py-6 text-center">
-                <p className="text-[12px] font-semibold text-emerald">No problems detected</p>
-                <p className="mt-1 text-[11px] text-ink/35">That&apos;s a good sign — keep it up.</p>
+                <p className="text-[12px] font-semibold text-emerald">{copy.noProblemsTitle}</p>
+                <p className="mt-1 text-[11px] text-ink/35">{copy.noProblemsBody}</p>
               </div>
             ) : (
               <ul className="space-y-3">
@@ -288,15 +327,17 @@ export default function InsightsPage() {
                       <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold capitalize text-ink/80">
                         {p.name}
                         <span className={`rounded px-1 py-px text-[9px] font-bold uppercase ${SEVERITY_BADGE[p.severity]}`}>
-                          {p.severity}
+                          {severityLabel(p.severity, copy)}
                         </span>
                       </p>
                       <p className="text-[10px] text-ink/35">
-                        {STATUS_LABEL[p.status] ?? p.status} · impact {p.impact_score}
+                        {statusLabel(p.status, copy)} · {copy.impactMentions
+                          .replace("{impact}", String(p.impact_score))
+                          .replace("{mentions}", String(p.mentions))}
                       </p>
                     </div>
                     <span className="text-[11px] tabular-nums text-ink/40">{p.mentions}</span>
-                    <TrendChip trend={p.trend_pct} />
+                    <TrendChip trend={p.trend_pct} copy={copy} />
                   </li>
                 ))}
               </ul>
@@ -304,12 +345,12 @@ export default function InsightsPage() {
           </section>
 
           {/* Products */}
-          <section aria-label="Products" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-            <h3 className="mb-4 text-[14px] font-bold text-ink">Products &amp; services</h3>
+          <section aria-label={copy.productsServices} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+            <h3 className="mb-4 text-[14px] font-bold text-ink">{copy.productsServices}</h3>
             {loading || !products ? (
               <SkeletonList />
             ) : products.products.length === 0 ? (
-              <p className="py-6 text-center text-[12px] text-ink/35">No products detected yet</p>
+              <p className="py-6 text-center text-[12px] text-ink/35">{copy.noProducts}</p>
             ) : (
               <ul className="space-y-3">
                 {products.products.slice(0, 8).map((p) => {
@@ -321,17 +362,19 @@ export default function InsightsPage() {
                       <div className="min-w-0 flex-1">
                         <p className="flex flex-wrap items-center gap-1.5 text-[12px] font-semibold capitalize text-ink/80">
                           {p.name}
-                          {loved && <span className="rounded bg-emerald/10 px-1 py-px text-[9px] font-bold uppercase text-emerald">loved</span>}
-                          {criticized && <span className="rounded bg-coral/10 px-1 py-px text-[9px] font-bold uppercase text-coral">criticized</span>}
-                          {growing && <span className="rounded bg-sky/10 px-1 py-px text-[9px] font-bold uppercase text-sky">rising</span>}
-                          {p.emerging && <span className="rounded bg-sky/10 px-1 py-px text-[9px] font-bold uppercase text-sky">new</span>}
+                          {loved && <span className="rounded bg-emerald/10 px-1 py-px text-[9px] font-bold uppercase text-emerald">{copy.badgeLoved}</span>}
+                          {criticized && <span className="rounded bg-coral/10 px-1 py-px text-[9px] font-bold uppercase text-coral">{copy.badgeCriticized}</span>}
+                          {growing && <span className="rounded bg-sky/10 px-1 py-px text-[9px] font-bold uppercase text-sky">{copy.badgeRising}</span>}
+                          {p.emerging && <span className="rounded bg-sky/10 px-1 py-px text-[9px] font-bold uppercase text-sky">{copy.badgeNew}</span>}
                         </p>
                         <p className="text-[10px] text-ink/35">
-                          {p.positive_pct}% positive · {p.mentions} mentions
-                          {p.avg_rating !== null && ` · ${p.avg_rating} avg`}
+                          {copy.positiveMentions
+                            .replace("{percent}", String(p.positive_pct))
+                            .replace("{mentions}", String(p.mentions))}
+                          {p.avg_rating !== null && ` · ${copy.avgRating.replace("{rating}", String(p.avg_rating))}`}
                         </p>
                       </div>
-                      <TrendChip trend={p.trend_pct} />
+                      <TrendChip trend={p.trend_pct} copy={copy} />
                     </li>
                   );
                 })}
@@ -343,6 +386,7 @@ export default function InsightsPage() {
           <div className="mt-3">
             <MomentumBars
               days={days}
+              copy={copy}
               items={[
                 ...(topics?.topics ?? []).map((t) => ({ name: t.name, trend: t.trend_pct })),
                 ...(products?.products ?? []).map((p) => ({ name: p.name, trend: p.trend_pct })),

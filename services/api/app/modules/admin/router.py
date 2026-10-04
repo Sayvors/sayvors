@@ -4,11 +4,12 @@ POST   /api/v1/admin/login   exchange the admin password for a short token
 GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
+import uuid
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ...config import settings
 from ...core.deps import get_db, require_admin
@@ -22,6 +23,7 @@ from .schemas import (
     AdminTenantDetail,
     AdminTenantList,
     AdminUsageOverview,
+    AdminVoiceUsageOverview,
     LlmModelCreate,
     LlmModelStatus,
     LlmModelTestResult,
@@ -90,8 +92,11 @@ async def admin_login(body: AdminLoginRequest, request: Request, response: Respo
     from ..auth.rate_limit import rate_limit
 
     ip = get_client_ip(request)
-    if not await rate_limit(f"admin-login:{ip}", 5, 300):
-        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    # Tests hit this endpoint constantly across runs and the Redis window
+    # outlives the process — same TESTING bypass admin_rate_limit uses.
+    if not settings.TESTING:
+        if not await rate_limit(f"admin-login:{ip}", 5, 300):
+            raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     if await _admin_locked_out():
         logger.error("Admin login globally locked out (repeated failures), ip=%s", ip)
         raise HTTPException(
@@ -276,6 +281,18 @@ async def admin_usage_overview(
     from ..llm.usage import get_admin_overview
 
     return AdminUsageOverview(**await get_admin_overview(db, days))
+
+
+@router.get("/usage/voice", response_model=AdminVoiceUsageOverview)
+async def admin_usage_voice(
+    days: int = Query(30, ge=1, le=365),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Voice-model (TTS) metering: totals + per-engine bars + daily series."""
+    from ..llm.usage import get_voice_overview
+
+    return AdminVoiceUsageOverview(**await get_voice_overview(db, days))
 
 
 @router.get("/llm", response_model=list[LlmProviderStatus])
@@ -884,3 +901,264 @@ async def admin_remote_models(
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider list failed: {type(e).__name__}: {str(e)[:160]}")
+
+
+# ── Voice engines (WhatsApp voice notes) ─────────────────────────────────
+#
+# The admin decides which TTS engine serves each tenant tier ("simple" /
+# "advanced"). Tenants only ever see the tier — never the provider or key.
+# Keys are stored Fernet-encrypted and NEVER returned; a response's
+# has_key just says whether one is set.
+
+
+class VoiceEngineStatus(BaseModel):
+    id: str
+    label: str
+    provider: str
+    tier: str
+    api_url: str | None = None
+    api_model: str | None = None
+    # Voice identity pin (fish.audio reference_id) — keeps the same persona
+    # in every voice note instead of Fish's per-request default roulette.
+    reference_id: str | None = None
+    # Optional per-language overrides, {"ur": "<id>"} — the customer's
+    # language pin wins over the multilingual voice.
+    language_references: dict[str, str] | None = None
+    languages: str = "*"
+    enabled: bool = True
+    has_key: bool = False
+
+
+class VoiceEngineUpsert(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+    provider: str = Field(min_length=1, max_length=32)
+    tier: str = Field(pattern="^(simple|advanced)$")
+    api_url: str | None = Field(None, max_length=500)
+    api_model: str | None = Field(None, max_length=200)
+    reference_id: str | None = Field(None, max_length=200)
+    language_references: dict[str, str] | None = None
+    languages: str = Field("*", max_length=500)
+    enabled: bool = True
+    # Only applied when non-null — omitting it never clears the stored key;
+    # empty string clears it.
+    api_key: str | None = Field(None, max_length=500)
+
+    @field_validator("language_references")
+    @classmethod
+    def _validate_language_pins(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is None:
+            return None
+        cleaned = {
+            str(k).strip().lower()[:8]: str(val).strip()[:200]
+            for k, val in v.items()
+            if str(k).strip() and str(val).strip()
+        }
+        if len(cleaned) > 8:
+            raise ValueError("at most 8 language pins per engine")
+        return cleaned or None
+
+
+def _voice_engine_status(row) -> VoiceEngineStatus:
+    return VoiceEngineStatus(
+        id=row.id,
+        label=row.label,
+        provider=row.provider,
+        tier=row.tier,
+        api_url=row.api_url,
+        api_model=row.api_model,
+        reference_id=row.reference_id,
+        language_references=row.language_references,
+        languages=row.languages,
+        enabled=row.enabled,
+        has_key=bool(row.key_encrypted),
+    )
+
+
+@router.get("/voice-engines", response_model=list[VoiceEngineStatus])
+async def admin_voice_engines_list(
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """All configured voice engines. Key VALUES are never returned."""
+    from ..llm.models import VoiceModelConfig
+
+    rows = (await db.execute(select(VoiceModelConfig))).scalars().all()
+    return [_voice_engine_status(r) for r in rows]
+
+
+@router.get("/voice-engines/fish-voices")
+async def admin_fish_voice_catalog(
+    sort_by: str = "task_count",
+    page: int = 1,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Browse the fish.audio public voice library so the admin can pick a
+    persona by name instead of pasting an opaque id. Uses the API key
+    stored on any fish engine — add one first if this 400s."""
+    from ..channels.service import decrypt_token
+    from ..channels.meta.voice import fish_voice_catalog
+    from ..llm.models import VoiceModelConfig
+
+    row = (
+        await db.execute(
+            select(VoiceModelConfig)
+            .where(
+                VoiceModelConfig.provider == "fish",
+                VoiceModelConfig.key_encrypted.is_not(None),
+            )
+            .order_by(VoiceModelConfig.updated_at.desc())
+        )
+    ).scalars().first()
+    if row is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Add a Fish Audio engine with an API key first — the "
+            "voice library is browsed with that key.",
+        )
+    try:
+        return await fish_voice_catalog(
+            decrypt_token(row.key_encrypted), sort_by=sort_by, page=page
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach fish.audio: {type(e).__name__}: {str(e)[:120]}",
+        )
+
+
+@router.post("/voice-engines", response_model=VoiceEngineStatus, status_code=201)
+async def admin_voice_engine_create(
+    body: VoiceEngineUpsert,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..channels.service import encrypt_token
+    from ..llm.models import VoiceModelConfig
+
+    row = VoiceModelConfig(
+        id=str(uuid.uuid4()),
+        label=body.label,
+        provider=body.provider,
+        api_url=body.api_url,
+        api_model=body.api_model,
+        reference_id=body.reference_id,
+        language_references=body.language_references,
+        tier=body.tier,
+        languages=body.languages,
+        enabled=body.enabled,
+    )
+    if body.api_key is not None:
+        row.key_encrypted = encrypt_token(body.api_key) if body.api_key else None
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _voice_engine_status(row)
+
+
+@router.delete("/voice-engines/{engine_id}", status_code=204)
+async def admin_voice_engine_delete(
+    engine_id: str,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..llm.models import VoiceModelConfig
+
+    row = (
+        await db.execute(
+            select(VoiceModelConfig).where(VoiceModelConfig.id == engine_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Voice engine not found")
+    await db.delete(row)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/voice-engines/{engine_id}/test")
+async def admin_voice_engine_test(
+    engine_id: str,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Real synthesis probe through this exact engine — the admin hears the
+    result of a good key, and a bad one shows here before any tenant does."""
+    import time
+
+    from ..channels.meta.voice import _synthesize_edge, _synthesize_fish
+    from ..llm.models import VoiceModelConfig
+
+    row = (
+        await db.execute(
+            select(VoiceModelConfig).where(VoiceModelConfig.id == engine_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Voice engine not found")
+
+    text = "Hello! This is a Sayvors voice check."
+    started = time.perf_counter()
+    try:
+        if row.provider == "fish":
+            result = await _synthesize_fish(row, text, "en")
+        elif row.provider == "edge":
+            result = await _synthesize_edge(row.api_model, "en", text)
+        else:
+            return {
+                "ok": False, "latency_ms": 0,
+                "detail": f"provider {row.provider!r} has no client wired yet",
+            }
+    except Exception as e:
+        return {
+            "ok": False,
+            "latency_ms": int((time.perf_counter() - started) * 1000),
+            "detail": f"{type(e).__name__}: {str(e)[:160]}",
+        }
+    latency = int((time.perf_counter() - started) * 1000)
+    if result is None:
+        return {
+            "ok": False, "latency_ms": latency,
+            "detail": "no audio (missing API key, or language not covered)",
+        }
+    audio, mime = result
+    return {"ok": True, "latency_ms": latency, "detail": f"{len(audio)} bytes {mime}"}
+
+
+@router.put("/voice-engines/{engine_id}", response_model=VoiceEngineStatus)
+async def admin_voice_engine_update(
+    engine_id: str,
+    body: VoiceEngineUpsert,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an engine. A non-null api_key rotates the stored key
+    (encrypted); an empty string clears it; omitting the field changes
+    nothing."""
+    from ..channels.service import encrypt_token
+    from ..llm.models import VoiceModelConfig
+
+    row = (
+        await db.execute(
+            select(VoiceModelConfig).where(VoiceModelConfig.id == engine_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Voice engine not found")
+    row.label = body.label
+    row.provider = body.provider
+    row.tier = body.tier
+    row.api_url = body.api_url
+    row.api_model = body.api_model
+    row.reference_id = body.reference_id
+    row.language_references = body.language_references
+    row.languages = body.languages
+    row.enabled = body.enabled
+    if body.api_key is not None:
+        row.key_encrypted = encrypt_token(body.api_key) if body.api_key else None
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _voice_engine_status(row)

@@ -1,3 +1,4 @@
+import functools
 import hashlib
 import hmac
 import json
@@ -5,8 +6,9 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import Request
-from sqlalchemy import select, func
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ...config import settings
 from ..users.models import User
@@ -14,8 +16,9 @@ from .models import Channel, ChannelMessage
 from .schemas import ChannelCreate, ChannelMessageSend
 
 
+@functools.lru_cache(maxsize=1)
 def _get_fernet():
-    """Lazy-load Fernet for token encryption.
+    """Lazy-load Fernet for token encryption (derived once per process).
 
     Primary key: CHANNEL_ENCRYPTION_KEY (dedicated, independent of the JWT
     signing secret — leaking one must not unlock the other). When unset, the
@@ -222,25 +225,103 @@ async def delete_channel(channel_id: str, user: User, db: AsyncSession) -> bool:
 async def send_message(
     channel_id: str, body: ChannelMessageSend, user: User, db: AsyncSession
 ) -> ChannelMessage:
+    """Send a message to a contact and record the result.
+
+    The row is written with the outcome, never optimistically: a message that
+    WhatsApp rejected must not read as "sent" in the inbox. Meta's 24-hour
+    customer-service window is enforced by Meta, not here, so an out-of-window
+    send comes back as a failed row carrying Meta's own error text.
+    """
     channel = await get_channel(channel_id, user, db)
     if not channel:
         raise ValueError("Channel not found")
 
-    msg = ChannelMessage(
+    contact_phone = (body.contact_phone or "").strip()
+    if not contact_phone:
+        raise ValueError("A recipient phone number is required to send")
+
+    outbound = ChannelMessage(
         id=str(uuid.uuid4()),
         channel_id=channel_id,
         direction="outbound",
         content=body.content,
         content_type=body.content_type,
         status="sent",
+        contact_phone=contact_phone,
+        contact_name=body.contact_name or None,
     )
-    db.add(msg)
 
-    # TODO: dispatch to platform API (Facebook Graph, Instagram, X API, etc.)
-    # For now, mark as sent
+    try:
+        provider_msg_id, error = await _dispatch_whatsapp(
+            db, user, channel, contact_phone, body.content
+        )
+    except Exception as exc:  # noqa: BLE001 - recorded on the row, not raised
+        provider_msg_id, error = "", str(exc)[:500]
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error
+    else:
+        outbound.platform_message_id = provider_msg_id[:200] or None
+        outbound.status = "sent"
+
+    db.add(outbound)
     await db.commit()
-    await db.refresh(msg)
-    return msg
+    await db.refresh(outbound)
+    return outbound
+
+
+async def _dispatch_whatsapp(
+    db: AsyncSession,
+    user: User,
+    channel: Channel,
+    to: str,
+    text: str,
+) -> tuple[str, str]:
+    """(provider_message_id, error). Exactly one of the two is meaningful.
+
+    Ownership is re-resolved from the database rather than trusted from the
+    channel row, mirroring the consumer: a channel must belong to this tenant
+    before we use its credentials.
+    """
+    from .meta.credentials import decrypt_connection_token
+    from .meta.models import MetaAsset
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    phone_number_id = channel.platform_user_id
+    if not phone_number_id:
+        return "", "This channel has no WhatsApp number attached."
+
+    result = await db.execute(
+        select(MetaAsset)
+        .where(
+            MetaAsset.tenant_id == user.id,
+            MetaAsset.provider == "whatsapp",
+            MetaAsset.external_asset_id == phone_number_id,
+        )
+        .options(selectinload(MetaAsset.connection))
+    )
+    asset = result.scalar_one_or_none()
+    if asset is None:
+        return "", "No WhatsApp account is connected for this number."
+    if not asset.active:
+        return "", "This WhatsApp number is not active."
+
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        return "", "WhatsApp credentials are missing. Reconnect the account."
+
+    try:
+        provider_msg_id = await WhatsAppAdapter().send_text_message(
+            phone_number_id, token, to, text
+        )
+    except MetaAPIError as exc:
+        detail = f"{exc.status_code}: {exc}" if exc.status_code else str(exc)
+        return "", detail[:500]
+    if not provider_msg_id:
+        return "", "WhatsApp accepted the request but returned no message id."
+    return provider_msg_id, ""
 
 
 async def list_messages(
@@ -270,3 +351,187 @@ async def handle_webhook(
     # TODO: verify webhook signature, parse platform-specific payload
     # For now, return None — will be wired up per platform
     return None
+
+
+# --- inbox: per-customer threads ------------------------------------------
+#
+# A channel is a phone number serving many customers, so the inbox cannot be a
+# flat message list. Threads are derived at read time by grouping on
+# (channel_id, contact_phone) rather than stored: there is no per-thread state
+# worth its own table, and a new inbound message should never need to
+# back-fill anything.
+
+UNKNOWN_THREAD_KEY = "unknown"
+
+
+def thread_key(contact_phone: str | None) -> str:
+    return contact_phone or UNKNOWN_THREAD_KEY
+
+
+async def list_inbox_threads(
+    user: User,
+    db: AsyncSession,
+    search: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Threads across every channel the user owns, newest activity first.
+
+    Built in SQL rather than by loading messages and grouping in Python: a
+    busy inbox can hold tens of thousands of rows, and the aggregate here
+    (last message, count, unread) is exactly what the database is for.
+    """
+    # A disconnected channel is not reachable (Meta revoked / user
+    # disconnected), so its threads stay out of the list — the history is
+    # preserved and reappears when the same number reconnects. The status flag
+    # only exists since the disconnect started writing it, so channels
+    # disconnected before that are caught by their deactivated Meta asset —
+    # every disconnect path deactivates the asset too.
+    channels = (
+        (
+            await db.execute(select(Channel).where(Channel.user_id == user.id))
+        )
+        .scalars()
+        .all()
+    )
+    if not channels:
+        return []
+    from .meta.models import MetaAsset
+
+    inactive_assets = {
+        (provider, external)
+        for provider, external in (
+            await db.execute(
+                select(MetaAsset.provider, MetaAsset.external_asset_id).where(
+                    MetaAsset.tenant_id == user.id,
+                    MetaAsset.active.is_(False),
+                )
+            )
+        ).all()
+    }
+    channels = [
+        c
+        for c in channels
+        if c.status != "disconnected"
+        and (c.platform, c.platform_user_id) not in inactive_assets
+    ]
+    if not channels:
+        return []
+    channel_ids = [c.id for c in channels]
+    by_id = {c.id: c for c in channels}
+
+    needle = f"%{search.strip()}%" if search and search.strip() else None
+    stmt = (
+        select(
+            ChannelMessage.contact_phone,
+            ChannelMessage.channel_id,
+            func.max(ChannelMessage.created_at).label("last_at"),
+            func.count(ChannelMessage.id).label("total"),
+        )
+        .where(ChannelMessage.channel_id.in_(channel_ids))
+        .group_by(ChannelMessage.contact_phone, ChannelMessage.channel_id)
+    )
+    if needle:
+        # Match the text of any message in the group, not the name: the contact
+        # name is usually missing, and the phone is rarely what someone types.
+        # HAVING, not WHERE — a filter here would drop whole threads instead of
+        # narrowing them to matching messages.
+        #
+        # MAX(CASE ...) rather than bool_or: the two are equivalent here, but
+        # bool_or does not exist in SQLite, which the test suite runs on.
+        matched = func.max(
+            case((ChannelMessage.content.ilike(needle), 1), else_=0)
+        )
+        stmt = stmt.having(matched == 1)
+    stmt = stmt.order_by(func.max(ChannelMessage.created_at).desc()).limit(limit)
+
+    summaries = (await db.execute(stmt)).all()
+    if not summaries:
+        return []
+
+    # The preview line and unread count need per-thread detail the grouped
+    # aggregate cannot carry, so fetch those rows only.
+    out: list[dict] = []
+    for phone, channel_id, last_at, total in summaries:
+        conditions = [
+            ChannelMessage.channel_id == channel_id,
+            ChannelMessage.contact_phone.is_(None)
+            if phone is None
+            else ChannelMessage.contact_phone == phone,
+        ]
+        last_row = (
+            await db.execute(
+                select(ChannelMessage)
+                .where(*conditions)
+                .order_by(ChannelMessage.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if last_row is None:
+            continue
+
+        # Unread = inbound messages after the most recent outbound one.
+        last_outbound_at = (
+            await db.execute(
+                select(func.max(ChannelMessage.created_at)).where(
+                    *conditions,
+                    ChannelMessage.direction == "outbound",
+                )
+            )
+        ).scalar()
+        unread = (
+            await db.execute(
+                select(func.count(ChannelMessage.id)).where(
+                    *conditions,
+                    ChannelMessage.direction == "inbound",
+                    ChannelMessage.created_at > (last_outbound_at or last_at),
+                )
+            )
+        ).scalar()
+        if not last_outbound_at:
+            unread = total if phone is not None else 0
+
+        name = last_row.contact_name
+        out.append(
+            {
+                "key": thread_key(phone),
+                "contact_phone": phone,
+                "display_name": name or phone,
+                "channel_id": channel_id,
+                "channel_name": by_id[channel_id].display_name,
+                "platform": by_id[channel_id].platform,
+                "last_message": (last_row.content or "")[:280],
+                "last_message_at": last_at.isoformat() if last_at else None,
+                "last_direction": last_row.direction,
+                "message_count": total,
+                "unread": int(unread or 0),
+                "is_unknown": phone is None,
+            }
+        )
+    return out
+
+
+async def list_thread_messages(
+    user: User,
+    db: AsyncSession,
+    channel_id: str,
+    contact_phone: str | None,
+    limit: int = 200,
+) -> list[ChannelMessage]:
+    """Every message in one thread, oldest first for display."""
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        return []
+    conditions = [
+        ChannelMessage.channel_id == channel_id,
+        ChannelMessage.contact_phone.is_(None)
+        if contact_phone is None
+        else ChannelMessage.contact_phone == contact_phone,
+    ]
+    result = await db.execute(
+        select(ChannelMessage)
+        .where(*conditions)
+        .order_by(ChannelMessage.created_at.desc())
+        .limit(limit)
+    )
+    rows = list(result.scalars().all())
+    return list(reversed(rows))

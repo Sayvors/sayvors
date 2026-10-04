@@ -47,7 +47,7 @@ export default function AutoReplyToggle({ onComplete }: AutoReplyToggleProps) {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         const list: Channel[] = (data.channels ?? []).filter(
           (c: Channel) => c.platform === "google_reviews" && c.status === "active"
         );

@@ -31,7 +31,18 @@ services:
     # unique index (user_id, platform, listing_key), so racers can never twin
     # rows. Set UVICORN_WORKERS in .env.prod (default 2). On a 4GB box use 3
     # and raise mem_limit below to ~1536m; on 2GB keep 2.
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2}"
+    # Trust Caddy's X-Forwarded-Proto so the API knows it is behind https.
+    # Without it uvicorn reports scheme=http (default forwarded-allow-ips is
+    # 127.0.0.1; Caddy connects from a container IP), which breaks Secure
+    # cookies/CSRF and any absolute redirect. Only Caddy can reach this port —
+    # it is unpublished, so "*" is scoped to the compose network.
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*' --workers ${UVICORN_WORKERS:-2}"
+    # HTTP-only: the queue/poll side of the platform (WhatsApp AI replies,
+    # reviews auto-reply, syncs, publishers, Kafka consumers, outbox) runs in
+    # the `worker` service below, so dashboard traffic can never delay a
+    # message reply.
+    environment:
+      RUN_BACKGROUND_WORKERS: "false"
     depends_on:
       redis:
         condition: service_healthy
@@ -42,6 +53,25 @@ services:
       # Uploaded files (media photos for Google, databank docs) live here —
       # without this volume every redeploy would wipe them.
       - uploadsdata:/app/data/uploads
+
+  worker:
+    image: ghcr.io/sayvors/sayvors-api:staging
+    container_name: sayvors-worker
+    restart: unless-stopped
+    env_file:
+      - ./.env.prod
+    # Same image as the api, no HTTP port: runs `python -m app.workers`
+    # (AI replies, reviews auto-reply, Localith sync, post publisher,
+    # analytics consumer, performance sync, outbox drainer). I/O-bound LLM
+    # + DB work; 384m fits the 2GB box alongside api@768m — raise to 512m+
+    # when the box grows, or `--scale worker=N` to fan out replies.
+    command: python -m app.workers
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    mem_limit: 384m
 
   redis:
     image: redis:7-alpine

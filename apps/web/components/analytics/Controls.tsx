@@ -12,7 +12,7 @@ export function useGoogleChannels() {
   const [channels, setChannels] = useState<ChannelOption[]>([]);
   useEffect(() => {
     let cancelled = false;
-    apiFetch("/api/v1/channels/")
+    apiFetch("/api/v1/channels")
       .then((data) => {
         if (cancelled) return;
         const google = (data.channels ?? [])

@@ -242,7 +242,7 @@ function IssuesContent() {
   useEffect(() => {
     // Same source the reviews page uses, so the two filters agree on which
     // locations exist and what they are called.
-    apiFetch("/api/v1/channels/?limit=100")
+    apiFetch("/api/v1/channels?limit=100")
       .then((data: { channels?: { id: string; platform: string; display_name: string | null }[] }) => {
         setChannels(
           (data.channels ?? [])

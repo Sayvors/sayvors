@@ -186,3 +186,60 @@ async def test_usage_summary_endpoint(client, db, user_id, usage_factory):
     data = res.json()
     assert data["totals"]["total_tokens"] == 15
     assert data["by_model"][0]["model"] == "groq:oss-120b"
+
+
+async def test_voice_events_excluded_from_token_overviews(db, usage_factory):
+    from app.modules.llm.usage import get_admin_overview, get_tenant_summary
+
+    db.add(LLMUsageEvent(tenant_id="t1", provider="groq", model_id="groq:x",
+                         api_model="y", purpose="chat.message",
+                         total_tokens=100, latency_ms=100))
+    db.add(LLMUsageEvent(tenant_id="t1", provider="edge", model_id="voice:edge:simple",
+                         api_model="en-US-JennyNeural", purpose="voice.tts",
+                         completion_tokens=400, total_tokens=400, latency_ms=900))
+    await db.commit()
+
+    o = await get_admin_overview(db)
+    assert o["totals"]["calls"] == 1
+    assert o["totals"]["total_tokens"] == 100
+    assert [m["model"] for m in o["per_model"]] == ["groq:x"]
+
+    s = await get_tenant_summary(db, "t1")
+    assert s["totals"]["calls"] == 1
+    assert s["totals"]["total_tokens"] == 100
+
+
+async def test_voice_overview_math(db, usage_factory):
+    from app.modules.llm.usage import get_voice_overview, record_voice_event
+
+    db.add_all([
+        LLMUsageEvent(tenant_id="t1", provider="edge", model_id="voice:edge:simple",
+                      api_model="en-US-JennyNeural", purpose="voice.tts",
+                      completion_tokens=400, total_tokens=400, latency_ms=800),
+        LLMUsageEvent(tenant_id="t2", provider="edge", model_id="voice:edge:simple",
+                      api_model="en-US-JennyNeural", purpose="voice.tts",
+                      completion_tokens=200, total_tokens=200, latency_ms=600),
+        LLMUsageEvent(tenant_id="t1", provider="fish", model_id="voice:fish:advanced",
+                      api_model="s2.1-pro", purpose="voice.tts", status="failed",
+                      error="no audio", latency_ms=1200),
+        LLMUsageEvent(tenant_id="t1", provider="groq", model_id="groq:x",
+                      api_model="y", purpose="chat.message", total_tokens=999),
+    ])
+    await db.commit()
+
+    # fire-and-forget recorder lands one more ok note
+    record_voice_event("t3", "fish", "voice:fish:advanced", "s2.1-pro",
+                       chars=150, latency_ms=700)
+    await _flush()
+
+    v = await get_voice_overview(db)
+    assert v["totals"]["notes"] == 3
+    assert v["totals"]["failed"] == 1
+    assert v["totals"]["chars"] == 750
+    assert v["totals"]["active_engines"] == 2
+    edge = next(e for e in v["per_engine"] if e["engine"] == "voice:edge:simple")
+    assert edge["notes"] == 2 and edge["chars"] == 600
+    assert edge["provider"] == "edge" and edge["failures"] == 0
+    fish = next(e for e in v["per_engine"] if e["engine"] == "voice:fish:advanced")
+    assert fish["notes"] == 1 and fish["failures"] == 1
+    assert len(v["daily"]) == 1 and v["daily"][0]["notes"] == 3

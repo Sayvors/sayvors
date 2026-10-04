@@ -124,6 +124,8 @@ def _serialize(user: User, feedback: dict[str, int]) -> dict:
         "country": user.country,
         "theme": user.theme or "light",
         "language": user.language or "en",
+        "response_style": getattr(user, "response_style", None) or "concise",
+        "voice_replies": getattr(user, "voice_replies", None) or "off",
         "plan": "pro",
         "member_since": member_since,
         "feedback": feedback,
@@ -195,6 +197,52 @@ async def update_preferences(user_id: str, theme: str, language: str, db: AsyncS
         user_id,
         email=user.email,
         metadata={"theme": theme, "language": language},
+    )
+
+    return await get_profile(user_id, db)
+
+
+async def update_response_style(user_id: str, response_style: str, db: AsyncSession) -> dict:
+    """Persist the tenant's WhatsApp response style (same write path as
+    preferences: DB commit -> cache invalidate -> outbox event)."""
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise ValueError("User not found")
+    user.response_style = response_style
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    await db.commit()
+
+    await _cache_delete(_profile_key(user_id))
+
+    await _emit(
+        "response_style.updated",
+        user_id,
+        email=user.email,
+        metadata={"response_style": response_style},
+    )
+
+    return await get_profile(user_id, db)
+
+
+async def update_voice_replies(user_id: str, voice_replies: str, db: AsyncSession) -> dict:
+    """Persist the tenant's WhatsApp voice replies tier (same write path as
+    preferences). The engine behind each tier is admin-managed."""
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise ValueError("User not found")
+    user.voice_replies = voice_replies
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    await db.commit()
+
+    await _cache_delete(_profile_key(user_id))
+
+    await _emit(
+        "voice_replies.updated",
+        user_id,
+        email=user.email,
+        metadata={"voice_replies": voice_replies},
     )
 
     return await get_profile(user_id, db)
@@ -293,6 +341,27 @@ async def get_business_context(user_id: str | None, db) -> dict:
             getattr(user, "business_description", None) or ""
         ).strip(),
     }
+    # The LLM-distilled business card (databank uploads) joins the same
+    # context so every format_business_identity consumer gets it for free.
+    # Separate savepoint: a missing business_profiles table (pre-migration
+    # DB) must not wipe the user facts probed above.
+    try:
+        from .business_profile import PROFILE_FIELDS
+        from .models import BusinessProfile
+
+        async with db.begin_nested():
+            row = (
+                await db.execute(
+                    select(BusinessProfile).where(BusinessProfile.user_id == user_id)
+                )
+            ).scalar_one_or_none()
+        if row is not None:
+            for field in PROFILE_FIELDS:
+                value = (getattr(row, field, None) or "").strip()
+                if value:
+                    ctx[f"business_{field}"] = value
+    except Exception:
+        pass
     return {k: v for k, v in ctx.items() if v}
 
 
@@ -328,6 +397,23 @@ def format_business_identity(ctx: dict | None, services: list[str] | None = None
         )
     if ctx.get("business_description"):
         lines.append(f"- About: {ctx['business_description'][:500]}")
+    # Business card fields (LLM-distilled from the databank, editable) —
+    # rendered last so owner-configured facts above always lead the block.
+    if ctx.get("business_summary"):
+        lines.append(f"- Summary: {ctx['business_summary'][:700]}")
+    if ctx.get("business_domain"):
+        lines.append(f"- Domain: {ctx['business_domain'][:200]}")
+    if ctx.get("business_products_services"):
+        lines.append(f"- Offers: {ctx['business_products_services'][:800]}")
+    if ctx.get("business_not_offered_and_policies"):
+        lines.append(
+            "- Does NOT offer / policies: "
+            f"{ctx['business_not_offered_and_policies'][:500]}"
+        )
+    if ctx.get("business_audience_languages"):
+        lines.append(
+            f"- Audience & languages: {ctx['business_audience_languages'][:300]}"
+        )
     return "\n".join(lines) if len(lines) > 1 else ""
 
 

@@ -177,10 +177,30 @@ async def meta_sdk(request: Request):
     if body is not None:
         # No trailing slash — the route is registered without one, and the
         # rewrite replaces the full escaped URL (including its trailing \/).
-        proxy_base = (
-            f"{request.url.scheme}://{request.url.netloc}"
-            "/api/v1/meta/connect-sdk-bundle"
-        )
+        #
+        # The rewritten URL must be one the BROWSER can reach, not one this
+        # server can reach. Behind a proxy (ngrok -> Next /api rewrite -> us)
+        # every header points at the hop before us, so prefer the forwarded
+        # origin the client actually used. Falling back to `request.url` yields
+        # http://localhost:8000, which the tunnel page cannot load — the bundle
+        # fails, fbAsyncInit never fires, and Facebook sign-in silently
+        # disables itself.
+        scheme = (
+            request.headers.get("x-forwarded-proto")
+            or request.url.scheme
+        ).split(",")[0].strip()
+        netloc = (
+            request.headers.get("x-forwarded-host")
+            or request.headers.get("host")
+            or request.url.netloc
+        ).split(",")[0].strip()
+        # An https page can only load an https script, and a loopback API is
+        # not reachable from a tunnel anyway — so a forwarded origin wins, but
+        # a bare loopback host falls back to http rather than https (we serve no
+        # TLS locally, so https://localhost:8000 would be refused).
+        if netloc.startswith(("localhost", "127.0.0.1")):
+            scheme = "http"
+        proxy_base = f"{scheme}://{netloc}/api/v1/meta/connect-sdk-bundle"
         body = body.replace(
             _FB_BUNDLE_URL_ESCAPED, proxy_base.replace("/", "\\/")
         )
@@ -275,6 +295,22 @@ async def oauth_callback(
     return RedirectResponse(f"{base}?meta_connected={provider}")
 
 
+@router.get("/whatsapp/smb-sync-status")
+async def smb_sync_status(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check SMB App Data sync status for a coexistence connection."""
+    conn = await _service.get_connection(db, user.id, "whatsapp")
+    if conn is None or conn.connection_type != "coexistence":
+        raise HTTPException(status_code=404, detail="No coexistence connection")
+    meta = conn.connection_metadata or {}
+    return {
+        "status": meta.get("smb_sync_status", "unknown"),
+        "deadline": meta.get("smb_sync_deadline"),
+    }
+
+
 @router.post("/whatsapp/session")
 async def whatsapp_session(
     body: MetaWhatsAppSession,
@@ -304,6 +340,9 @@ async def whatsapp_session(
         "waba_id": body.waba_id,
         "phone_number_id": body.phone_number_id,
     }
+    is_coexistence = body.mode == "coexistence"
+    if is_coexistence:
+        credentials["connection_type"] = "coexistence"
     try:
         if body.code:
             exchanged = await adapter.exchange_code(body.code)
@@ -326,10 +365,13 @@ async def whatsapp_session(
                     if asset.asset_type == "waba":
                         await adapter.subscribe_app(asset.external_asset_id, token)
                     elif asset.asset_type == "phone_number":
-                        await adapter.register_number(
-                            asset.external_asset_id, token, pin=body.pin
-                        )
-                        _remember_pin(asset, body.pin)
+                        if not is_coexistence:
+                            await adapter.register_number(
+                                asset.external_asset_id, token, pin=body.pin
+                            )
+                            _remember_pin(asset, body.pin)
+                        # In coexistence, the number is already registered
+                        asset.status = "registered"
                         registered.append(asset.external_asset_id)
                 except MetaAPIError as e:
                     logger.warning(
@@ -341,6 +383,33 @@ async def whatsapp_session(
                         "asset_type": asset.asset_type,
                         "status": e.status_code,
                     })
+            # In coexistence mode, trigger SMB App Data sync after webhook subscription
+            if is_coexistence and token:
+                from datetime import datetime, timedelta, timezone
+                for asset in assets:
+                    if asset.asset_type == "phone_number":
+                        try:
+                            await adapter.sync_smb_app_data(
+                                asset.external_asset_id, token, "smb_app_state_sync"
+                            )
+                            await adapter.sync_smb_app_data(
+                                asset.external_asset_id, token, "history"
+                            )
+                        except MetaAPIError as e:
+                            logger.warning(
+                                "WhatsApp SMB sync trigger failed phone=%s: %s",
+                                asset.external_asset_id, e.status_code,
+                            )
+                        break  # first phone number only
+                # Record the 24h deadline in connection_metadata
+                conn.connection_metadata = {
+                    **(conn.connection_metadata or {}),
+                    "smb_sync_status": "triggered",
+                    "smb_sync_deadline": (
+                        datetime.now(timezone.utc) + timedelta(hours=24)
+                    ).isoformat(),
+                }
+                db.add(conn)
             # Commit unconditionally: this persists the encrypted PIN and the
             # registered status set above. Skipping it on the happy path would
             # silently discard the PIN the tenant just supplied.
@@ -349,13 +418,15 @@ async def whatsapp_session(
         await _oauth.fail_transaction(db, txn.id)
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
-    needs_pin = any(
-        a["asset_type"] == "phone_number" and a["asset_id"] in
-        {r["asset_id"] for r in failed}
-        for a in failed
-    ) or (
-        bool(body.phone_number_id or discovered_has_number(discovered))
-        and not body.pin
+    needs_pin = (not is_coexistence) and (
+        any(
+            a["asset_type"] == "phone_number" and a["asset_id"] in
+            {r["asset_id"] for r in failed}
+            for a in failed
+        ) or (
+            bool(body.phone_number_id or discovered_has_number(discovered))
+            and not body.pin
+        )
     )
     return {
         "connected": True,
@@ -493,10 +564,16 @@ async def validate_connection(
 async def disconnect(
     provider: str,
     revoke: bool = Query(False),
+    delete_data: bool = Query(
+        False,
+        description="Permanently delete this provider's channels, messages and assets",
+    ),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if provider not in ("whatsapp", "facebook", "instagram"):
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
-    await _service.disconnect(db, user.id, provider, revoke=revoke)
-    return {"disconnected": True, "provider": provider}
+    result = await _service.disconnect(
+        db, user.id, provider, revoke=revoke, delete_data=delete_data
+    )
+    return {"disconnected": True, "provider": provider, **result}

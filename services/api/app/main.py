@@ -10,6 +10,7 @@ from .modules.auth.router import router as auth_router
 from .modules.tts.router import router as tts_router
 from .modules.stt.router import router as stt_router
 from .modules.llm.router import router as llm_router
+from .modules.channels.router import _inbox_router as inbox_router
 from .modules.channels.router import router as channels_router
 from .modules.channels.meta.router import router as meta_router
 from .modules.channels.meta.webhooks.router import router as meta_webhooks_router
@@ -130,45 +131,50 @@ async def lifespan(app: FastAPI):
         pass
 
     # Schedule periodic retention cleanup (startup-only runs never fire again
-    # on long-lived pods)
+    # on long-lived pods). Auth housekeeping stays HTTP-adjacent on purpose.
     import asyncio
     from .modules.auth.service import run_retention_loop
     retention_task = asyncio.create_task(run_retention_loop())
 
-    # Start the Google Reviews auto-reply polling worker
-    from .modules.channels.reviews_worker import run_google_reviews_worker
-    reviews_task = asyncio.create_task(run_google_reviews_worker())
+    # Queue/poll workers (AI replies, syncs, publishers, Kafka consumers)
+    # belong OUTSIDE the HTTP process: in the worker deployment they run via
+    # `python -m app.workers` and the api sets RUN_BACKGROUND_WORKERS=false,
+    # so dashboard traffic can never delay the webhook -> AI reply pipeline.
+    # Dev keeps the default true — one uvicorn process still does everything.
+    bg_tasks: list[asyncio.Task] = []
+    outbox_worker = None
+    if settings.RUN_BACKGROUND_WORKERS:
+        from .modules.channels.reviews_worker import run_google_reviews_worker
+        from .modules.localith.worker import run_localith_sync_worker
+        from .modules.posts.worker import run_post_publish_worker
+        from .modules.analytics.consumer import run_analytics_consumer
+        from .modules.analytics.performance import run_performance_sync_worker
+        from .modules.channels.meta.consumer import run_meta_events_consumer
+        from .modules.outbox.worker import OutboxWorker
 
-    # Start the Localith background auto-sync (profile + reviews + metrics)
-    from .modules.localith.worker import run_localith_sync_worker
-    localith_sync_task = asyncio.create_task(run_localith_sync_worker())
+        bg_tasks.append(asyncio.create_task(run_google_reviews_worker()))
+        bg_tasks.append(asyncio.create_task(run_localith_sync_worker()))
+        bg_tasks.append(asyncio.create_task(run_post_publish_worker()))
+        bg_tasks.append(asyncio.create_task(run_analytics_consumer()))
+        bg_tasks.append(asyncio.create_task(run_performance_sync_worker()))
+        bg_tasks.append(asyncio.create_task(run_meta_events_consumer()))
 
-    # Start the scheduled-post publisher (due posts -> Google)
-    from .modules.posts.worker import run_post_publish_worker
-    posts_publish_task = asyncio.create_task(run_post_publish_worker())
-
-    # Start the analytics pipeline: Kafka consumer (review enrichment +
-    # daily rollups) and Google performance metrics sync worker
-    from .modules.analytics.consumer import run_analytics_consumer
-    from .modules.analytics.performance import run_performance_sync_worker
-    analytics_consumer_task = asyncio.create_task(run_analytics_consumer())
-    performance_sync_task = asyncio.create_task(run_performance_sync_worker())
-
-    # Start the outbox worker (drains events to Kafka)
-    from .modules.outbox.worker import OutboxWorker
-    outbox_worker = OutboxWorker()
-    await outbox_worker.start()
+        outbox_worker = OutboxWorker()
+        await outbox_worker.start()
+    else:
+        log.info(
+            "RUN_BACKGROUND_WORKERS=false — queue/poll workers run in the "
+            "worker deployment"
+        )
 
     yield
 
     # Shutdown
     retention_task.cancel()
-    reviews_task.cancel()
-    localith_sync_task.cancel()
-    posts_publish_task.cancel()
-    analytics_consumer_task.cancel()
-    performance_sync_task.cancel()
-    await outbox_worker.stop()
+    for task in bg_tasks:
+        task.cancel()
+    if outbox_worker is not None:
+        await outbox_worker.stop()
     try:
         from .modules.kafka.client import get_kafka_producer
         producer = await get_kafka_producer()
@@ -181,9 +187,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limit=100_000_000)
 
+# Route convention: collection endpoints are declared BARE (`@router.get("")`
+# under a prefix, giving /api/v1/channels), matching what the frontends call.
+# Never declare them as "/" — Starlette then only serves the trailing-slash
+# form and answers the bare path with a 307 whose Location is built from the
+# ASGI scope, which is wrong behind any proxy/tunnel and dead-ends the browser.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "Authorization", "X-CSRF-Token", "X-Requested-With"],
@@ -199,6 +211,7 @@ app.include_router(tts_router)
 app.include_router(stt_router)
 app.include_router(llm_router)
 app.include_router(channels_router)
+app.include_router(inbox_router)
 app.include_router(meta_router)
 app.include_router(meta_webhooks_router)
 app.include_router(analytics_router)

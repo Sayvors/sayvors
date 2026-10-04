@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
+import { ALL_BRANCHES, groupTargets, groupValue, parseGroupValue, useLocationGroups } from "@/lib/location-groups";
 import {
   approveReply,
   rejectReply,
@@ -17,11 +18,10 @@ import {
 interface ChannelOption {
   id: string;
   display_name: string | null;
+  listing_id?: string | null;
 }
 
 type StatusFilter = "pending_approval" | "posted" | "failed";
-
-const ALL_BRANCHES = "__all__";
 
 function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -210,21 +210,38 @@ export default function OutboxPage() {
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 10;
 
-  const scopeIds = useCallback(
+  const { groups } = useLocationGroups();
+  // Groups key on listing_id; this page works in channel IDs, so a group is
+  // resolved through the listing->channel map the picker shows.
+  const listingMap = useMemo(
+    () =>
+      Object.fromEntries(
+        channels.filter((c) => c.listing_id).map((c) => [c.listing_id as string, c.id]),
+      ),
+    [channels],
+  );
+
+  /* A scope is "all", one channel, or a group. Group members that are no longer
+     connected are dropped rather than queried as bogus channel IDs. */
+  const resolveScope = useCallback(
     (scope: string | null, list: ChannelOption[]) => {
       if (!scope || scope === ALL_BRANCHES) return list.map((c) => c.id);
-      return [scope];
+      const gid = parseGroupValue(scope);
+      if (!gid) return [scope];
+      const group = groups.find((g) => g.id === gid);
+      if (!group) return [];
+      return groupTargets(group, listingMap, list.map((c) => c.id));
     },
-    []
+    [groups, listingMap],
   );
+
+  const scopeIds = resolveScope;
 
   // One load for the whole page: replies + flagged across the branch scope.
   const loadScope = useCallback(async (scope: string | null, list: ChannelOption[]) => {
     setLoading(true);
     try {
-      const ids = scope === ALL_BRANCHES || !scope
-        ? list.map((c) => c.id)
-        : [scope];
+      const ids = resolveScope(scope, list);
       const lists: ReviewReplyDTO[][] = await Promise.all(
         ids.map(async (id) => {
           try {
@@ -243,7 +260,9 @@ export default function OutboxPage() {
       }
       const names: Record<string, string> = {};
       for (const c of list) names[c.id] = c.display_name || "Location";
-      if (scope !== ALL_BRANCHES && scope) {
+      // A single channel needs one filtered call; "all" or a group is several,
+      // and `ids` is already resolved, so both share the fan-out.
+      if (ids.length === 1 && scope && !parseGroupValue(scope)) {
         try {
           const data = await apiFetch(`/api/v1/analytics/reviews/insights?channel_id=${encodeURIComponent(scope)}&status=skipped&limit=100`);
           setFlagged((data.items ?? []) as ReviewInsight[]);
@@ -272,13 +291,13 @@ export default function OutboxPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [resolveScope]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch("/api/v1/channels/?limit=100");
+        const data = await apiFetch("/api/v1/channels?limit=100");
         if (cancelled) return;
         const google = (data.channels ?? []).filter(
           (c: { platform: string }) => c.platform === "google_reviews"
@@ -433,6 +452,18 @@ export default function OutboxPage() {
               className="w-56 appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
             >
               <option value={ALL_BRANCHES}>All branches ({channels.length})</option>
+              {groups
+                .map((g) => ({
+                  id: g.id,
+                  name: g.name,
+                  n: g.listing_ids.filter((lid) => listingMap[lid]).length,
+                }))
+                .filter((g) => g.n > 0)
+                .map((g) => (
+                  <option key={g.id} value={groupValue(g.id)}>
+                    {g.name} ({g.n})
+                  </option>
+                ))}
               {channels.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.display_name || "Location"}
@@ -574,7 +605,7 @@ export default function OutboxPage() {
               key={r.id}
               r={r}
               branchName={channelNames[r.channel_id] ?? "Location"}
-              showBranch={selected === ALL_BRANCHES}
+              showBranch={selected === ALL_BRANCHES || parseGroupValue(selected) !== null}
             />
           ))}
           <Pager page={safePage} totalPages={totalPages} onPage={setPage} />

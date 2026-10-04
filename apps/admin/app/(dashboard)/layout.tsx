@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getAdminToken, setAdminToken } from "@/lib/admin-api";
+import { adminLogout, checkAdminSession } from "@/lib/admin-api";
 
 type NavItem = {
   href: string;
   label: string;
   desc: string;
-  icon: "overview" | "tenants" | "usage" | "logs" | "llms";
+  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice";
 };
 
 const SECTIONS: { title: string; items: NavItem[] }[] = [
@@ -29,7 +29,10 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   },
   {
     title: "Intelligence",
-    items: [{ href: "/llms", label: "LLMs", desc: "Providers & models", icon: "llms" }],
+    items: [
+      { href: "/llms", label: "LLMs", desc: "Providers & models", icon: "llms" },
+      { href: "/voice", label: "Voice models", desc: "WhatsApp voice TTS", icon: "voice" },
+    ],
   },
 ];
 
@@ -81,6 +84,14 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
           <path d="M19 13.2l.7 1.4 1.5.3-1.1 1 .3 1.5-1.4-.8-1.4.8.3-1.5-1.1-1 1.5-.3.7-1.4z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
         </svg>
       );
+    case "voice":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <rect x="9" y="3" width="6" height="11.5" rx="3" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          <path d="M12 18v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      );
   }
 }
 
@@ -90,8 +101,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!getAdminToken()) router.replace("/login");
-    else setReady(true);
+    checkAdminSession().then((ok) => {
+      if (!ok) router.replace("/login");
+      else setReady(true);
+    });
   }, [router]);
 
   if (!ready) return null;
@@ -178,8 +191,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
           <button
             onClick={() => {
-              setAdminToken(null);
-              router.replace("/login");
+              adminLogout().finally(() => router.replace("/login"));
             }}
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-[6px] border border-white/10 bg-transparent px-3 py-2.5 text-[12px] font-semibold text-white/60 transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white"
           >

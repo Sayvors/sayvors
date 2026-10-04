@@ -7,12 +7,13 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import oauth as _oauth
 from .credentials import decrypt_connection_token, encrypt_credential
 from .models import MetaAsset, MetaConnection
+from ..models import Channel, ChannelMessage
 from .providers.base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter
 from .providers.facebook import FacebookAdapter
 from .providers.instagram import InstagramAdapter
@@ -121,7 +122,21 @@ async def store_connection(
 async def list_assets(
     db: AsyncSession, tenant_id: str, provider: str | None = None
 ) -> list[MetaAsset]:
-    stmt = select(MetaAsset).where(MetaAsset.tenant_id == tenant_id)
+    # Dev-seeded assets (scripts/seed_test_whatsapp_asset.py) are not
+    # tenant-selectable and read as duplicate junk next to the real signup's.
+    # They carry {"source": "dev_seed"} on the row itself, because their
+    # connection was since replaced in place by the real one
+    # ((tenant_id, provider) is unique), so the connection_type test alone no
+    # longer identifies them.
+    stmt = (
+        select(MetaAsset)
+        .join(MetaConnection, MetaAsset.connection_id == MetaConnection.id)
+        .where(
+            MetaAsset.tenant_id == tenant_id,
+            MetaConnection.connection_type != "dev_seed",
+            func.coalesce(MetaAsset.asset_metadata["source"].as_string(), "") != "dev_seed",
+        )
+    )
     if provider:
         stmt = stmt.where(MetaAsset.provider == provider)
     return list((await db.execute(stmt.order_by(MetaAsset.created_at))).scalars().all())
@@ -238,6 +253,11 @@ async def select_assets(
                         status="active",
                     )
                 )
+            elif existing_channel.status == "disconnected":
+                # Reconnect of the same number: the channel and its history
+                # come back — disconnect only ever marked it unreachable.
+                existing_channel.status = "active"
+                db.add(existing_channel)
         activated.append(asset)
     await db.commit()
     logger.info(
@@ -327,13 +347,23 @@ async def validate_connection(
 
 
 async def disconnect(
-    db: AsyncSession, tenant_id: str, provider: str, revoke: bool = False
-) -> None:
-    """Mark connection revoked; deactivate assets. Best-effort provider revoke."""
+    db: AsyncSession,
+    tenant_id: str,
+    provider: str,
+    revoke: bool = False,
+    delete_data: bool = False,
+) -> dict:
+    """Disconnect (revoke token, deactivate assets) or wipe (delete everything).
+
+    With `delete_data` the platform's channels, every message on them, the
+    assets and ALL connections for the provider are hard-deleted, so a
+    reconnect starts from scratch. Children cascade at the DB level except
+    channel_messages, which is deleted explicitly first. Returns
+    {"deleted": {table: rowcount}} for the UI to report.
+    """
+    counts: dict[str, int] = {}
     conn = await get_connection(db, tenant_id, provider)
-    if conn is None:
-        return
-    if revoke:
+    if conn is not None and revoke:
         adapter = get_adapter(provider)
         revoke_fn = getattr(adapter, "revoke", None)
         if revoke_fn is not None:
@@ -341,13 +371,68 @@ async def disconnect(
                 await revoke_fn(conn, {"access_token": decrypt_connection_token(conn) or ""})
             except Exception as e:
                 logger.warning("Meta revoke failed provider=%s: %s", provider, e)
-    conn.status = "revoked"
-    conn.access_token_encrypted = None
-    db.add(conn)
-    assets = await list_assets(db, tenant_id, provider)
+    if delete_data:
+        channel_ids = select(Channel.id).where(
+            Channel.user_id == tenant_id, Channel.platform == provider
+        )
+        res = await db.execute(
+            delete(ChannelMessage).where(ChannelMessage.channel_id.in_(channel_ids))
+        )
+        counts["messages"] = res.rowcount or 0
+        res = await db.execute(
+            delete(Channel).where(
+                Channel.user_id == tenant_id, Channel.platform == provider
+            )
+        )
+        counts["channels"] = res.rowcount or 0
+        res = await db.execute(
+            delete(MetaAsset).where(
+                MetaAsset.tenant_id == tenant_id, MetaAsset.provider == provider
+            )
+        )
+        counts["assets"] = res.rowcount or 0
+        # All connections for the provider — a dev-seeded one alongside the
+        # real signup must not survive and re-show its assets.
+        res = await db.execute(
+            delete(MetaConnection).where(
+                MetaConnection.tenant_id == tenant_id,
+                MetaConnection.provider == provider,
+            )
+        )
+        counts["connections"] = res.rowcount or 0
+        await db.commit()
+        logger.info(
+            "Meta disconnect with data deletion provider=%s tenant=%s %s",
+            provider, tenant_id, counts,
+        )
+        return {"deleted": counts}
+    # Soft disconnect takes down whatever exists — even with no connection row
+    # (e.g. wiped by an earlier purge), assets and channels must not stay
+    # active behind a success response.
+    if conn is not None:
+        conn.status = "revoked"
+        conn.access_token_encrypted = None
+        db.add(conn)
+    # Every asset, including dev-seeded ones (list_assets hides those).
+    assets = (
+        await db.execute(
+            select(MetaAsset).where(
+                MetaAsset.tenant_id == tenant_id, MetaAsset.provider == provider
+            )
+        )
+    ).scalars().all()
     for asset in assets:
         asset.active = False
         asset.status = "disconnected"
         db.add(asset)
+    # The channels stay (messages are business data), but marked disconnected
+    # so the inbox and auto-reply stop listing a number that is no longer
+    # reachable. select_assets flips them back on reconnect.
+    await db.execute(
+        update(Channel)
+        .where(Channel.user_id == tenant_id, Channel.platform == provider)
+        .values(status="disconnected")
+    )
     await db.commit()
     logger.info("Meta disconnect provider=%s tenant=%s", provider, tenant_id)
+    return {"deleted": {}}

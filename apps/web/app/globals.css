@@ -45,7 +45,49 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  /* Geist is Latin-only, so the Arabic face must sit behind it in the stack:
+     Latin glyphs are served by Geist, Arabic by Plex Arabic. */
+  font-family: var(--font-geist-sans), var(--font-arabic), ui-sans-serif, system-ui, sans-serif;
+}
+
+/*
+ * Arabic optical size correction.
+ *
+ * Arabic script has a smaller x-height and more open counters than Latin, so at
+ * an identical font-size it reads noticeably smaller. Industry practice is to
+ * bump Arabic ~10-15% and add a little leading. Applied to the root element so
+ * every rem-based size below scales together.
+ */
+/*
+ * NOTE: deliberately targeting `html[lang="ar"]` rather than
+ * `:root:has(html[lang="ar"])` — the minifier collapses :has() down to
+ * `html[lang=ar]`, which is an invalid selector and the rule is dropped.
+ */
+html[lang="ar"] {
+  font-size: 112.5%;
+}
+
+html[lang="ar"] body {
+  line-height: 1.75;
+}
+
+/*
+ * Arabic sits lower in the em box and its descenders (ي، ج، ص) sweep below the
+ * baseline, so tight fixed heights clip them. Give the line box room.
+ */
+html[lang="ar"] p,
+html[lang="ar"] li,
+html[lang="ar"] span,
+html[lang="ar"] label,
+html[lang="ar"] h1,
+html[lang="ar"] h2,
+html[lang="ar"] h3 {
+  line-height: 1.7;
+}
+
+/* Arabic-Indic digits for numerals rendered by the app chrome. */
+html[lang="ar"] {
+  font-feature-settings: "ss01";
 }
 
 /* Scrollbar styling */

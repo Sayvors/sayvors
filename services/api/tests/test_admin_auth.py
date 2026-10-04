@@ -210,7 +210,7 @@ async def test_admin_token_rejected_on_tenant_routes(client, monkeypatch):
         for path in (
             "/api/v1/analytics/overview?days=30",
             "/api/v1/analytics/reviews/insights",
-            "/api/v1/channels/?limit=100",
+            "/api/v1/channels?limit=100",
             "/api/v1/integrations/localith/connection",
         ):
             r = client.get(path, headers=headers)

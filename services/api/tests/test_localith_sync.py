@@ -164,9 +164,64 @@ def test_apply_listing_snapshot_copies_everything():
     assert conn.is_disabled is False
     assert conn.total_reviews == 0
     assert conn.average_rating == 0.0
-    assert conn.last_review_on is None
+    # No lastReviewOn in this payload, so the snapshot must leave the column
+    # alone rather than stamping None over it (see the staleness guard below).
+    assert getattr(conn, "last_review_on", "untouched") == "untouched"
     assert conn.raw_listing_json["id"] == "abc123"
     assert conn.profile_synced_at is not None
+
+
+def test_apply_listing_snapshot_parses_timestamps_to_datetime():
+    """lastReviewOn/lastReplyOn must land as datetimes, never raw strings.
+
+    The columns are TIMESTAMPTZ: assigning the provider's string form raises
+    DataError from asyncpg on the next autoflush, which takes the whole sync
+    pass down with it.
+    """
+    from datetime import datetime as _dt
+
+    conn = SimpleNamespace(listing_name="Makkah")
+    service.apply_listing_snapshot(conn, {
+        "id": "x", "name": "Makkah",
+        "lastReviewOn": "2026-09-28 18:22:13",
+        "lastReplyOn": "2026-09-30T10:28:52Z",
+    })
+    assert isinstance(conn.last_review_on, _dt)
+    assert isinstance(conn.last_reply_on, _dt)
+    assert conn.last_review_on.year == 2026 and conn.last_review_on.month == 9
+
+
+def test_apply_listing_snapshot_never_erases_with_a_lagging_read():
+    """A read-back that still serves the PREVIOUS values must not clobber ours.
+
+    The provider is eventually consistent: immediately after a PATCH the
+    detail endpoint still returns the old phone/website. Writing that back
+    silently reverted the merchant's own successful edit, so the "no phone
+    number" alert came straight back and only a later background sync could
+    repair it.
+    """
+    conn = SimpleNamespace(
+        listing_name="Makkah", phone_number="+966 55 123 4567",
+        website_url="https://sayvors.com/", address="Azziziya",
+    )
+    service.apply_listing_snapshot(conn, {
+        "id": "x", "name": "Makkah",
+        "phoneNumber": None, "websiteUrl": None, "address": None,
+    })
+    assert conn.phone_number == "+966 55 123 4567"
+    assert conn.website_url == "https://sayvors.com/"
+    assert conn.address == "Azziziya"
+
+
+def test_apply_listing_snapshot_still_applies_real_values():
+    """The guard must not block a genuine update."""
+    conn = SimpleNamespace(listing_name="Makkah", phone_number=None, website_url=None)
+    service.apply_listing_snapshot(conn, {
+        "id": "x", "name": "Makkah",
+        "phoneNumber": "+92 346 0561173", "websiteUrl": "https://sayvors.com/",
+    })
+    assert conn.phone_number == "+92 346 0561173"
+    assert conn.website_url == "https://sayvors.com/"
 
 
 def test_parse_dt_edge_cases():
@@ -322,7 +377,7 @@ def _make_factory(connections, users):
 async def test_sync_all_once_skips_without_key(monkeypatch):
     monkeypatch.setattr(service, "_key_present", lambda: False)
     totals = await localith_worker.sync_all_once(
-        session_factory=_make_factory([SimpleNamespace(user_id="u1")], {})
+        session_factory=_make_factory([SimpleNamespace(user_id="u1", listing_id="a")], {})
     )
     assert totals == {"connections": 0, "fetched": 0, "new_reviews": 0, "errors": 0, "skipped": 0}
 
@@ -345,7 +400,10 @@ async def test_sync_all_once_counts_and_isolates_failures(monkeypatch):
         return {"fetched": 3, "new_reviews": 2}
 
     monkeypatch.setattr(service, "sync_connection", _fake_sync)
-    conns = [SimpleNamespace(user_id="u1"), SimpleNamespace(user_id="bad")]
+    conns = [
+        SimpleNamespace(user_id="u1", listing_id="a"),
+        SimpleNamespace(user_id="bad", listing_id="b"),
+    ]
     users = {"u1": SimpleNamespace(id="u1"), "bad": SimpleNamespace(id="bad")}
     totals = await localith_worker.sync_all_once(
         session_factory=_make_factory(conns, users)
@@ -390,7 +448,9 @@ async def test_sync_all_once_skips_missing_user(monkeypatch):
 
     monkeypatch.setattr(service, "sync_connection", _fake_sync)
     totals = await localith_worker.sync_all_once(
-        session_factory=_make_factory([SimpleNamespace(user_id="ghost")], {})
+        session_factory=_make_factory(
+            [SimpleNamespace(user_id="ghost", listing_id="listing-ghost")], {}
+        )
     )
     assert totals["connections"] == 0
     assert calls == []
@@ -823,7 +883,7 @@ async def test_sync_connection_loops_all_branches(db, user_id, monkeypatch):
 
     seen = []
 
-    async def _fake_single(user, db_, connection, days_back=30):
+    async def _fake_single(user_id, db_, connection, days_back=30):
         seen.append(connection.listing_id)
         return {"fetched": 1, "new_reviews": 2}
 
@@ -969,7 +1029,7 @@ async def test_branch_failure_notifies(db, user_id, monkeypatch):
     ))
     await db.commit()
 
-    async def _boom(user, db_, connection, days_back=30):
+    async def _boom(user_id, db_, connection, days_back=30):
         raise RuntimeError("404 Not Found for url ghost")
 
     monkeypatch.setattr(service, "_sync_single_connection", _boom)

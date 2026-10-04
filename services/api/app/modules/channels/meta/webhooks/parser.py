@@ -41,6 +41,16 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             "msg_type": msg.get("type"),
                             "text": ((msg.get("text") or {}).get("body")),
                             "context": msg.get("context"),
+                            # WhatsApp sends the sender's saved contact name on
+                            # some payloads only. Carried through so the inbox can
+                            # show "Ahmed Khan" instead of a bare number.
+                            "profile_name": (
+                                (msg["contacts"][0].get("profile") or {}).get("name")
+                                if msg.get("contacts")
+                                else None
+                            ),
+                            # Reactions carry their emoji here, not in text.
+                            "reaction": msg.get("reaction"),
                         },
                     }
                 )
@@ -60,15 +70,68 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                 )
             # Account-level changes (new ids, quality updates, ...).
             if value.get("phone_number_id") and not value.get("messages") and not value.get("statuses"):
+                event_type = "account.update"
+                field_val = change.get("field", "")
+                # Coexistence: partner_removed disconnect
+                if field_val == "partner_removed":
+                    event_type = "connection.disconnect"
                 events.append(
                     {
                         "external_asset_id": phone_number_id,
-                        "external_event_id": f"account-{entry.get('id', '')}-{change.get('field', 'update')}",
-                        "event_type": "account.update",
+                        "external_event_id": f"account-{entry.get('id', '')}-{field_val}",
+                        "event_type": event_type,
                         "occurred_at": _now_iso(),
-                        "data": {"field": change.get("field"), "value": value},
+                        "data": {"field": field_val, "value": value},
                     }
                 )
+            # Coexistence: history sync messages (past messages)
+            if change.get("field") == "history":
+                for msg in value.get("messages", []):
+                    events.append({
+                        "external_asset_id": phone_number_id,
+                        "external_event_id": msg.get("id", ""),
+                        "event_type": "message.history",
+                        "occurred_at": _ts(msg.get("timestamp")),
+                        "data": {
+                            "from": msg.get("from"),
+                            "msg_type": msg.get("type"),
+                            "text": ((msg.get("text") or {}).get("body")),
+                            "context": msg.get("context"),
+                            "profile_name": (
+                                (msg["contacts"][0].get("profile") or {}).get("name")
+                                if msg.get("contacts")
+                                else None
+                            ),
+                            "reaction": msg.get("reaction"),
+                        },
+                    })
+            # Coexistence: SMB contacts sync
+            if change.get("field") == "smb_app_state_sync":
+                contacts = value.get("contacts", [])
+                events.append({
+                    "external_asset_id": phone_number_id,
+                    "external_event_id": f"smb-contacts-{entry.get('id', '')}",
+                    "event_type": "smb.contacts",
+                    "occurred_at": _now_iso(),
+                    "data": {"contacts": contacts},
+                })
+            # Coexistence: Business app message echoes (sent via app after onboarding)
+            if change.get("field") == "smb_message_echoes":
+                for msg in value.get("messages", []):
+                    events.append({
+                        "external_asset_id": phone_number_id,
+                        "external_event_id": msg.get("id", ""),
+                        "event_type": "message.echo",
+                        "occurred_at": _ts(msg.get("timestamp")),
+                        "data": {
+                            "from": msg.get("from"),
+                            "to": msg.get("to"),
+                            "msg_type": msg.get("type"),
+                            "text": ((msg.get("text") or {}).get("body")),
+                            "context": msg.get("context"),
+                            "reaction": msg.get("reaction"),
+                        },
+                    })
     return [e for e in events if e["external_event_id"]]
 
 

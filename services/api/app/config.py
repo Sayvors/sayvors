@@ -15,6 +15,17 @@ class Settings(BaseSettings):
     # "production" arms the fail-closed startup validation below.
     ENVIRONMENT: str = "development"
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    # Optional regex for rotating dev-tunnel origins (e.g. free-tier ngrok
+    # gives the frontend a new subdomain on every restart). Starlette echoes
+    # the actual origin for regex matches, so credentials still work.
+    CORS_ORIGIN_REGEX: str | None = None
+    # Queue/poll workers (WhatsApp AI replies, reviews auto-reply, syncs,
+    # publishers, Kafka consumers, outbox drainer) run inside the API process
+    # when true — the dev default so one uvicorn process is self-sufficient.
+    # The worker deployment (docker-compose worker service, `python -m
+    # app.workers`) sets this false on the api so HTTP traffic can never
+    # delay message replies.
+    RUN_BACKGROUND_WORKERS: bool = True
     REDIS_URL: str = "redis://localhost:6379/0"
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
 
@@ -38,6 +49,14 @@ class Settings(BaseSettings):
     # X-CSRF-Token double-submit header in split-domain deployments.
     # None = host-only cookies (local dev).
     COOKIE_DOMAIN: str | None = None
+    # Cookie transport flags. Both cookies are hardcoded Secure/SameSite=None
+    # by default, which is correct in production and silently breaks local dev:
+    # a browser refuses a Secure cookie over plain http, so the CSRF cookie
+    # never lands and EVERY non-GET call fails 403 "CSRF validation failed"
+    # while GETs (which skip the check) keep working — a confusing half-broken
+    # app. Set COOKIE_SECURE=false for http://localhost / ngrok-over-http dev.
+    COOKIE_SECURE: bool = True
+    COOKIE_SAMESITE: str = "none"  # none | lax | strict
     ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
 
     # ── File uploads ────────────────────────────────────
@@ -149,6 +168,14 @@ class Settings(BaseSettings):
     # Embedded Signup v4 Builder configuration id (App Dashboard ->
     # WhatsApp -> Embedded Signup Builder). Frontend passes it to FB.login.
     META_WHATSAPP_CONFIG_ID: str = ""
+    # Separate Builder configuration for WhatsApp Coexistence ("Connect
+    # existing" — the customer keeps their number and their own WhatsApp
+    # Business App). Meta scopes the two flows to different configurations,
+    # so they cannot share one config_id. Empty = fall back to
+    # META_WHATSAPP_CONFIG_ID, which is only correct if Meta has since
+    # merged the flows — otherwise coexistence silently opens the standard
+    # (new-number) onboarding and the merchant never sees their app.
+    META_WHATSAPP_COEXISTENCE_CONFIG_ID: str = ""
     # Tech Provider solution id (Tech Provider Portal -> Solutions). When
     # set, the frontend uses the v4 app_only_install FB.login extras.
     META_SOLUTION_ID: str = ""

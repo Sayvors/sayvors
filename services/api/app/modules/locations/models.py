@@ -15,6 +15,32 @@ from sqlalchemy.orm import Mapped, mapped_column
 from ...database import Base
 
 
+class LocationGroup(Base):
+    """A named set of listings, so bulk actions can target "North Riyadh"
+    instead of every branch. Members live in `listing_ids` — a plain JSON
+    list of Localith listing IDs, deliberately not a join table: group
+    membership is only ever read and written whole, never queried across
+    groups, and listings come and go from Localith independently."""
+    __tablename__ = "location_groups"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    listing_ids: Mapped[list] = mapped_column(JSON, default=list)
+    position: Mapped[int] = mapped_column(default=0)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class LocationProfile(Base):
     __tablename__ = "location_profiles"
     __table_args__ = (

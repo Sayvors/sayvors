@@ -1,23 +1,32 @@
 "use client";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const TOKEN_KEY = "sayvors.admin.token";
 
-export function getAdminToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.sessionStorage.getItem(TOKEN_KEY);
+// The admin session lives in an httpOnly cookie set by the API
+// (POST /api/v1/admin/login). JS can never read it, so there is no token
+// storage here — session state is checked via GET /api/v1/admin/me.
+// Every request must carry credentials (cross-origin :3001 → :8000) plus
+// the X-Requested-With header the API's cookie CSRF check requires.
+const ADMIN_HEADERS = { "X-Requested-With": "XMLHttpRequest" };
+
+export async function checkAdminSession(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  try {
+    const res = await fetch(`${API}/api/v1/admin/me`, {
+      headers: { ...ADMIN_HEADERS },
+      credentials: "include",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
-export function setAdminToken(token: string | null) {
-  if (typeof window === "undefined") return;
-  if (token) window.sessionStorage.setItem(TOKEN_KEY, token);
-  else window.sessionStorage.removeItem(TOKEN_KEY);
-}
-
-export async function adminLogin(password: string): Promise<{ access_token: string; expires_in_minutes: number }> {
+export async function adminLogin(password: string): Promise<{ expires_in_minutes: number }> {
   const res = await fetch(`${API}/api/v1/admin/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...ADMIN_HEADERS },
+    credentials: "include",
     body: JSON.stringify({ password }),
   });
   if (!res.ok) {
@@ -27,22 +36,33 @@ export async function adminLogin(password: string): Promise<{ access_token: stri
   return res.json();
 }
 
+export async function adminLogout(): Promise<void> {
+  try {
+    await fetch(`${API}/api/v1/admin/logout`, {
+      method: "POST",
+      headers: { ...ADMIN_HEADERS },
+      credentials: "include",
+    });
+  } catch {
+    /* clearing server state is best-effort; the cookie is httpOnly */
+  }
+}
+
 export async function adminFetch<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getAdminToken();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60000);
   try {
     const res = await fetch(`${API}${path}`, {
       ...options,
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...ADMIN_HEADERS,
         ...(options.headers as Record<string, string>),
       },
       signal: controller.signal,
     });
     if (res.status === 401 || res.status === 403) {
-      setAdminToken(null);
       if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
         window.location.href = "/login";
       }
