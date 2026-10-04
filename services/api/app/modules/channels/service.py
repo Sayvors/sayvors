@@ -380,6 +380,12 @@ async def list_inbox_threads(
     busy inbox can hold tens of thousands of rows, and the aggregate here
     (last message, count, unread) is exactly what the database is for.
     """
+    # A disconnected channel is not reachable (Meta revoked / user
+    # disconnected), so its threads stay out of the list — the history is
+    # preserved and reappears when the same number reconnects. The status flag
+    # only exists since the disconnect started writing it, so channels
+    # disconnected before that are caught by their deactivated Meta asset —
+    # every disconnect path deactivates the asset too.
     channels = (
         (
             await db.execute(select(Channel).where(Channel.user_id == user.id))
@@ -387,6 +393,27 @@ async def list_inbox_threads(
         .scalars()
         .all()
     )
+    if not channels:
+        return []
+    from .meta.models import MetaAsset
+
+    inactive_assets = {
+        (provider, external)
+        for provider, external in (
+            await db.execute(
+                select(MetaAsset.provider, MetaAsset.external_asset_id).where(
+                    MetaAsset.tenant_id == user.id,
+                    MetaAsset.active.is_(False),
+                )
+            )
+        ).all()
+    }
+    channels = [
+        c
+        for c in channels
+        if c.status != "disconnected"
+        and (c.platform, c.platform_user_id) not in inactive_assets
+    ]
     if not channels:
         return []
     channel_ids = [c.id for c in channels]

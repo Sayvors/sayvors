@@ -7,7 +7,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import oauth as _oauth
@@ -253,6 +253,11 @@ async def select_assets(
                         status="active",
                     )
                 )
+            elif existing_channel.status == "disconnected":
+                # Reconnect of the same number: the channel and its history
+                # come back — disconnect only ever marked it unreachable.
+                existing_channel.status = "active"
+                db.add(existing_channel)
         activated.append(asset)
     await db.commit()
     logger.info(
@@ -401,11 +406,13 @@ async def disconnect(
             provider, tenant_id, counts,
         )
         return {"deleted": counts}
-    if conn is None:
-        return {"deleted": {}}
-    conn.status = "revoked"
-    conn.access_token_encrypted = None
-    db.add(conn)
+    # Soft disconnect takes down whatever exists — even with no connection row
+    # (e.g. wiped by an earlier purge), assets and channels must not stay
+    # active behind a success response.
+    if conn is not None:
+        conn.status = "revoked"
+        conn.access_token_encrypted = None
+        db.add(conn)
     # Every asset, including dev-seeded ones (list_assets hides those).
     assets = (
         await db.execute(
@@ -418,6 +425,14 @@ async def disconnect(
         asset.active = False
         asset.status = "disconnected"
         db.add(asset)
+    # The channels stay (messages are business data), but marked disconnected
+    # so the inbox and auto-reply stop listing a number that is no longer
+    # reachable. select_assets flips them back on reconnect.
+    await db.execute(
+        update(Channel)
+        .where(Channel.user_id == tenant_id, Channel.platform == provider)
+        .values(status="disconnected")
+    )
     await db.commit()
     logger.info("Meta disconnect provider=%s tenant=%s", provider, tenant_id)
     return {"deleted": {}}

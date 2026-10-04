@@ -74,6 +74,43 @@ async def test_threads_group_by_contact(db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_disconnected_channel_hidden_from_inbox(db, user_id):
+    """Disconnecting a number takes its threads out of the list. The messages
+    stay (business data) and reappear when the channel reconnects."""
+    ch, _ = _channel(db, user_id)
+    await _msg(db, ch.id, phone="966500000001", content="before disconnect", minutes_ago=10)
+    await db.commit()
+    assert len(await channels.list_inbox_threads(db=db, user=_user(user_id))) == 1
+
+    ch.status = "disconnected"
+    await db.commit()
+    assert await channels.list_inbox_threads(db=db, user=_user(user_id)) == []
+
+    # Reconnect of the same number: threads come back.
+    ch.status = "active"
+    await db.commit()
+    assert len(await channels.list_inbox_threads(db=db, user=_user(user_id))) == 1
+
+
+@pytest.mark.asyncio
+async def test_channel_with_inactive_asset_hidden_from_inbox(db, user_id):
+    """Channels disconnected before status marking existed carry no
+    "disconnected" flag — but their Meta asset was deactivated, which is the
+    second signal the inbox reads. Covers tenants who disconnected on old
+    code; deploying alone must already hide their threads."""
+    ch, _ = _channel(db, user_id)  # status still "active"
+    db.add(MetaAsset(
+        id="asset-1", tenant_id=user_id, connection_id="seed-conn",
+        provider="whatsapp", asset_type="phone_number",
+        external_asset_id="pn-1", active=False,
+    ))
+    await _msg(db, ch.id, phone="966500000001", content="legacy disconnect", minutes_ago=5)
+    await db.commit()
+
+    assert await channels.list_inbox_threads(db=db, user=_user(user_id)) == []
+
+
+@pytest.mark.asyncio
 async def test_pre_migration_rows_group_as_unknown(db, user_id):
     """Rows written before contact_phone existed have no sender. They must land
     in one catch-all thread, keeping their text, not be dropped."""
