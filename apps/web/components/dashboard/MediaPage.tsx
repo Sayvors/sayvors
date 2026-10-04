@@ -41,8 +41,6 @@ const BACKEND_STATUS: Record<string, MediaStatus> = {
   failed: "FAILED",
 };
 
-const AUTOPILOT_KEY = "sayvors.media-autopilot";
-
 function normalizeMedia(raw: unknown): MediaItem[] {
   const list = Array.isArray(raw) ? raw : (raw as { media?: unknown[] }).media;
   if (!Array.isArray(list)) return [];
@@ -102,24 +100,6 @@ function MediaInner() {
   const [scheduledAt, setScheduledAt] = useState("");
   const [uploading, setUploading] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
-  const [hideAutopilot, setHideAutopilot] = useState(false);
-
-  useEffect(() => {
-    try {
-      if (localStorage.getItem(AUTOPILOT_KEY) === "1") setHideAutopilot(true);
-    } catch {
-      /* storage unavailable */
-    }
-  }, []);
-
-  const dismissAutopilot = () => {
-    setHideAutopilot(true);
-    try {
-      localStorage.setItem(AUTOPILOT_KEY, "1");
-    } catch {
-      /* storage unavailable */
-    }
-  };
 
   const openScheduleUpload = () => {
     setUploadType("PHOTO");
@@ -369,12 +349,9 @@ function MediaInner() {
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-4xl space-y-4">
-          {!hideAutopilot && (
-            <div className="rounded-2xl border border-deep-violet/15 bg-gradient-to-br from-deep-violet/[0.06] to-transparent p-4 dark:border-deep-violet/25">
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="text-[14px] font-bold text-ink dark:text-fog">📸 Let your photos sell while you work</h3>
-                <button onClick={dismissAutopilot} aria-label="Dismiss" className="shrink-0 rounded-md px-1.5 py-0.5 text-[13px] text-ink/30 hover:bg-ink/[0.05] hover:text-ink/60">✕</button>
-              </div>
+          {/* Autopilot explainer — permanent by design; there is no dismiss. */}
+          <div className="rounded-2xl border border-deep-violet/15 bg-gradient-to-br from-deep-violet/[0.06] to-transparent p-4 dark:border-deep-violet/25">
+              <h3 className="text-[14px] font-bold text-ink dark:text-fog">📸 Let your photos sell while you work</h3>
               <p className="mt-0.5 text-[12px] text-ink/50 dark:text-fog/50">Pick a photo and a time — it appears on your Google listing by itself. Nothing to remember.</p>
               <ul className="mt-2.5 space-y-1.5">
                 {[
@@ -391,8 +368,7 @@ function MediaInner() {
               <button onClick={openScheduleUpload} className="mt-3 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:opacity-90">
                 Schedule a photo
               </button>
-            </div>
-          )}
+          </div>
           <div className="flex gap-1 overflow-x-auto rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
             {([
               { key: "all", label: `All Media (${counts.all})` },

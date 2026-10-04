@@ -129,7 +129,9 @@ export default function Sidebar() {
   // an Advanced page — a collapsed section hiding the active item reads as a
   // broken highlight.
   useEffect(() => {
+    // Restore after mount so SSR and client render agree.
     try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is an external store; reading it during render would break SSR
       if (localStorage.getItem(ADVANCED_OPEN_KEY) === "1") setAdvancedOpen(true);
     } catch {
       /* storage unavailable */
