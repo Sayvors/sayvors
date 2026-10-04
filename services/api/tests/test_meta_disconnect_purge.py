@@ -86,8 +86,51 @@ async def test_soft_disconnect_keeps_history(db):
 
     assert (await db.get(MetaConnection, conn.id)).status == "revoked"
     assert (await db.get(MetaAsset, asset.id)).active is False
+    # The channel itself is marked disconnected — the inbox stops listing it —
+    # but the row and its messages survive for the reconnect.
+    assert (await db.get(Channel, channel.id)).status == "disconnected"
     conns, assets, channels = await _counts(db, TENANT)
     assert (conns, assets, channels) == (1, 1, 1)
+    msgs = (await db.execute(
+        select(ChannelMessage).where(ChannelMessage.channel_id == channel.id)
+    )).scalars().all()
+    assert len(msgs) == 2
+
+
+async def test_reconnect_same_number_reactivates_channel(db):
+    """Disconnect hides the number from the inbox; selecting the same number
+    again after a reconnect brings the channel and its history back."""
+    conn = await _seed_connection(db, TENANT)
+    asset = await _seed_asset(db, TENANT, conn, "pn-1")
+    channel = await _seed_channel_with_messages(db, TENANT)
+
+    await _service.disconnect(db, TENANT, "whatsapp")
+    assert (await db.get(Channel, channel.id)).status == "disconnected"
+
+    activated = await _service.select_assets(db, TENANT, "whatsapp", [asset.id])
+
+    assert asset.id in [a.id for a in activated]
+    assert (await db.get(Channel, channel.id)).status == "active"
+    msgs = (await db.execute(
+        select(ChannelMessage).where(ChannelMessage.channel_id == channel.id)
+    )).scalars().all()
+    assert len(msgs) == 2
+
+
+async def test_disconnect_without_connection_row_still_disconnects(db):
+    """A missing connection row must not turn the endpoint into a silent
+    no-op: the channel it served still gets marked disconnected (its assets
+    cascade away with the connection row itself)."""
+    conn = await _seed_connection(db, TENANT)
+    channel = await _seed_channel_with_messages(db, TENANT)
+
+    await db.delete(conn)
+    await db.commit()
+
+    result = await _service.disconnect(db, TENANT, "whatsapp")
+
+    assert result == {"deleted": {}}
+    assert (await db.get(Channel, channel.id)).status == "disconnected"
     msgs = (await db.execute(
         select(ChannelMessage).where(ChannelMessage.channel_id == channel.id)
     )).scalars().all()
