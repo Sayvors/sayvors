@@ -847,6 +847,101 @@ async def test_edited_review_after_posted_reply_queues_followup(db, user_id, cha
 
 
 @pytest.mark.asyncio
+async def test_edited_review_followup_autoposts_when_opted_in(db, user_id, monkeypatch):
+    """edited_review_autopost on: the follow-up behind a live reply posts
+    through the normal publish path (gates permitting) and clears the
+    edited flag — the edit has been answered."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from app.modules.analytics.models import ReviewInsight
+    from app.modules.channels.models import AutoReplyConfig, Channel, ReviewReply
+    from app.modules.localith.models import LocalithConnection
+
+    # The config must sit on the channel the sync resolves for this
+    # listing (get-or-create by listing_key), not an unrelated fixture row.
+    db.add(Channel(
+        id="ch-ap-1", user_id=user_id, platform="google_reviews",
+        platform_user_id="demo-loc-ap", display_name="Autopost Branch",
+        status="active", listing_key="demo-loc-ap",
+    ))
+    db.add(LocalithConnection(
+        id="lc-ap-1", user_id=user_id, listing_id="demo-loc-ap",
+        listing_name="Autopost Branch",
+    ))
+    db.add(AutoReplyConfig(
+        id="cfg-ap-1", channel_id="ch-ap-1", enabled=True,
+        approval_mode="auto", min_rating_auto=4,
+        edited_review_autopost=True,
+    ))
+    await db.commit()
+
+    items = [
+        {"id": "rv-ap", "rating": 5, "captionText": "Great product", "authorName": "Adeel"},
+    ]
+    monkeypatch.setattr(service.settings, "GOOGLE_REVIEWS_MOCK", False)
+    monkeypatch.setattr(service, "_key_present", lambda: True)
+
+    async def _detail(listing_id, api_key=None):
+        return {}
+
+    async def _no_events(event_type, payload, topic="review-events"):
+        return "evt"
+
+    monkeypatch.setattr(service, "get_listing_detail", _detail)
+    monkeypatch.setattr(service, "enqueue_event", _no_events)
+    monkeypatch.setattr(embedsocial, "fetch_all_items", lambda listing_id, *a, **k: items)
+    monkeypatch.setattr(embedsocial, "fetch_listing_metrics", lambda *a, **k: {})
+    monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
+
+    posted_via_api: list[tuple[str, str]] = []
+
+    async def _post(item_id, text, api_key=None):
+        posted_via_api.append((item_id, text))
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "post_reply", _post)
+
+    async def _gen(config, channel, rating, text, reviewer, db_,
+                   review_id=None, attempt=1, previous_draft=None):
+        return f"AI reply to: {text} (try {attempt})"
+
+    monkeypatch.setattr(service, "generate_auto_reply", _gen)
+
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+    # First sync auto-posted the fresh reply (auto mode, 5 >= 4).
+    rows = (await db.execute(
+        select(ReviewReply).order_by(ReviewReply.created_at.asc())
+    )).scalars().all()
+    assert len(rows) == 1 and rows[0].status == "posted"
+    assert len(posted_via_api) == 1
+
+    # Reviewer edits the review; the new content still clears the gates.
+    items[0]["rating"] = 4
+    items[0]["captionText"] = "Actually broke after a week"
+    await service.sync_connection(SimpleNamespace(id=user_id), db)
+
+    db.expire_all()
+    rows = (await db.execute(
+        select(ReviewReply).order_by(ReviewReply.created_at.asc())
+    )).scalars().all()
+    assert len(rows) == 2
+    assert all(r.status == "posted" for r in rows)
+    followup = rows[1]
+    assert followup.review_text == "Actually broke after a week"
+    assert posted_via_api == [
+        ("rv-ap", "AI reply to: Great product (try 1)"),
+        ("rv-ap", "AI reply to: Actually broke after a week (try 1)"),
+    ]
+
+    insight = (await db.execute(
+        select(ReviewInsight).where(ReviewInsight.review_id == "localith:rv-ap")
+    )).scalar_one()
+    assert insight.edited is False  # cleared: the follow-up answered the edit
+
+
+@pytest.mark.asyncio
 async def test_get_connection_selects_branch(db, user_id):
     """Two branches coexist; lookup selects by listing, default is first."""
     from app.modules.localith.models import LocalithConnection

@@ -108,6 +108,39 @@ class ChannelMessage(Base):
     channel = relationship("Channel", back_populates="messages")
 
 
+class ContactProfile(Base):
+    """Cached profile for one customer on one platform.
+
+    WhatsApp ships the profile name free on every webhook; Instagram and
+    Messenger expose name/username/avatar through a Graph read on the
+    conversation participant (IGSID/PSID). Avatar URLs are temporary CDN
+    links — `profile_fetched_at` drives a weekly refresh on inbound
+    traffic so the inbox keeps showing a current picture.
+    """
+
+    __tablename__ = "contact_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    # Phone number (whatsapp), IGSID (instagram) or PSID (facebook)
+    contact_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Temporary CDN URL — never guaranteed long-lived; refresh when stale
+    avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    profile_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "platform", "contact_id",
+            name="uq_contact_profiles_identity",
+        ),
+    )
+
+
 class AutoReplyConfig(Base):
     """Per-channel auto-reply settings (Phase 1: Google Reviews)."""
 
@@ -128,6 +161,13 @@ class AutoReplyConfig(Base):
     # "approval" = every reply waits for human approval.
     approval_mode: Mapped[str] = mapped_column(
         Enum("auto", "approval", name="reply_approval_mode"), default="auto"
+    )
+    # When a reviewer edits a review we already answered, the follow-up
+    # reply waits for human approval by default. True = the follow-up may
+    # auto-post, through the same gates as a fresh reply (approval_mode
+    # "auto" + rating at/above min_rating_auto).
+    edited_review_autopost: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
     )
     # Free-text brand voice / house rules injected into every reply prompt
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)

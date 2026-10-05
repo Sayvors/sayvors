@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import LogoLoader from "@/components/LogoLoader";
 import {
@@ -36,6 +36,35 @@ function initials(name: string | null, phone: string | null): string {
   const parts = base.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return base.slice(0, 2).toUpperCase();
+}
+
+/** Profile picture when the platform gave us one, initials otherwise. */
+function Avatar({
+  name,
+  phone,
+  url,
+  boxCls,
+  children,
+}: {
+  name: string | null;
+  phone: string | null;
+  url: string | null | undefined;
+  boxCls: string;
+  children?: ReactNode;
+}) {
+  return (
+    <span className="relative shrink-0" aria-hidden>
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="" className={`object-cover ${boxCls}`} />
+      ) : (
+        <span className={`flex items-center justify-center font-bold ${boxCls}`}>
+          {initials(name, phone)}
+        </span>
+      )}
+      {children}
+    </span>
+  );
 }
 
 function relative(iso: string | null): string {
@@ -345,10 +374,14 @@ export default function InboxPage() {
                           aria-current={active}
                           className="flex min-w-0 flex-1 items-start gap-3 px-3 py-3 text-left"
                         >
-                          <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-deep-violet/10 text-[11px] font-bold text-deep-violet" aria-hidden>
-                            {initials(t.display_name, t.contact_phone)}
+                          <Avatar
+                            name={t.display_name}
+                            phone={t.contact_phone}
+                            url={t.avatar_url}
+                            boxCls="h-9 w-9 rounded-xl bg-deep-violet/10 text-[11px] text-deep-violet"
+                          >
                             <PlatformBadge platform={t.platform} />
-                          </span>
+                          </Avatar>
                           <span className="min-w-0 flex-1">
                             <span className="flex items-baseline justify-between gap-2">
                               <span className="truncate text-[13px] font-semibold text-ink dark:text-fog">
@@ -408,10 +441,14 @@ export default function InboxPage() {
                   className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl p-1.5 text-left transition hover:bg-ink/[0.04] dark:hover:bg-fog/[0.05]"
                   aria-label="View contact profile"
                 >
-                  <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-deep-violet/10 text-[11px] font-bold text-deep-violet ring-1 ring-deep-violet/10" aria-hidden>
-                    {initials(target.display_name, target.contact_phone)}
+                  <Avatar
+                    name={target.display_name}
+                    phone={target.contact_phone}
+                    url={target.avatar_url}
+                    boxCls="h-10 w-10 rounded-xl bg-deep-violet/10 text-[11px] text-deep-violet ring-1 ring-deep-violet/10"
+                  >
                     <PlatformBadge platform={target.platform} />
-                  </span>
+                  </Avatar>
                   <span className="min-w-0 flex-1">
                     <p className="truncate text-[14px] font-semibold text-ink dark:text-fog">
                       {target.display_name || "Unknown sender"}
@@ -578,13 +615,20 @@ export default function InboxPage() {
           ) : (
             <div className="space-y-4">
               <div className="flex flex-col items-center text-center">
-                <span className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-deep-violet/10 text-[16px] font-bold text-deep-violet ring-1 ring-deep-violet/10" aria-hidden>
-                  {initials(target.display_name, target.contact_phone)}
+                <Avatar
+                  name={target.display_name}
+                  phone={target.contact_phone}
+                  url={target.avatar_url}
+                  boxCls="h-14 w-14 rounded-2xl bg-deep-violet/10 text-[16px] text-deep-violet ring-1 ring-deep-violet/10"
+                >
                   <PlatformBadge platform={target.platform} />
-                </span>
+                </Avatar>
                 <p className="mt-2 text-[14px] font-semibold text-ink dark:text-fog">
                   {target.display_name || "Unknown sender"}
                 </p>
+                {target.username && (
+                  <p className="text-[12px] font-medium text-deep-violet">@{target.username}</p>
+                )}
                 <p className="text-[12px] text-ink/45 dark:text-fog/45">
                   {target.platform === "instagram"
                     ? target.contact_phone

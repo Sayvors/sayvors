@@ -295,7 +295,7 @@ async def _enqueue_review_replied(channel: Channel, review, status: str) -> None
 
 
 async def _refresh_edited_review_reply(
-    db: AsyncSession, channel: Channel, config: AutoReplyConfig, review
+    db: AsyncSession, channel: Channel, config: AutoReplyConfig, review, client=None
 ) -> None:
     """Bring a queued/live response back in step with an edited review.
 
@@ -303,8 +303,9 @@ async def _refresh_edited_review_reply(
     or rating changed after a reply was queued or posted, the response on
     file answers content that no longer exists: a still-pending draft is
     regenerated in place, and a posted reply gets a follow-up draft queued
-    behind it. An edit follow-up never auto-posts — it always waits for
-    approval (the same rule as the Localith sync path).
+    behind it. An edit follow-up waits for approval by default; the
+    edited_review_autopost opt-in posts it through the same gates as a
+    fresh reply (approval_mode "auto" + rating at/above min_rating_auto).
     """
     latest = (
         await db.execute(
@@ -361,13 +362,61 @@ async def _refresh_edited_review_reply(
         latest.reviewer_name = review.reviewer_name
         latest.generation_attempt = attempt
         latest.error = None
-    else:
-        _save_reply_row(
-            db, failed_row, channel.id, review.review_id,
-            review.rating, review.text, review.reviewer_name,
-            reply_text, "pending_approval",
+        await db.commit()
+        return
+
+    # posted/approved: an edit follow-up waits for a human by default.
+    # With the merchant's opt-in it may auto-post, but only through the
+    # same gates as a fresh reply: approval_mode "auto" and a rating
+    # at/above min_rating_auto.
+    autopost = (
+        bool(getattr(config, "edited_review_autopost", False))
+        and getattr(config, "approval_mode", "auto") != "approval"
+        and review.rating >= config.min_rating_auto
+    )
+    status = "pending_approval"
+    if autopost and client is not None:
+        try:
+            await client.reply_to_review(review.review_id, reply_text)
+            if not await client.confirm_reply_live(review.review_id):
+                raise GoogleReviewsError(
+                    "Google accepted the reply but it is not showing on the listing"
+                )
+        except GoogleReviewsError as e:
+            _save_reply_row(
+                db, failed_row, channel.id, review.review_id,
+                review.rating, review.text, review.reviewer_name,
+                reply_text, "failed", str(e)[:2000],
+            )
+            await notify(
+                db, channel.user_id, "reply_failed",
+                f"Auto-reply failed for ★{review.rating} review",
+                str(e)[:160],
+                data={"review_id": review.review_id, "channel_id": channel.id},
+                href="/dashboard/outbox",
+            )
+            await db.commit()
+            return
+        status = "posted"
+    _save_reply_row(
+        db, failed_row, channel.id, review.review_id,
+        review.rating, review.text, review.reviewer_name,
+        reply_text, status,
+    )
+    if status == "posted":
+        await notify(
+            db, channel.user_id, "reply_posted",
+            f"Auto-replied to ★{review.rating} review from {review.reviewer_name or 'a customer'}",
+            (reply_text or "")[:160],
+            data={"review_id": review.review_id, "channel_id": channel.id},
+            href="/dashboard/reviews",
         )
     await db.commit()
+    if status == "posted":
+        try:
+            await _enqueue_review_replied(channel, review, "posted")
+        except Exception as e:
+            logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 
 
 async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyConfig) -> dict:
@@ -441,7 +490,7 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 # this review — polling it again must not create a duplicate.
                 # But if the reviewer edited the review since we replied or
                 # queued a draft, first bring that response up to date.
-                await _refresh_edited_review_reply(db, channel, config, review)
+                await _refresh_edited_review_reply(db, channel, config, review, client)
                 stats["skipped"] += 1
                 continue
             if await _draft_dismissed(db, channel.id, review.review_id):

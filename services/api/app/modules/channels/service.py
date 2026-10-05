@@ -509,6 +509,29 @@ async def list_inbox_threads(
     if not summaries:
         return []
 
+    # Cached contact profiles (names/usernames/avatars) in one read — the
+    # map lookup stays exact per (platform, contact) even though the IN
+    # filters can over-fetch.
+    from .models import ContactProfile
+
+    profile_keys = {
+        (by_id[cid].platform, phone)
+        for phone, cid, _la, _t in summaries
+        if phone is not None
+    }
+    profiles: dict = {}
+    if profile_keys:
+        rows = (
+            await db.execute(
+                select(ContactProfile).where(
+                    ContactProfile.tenant_id == user.id,
+                    ContactProfile.platform.in_({p for p, _ in profile_keys}),
+                    ContactProfile.contact_id.in_({c for _, c in profile_keys}),
+                )
+            )
+        ).scalars().all()
+        profiles = {(r.platform, r.contact_id): r for r in rows}
+
     # The preview line and unread count need per-thread detail the grouped
     # aggregate cannot carry, so fetch those rows only.
     out: list[dict] = []
@@ -552,11 +575,20 @@ async def list_inbox_threads(
             unread = total if phone is not None else 0
 
         name = last_row.contact_name
+        profile = (
+            profiles.get((by_id[channel_id].platform, phone))
+            if phone is not None
+            else None
+        )
+        if profile is not None and profile.name:
+            name = profile.name
         out.append(
             {
                 "key": thread_key(phone),
                 "contact_phone": phone,
                 "display_name": name or phone,
+                "username": profile.username if profile else None,
+                "avatar_url": profile.avatar_url if profile else None,
                 "channel_id": channel_id,
                 "channel_name": by_id[channel_id].display_name,
                 "platform": by_id[channel_id].platform,

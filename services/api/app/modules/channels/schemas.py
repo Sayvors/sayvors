@@ -113,6 +113,8 @@ class InboxThread(BaseModel):
     key: str
     contact_phone: str | None = None
     display_name: str | None = None
+    username: str | None = None
+    avatar_url: str | None = None
     channel_id: str
     channel_name: str | None = None
     platform: str | None = None
@@ -153,6 +155,7 @@ class AutoReplyConfigUpdate(BaseModel):
     min_rating_auto: int | None = Field(None, ge=1, le=5, description="Ratings below this are queued for approval")
     model: str | None = Field(None, description="LLM catalog model id from the enabled list; empty string resets to tenant default")
     approval_mode: str | None = Field(None, pattern="^(auto|approval)$", description="auto = post above threshold; approval = all replies wait for human approval")
+    edited_review_autopost: bool | None = Field(None, description="Auto-post the follow-up reply when a reviewer edits an already-answered review (still gated by approval_mode and min_rating_auto); default waits for approval")
     custom_instructions: str | None = Field(None, max_length=2000, description="Brand voice / house rules injected into every reply prompt; empty to clear")
     dialect: str | None = Field(None, max_length=30, description="Arabic dialect catalog code or 'auto'")
     reply_language: str | None = Field(None, pattern="^(match|en|ar)$", description="match = reply in the review's language; en/ar = force a language")
@@ -170,6 +173,7 @@ class AutoReplyConfigResponse(BaseModel):
     min_rating_auto: int
     model: str | None = Field(None, description="Explicit model choice; null = tenant default from enabled models")
     approval_mode: str = "auto"
+    edited_review_autopost: bool = False
     custom_instructions: str | None = None
     dialect: str = "auto"
     reply_language: str = "match"

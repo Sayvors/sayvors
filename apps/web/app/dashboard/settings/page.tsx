@@ -14,6 +14,7 @@ interface ChannelCfg {
   min_rating_auto: number;
   model: string;
   approval_mode?: string;
+  edited_review_autopost: boolean;
   custom_instructions?: string | null;
   dialect: string;
   reply_language: string;
@@ -193,6 +194,7 @@ export default function SettingsPage() {
   const [promoLinks, setPromoLinks] = useState(false);
   const [promoRelevant, setPromoRelevant] = useState(true);
   const [promoMax, setPromoMax] = useState(1);
+  const [editedAutopost, setEditedAutopost] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -266,6 +268,7 @@ export default function SettingsPage() {
         setPromoLinks(false);
         setPromoRelevant(true);
         setPromoMax(1);
+        setEditedAutopost(false);
       }
       return;
     }
@@ -276,6 +279,7 @@ export default function SettingsPage() {
     setPromoLinks(!!cfg.promo_links);
     setPromoRelevant(cfg.promo_only_relevant ?? true);
     setPromoMax(Number.isFinite(cfg.promo_max_ctas) ? cfg.promo_max_ctas : 1);
+    setEditedAutopost(!!cfg.edited_review_autopost);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, isBulk, cfg?.tone, cfg?.reply_language, cfg?.dialect]);
 
@@ -295,6 +299,7 @@ export default function SettingsPage() {
     if (differs((id) => !!configs[id]?.promo_links)) set.add("promoLinks");
     if (differs((id) => configs[id]?.promo_only_relevant ?? true)) set.add("promoRelevant");
     if (differs((id) => configs[id]?.promo_max_ctas ?? 1)) set.add("promoMax");
+    if (differs((id) => !!configs[id]?.edited_review_autopost)) set.add("editedAutopost");
     return set;
   }, [isBulk, channels, configs]);
 
@@ -879,6 +884,50 @@ export default function SettingsPage() {
                   className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "marketing" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save marketing"}
+                </button>
+              </Section>
+
+              <Section
+                title="Edited reviews"
+                subtitle="When a customer edits a review you already answered, a fresh reply is drafted for the new content."
+              >
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={editedAutopost}
+                    onChange={(e) => setEditedAutopost(e.target.checked)}
+                    disabled={busy !== null}
+                    className="mt-0.5 h-4 w-4 rounded text-deep-violet focus:ring-deep-violet/40"
+                  />
+                  <span>
+                    <span className="block text-[13px] font-semibold text-ink dark:text-fog">
+                      Auto-post the updated reply
+                      {bulk?.varies.has("editedAutopost") ? <VariesBadge /> : null}
+                    </span>
+                    <span className="block text-[11px] text-ink/45 dark:text-fog/45">
+                      Off = the updated reply waits for your approval (default). On = it posts automatically, still respecting your approval mode and minimum rating.
+                    </span>
+                  </span>
+                </label>
+                <button
+                  onClick={() => {
+                    const patch = { edited_review_autopost: editedAutopost };
+                    if (!isBulk) {
+                      void saveCfg(patch, "Edited-review preference saved.", "editedReview");
+                      return;
+                    }
+                    requestBulkSave(
+                      "Apply edited-review preference to all branches?",
+                      [`Edited-review replies → ${editedAutopost ? "auto-post" : "wait for approval"}`],
+                      () => runBulkCfg("Edited reviews", patch),
+                      "editedReview",
+                      (ids) => runBulkCfg("Edited reviews", patch, ids),
+                    );
+                  }}
+                  disabled={busy !== null}
+                  className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                >
+                  {busy === "editedReview" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save"}
                 </button>
               </Section>
 

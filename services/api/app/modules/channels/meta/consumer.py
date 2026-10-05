@@ -29,6 +29,87 @@ from .models import MetaAsset
 
 logger = logging.getLogger(__name__)
 
+
+async def _upsert_whatsapp_profile_name(
+    db, tenant_id: str, phone: str, name: str | None
+) -> None:
+    """Cache the free profile name every WhatsApp webhook carries."""
+    from datetime import datetime, timezone
+
+    from ..models import ContactProfile
+
+    if not phone or not name:
+        return
+    row = (
+        await db.execute(
+            select(ContactProfile).where(
+                ContactProfile.tenant_id == tenant_id,
+                ContactProfile.platform == "whatsapp",
+                ContactProfile.contact_id == phone,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        db.add(ContactProfile(
+            tenant_id=tenant_id,
+            platform="whatsapp",
+            contact_id=phone,
+            name=name[:120],
+            profile_fetched_at=datetime.now(timezone.utc),
+        ))
+    elif row.name != name[:120]:
+        row.name = name[:120]
+        db.add(row)
+
+
+async def _refresh_instagram_profile(
+    db, tenant_id: str, adapter, page_token: str, igsid: str
+) -> str | None:
+    """Upsert the Instagram contact cache; Graph read only when stale.
+
+    Avatar URLs are temporary CDN links (they expire), so the profile is
+    re-fetched once a week on inbound traffic. Returns the best display
+    name (name, then username) or None.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from ..models import ContactProfile
+
+    row = (
+        await db.execute(
+            select(ContactProfile).where(
+                ContactProfile.tenant_id == tenant_id,
+                ContactProfile.platform == "instagram",
+                ContactProfile.contact_id == igsid,
+            )
+        )
+    ).scalar_one_or_none()
+    fetched_at = row.profile_fetched_at if row else None
+    stale = (
+        fetched_at is None
+        or fetched_at < datetime.now(timezone.utc) - timedelta(days=7)
+    )
+    if stale:
+        fetched = await adapter.get_contact_profile(page_token, igsid)
+        if row is None:
+            row = ContactProfile(
+                tenant_id=tenant_id,
+                platform="instagram",
+                contact_id=igsid,
+            )
+            db.add(row)
+        if fetched.get("name"):
+            row.name = fetched["name"][:120]
+        if fetched.get("username"):
+            row.username = fetched["username"][:120]
+        if fetched.get("profile_pic"):
+            row.avatar_url = fetched["profile_pic"][:1024]
+        row.profile_fetched_at = datetime.now(timezone.utc)
+        db.add(row)
+    if row is None:
+        return None
+    return row.name or row.username
+
 TOPIC = "meta-events"
 GROUP_ID = "meta-events-replier"
 
@@ -246,6 +327,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 contact_phone=from_wa or None,
                 contact_name=data.get("profile_name") or None,
             )
+        )
+        # Cache the free profile name for the inbox/contacts lists.
+        await _upsert_whatsapp_profile_name(
+            db, tenant_id, from_wa, data.get("profile_name")
         )
         # The customer wrote again: any pending one-shot follow-up closes —
         # nothing is owed anymore.
@@ -524,6 +609,10 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             contact_phone=from_wa or None,
             contact_name=data.get("profile_name") or None,
         ))
+        # History-synced contacts feed the inbox lists like live ones do.
+        await _upsert_whatsapp_profile_name(
+            db, tenant_id, from_wa, data.get("profile_name")
+        )
         await db.commit()
 
 
@@ -779,23 +868,25 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         # like WhatsApp: failure here changes nothing downstream.
         await adapter.send_typing_indicator(page_id, page_token, igsid)
 
-        # Best-effort contact name so the inbox shows a person, not a bare
-        # IGSID. One Graph read on the inbound message, never blocking.
+        # Best-effort contact profile so the inbox shows a person with a
+        # face, not a bare IGSID. Cached in contact_profiles; the Graph
+        # read happens only when the row is missing or stale (avatar URLs
+        # are temporary CDN links — refreshed weekly on inbound traffic).
         if text:
-            profile = await adapter.get_contact_profile(page_token, igsid)
-            name = profile.get("name") or profile.get("username")
-            if name:
-                row = (
-                    await db.execute(
-                        select(ChannelMessage).where(
-                            ChannelMessage.platform_message_id == mid,
-                        )
+            name = await _refresh_instagram_profile(
+                db, tenant_id, adapter, page_token, igsid
+            )
+            row = (
+                await db.execute(
+                    select(ChannelMessage).where(
+                        ChannelMessage.platform_message_id == mid,
                     )
-                ).scalar_one_or_none()
-                if row is not None and not row.contact_name:
-                    row.contact_name = name[:120]
-                    db.add(row)
-                    await db.commit()
+                )
+            ).scalar_one_or_none()
+            if row is not None and not row.contact_name and name:
+                row.contact_name = name[:120]
+                db.add(row)
+            await db.commit()
 
         try:
             reply = await _generate_reply(

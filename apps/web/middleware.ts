@@ -58,7 +58,9 @@ export function middleware(request: NextRequest) {
     // API host: serves the proxied Meta SDK script (cross-origin script tag).
     `script-src 'self' ${apiUrl} ${gsi}${devSdk}${scriptExtras}`,
     `style-src 'self' 'unsafe-inline' ${gsi}`,
-    `img-src 'self' data: blob: ${gsi} https://www.gstatic.com`,
+    // Contact avatars come straight from Meta's CDNs (Instagram profile_pic,
+    // Messenger lookaside) — temporary links by design, refreshed weekly.
+    `img-src 'self' data: blob: ${gsi} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com`,
     "font-src 'self' data:",
     // Meta SDK subresources (graph calls, dialog/popup channel frames).
     `connect-src 'self' ${apiUrl} ${gsi} https://graph.facebook.com https://connect.facebook.net`,

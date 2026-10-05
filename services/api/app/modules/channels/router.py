@@ -912,6 +912,7 @@ def _config_response(config: AutoReplyConfig) -> AutoReplyConfigResponse:
         min_rating_auto=config.min_rating_auto,
         model=config.model,
         approval_mode=config.approval_mode,
+        edited_review_autopost=bool(config.edited_review_autopost),
         custom_instructions=config.custom_instructions,
         dialect=config.dialect or "auto",
         reply_language=config.reply_language or "match",
@@ -986,6 +987,8 @@ async def update_autoreply_config(
             config.model = body.model[:100]
     if body.approval_mode is not None:
         config.approval_mode = body.approval_mode
+    if body.edited_review_autopost is not None:
+        config.edited_review_autopost = body.edited_review_autopost
     if body.custom_instructions is not None:
         config.custom_instructions = body.custom_instructions.strip()[:2000] or None
     if body.dialect is not None:

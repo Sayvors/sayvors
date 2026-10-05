@@ -143,10 +143,11 @@ class InstagramAdapter(MetaProviderAdapter):
             return False
 
     async def get_contact_profile(self, page_token: str, igsid: str) -> dict:
-        """Best-effort name/username for the inbox — {} on any failure."""
+        """Best-effort name/username/avatar for the inbox — {} on any failure."""
         try:
             resp = await self._graph(
-                "GET", f"/{igsid}", page_token, params={"fields": "name,username"},
+                "GET", f"/{igsid}", page_token,
+                params={"fields": "name,username,profile_pic"},
             )
             return resp.json() or {}
         except MetaAPIError:
