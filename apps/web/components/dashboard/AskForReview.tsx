@@ -20,15 +20,15 @@ interface BusinessProfile {
   reviewUrl: string;
 }
 
+interface ContactGroup {
+  id: string;
+  name: string;
+  contactIds: string[];
+}
+
 // Real contacts come from the inbox: every customer with a conversation on
 // WhatsApp, Instagram or Messenger shows up here.
 const CONTACT_PLATFORMS = ["whatsapp", "instagram", "facebook"];
-
-const DUMMY_BUSINESSES: BusinessProfile[] = [
-  { id: "biz-1", name: "Sayvors Company Main Branch - Al Malqa", reviewUrl: "https://www.google.com/maps/search/?api=1&query=Sayvors+Al+Malqa" },
-  { id: "biz-2", name: "Sayvors Company - Olaya Branch", reviewUrl: "https://www.google.com/maps/search/?api=1&query=Sayvors+Olaya" },
-  { id: "biz-3", name: "Sayvors Company - Diplomatic Quarter", reviewUrl: "https://www.google.com/maps/search/?api=1&query=Sayvors+Diplomatic+Quarter" },
-];
 
 const REVIEW_MESSAGE = "Hi! We hope you enjoyed your experience with us. Would you mind leaving us a quick review? It really helps our business grow. Thank you!";
 
@@ -39,6 +39,16 @@ const PLATFORM_META: Record<string, { label: string; color: string; bg: string }
 };
 
 export default function AskForReview() {
+  const [businesses, setBusinesses] = useState<BusinessProfile[]>([]);
+  const [groups, setGroups] = useState<ContactGroup[]>(() => {
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem("sayvors.contactGroups") : null;
+      return raw ? (JSON.parse(raw) as ContactGroup[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [newGroupName, setNewGroupName] = useState("");
   const [activeChannel, setActiveChannel] = useState<ReviewChannel | null>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
@@ -47,6 +57,32 @@ export default function AskForReview() {
   const [contacts, setContacts] = useState<PlatformContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(true);
   const [contactSearch, setContactSearch] = useState("");
+  const [whatsappSearch, setWhatsappSearch] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiFetch("/api/v1/integrations/localith/connections");
+        if (cancelled) return;
+        const conns = (Array.isArray(data) ? data : (data.connections ?? [])) as {
+          id?: string; listing_id?: string | null; listing_name?: string | null; website_url?: string | null;
+        }[];
+        setBusinesses(
+          conns
+            .filter((c) => c.listing_id || c.id)
+            .map((c) => ({
+              id: c.listing_id ?? c.id!,
+              name: c.listing_name ?? "Location",
+              reviewUrl: c.website_url ?? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.listing_name ?? "")}`,
+            }))
+        );
+      } catch {
+        if (!cancelled) setBusinesses([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,9 +145,27 @@ export default function AskForReview() {
     [contacts]
   );
 
+  const visibleWhatsappContacts = useMemo(() => {
+    const q = whatsappSearch.trim().toLowerCase();
+    if (!q) return whatsappContacts;
+    return whatsappContacts.filter(
+      (c) => c.name.toLowerCase().includes(q) || c.number.toLowerCase().includes(q)
+    );
+  }, [whatsappContacts, whatsappSearch]);
+
+  // Contacts panel groups the full list by platform instead of one flat list.
+  const groupedContacts = useMemo(() => {
+    if (platformTab !== "all") return null;
+    const groups: Record<string, PlatformContact[]> = { whatsapp: [], instagram: [], facebook: [] };
+    for (const c of searchableContacts) {
+      (groups[c.platform] ??= []).push(c);
+    }
+    return groups;
+  }, [searchableContacts, platformTab]);
+
   const allContactsSelected = filteredContacts.length > 0 && filteredContacts.every((c) => selectedContactIds.has(c.id));
-  const allWhatsAppSelected = whatsappContacts.length > 0 && whatsappContacts.every((c) => selectedContactIds.has(c.id));
-  const allBusinessesSelected = DUMMY_BUSINESSES.length > 0 && DUMMY_BUSINESSES.every((b) => selectedBusinessIds.has(b.id));
+  const allWhatsAppSelected = visibleWhatsappContacts.length > 0 && visibleWhatsappContacts.every((c) => selectedContactIds.has(c.id));
+  const allBusinessesSelected = businesses.length > 0 && businesses.every((b) => selectedBusinessIds.has(b.id));
 
   const toggleAllContacts = (list: PlatformContact[] = filteredContacts) => {
     const every = list.length > 0 && list.every((c) => selectedContactIds.has(c.id));
@@ -126,7 +180,7 @@ export default function AskForReview() {
     if (allBusinessesSelected) {
       setSelectedBusinessIds(new Set());
     } else {
-      setSelectedBusinessIds(new Set(DUMMY_BUSINESSES.map((b) => b.id)));
+      setSelectedBusinessIds(new Set(businesses.map((b) => b.id)));
     }
   };
 
@@ -167,6 +221,31 @@ export default function AskForReview() {
       if (c.platform === "whatsapp") {
         handleWhatsAppSend(c.number);
       }
+    }
+  };
+
+  const saveGroups = (next: ContactGroup[]) => {
+    setGroups(next);
+    try {
+      localStorage.setItem("sayvors.contactGroups", JSON.stringify(next));
+    } catch {}
+  };
+
+  const createGroup = () => {
+    const name = newGroupName.trim();
+    if (!name || selectedContactIds.size === 0) return;
+    saveGroups([...groups, { id: crypto.randomUUID(), name, contactIds: [...selectedContactIds] }]);
+    setNewGroupName("");
+  };
+
+  const deleteGroup = (id: string) => saveGroups(groups.filter((g) => g.id !== id));
+
+  const selectGroup = (g: ContactGroup) => setSelectedContactIds(new Set(g.contactIds));
+
+  const sendGroup = (g: ContactGroup) => {
+    for (const id of g.contactIds) {
+      const c = contacts.find((c) => c.id === id);
+      if (c && c.platform === "whatsapp") handleWhatsAppSend(c.number);
     }
   };
 
@@ -248,7 +327,7 @@ export default function AskForReview() {
           Select business for review
         </p>
         <div className="space-y-1.5">
-          {DUMMY_BUSINESSES.map((biz) => (
+          {businesses.map((biz) => (
             <label
               key={biz.id}
               className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg bg-white px-3 py-2 transition hover:bg-ink/[0.02]"
@@ -345,13 +424,20 @@ export default function AskForReview() {
                 WhatsApp contacts
               </p>
               <button
-                onClick={() => toggleAllContacts(whatsappContacts)}
+                onClick={() => toggleAllContacts(visibleWhatsappContacts)}
                 className="text-[10px] font-bold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40"
               >
                 {allWhatsAppSelected ? "Deselect all" : "Select all"}
               </button>
             </div>
-            {contactList(whatsappContacts, "text-emerald-600", false)}
+            <input
+              type="search"
+              placeholder="Search WhatsApp contacts…"
+              value={whatsappSearch}
+              onChange={(e) => setWhatsappSearch(e.target.value)}
+              className="input-field mb-2 w-full"
+            />
+            {contactList(visibleWhatsappContacts, "text-emerald-600", false)}
             {selectedContactIds.size > 0 && (
               <button
                 onClick={handleSendSelected}
@@ -417,6 +503,41 @@ export default function AskForReview() {
             ))}
           </div>
 
+          <div className="mt-4 rounded-lg border border-ink/[0.06] bg-white p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Contact groups</p>
+            <div className="mt-2 flex gap-2">
+              <input
+                type="text"
+                placeholder="Group name"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                className="input-field flex-1"
+              />
+              <button
+                onClick={createGroup}
+                disabled={!newGroupName.trim() || selectedContactIds.size === 0}
+                className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-40"
+              >
+                Save group
+              </button>
+            </div>
+            <p className="mt-1 text-[10px] text-ink/40">Select contacts above, then save them as a group.</p>
+            {groups.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {groups.map((g) => (
+                  <li key={g.id} className="flex items-center justify-between rounded-lg bg-ink/[0.02] px-3 py-2">
+                    <span className="text-[12px] font-semibold text-ink">{g.name} · {g.contactIds.length}</span>
+                    <span className="flex gap-2 text-[10px] font-bold">
+                      <button onClick={() => selectGroup(g)} className="text-deep-violet hover:underline">Load</button>
+                      <button onClick={() => sendGroup(g)} className="text-emerald-600 hover:underline">Send</button>
+                      <button onClick={() => deleteGroup(g.id)} className="text-red-500 hover:underline">Delete</button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="mt-3">
             <div className="mb-1.5 flex items-center justify-between">
               <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">
@@ -429,7 +550,22 @@ export default function AskForReview() {
                 {allContactsSelected ? "Deselect all" : "Select all"}
               </button>
             </div>
-            {contactList(filteredContacts, "text-deep-violet", true)}
+            {platformTab === "all" && groupedContacts ? (
+              <div className="space-y-3">
+                {(["whatsapp", "instagram", "facebook"] as const).map((p) =>
+                  groupedContacts[p].length > 0 ? (
+                    <div key={p}>
+                      <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-ink/40">
+                        {PLATFORM_META[p]?.label ?? p} · {groupedContacts[p].length}
+                      </p>
+                      {contactList(groupedContacts[p], "text-deep-violet", false)}
+                    </div>
+                  ) : null
+                )}
+              </div>
+            ) : (
+              contactList(filteredContacts, "text-deep-violet", true)
+            )}
             {selectedContactIds.size > 0 && (
               <button
                 onClick={handleSendSelected}
