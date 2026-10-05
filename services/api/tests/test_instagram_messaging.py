@@ -188,6 +188,52 @@ def test_parse_page_message_uses_nested_mid():
     assert events[0]["external_event_id"] == "pg_mid_1"
 
 
+def test_parse_instagram_messaging_array():
+    """Page-linked IG accounts deliver DMs on a top-level entry `messaging`
+    array — no changes/field wrapper. The changes-shape parser read ZERO
+    events from real Meta payloads, so DMs silently 200'd into nothing.
+    (Body captured verbatim from a real webhook.)"""
+    payload = {
+        "object": "instagram",
+        "entry": [{
+            "time": 1791188359762,
+            "id": IG_ID,
+            "messaging": [{
+                "sender": {"id": "1560689862767193"},
+                "recipient": {"id": IG_ID},
+                "timestamp": 1791188359047,
+                "message": {"mid": "aWdfZAG1faXRlbTox", "text": "Hi"},
+            }],
+        }],
+    }
+    provider, events = parse(payload)
+    assert provider == "instagram"
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["external_asset_id"] == IG_ID
+    assert ev["external_event_id"] == "aWdfZAG1faXRlbTox"
+    assert ev["data"]["field"] == "messages"
+    assert ev["data"]["raw"]["sender"]["id"] == "1560689862767193"
+    assert ev["data"]["raw"]["message"]["text"] == "Hi"
+
+
+def test_parse_instagram_messaging_skips_read_receipts():
+    """Entries without a message (reads/deliveries) are history only — they
+    must not produce a message event."""
+    payload = {
+        "object": "instagram",
+        "entry": [{
+            "id": IG_ID,
+            "messaging": [
+                {"sender": {"id": "1"}, "recipient": {"id": IG_ID},
+                 "timestamp": 1791188359047, "read": {"mid": "x"}},
+            ],
+        }],
+    }
+    _, events = parse(payload)
+    assert events == []
+
+
 # ── Consumer: DM in → row + AI reply through the Page ─────
 
 
@@ -219,6 +265,42 @@ async def test_instagram_inbound_stored_and_ai_reply_sent(db, ig_mocks):
     )).scalar_one()
     assert channel.platform_user_id == IG_ID
     assert channel.display_name == "myshop"
+
+
+@pytest.mark.asyncio
+async def test_contact_profile_cached_with_avatar(db, ig_mocks):
+    """name/username/profile_pic land in contact_profiles; a follow-up
+    message within the freshness window skips the Graph read."""
+    from app.modules.channels.models import ContactProfile
+
+    await _seed_ig_stack(db)
+    # The fixture's mock is bound to the adapter class — mutate it in place.
+    ig_mocks.profile.return_value = {
+        "name": "Aisha",
+        "username": "aisha_ig",
+        "profile_pic": "https://cdn.example/aisha.jpg",
+    }
+    await _consumer._process_message(_dm_bytes())
+
+    row = (await db.execute(
+        select(ContactProfile).where(ContactProfile.platform == "instagram")
+    )).scalar_one()
+    assert row.tenant_id == TENANT
+    assert row.contact_id == IGSID
+    assert row.name == "Aisha"
+    assert row.username == "aisha_ig"
+    assert row.avatar_url == "https://cdn.example/aisha.jpg"
+    assert row.profile_fetched_at is not None
+    assert ig_mocks.profile.await_count == 1
+
+    # The cache is fresh — the next message must not re-read the profile.
+    await _consumer._process_message(_dm_bytes(mid="mid_2", raw={
+        "sender": {"id": IGSID},
+        "recipient": {"id": IG_ID},
+        "timestamp": "2026-10-04T00:01:00+00:00",
+        "message": {"mid": "mid_2", "text": "second dm"},
+    }))
+    assert ig_mocks.profile.await_count == 1
 
 
 @pytest.mark.asyncio

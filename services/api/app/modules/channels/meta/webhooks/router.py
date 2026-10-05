@@ -60,6 +60,17 @@ async def ingress(request: Request, db: AsyncSession = Depends(get_db)):
 
     provider, raw_events = _parser.parse(payload)
     logger.info("Meta webhook provider=%s events=%d", provider, len(raw_events))
+    if not raw_events and provider != "whatsapp":
+        # A real payload (entry + changes) that parses to zero events means a
+        # webhook shape the parser doesn't recognize yet — never silently 200
+        # that; Meta delivered something we are dropping on the floor.
+        _entry = (payload.get("entry") or [{}])[0]
+        _changes = (_entry.get("changes") or [{}])
+        _fields = [c.get("field") for c in _changes]
+        logger.warning(
+            "Meta webhook parsed to ZERO events provider=%s object=%s fields=%s body=%.2500s",
+            provider, payload.get("object"), _fields, json.dumps(payload, default=str),
+        )
 
     for raw in raw_events:
         await _store_event(db, provider, payload, raw)
