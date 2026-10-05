@@ -1,6 +1,6 @@
 """Analytics API: business overview, timeseries, enriched-review list."""
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -215,28 +215,78 @@ async def get_timeseries(
         except (TypeError, ValueError):
             return 0
 
-    return TimeseriesResponse(
-        points=[
-            TimeseriesPoint(
-                date=row.date.isoformat(),
-                channel_id=row.channel_id,
-                reviews_count=row.reviews_count,
-                avg_rating=row.avg_rating,
-                positive_count=row.positive_count,
-                neutral_count=row.neutral_count,
-                negative_count=row.negative_count,
-                replies_count=row.replies_count,
-                impressions_maps=row.impressions_maps_desktop + row.impressions_maps_mobile,
-                impressions_search=_extra_int(row, "impressions_search"),
-                website_clicks=row.website_clicks,
-                call_clicks=row.call_clicks,
-                direction_requests=row.direction_requests,
-                messages=_extra_int(row, "messages"),
-                bookings=_extra_int(row, "bookings"),
+    points = [
+        TimeseriesPoint(
+            date=row.date.isoformat(),
+            channel_id=row.channel_id,
+            reviews_count=row.reviews_count,
+            avg_rating=row.avg_rating,
+            positive_count=row.positive_count,
+            neutral_count=row.neutral_count,
+            negative_count=row.negative_count,
+            replies_count=row.replies_count,
+            impressions_maps=row.impressions_maps_desktop + row.impressions_maps_mobile,
+            impressions_search=_extra_int(row, "impressions_search"),
+            website_clicks=row.website_clicks,
+            call_clicks=row.call_clicks,
+            direction_requests=row.direction_requests,
+            messages=0,  # filled from channel_messages below (WhatsApp/IG/FB)
+            bookings=_extra_int(row, "bookings"),
+        )
+        for row in rows
+    ]
+
+    # Real inbox message volume per day from ChannelMessage (the `messages`
+    # extra on analytics rows only carries Embedsocial's reporting, which is
+    # normally empty). Merge so the Messages chart shows actual traffic.
+    from ..channels.models import Channel, ChannelMessage
+
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    chan_ids = (
+        await db.execute(
+            select(Channel.id).where(
+                Channel.user_id == uid,
+                Channel.platform.in_(("whatsapp", "instagram", "facebook")),
             )
-            for row in rows
-        ]
+        )
+    ).scalars().all()
+    msg_stmt = (
+        select(func.date(ChannelMessage.created_at), func.count(ChannelMessage.id))
+        .where(ChannelMessage.channel_id.in_(chan_ids))
+        .where(ChannelMessage.created_at >= cutoff_dt)
+        .group_by(func.date(ChannelMessage.created_at))
     )
+    if channel_id:
+        msg_stmt = msg_stmt.where(ChannelMessage.channel_id == channel_id)
+    per_day: dict[str, int] = {}
+    for d, n in (await db.execute(msg_stmt)).all():
+        per_day[str(d)] = int(n)
+    seen: set[str] = set()
+    for p in points:
+        seen.add(p.date)
+        p.messages = per_day.get(p.date, 0)
+    for d, n in per_day.items():
+        if d not in seen:
+            points.append(
+                TimeseriesPoint(
+                    date=d,
+                    channel_id=channel_id or "all",
+                    reviews_count=0,
+                    avg_rating=0.0,
+                    positive_count=0,
+                    neutral_count=0,
+                    negative_count=0,
+                    replies_count=0,
+                    impressions_maps=0,
+                    website_clicks=0,
+                    call_clicks=0,
+                    direction_requests=0,
+                    messages=n,
+                    bookings=0,
+                )
+            )
+    points.sort(key=lambda p: p.date)
+    return TimeseriesResponse(points=points)
 
 
 @router.get("/reviews/insights", response_model=ReviewInsightListResponse)
