@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -351,6 +351,66 @@ async def get_channel_messages(
 _inbox_router = APIRouter(prefix="/api/v1/inbox", tags=["inbox"])
 
 
+@_inbox_router.websocket("/ws")
+async def inbox_ws(websocket: WebSocket):
+    """Live inbox events for the authenticated user.
+
+    Browsers can't set headers on WebSocket, so the access token travels in
+    the query string and is validated exactly like the HTTP auth dependency.
+    """
+    token = websocket.query_params.get("token") or ""
+    try:
+        import jwt as pyjwt
+
+        payload = pyjwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id or payload.get("type") != "access":
+            raise ValueError("bad token")
+    except Exception:
+        await websocket.close(code=4401)
+        return
+
+    await websocket.accept()
+
+    from .realtime import subscribe_inbox
+
+    try:
+        client, pubsub = await subscribe_inbox(user_id)
+    except Exception:
+        await websocket.close(code=1013)
+        return
+
+    import asyncio
+
+    async def _heartbeat():
+        try:
+            while True:
+                await asyncio.sleep(25)
+                await websocket.send_json({"type": "ping"})
+        except Exception:
+            pass
+
+    beat = asyncio.create_task(_heartbeat())
+    try:
+        async for msg in pubsub.listen():
+            if msg.get("type") != "message" or not msg.get("data"):
+                continue
+            try:
+                await websocket.send_text(msg["data"])
+            except Exception:
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        beat.cancel()
+        try:
+            await pubsub.unsubscribe()
+            await pubsub.close()
+            await client.close()
+        except Exception:
+            pass
+
+
 @_inbox_router.get("/threads", response_model=InboxThreadListResponse)
 async def inbox_threads(
     search: str | None = Query(None, max_length=200),
@@ -434,6 +494,23 @@ async def inbox_send(
         raise HTTPException(status_code=422, detail=message)
 
     failed = msg.status == "failed"
+
+    from .realtime import publish_inbox_event
+
+    await publish_inbox_event(user.id, {
+        "type": "message",
+        "id": msg.id,
+        "channel_id": msg.channel_id,
+        "platform": None,
+        "direction": "outbound",
+        "content": msg.content,
+        "content_type": msg.content_type,
+        "status": msg.status,
+        "contact_phone": msg.contact_phone,
+        "contact_name": msg.contact_name,
+        "created_at": msg.created_at,
+    })
+
     return InboxSendResponse(
         message=ChannelMessageResponse(
             id=msg.id,

@@ -144,6 +144,7 @@ function AttentionQueue() {
   const [editedError, setEditedError] = useState<string | null>(null);
   // Scheduled posts + photos: shown only when something is actually queued.
   const [scheduled, setScheduled] = useState<ScheduledItem[]>([]);
+  const [postStats, setPostStats] = useState<{ published: number; live: number; scheduled: number }>({ published: 0, live: 0, scheduled: 0 });
   const [scheduledTotal, setScheduledTotal] = useState(0);
   const [scheduledOpen, setScheduledOpen] = useState(false);
 
@@ -275,6 +276,9 @@ function AttentionQueue() {
               if (c.listing_id) locNames[c.listing_id] = c.listing_name ?? "Location";
             }
             const sched: ScheduledItem[] = [];
+            let postPublished = 0;
+            let postLive = 0;
+            let postScheduled = 0;
             await Promise.all(locs.map(async (loc) => {
               const lid = loc.listing_id!;
               const [postRows, mediaRows] = await Promise.all([
@@ -297,6 +301,9 @@ function AttentionQueue() {
                 })(),
               ]);
               for (const p of postRows) {
+                postPublished += 1;
+                if (p.status === "published") postLive += 1;
+                if (p.status === "scheduled") postScheduled += 1;
                 if (p.status === "scheduled" && typeof p.scheduled_on === "string") {
                   sched.push({
                     kind: "post", id: String(p.id ?? ""),
@@ -322,7 +329,9 @@ function AttentionQueue() {
             if (!cancelled) {
               setScheduledTotal(sched.length);
               setScheduled(sched.slice(0, 5));
+              setPostStats({ published: postPublished, live: postLive, scheduled: postScheduled });
             }
+
           } catch {
             /* scheduled row hidden on error */
           }
@@ -632,7 +641,24 @@ function AttentionQueue() {
    const editedTitle =
      editedTotal === 1 ? "1 review was edited by its author" : `${editedTotal} reviews were edited by their authors`;
    return (
-    <section
+    <>
+      <Link href="/dashboard/posts-media" aria-label="Open posts and media">
+        <section aria-label="Posts stats" className="rounded-2xl border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-ink/80">
+          <div className="divide-y divide-ink/[0.05] dark:divide-fog/[0.05]">
+            {([
+              { label: "Published", value: postStats.published, tone: "text-ink dark:text-fog" },
+              { label: "Live", value: postStats.live, tone: "text-emerald-600" },
+              { label: "Scheduled", value: postStats.scheduled, tone: "text-deep-violet" },
+            ] as const).map((s) => (
+              <div key={s.label} className="flex items-center justify-between py-1.5 first:pt-0 last:pb-0">
+                <p className="text-[12px] font-semibold text-ink/50 dark:text-fog/50">{s.label}</p>
+                <p className={`text-[16px] font-bold ${s.tone}`}>{s.value}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </Link>
+      <section
       aria-label="Needs attention"
       data-tour="attention"
       className={`rounded-2xl border-2 bg-white/80 p-4 backdrop-blur-sm ${allClear ? "border-emerald-200/60" : "border-white"}`}
@@ -1091,6 +1117,7 @@ function AttentionQueue() {
         </ul>
       )}
     </section>
+    </>
   );
 }
 

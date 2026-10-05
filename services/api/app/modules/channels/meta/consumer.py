@@ -315,8 +315,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         channel = await _channel_for(
             db, tenant_id, phone_number_id, asset.phone
         )
-        db.add(
-            ChannelMessage(
+        row = ChannelMessage(
                 id=str(uuid.uuid4()),
                 channel_id=channel.id,
                 platform_message_id=wamid[:200] or None,
@@ -327,7 +326,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 contact_phone=from_wa or None,
                 contact_name=data.get("profile_name") or None,
             )
-        )
+        db.add(row)
         # Cache the free profile name for the inbox/contacts lists.
         await _upsert_whatsapp_profile_name(
             db, tenant_id, from_wa, data.get("profile_name")
@@ -338,6 +337,22 @@ async def _handle_message_received(event: dict, data: dict) -> None:
 
         await clear_awaiting(db, channel.id, from_wa)
         await db.commit()
+
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "whatsapp",
+            "direction": "inbound",
+            "content": row.content,
+            "content_type": row.content_type,
+            "status": row.status,
+            "contact_phone": row.contact_phone,
+            "contact_name": row.contact_name,
+            "created_at": row.created_at,
+        })
 
         token = decrypt_connection_token(asset.connection) if asset.connection else None
         if not token:
@@ -462,8 +477,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         from_wa[-6:], type(e).__name__, str(e)[:200],
                     )
                 else:
-                    db.add(
-                        ChannelMessage(
+                    row = ChannelMessage(
                             id=str(uuid.uuid4()),
                             channel_id=channel.id,
                             platform_message_id=provider_msg_id[:200] or None,
@@ -473,7 +487,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             status="sent",
                             contact_phone=from_wa or None,
                         )
-                    )
+                    db.add(row)
                     # The voice note is the remedy for the confusion that
                     # triggered it — once delivered, the AI goes back to
                     # text mode. Fresh confusion (after this note) starts
@@ -481,6 +495,20 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     # older than this note for the same reason.
                     await clear_confusion(db, channel.id, from_wa)
                     await db.commit()
+                    from ...channels.realtime import publish_inbox_event as _pub
+
+                    await _pub(tenant_id, {
+                        "type": "message",
+                        "id": row.id,
+                        "channel_id": channel.id,
+                        "platform": "whatsapp",
+                        "direction": "outbound",
+                        "content": row.content,
+                        "content_type": row.content_type,
+                        "status": "sent",
+                        "contact_phone": row.contact_phone,
+                        "created_at": row.created_at,
+                    })
                     logger.info(
                         "WhatsApp AI voice note sent to=+%s wamid=%s "
                         "language=%s provider_msg=%s",
@@ -533,8 +561,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     await db.commit()
                     # Later parts would land without their context — stop.
                     return
-                db.add(
-                    ChannelMessage(
+                row = ChannelMessage(
                         id=str(uuid.uuid4()),
                         channel_id=channel.id,
                         platform_message_id=provider_msg_id[:200] or None,
@@ -543,8 +570,22 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         status="sent",
                         contact_phone=from_wa or None,
                     )
-                )
+                db.add(row)
                 await db.commit()
+                from ...channels.realtime import publish_inbox_event as _pub2
+
+                await _pub2(tenant_id, {
+                    "type": "message",
+                    "id": row.id,
+                    "channel_id": channel.id,
+                    "platform": "whatsapp",
+                    "direction": "outbound",
+                    "content": row.content,
+                    "content_type": "text",
+                    "status": "sent",
+                    "contact_phone": row.contact_phone,
+                    "created_at": row.created_at,
+                })
                 if index < len(messages) - 1:
                     await asyncio.sleep(_MESSAGE_GAP_SECONDS)
 
@@ -598,7 +639,7 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             return
 
         channel = await _channel_for(db, tenant_id, phone_number_id, asset.phone)
-        db.add(ChannelMessage(
+        row = ChannelMessage(
             id=str(uuid.uuid4()),
             channel_id=channel.id,
             platform_message_id=wamid[:200] or None,
@@ -608,12 +649,28 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             status="delivered",
             contact_phone=from_wa or None,
             contact_name=data.get("profile_name") or None,
-        ))
+        )
+        db.add(row)
         # History-synced contacts feed the inbox lists like live ones do.
         await _upsert_whatsapp_profile_name(
             db, tenant_id, from_wa, data.get("profile_name")
         )
         await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "whatsapp",
+            "direction": "inbound",
+            "content": row.content,
+            "content_type": row.content_type,
+            "status": "delivered",
+            "contact_phone": row.contact_phone,
+            "contact_name": row.contact_name,
+            "created_at": row.created_at,
+        })
 
 
 async def _handle_message_echo(event: dict, data: dict) -> None:
@@ -647,7 +704,7 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
             return
 
         channel = await _channel_for(db, tenant_id, phone_number_id, asset.phone)
-        db.add(ChannelMessage(
+        row = ChannelMessage(
             id=str(uuid.uuid4()),
             channel_id=channel.id,
             platform_message_id=wamid[:200] or None,
@@ -658,8 +715,23 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
             # An echo is a message the business sent from the WhatsApp app, so
             # `to` is the customer — the same contact the thread is keyed on.
             contact_phone=to_wa or None,
-        ))
+        )
+        db.add(row)
         await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "whatsapp",
+            "direction": "outbound",
+            "content": row.content,
+            "content_type": row.content_type,
+            "status": row.status,
+            "contact_phone": row.contact_phone,
+            "created_at": row.created_at,
+        })
 
 
 async def _handle_smb_contacts(event: dict, data: dict) -> None:
@@ -743,6 +815,20 @@ async def _handle_message_status(event: dict, data: dict) -> None:
             row.error = json.dumps(errors)[:500]
         db.add(row)
         await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        from ..models import Channel as _Ch
+
+        ch = await db.get(_Ch, row.channel_id)
+        if ch is not None:
+            await publish_inbox_event(ch.user_id, {
+                "type": "status",
+                "message_id": row.id,
+                "channel_id": row.channel_id,
+                "contact_phone": row.contact_phone,
+                "status": row.status,
+                "error": row.error,
+            })
 
 
 async def _handle_instagram_echo(event: dict, data: dict) -> None:
@@ -842,7 +928,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             db, tenant_id, ig_account_id, asset.username,
             platform="instagram",
         )
-        db.add(ChannelMessage(
+        row = ChannelMessage(
             id=str(uuid.uuid4()),
             channel_id=channel.id,
             platform_message_id=mid[:200] or None,
@@ -851,8 +937,23 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             content_type="text",
             status="delivered",
             contact_phone=igsid or None,
-        ))
+        )
+        db.add(row)
         await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "instagram",
+            "direction": "inbound",
+            "content": row.content,
+            "content_type": row.content_type,
+            "status": row.status,
+            "contact_phone": row.contact_phone,
+            "created_at": row.created_at,
+        })
 
         page_id, page_token = await get_instagram_page_credentials(db, asset)
         if not page_id or not page_token:
@@ -949,7 +1050,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 await db.commit()
                 # Later parts would land without their context — stop.
                 return
-            db.add(ChannelMessage(
+            row = ChannelMessage(
                 id=str(uuid.uuid4()),
                 channel_id=channel.id,
                 platform_message_id=provider_msg_id[:200] or None,
@@ -957,8 +1058,26 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 content=part,
                 status="sent",
                 contact_phone=igsid or None,
-            ))
+            )
+            db.add(row)
             await db.commit()
+            try:
+                from ...channels.realtime import publish_inbox_event as _pub3
+
+                await _pub3(tenant_id, {
+                    "type": "message",
+                    "id": row.id,
+                    "channel_id": channel.id,
+                    "platform": "instagram",
+                    "direction": "outbound",
+                    "content": row.content,
+                    "content_type": "text",
+                    "status": "sent",
+                    "contact_phone": row.contact_phone,
+                    "created_at": row.created_at,
+                })
+            except Exception:
+                pass
             if index < len(messages) - 1:
                 await asyncio.sleep(_MESSAGE_GAP_SECONDS)
 

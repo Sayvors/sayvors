@@ -7,10 +7,12 @@ import {
   fetchInboxThreads,
   fetchThreadMessages,
   sendInboxMessage,
+  UNKNOWN_THREAD_KEY,
   type InboxMessage,
   type InboxThread,
 } from "@/lib/api-inbox";
 import { platformMeta } from "@/lib/platform";
+import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
 
 type Filter = "all" | "unread" | "unknown";
 
@@ -191,6 +193,76 @@ export default function InboxPage() {
   const requestedKey = useRef<string | null>(null);
   const target = effectiveSelected;
   const targetKey = target ? `${target.channel_id}:${target.key}` : null;
+  const targetKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    targetKeyRef.current = targetKey;
+  }, [targetKey]);
+
+  useInboxRealtime((e: InboxRealtimeEvent) => {
+    if (e.type === "status" && e.message_id) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === e.message_id && e.status
+            ? { ...m, status: e.status, error: e.error ?? m.error }
+            : m,
+        ),
+      );
+      return;
+    }
+    if (e.type !== "message" || !e.channel_id || !e.id) return;
+    const contactKey = e.contact_phone ?? UNKNOWN_THREAD_KEY;
+    const composite = `${e.channel_id}:${contactKey}`;
+    const open = composite === targetKeyRef.current;
+    const msg: InboxMessage = {
+      id: e.id,
+      channel_id: e.channel_id,
+      platform_message_id: null,
+      direction: e.direction ?? "inbound",
+      content: e.content ?? "",
+      content_type: e.content_type ?? "text",
+      status: e.status ?? "delivered",
+      error: e.error ?? null,
+      contact_phone: e.contact_phone ?? null,
+      contact_name: e.contact_name ?? null,
+      created_at: e.created_at ?? new Date().toISOString(),
+    };
+    if (open) {
+      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+    }
+    setThreads((prev) => {
+      const idx = prev.findIndex((t) => `${t.channel_id}:${t.key}` === composite);
+      if (idx === -1) {
+        const fresh: InboxThread = {
+          key: contactKey,
+          contact_phone: e.contact_phone ?? null,
+          display_name: e.contact_name ?? e.contact_phone ?? null,
+          username: null,
+          avatar_url: null,
+          channel_id: e.channel_id!,
+          channel_name: null,
+          platform: e.platform ?? null,
+          last_message: msg.content,
+          last_message_at: msg.created_at,
+          last_direction: msg.direction,
+          message_count: 1,
+          unread: msg.direction === "inbound" && !open ? 1 : 0,
+          is_unknown: !e.contact_phone,
+        };
+        return [fresh, ...prev];
+      }
+      const t = prev[idx];
+      const updated: InboxThread = {
+        ...t,
+        display_name: t.display_name ?? e.contact_name ?? null,
+        last_message: msg.content,
+        last_message_at: msg.created_at,
+        last_direction: msg.direction,
+        message_count: t.message_count + 1,
+        unread: msg.direction === "inbound" && !open ? t.unread + 1 : open ? 0 : t.unread,
+      };
+      return [updated, ...prev.filter((_, i) => i !== idx)];
+    });
+  });
 
   useEffect(() => {
     requestedKey.current = targetKey;
