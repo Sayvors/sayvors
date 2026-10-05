@@ -98,23 +98,61 @@ async def list_connections(
 @router.post("/{provider}/connect")
 async def start_connect(
     provider: str,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create an OAuth transaction; return the provider auth entry."""
+    origin = _request_origin(request)
     try:
-        return await _service.start_connect(db, user.id, provider)
+        return await _service.start_connect(
+            db, user.id, provider, {"frontend_origin": origin} if origin else None
+        )
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
     except MetaAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
 
-def _frontend_base(next_path: str | None) -> str:
-    base = settings.FRONTEND_URL.rstrip("/") + "/dashboard/channels"
+def _frontend_base(next_path: str | None, origin: str | None = None) -> str:
+    """Where the browser that started this flow should land after the OAuth.
+
+    The tenant may browse the app from any origin that proxies the API
+    (localhost in dev, a tunnel, the deployed domain) — FRONTEND_URL only
+    names one of them, so the connect call records the origin it was made
+    from and the callback returns the tenant to THAT origin.
+    """
+    base_url = (origin or settings.FRONTEND_URL).rstrip("/")
+    base = f"{base_url}/dashboard/channels"
     if next_path and _SAFE_NEXT.fullmatch(next_path):
-        base = settings.FRONTEND_URL.rstrip("/") + next_path
+        base = f"{base_url}{next_path}"
     return base
+
+
+def _request_origin(request: Request) -> str | None:
+    """The web origin behind this request, when it looks sane.
+
+    Same-origin POSTs carry Origin; proxied hops carry x-forwarded-host.
+    Only a bare scheme://host is ever accepted — no path, query or fragment —
+    so a crafted header cannot turn the OAuth return into a redirect
+    anywhere but a site root (and only for the tenant's own transaction).
+    """
+    from urllib.parse import urlsplit
+
+    candidate = request.headers.get("origin")
+    if not candidate:
+        forwarded_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+        if forwarded_host:
+            scheme = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip() or "https"
+            candidate = f"{scheme}://{forwarded_host}"
+    if not candidate:
+        return None
+    parts = urlsplit(candidate)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return None
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        return None
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 _FB_SDK_URL = "https://connect.facebook.net/en_US/sdk.js"
@@ -257,8 +295,11 @@ async def oauth_callback(
     if txn is None:
         return RedirectResponse(f"{base}?meta_error=invalid_state")
     tenant_id = txn.tenant_id
-    next_path = (txn.transaction_metadata or {}).get("next")
-    base = _frontend_base(next_path)
+    # Return the tenant to the origin their own connect call came from.
+    base = _frontend_base(
+        (txn.transaction_metadata or {}).get("next"),
+        (txn.transaction_metadata or {}).get("frontend_origin"),
+    )
 
     adapter = _service.get_adapter(provider)
     try:
@@ -271,9 +312,22 @@ async def oauth_callback(
         return RedirectResponse(f"{base}?meta_error=token_exchange_failed")
 
     if provider == "instagram":
-        # IG uses the Facebook connection's credentials; link to it.
+        # IG messaging rides the parent Page's token, so the Facebook row
+        # holds the working credential. The instagram row is the marker the
+        # channels page reads — without it the IG card offers Connect forever.
         conn = await _service.store_connection(
             db, tenant_id, "facebook", credentials
+        )
+        await _service.store_connection(
+            db,
+            tenant_id,
+            "instagram",
+            {
+                "access_token": credentials.get("access_token", ""),
+                "connection_type": "via_facebook",
+                "business_id": credentials.get("business_id"),
+            },
+            scopes=list(credentials.get("scopes", []) or []),
         )
         return RedirectResponse(
             f"{base}?meta_connected=facebook&next=instagram_select"

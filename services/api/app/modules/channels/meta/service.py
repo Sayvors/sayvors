@@ -57,7 +57,26 @@ async def list_connections(db: AsyncSession, tenant_id: str) -> list[MetaConnect
             .order_by(MetaConnection.created_at)
         )
     ).scalars().all()
-    return list(rows)
+    rows = list(rows)
+    providers = {r.provider for r in rows}
+    # Instagram never gets its own Login dialog — it rides the Facebook one,
+    # and only the callback/discovery creates its marker row. Tenants who
+    # connected before that marker existed (or mid-flow) would otherwise see
+    # the IG card offering Connect forever. Synthesize; never persist here.
+    # A real row in ANY state (even revoked) suppresses this.
+    fb = next((r for r in rows if r.provider == "facebook"), None)
+    if fb is not None and "instagram" not in providers:
+        marker = MetaConnection(
+            id=f"synthetic-{fb.id}",
+            tenant_id=tenant_id,
+            provider="instagram",
+            connection_type="via_facebook",
+            status=fb.status,
+            scopes=list(fb.scopes or []),
+            created_at=fb.created_at,
+        )
+        rows.append(marker)
+    return rows
 
 
 async def get_connection(

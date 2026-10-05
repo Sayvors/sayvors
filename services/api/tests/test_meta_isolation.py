@@ -111,7 +111,8 @@ async def test_disconnect_other_tenant_noop(db):
 
 
 async def test_http_connections_scoped(client, engine, db):
-    """HTTP tenant sees only their own connections."""
+    """HTTP tenant sees only their own connections — plus the instagram
+    marker synthesized from their facebook row (never anyone else's)."""
     db.add(MetaConnection(
         id=str(uuid.uuid4()), tenant_id="test-user-0000-0000-0000-000000000001",
         provider="facebook", access_token_encrypted="x", status="active",
@@ -125,7 +126,10 @@ async def test_http_connections_scoped(client, engine, db):
     resp = client.get("/api/v1/meta/connections", headers={"host": "localhost"})
     assert resp.status_code == 200
     providers = [c["provider"] for c in resp.json()["connections"]]
-    assert providers == ["facebook"]
+    # facebook + the instagram marker; the other tenant's row never leaks.
+    assert providers == ["facebook", "instagram"]
+    assert all(c["connection_type"] == "oauth" or c["provider"] == "instagram"
+               for c in resp.json()["connections"])
 
 
 # ── WhatsApp session-level tenant binding ─────────────────
