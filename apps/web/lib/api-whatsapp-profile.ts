@@ -10,8 +10,9 @@ export type WaProfile = {
   websites: string[];
   vertical: string | null;
   profile_picture_url: string | null;
-  synced_at: string | null;
-  stale: boolean;
+  hours: Record<string, { start: string; end: string }[]> | null;
+  synced_at?: string | null;
+  stale?: boolean;
 };
 
 export type WaUsage = {
@@ -32,6 +33,15 @@ export async function saveWaProfile(phoneId: string, patch: Partial<WaProfile>):
   return apiFetch(`/api/v1/meta/whatsapp/${encodeURIComponent(phoneId)}/profile`, {
     method: "PATCH",
     body: JSON.stringify(patch),
+  });
+}
+
+export async function uploadWaPhoto(phoneId: string, file: File): Promise<WaProfile> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return apiFetch(`/api/v1/meta/whatsapp/${encodeURIComponent(phoneId)}/profile-photo`, {
+    method: "POST",
+    body: fd,
   });
 }
 
@@ -67,7 +77,23 @@ export function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export const WA_VERTICALS = [
-  "Restaurant", "Retail", "Services", "Health", "Education", "Automotive",
-  "Beauty", "Real Estate", "Travel", "Other",
+/** Meta's vertical enum for whatsapp_business_profile → display label. */
+export const WA_VERTICALS: { value: string; label: string }[] = [
+  { value: "RESTAURANT", label: "Restaurant" },
+  { value: "RETAIL", label: "Retail" },
+  { value: "PROF_SERVICES", label: "Services" },
+  { value: "HEALTH", label: "Health & Medical" },
+  { value: "EDU", label: "Education" },
+  { value: "AUTO", label: "Automotive" },
+  { value: "BEAUTY", label: "Beauty" },
+  { value: "TRAVEL", label: "Travel" },
+  { value: "GROCERY", label: "Groceries" },
+  { value: "HOTEL", label: "Hotel & Lodging" },
+  { value: "ENTERTAIN", label: "Entertainment" },
+  { value: "FINANCE", label: "Finance" },
+  { value: "EVENT_PLAN", label: "Events" },
+  { value: "NONPROFIT", label: "Nonprofit" },
+  { value: "GOVT", label: "Government" },
+  { value: "ALCOHOL", label: "Alcohol" },
+  { value: "OTHER", label: "Other" },
 ];

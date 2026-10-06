@@ -163,7 +163,7 @@ class WhatsAppAdapter(MetaProviderAdapter):
             f"{graph_base()}/{phone_number_id}/media",
             headers={"Authorization": f"Bearer {token}"},
             data={"messaging_product": "whatsapp", "type": mime_type},
-            files={"file": ("audio", data, mime_type)},
+            files={"file": ("photo", data, mime_type)},
         )
         if resp.status_code >= 400:
             raise MetaAPIError(
@@ -171,6 +171,75 @@ class WhatsAppAdapter(MetaProviderAdapter):
                 resp.status_code,
             )
         return resp.json().get("id", "")
+
+    async def set_profile_photo(
+        self,
+        phone_number_id: str,
+        token: str,
+        data: bytes,
+        mime_type: str,
+        waba_id: str | None = None,
+        file_name: str = "profile.jpg",
+    ) -> None:
+        """Set the business profile photo via the Resumable Upload API.
+
+        The plain /{id}/media endpoint returns a messaging media id, which
+        Graph rejects as `profile_picture_handle` (#131009) — the handle must
+        come from the resumable upload flow: create a session, POST the bytes,
+        then hand the returned `h` to whatsapp_business_profile.
+        """
+        owners = [o for o in (waba_id, settings.META_APP_ID) if o]
+        if not owners:
+            raise MetaAPIError("No WABA or app id available for profile photo upload", 503)
+        session_id = ""
+        last_err: MetaAPIError | None = None
+        for owner in owners:
+            try:
+                resp = await self._graph(
+                    "POST",
+                    f"/{owner}/uploads",
+                    token,
+                    params={
+                        "file_name": file_name,
+                        "file_length": len(data),
+                        "file_type": mime_type,
+                    },
+                )
+                session_id = resp.json().get("id", "")
+                break
+            except MetaAPIError as e:
+                last_err = e
+        if not session_id:
+            raise last_err or MetaAPIError("Upload session creation returned no id", 502)
+
+        # Response id is either `upload:<id>` or the bare id; try both shapes.
+        if session_id.startswith("upload:"):
+            paths = [f"/{session_id}"]
+        else:
+            paths = [f"/upload:{session_id}", f"/{session_id}"]
+        handle = ""
+        for path in paths:
+            try:
+                resp = await self._graph(
+                    "POST",
+                    path,
+                    token,
+                    headers={"file_offset": "0", "Content-Type": mime_type},
+                    content=data,
+                )
+                handle = resp.json().get("h", "")
+                break
+            except MetaAPIError as e:
+                last_err = e
+        if not handle:
+            raise last_err or MetaAPIError("Resumable upload returned no file handle", 502)
+
+        await self._graph(
+            "POST",
+            f"/{phone_number_id}/whatsapp_business_profile",
+            token,
+            json={"messaging_product": "whatsapp", "profile_picture_handle": handle},
+        )
 
     async def send_voice_note(
         self, phone_number_id: str, token: str, to: str, media_id: str,
@@ -266,10 +335,16 @@ class WhatsAppAdapter(MetaProviderAdapter):
             return False, f"graph error {e.status_code}"
         return True, f"{len(resp.json().get('data', []))} WABA(s) visible"
 
+    # `hours` is NOT a Graph param on whatsapp_business_profile (400 #131009);
+    # it is persisted locally in asset_metadata.business_profile instead.
     PROFILE_FIELDS = ("about", "address", "description", "email", "websites", "vertical")
 
     async def get_business_profile(self, phone_number_id: str, token: str) -> dict:
-        """Fetch the WhatsApp business profile for a number."""
+        """Fetch the WhatsApp business profile for a number.
+
+        Graph wraps the profile either as `{data: {...}}` or `{data: [...]}`
+        depending on API version — normalize to a plain dict.
+        """
         resp = await self._graph(
             "GET",
             f"/{phone_number_id}/whatsapp_business_profile",
@@ -277,6 +352,8 @@ class WhatsAppAdapter(MetaProviderAdapter):
             params={"fields": "about,address,description,email,websites,vertical,profile_picture_url"},
         )
         data = resp.json().get("data", {})
+        if isinstance(data, list):
+            data = data[0] if data and isinstance(data[0], dict) else {}
         return data if isinstance(data, dict) else {}
 
     async def set_business_profile(self, phone_number_id: str, token: str, fields: dict) -> dict:

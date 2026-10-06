@@ -60,7 +60,8 @@ export function middleware(request: NextRequest) {
     `style-src 'self' 'unsafe-inline' ${gsi}`,
     // Contact avatars come straight from Meta's CDNs (Instagram profile_pic,
     // Messenger lookaside) — temporary links by design, refreshed weekly.
-    `img-src 'self' data: blob: ${gsi} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com`,
+    // WhatsApp business profile photos are served from pps.whatsapp.net.
+    `img-src 'self' data: blob: ${gsi} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com https://*.whatsapp.net`,
     "font-src 'self' data:",
     // Meta SDK subresources (graph calls, dialog/popup channel frames).
     `connect-src 'self' ${apiUrl} ${gsi} https://graph.facebook.com https://connect.facebook.net`,

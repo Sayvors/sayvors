@@ -59,23 +59,23 @@ export default function NumbersHealth({
 
   return (
     <div className="space-y-3" style={{ fontFamily: '"Segoe UI",Helvetica Neue,Helvetica,Arial,sans-serif' }}>
-      {msg && <p role="status" className="mx-auto max-w-md rounded-lg bg-[#fff3cd] px-4 py-2.5 text-[13px] text-[#664d03] shadow">{msg}</p>}
+      {msg && <p role="status" className="mx-auto max-w-md rounded-lg bg-[var(--wa-warn-bg)] px-4 py-2.5 text-[13px] text-[var(--wa-warn-text)] shadow">{msg}</p>}
       {numbers.map((n) => {
         const state = reg[n.external_asset_id] ?? "idle";
         return (
-          <div key={n.external_asset_id} className={`rounded-lg bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)] ${n.external_asset_id === activeId ? "ring-2 ring-[#00a884]" : ""}`}>
+          <div key={n.external_asset_id} className={`rounded-lg bg-[var(--wa-panel)] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)] ${n.external_asset_id === activeId ? "ring-2 ring-[var(--wa-accent)]" : ""}`}>
             <div className="flex flex-wrap items-center gap-3">
               <span className={`h-2.5 w-2.5 rounded-full ${n.active ? "bg-emerald-500" : "bg-amber-500"}`} />
               <div className="min-w-0 flex-1">
-                <p className="text-[14px] font-bold">{n.phone || n.name || n.external_asset_id}</p>
-                <p className="truncate text-[11px] text-black/45">{n.name || "WhatsApp number"} · {n.status}</p>
+                <p className="text-[14px] font-bold text-[var(--wa-text)]">{n.phone || n.name || n.external_asset_id}</p>
+                <p className="truncate text-[11px] text-[var(--wa-text-2)]">{n.name || "WhatsApp number"} · {n.status}</p>
               </div>
-              <button onClick={revalidate} disabled={busy !== null} className="min-h-11 rounded-xl border border-black/10 px-3 text-[12px] font-semibold disabled:opacity-50">
+              <button onClick={revalidate} disabled={busy !== null} className="min-h-11 rounded-xl border border-[var(--wa-border)] px-3 text-[12px] font-semibold text-[var(--wa-text)] disabled:opacity-50">
                 {busy === "all" ? "Checking…" : "Refresh"}
               </button>
             </div>
             {!n.active && (
-              <div className="mt-3 rounded-xl bg-amber-50 p-3">
+              <div className="mt-3 rounded-xl bg-[var(--wa-warn-bg)] p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     value={pin[n.external_asset_id] ?? ""}
@@ -85,25 +85,25 @@ export default function NumbersHealth({
                     maxLength={6}
                     placeholder="6-digit PIN"
                     aria-label={`PIN for ${n.phone ?? n.external_asset_id}`}
-                    className="min-h-11 w-36 rounded-xl border border-black/10 bg-white px-3 text-[13px] tracking-widest"
+                    className="min-h-11 w-36 rounded-xl border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-3 text-[13px] tracking-widest text-[var(--wa-text)]"
                   />
                   <button
                     onClick={() => register(n.external_asset_id)}
                     disabled={state === "registering"}
-                    className="min-h-11 rounded-full bg-[#00a884] px-5 text-[12px] font-semibold text-white disabled:opacity-50"
+                    className="min-h-11 rounded-full bg-[var(--wa-accent)] px-5 text-[12px] font-semibold text-white disabled:opacity-50"
                   >
                     {state === "registering" ? "Registering…" : "Register"}
                   </button>
                   {state === "success" && (
-                    <span role="status" className="text-[12px] font-semibold text-emerald-700">
+                    <span role="status" className="text-[12px] font-semibold text-[var(--wa-ok-text)]">
                       Registered — this number can send now.
                     </span>
                   )}
                 </div>
                 {state === "error" && regError[n.external_asset_id] && (
-                  <p role="alert" className="mt-2 text-[12px] font-medium text-red-700">{regError[n.external_asset_id]}</p>
+                  <p role="alert" className="mt-2 text-[12px] font-medium text-[var(--wa-danger)]">{regError[n.external_asset_id]}</p>
                 )}
-                <p className="mt-2 text-[11px] text-black/45">
+                <p className="mt-2 text-[11px] text-[var(--wa-warn-text)]">
                   Meta allows re-registration for 14 days after signup; later needs a fresh Embedded Signup.
                 </p>
               </div>

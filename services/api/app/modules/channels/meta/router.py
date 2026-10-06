@@ -4,7 +4,7 @@ import re
 import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +56,33 @@ def discovered_has_number(discovered) -> bool:
     return any(getattr(d, "asset_type", "") == "phone_number" for d in discovered or [])
 
 
+# Meta's whatsapp_business_profile vertical enum. Anything else is a 400 (#100).
+WA_VERTICALS = frozenset({
+    "OTHER", "AUTO", "BEAUTY", "APPAREL", "EDU", "ENTERTAIN", "EVENT_PLAN",
+    "FINANCE", "GROCERY", "GOVT", "HOTEL", "HEALTH", "NONPROFIT",
+    "PROF_SERVICES", "RETAIL", "TRAVEL", "RESTAURANT", "ALCOHOL",
+    "ONLINE_GAMBLING", "PHYSICAL_GAMBLING", "OTC_DRUGS",
+})
+_VERTICAL_ALIASES = {
+    "SERVICES": "PROF_SERVICES", "REAL_ESTATE": "OTHER", "REALTY": "OTHER",
+    "MEDICAL": "HEALTH", "SCHOOL": "EDU", "AUTOMOTIVE": "AUTO",
+    "RESTAURANTS": "RESTAURANT", "RETAILS": "RETAIL",
+}
+
+
+def _normalize_vertical(value: str) -> str:
+    """Map legacy label-style values (\"Restaurant\") to Meta's enum."""
+    v = value.strip().upper().replace(" ", "_").replace("-", "_")
+    if v in WA_VERTICALS:
+        return v
+    if v in _VERTICAL_ALIASES:
+        return _VERTICAL_ALIASES[v]
+    raise HTTPException(
+        status_code=400,
+        detail=f"Invalid category '{value}' — allowed: {', '.join(sorted(WA_VERTICALS))}",
+    )
+
+
 def _persist_profile(asset, data: dict) -> str:
     """Store the profile snapshot on the number asset (DB copy).
 
@@ -84,6 +111,7 @@ def _profile_out(
         websites=data.get("websites") or [],
         vertical=data.get("vertical"),
         profile_picture_url=data.get("profile_picture_url"),
+        hours=data.get("hours"),
         synced_at=synced_at,
         stale=stale,
     )
@@ -664,20 +692,30 @@ async def get_whatsapp_profile(
     if not token:
         raise HTTPException(status_code=409, detail="Reconnect WhatsApp — the access token is missing")
     adapter = _service.get_adapter("whatsapp")
+    stored_profile = (asset.asset_metadata or {}).get("business_profile") or {}
     try:
         data = await adapter.get_business_profile(phone_number_id, token)
     except _MetaAPIError as e:
         # Graph being unreachable is not a reason to blank the editor: fall
         # back to the persisted copy so the tenant still sees their profile
         # (flagged stale). 404/5xx only when there is nothing stored.
-        stored = (asset.asset_metadata or {}).get("business_profile")
-        if stored is not None:
+        if stored_profile:
             return _profile_out(
-                stored,
+                stored_profile,
                 (asset.asset_metadata or {}).get("business_profile_synced_at"),
                 stale=True,
             )
         raise HTTPException(status_code=e.status_code, detail=str(e))
+    # `hours` never comes back from Graph — keep the locally persisted copy.
+    if stored_profile.get("hours"):
+        data["hours"] = stored_profile["hours"]
+    # An empty live read must never blank the editor (or wipe storage):
+    # fall back to the last persisted copy.
+    if not data and stored_profile:
+        return _profile_out(
+            stored_profile,
+            (asset.asset_metadata or {}).get("business_profile_synced_at"),
+        )
     synced_at = _persist_profile(asset, data)
     db.add(asset)
     await db.commit()
@@ -724,6 +762,9 @@ async def update_whatsapp_profile(
     if not token:
         raise HTTPException(status_code=409, detail="Reconnect WhatsApp — the access token is missing")
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    hours = fields.pop("hours", None)  # not a Graph param — persist locally
+    if "vertical" in fields and fields["vertical"]:
+        fields["vertical"] = _normalize_vertical(fields["vertical"])
     if "websites" in fields:
         fields["websites"] = [w if w.startswith("http") else f"https://{w}" for w in fields["websites"]][:2]
     adapter = _service.get_adapter("whatsapp")
@@ -731,6 +772,86 @@ async def update_whatsapp_profile(
         data = await adapter.set_business_profile(phone_number_id, token, fields)
     except _MetaAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
+    stored_profile = (asset.asset_metadata or {}).get("business_profile") or {}
+    # Graph acknowledged the write but the re-read came back empty — keep the
+    # stored copy and overlay what we just saved instead of blanking it.
+    if not data:
+        data = {**stored_profile, **fields}
+    data["hours"] = hours if hours is not None else stored_profile.get("hours")
+    synced_at = _persist_profile(asset, data)
+    db.add(asset)
+    await db.commit()
+    return _profile_out(data, synced_at)
+
+
+@router.post("/whatsapp/{phone_number_id}/profile-photo")
+async def upload_profile_photo(
+    phone_number_id: str,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a profile photo and set it on the WhatsApp business profile."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .models import MetaAsset
+    from .providers.base import MetaAPIError as _MetaAPIError
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == user.id,
+                MetaAsset.provider == "whatsapp",
+                MetaAsset.asset_type == "phone_number",
+                MetaAsset.external_asset_id == phone_number_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Number not found for this account")
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        raise HTTPException(status_code=409, detail="Reconnect WhatsApp — the access token is missing")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Photo must be under 5 MB")
+    mime = file.content_type or "image/jpeg"
+    if mime not in ("image/jpeg", "image/png"):
+        raise HTTPException(status_code=400, detail="Only JPG or PNG images are allowed")
+
+    # Resumable upload sessions are created against the owning WABA.
+    waba_id = None
+    if asset.parent_asset_id:
+        parent = await db.get(MetaAsset, asset.parent_asset_id)
+        waba_id = parent.external_asset_id if parent else None
+
+    adapter = _service.get_adapter("whatsapp")
+    try:
+        await adapter.set_profile_photo(
+            phone_number_id,
+            token,
+            content,
+            mime,
+            waba_id=waba_id,
+            file_name=file.filename or "profile.jpg",
+        )
+    except _MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    stored_profile = (asset.asset_metadata or {}).get("business_profile") or {}
+    try:
+        data = await adapter.get_business_profile(phone_number_id, token)
+    except _MetaAPIError:
+        data = {}
+    if not data:
+        data = stored_profile
+    if stored_profile.get("hours"):
+        data.setdefault("hours", stored_profile["hours"])
     synced_at = _persist_profile(asset, data)
     db.add(asset)
     await db.commit()

@@ -25,24 +25,24 @@ const VOICE_REPLY_OPTIONS = [
 const WA_FONT = { fontFamily: '"Segoe UI",Helvetica Neue,Helvetica,Arial,sans-serif' };
 
 function StatusText({ state }: { state: SaveState }) {
-  if (state === "saving") return <span className="text-[11px] text-black/40">Saving&hellip;</span>;
+  if (state === "saving") return <span className="text-[11px] text-[var(--wa-text-3)]">Saving&hellip;</span>;
   if (state === "saved")
     return (
-      <span className="text-[11px] font-semibold text-emerald-700">Saved &mdash; applies to new messages</span>
+      <span className="text-[11px] font-semibold text-[var(--wa-ok-text)]">Saved &mdash; applies to new messages</span>
     );
   if (state === "error")
-    return <span className="text-[11px] font-semibold text-red-600">Couldn&rsquo;t save &mdash; try again</span>;
+    return <span className="text-[11px] font-semibold text-[var(--wa-danger)]">Couldn&rsquo;t save &mdash; try again</span>;
   return null;
 }
 
 function Card({ title, subtitle, children, status }: { title: string; subtitle: string; children: React.ReactNode; status?: SaveState }) {
   return (
-    <section className="rounded-lg bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
+    <section className="rounded-lg bg-[var(--wa-panel)] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[14px] font-bold text-[#111b21]">{title}</p>
+        <p className="text-[14px] font-bold text-[var(--wa-text)]">{title}</p>
         {status && <StatusText state={status} />}
       </div>
-      <p className="mt-0.5 text-[12px] text-[#667781]">{subtitle}</p>
+      <p className="mt-0.5 text-[12px] text-[var(--wa-text-2)]">{subtitle}</p>
       {children}
     </section>
   );
@@ -179,7 +179,7 @@ export default function WhatsAppSettings({
         subtitle="Your Sayvors plan includes a monthly pool of outbound WhatsApp messages. Resets on the 1st."
       >
         {usageError && (
-          <p role="alert" className="mt-2 text-[12px] text-red-600">
+          <p role="alert" className="mt-2 text-[12px] text-[var(--wa-danger)]">
             Could not load usage.{" "}
             <button className="font-semibold underline" onClick={() => { setUsageError(false); fetchWhatsAppUsage().then(setUsage).catch(() => setUsageError(true)); }}>
               Retry
@@ -188,15 +188,15 @@ export default function WhatsAppSettings({
         )}
         {!usage && !usageError && (
           <div className="mt-3 animate-pulse">
-            <div className="h-2 w-full rounded bg-black/10" />
-            <div className="mt-2 h-3 w-1/2 rounded bg-black/[0.07]" />
+            <div className="h-2 w-full rounded bg-[var(--wa-track)]" />
+            <div className="mt-2 h-3 w-1/2 rounded bg-[var(--wa-track)]" />
           </div>
         )}
         {usage && (
           <div className="mt-3">
-            <div className="h-2 w-full overflow-hidden rounded-full bg-black/[0.08]">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--wa-track)]">
               <div
-                className={`h-full rounded-full transition-all ${usedPct >= 90 ? "bg-red-500" : usedPct >= 70 ? "bg-amber-500" : "bg-[#00a884]"}`}
+                className={`h-full rounded-full transition-all ${usedPct >= 90 ? "bg-red-500" : usedPct >= 70 ? "bg-amber-500" : "bg-[var(--wa-accent)]"}`}
                 style={{ width: `${Math.max(2, usedPct)}%` }}
                 role="progressbar"
                 aria-valuenow={usedPct}
@@ -204,8 +204,8 @@ export default function WhatsAppSettings({
                 aria-valuemax={100}
               />
             </div>
-            <p className="mt-2 text-[12px] text-[#667781]">
-              <span className="font-bold text-[#111b21]">{usage.used_this_month.toLocaleString()}</span> of{" "}
+            <p className="mt-2 text-[12px] text-[var(--wa-text-2)]">
+              <span className="font-bold text-[var(--wa-text)]">{usage.used_this_month.toLocaleString()}</span> of{" "}
               {usage.monthly_limit.toLocaleString()} outbound messages this month ·{" "}
               {usage.plan === "pro" ? "Pro" : "Free"} plan
             </p>
@@ -215,8 +215,8 @@ export default function WhatsAppSettings({
 
       {/* Auto-reply */}
       <Card title="Auto-reply" subtitle="Let the AI answer incoming WhatsApp messages automatically." status={autoReplyState}>
-        {autoReplyError && <p role="alert" className="mt-2 text-[12px] text-red-600">{autoReplyError}</p>}
-        {autoReplyReady === null && !autoReplyError && <p className="mt-2 text-[12px] text-black/40">Loading&hellip;</p>}
+        {autoReplyError && <p role="alert" className="mt-2 text-[12px] text-[var(--wa-danger)]">{autoReplyError}</p>}
+        {autoReplyReady === null && !autoReplyError && <p className="mt-2 text-[12px] text-[var(--wa-text-3)]">Loading&hellip;</p>}
         {autoReplyReady !== null && (
           <button
             onClick={() => toggleAutoReply(!autoReplyReady)}
@@ -225,10 +225,10 @@ export default function WhatsAppSettings({
             aria-checked={autoReplyReady}
             className="mt-3 flex items-center gap-3 disabled:opacity-60"
           >
-            <span className={`relative h-6 w-11 rounded-full transition ${autoReply ? "bg-[#00a884]" : "bg-black/20"}`}>
-              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${autoReply ? "left-[22px]" : "left-0.5"}`} />
+            <span className={`relative h-6 w-11 rounded-full transition ${autoReplyReady ? "bg-[var(--wa-accent)]" : "bg-[var(--wa-track)]"}`}>
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${autoReplyReady ? "left-[22px]" : "left-0.5"}`} />
             </span>
-            <span className="text-[13px] font-semibold text-[#111b21]">{autoReply ? "On" : "Off"}</span>
+            <span className="text-[13px] font-semibold text-[var(--wa-text)]">{autoReplyReady ? "On" : "Off"}</span>
           </button>
         )}
       </Card>
@@ -249,17 +249,17 @@ export default function WhatsAppSettings({
                 disabled={styleState === "saving"}
                 aria-pressed={selected}
                 className={`rounded-lg border px-3 py-2 text-left transition disabled:opacity-60 ${
-                  selected ? "border-[#00a884] bg-[#00a884]/[0.06]" : "border-black/10 hover:border-[#00a884]/40"
+                  selected ? "border-[var(--wa-accent)] bg-[var(--wa-accent)]/[0.06]" : "border-[var(--wa-border)] hover:border-[var(--wa-accent)]/40"
                 }`}
               >
-                <span className="block text-[12px] font-semibold text-[#111b21]">{opt.label}</span>
-                <span className="mt-0.5 block text-[11px] text-black/45">{opt.desc}</span>
+                <span className="block text-[12px] font-semibold text-[var(--wa-text)]">{opt.label}</span>
+                <span className="mt-0.5 block text-[11px] text-[var(--wa-text-3)]">{opt.desc}</span>
               </button>
             );
           })}
         </div>
         {responseStyle === "human" && (
-          <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+          <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-[11px] leading-relaxed text-[var(--wa-warn-text)]">
             ⚠️ Human-like responses may send multiple WhatsApp messages for a single response, which uses more of your monthly message pool.
           </div>
         )}
@@ -281,17 +281,17 @@ export default function WhatsAppSettings({
                 disabled={voiceState === "saving"}
                 aria-pressed={selected}
                 className={`rounded-lg border px-3 py-2 text-left transition disabled:opacity-60 ${
-                  selected ? "border-[#00a884] bg-[#00a884]/[0.06]" : "border-black/10 hover:border-[#00a884]/40"
+                  selected ? "border-[var(--wa-accent)] bg-[var(--wa-accent)]/[0.06]" : "border-[var(--wa-border)] hover:border-[var(--wa-accent)]/40"
                 }`}
               >
-                <span className="block text-[12px] font-semibold text-[#111b21]">{opt.label}</span>
-                <span className="mt-0.5 block text-[11px] text-black/45">{opt.desc}</span>
+                <span className="block text-[12px] font-semibold text-[var(--wa-text)]">{opt.label}</span>
+                <span className="mt-0.5 block text-[11px] text-[var(--wa-text-3)]">{opt.desc}</span>
               </button>
             );
           })}
         </div>
         {voiceReplies !== "off" && (
-          <p className="mt-2 text-[11px] leading-relaxed text-black/45">
+          <p className="mt-2 text-[11px] leading-relaxed text-[var(--wa-text-3)]">
             Voice notes are short (about 30&ndash;40 seconds) and sent at most once per reply. If a voice can&rsquo;t be produced, the customer gets the text reply instead.
           </p>
         )}
