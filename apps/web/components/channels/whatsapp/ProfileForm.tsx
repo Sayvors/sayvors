@@ -99,43 +99,43 @@ export default function ProfileForm({ phoneId }: { phoneId: string }) {
   };
 
   const score = completeness({ ...(profile ?? { about: null, address: null, description: null, email: null, websites: [], vertical: null, profile_picture_url: null }), ...draft } as WaProfile);
-  const inputCls = "min-h-11 w-full rounded-xl border-2 border-black/[0.08] bg-white px-4 py-2.5 text-[13px] outline-none transition placeholder:text-black/30 focus:border-[#25D366]";
+  const inputCls = "min-h-11 w-full rounded-lg border border-black/15 bg-white px-3.5 py-2.5 text-[14px] text-[#111b21] outline-none transition placeholder:text-[#8696a0] focus:border-[#00a884] focus:ring-2 focus:ring-[#00a884]/25";
 
   if (status === "loading") {
     return (
-      <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
-        <div className="animate-pulse space-y-3"><div className="h-12 rounded-xl bg-white" /><div className="h-24 rounded-xl bg-white" /><div className="h-12 rounded-xl bg-white" /></div>
-        <div className="h-80 animate-pulse rounded-[24px] bg-white" />
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="animate-pulse space-y-3"><div className="h-12 rounded-lg bg-white shadow" /><div className="h-24 rounded-lg bg-white shadow" /><div className="h-12 rounded-lg bg-white shadow" /></div>
+        <div className="h-80 animate-pulse rounded-[32px] bg-white shadow" />
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="mb-4 flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm">
-        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#25D366]/15 text-[15px] font-bold text-emerald-700" aria-label={`Profile ${score}% complete`}>{score}%</div>
+    <div style={{ fontFamily: '"Segoe UI",Helvetica Neue,Helvetica,Arial,sans-serif' }}>
+      <div className="mb-4 flex items-center gap-3 rounded-lg bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
+        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#00a884]/15 text-[15px] font-bold text-[#008069]" aria-label={`Profile ${score}% complete`}>{score}%</div>
         <div className="min-w-0 flex-1">
-          <div className="h-2 overflow-hidden rounded-full bg-black/[0.06]"><div className="h-full rounded-full bg-[#25D366] transition-all" style={{ width: `${score}%` }} /></div>
-          <p className="mt-1 text-[12px] text-black/50">{score >= 90 ? "All caught up — looking sharp." : "Add a photo, About and a website to reach 90%+."}</p>
+          <div className="h-2 overflow-hidden rounded-full bg-black/[0.08]"><div className="h-full rounded-full bg-[#00a884] transition-all" style={{ width: `${score}%` }} /></div>
+          <p className="mt-1 text-[12px] text-[#667781]">{score >= 90 ? "All caught up — looking sharp." : "Add a photo, About and a website to reach 90%+."}</p>
         </div>
-        <button onClick={save} disabled={status === "saving"} className="min-h-11 shrink-0 rounded-xl bg-[#16130E] px-5 py-2.5 text-[13px] font-bold text-white transition hover:opacity-90 active:scale-[0.98] disabled:opacity-60">
-          {status === "saving" ? "Saving…" : "Save profile"}
+        <button onClick={save} disabled={status === "saving"} className="min-h-11 shrink-0 rounded-full bg-[#00a884] px-6 py-2.5 text-[13px] font-semibold text-white shadow transition hover:bg-[#008069] active:scale-[0.98] disabled:opacity-60">
+          {status === "saving" ? "Saving…" : "Save"}
         </button>
       </div>
 
       {msg && (
-        <p role="status" className={`mb-3 rounded-xl px-4 py-2.5 text-[13px] ${status === "error" ? "border border-red-200 bg-red-50 text-red-700" : "border border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{msg}</p>
+        <div role="status" className={`mx-auto mb-3 flex max-w-md items-center gap-2 rounded-lg px-4 py-2.5 text-[13px] shadow ${status === "error" ? "bg-[#fff3cd] text-[#664d03]" : "bg-[#d1f4cc] text-[#0f5132]"}`}>{msg}</div>
       )}
 
       {!profile && status === "error" && (
-        <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
-          <p className="font-bold">No profile yet</p>
-          <p className="mt-1 text-[13px] text-black/50">Fill the form — the preview shows exactly what customers see.</p>
+        <div className="rounded-lg bg-white p-6 text-center shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
+          <p className="font-semibold text-[#111b21]">No profile yet</p>
+          <p className="mt-1 text-[13px] text-[#667781]">Fill the form — the preview shows exactly what customers see.</p>
         </div>
       )}
 
-      <div className="grid items-start gap-4 lg:grid-cols-[1fr_340px]">
-        <div className="space-y-4 rounded-2xl bg-white p-4 shadow-sm sm:p-5">
+      <div className="grid items-start gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="space-y-4 rounded-lg bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)] sm:p-5">
           <div>
             <label htmlFor="wa-about" className="mb-1.5 block text-[13px] font-semibold">About {(draft.about ?? "").length}/139</label>
             <input id="wa-about" value={draft.about ?? ""} onChange={(e) => set("about", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, about: true }))} placeholder="Fresh coffee downtown, open till late" className={inputCls} maxLength={200} />

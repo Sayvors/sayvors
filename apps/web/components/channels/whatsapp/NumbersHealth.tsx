@@ -38,10 +38,10 @@ export default function NumbersHealth({ numbers, activeId }: { numbers: MetaAsse
   };
 
   return (
-    <div className="space-y-3">
-      {msg && <p role="status" className="rounded-xl bg-white px-4 py-2.5 text-[13px] shadow-sm">{msg}</p>}
+    <div className="space-y-3" style={{ fontFamily: '"Segoe UI",Helvetica Neue,Helvetica,Arial,sans-serif' }}>
+      {msg && <p role="status" className="mx-auto max-w-md rounded-lg bg-[#fff3cd] px-4 py-2.5 text-[13px] text-[#664d03] shadow">{msg}</p>}
       {numbers.map((n) => (
-        <div key={n.external_asset_id} className={`rounded-2xl bg-white p-4 shadow-sm ${n.external_asset_id === activeId ? "ring-2 ring-[#25D366]" : ""}`}>
+        <div key={n.external_asset_id} className={`rounded-lg bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)] ${n.external_asset_id === activeId ? "ring-2 ring-[#00a884]" : ""}`}>
           <div className="flex flex-wrap items-center gap-3">
             <span className={`h-2.5 w-2.5 rounded-full ${n.active ? "bg-emerald-500" : "bg-amber-500"}`} />
             <div className="min-w-0 flex-1">
@@ -64,7 +64,7 @@ export default function NumbersHealth({ numbers, activeId }: { numbers: MetaAsse
                 aria-label={`PIN for ${n.phone ?? n.external_asset_id}`}
                 className="min-h-11 w-36 rounded-xl border border-black/10 bg-white px-3 text-[13px] tracking-widest"
               />
-              <button onClick={() => register(n.external_asset_id)} disabled={busy === n.external_asset_id} className="min-h-11 rounded-xl bg-[#16130E] px-4 text-[12px] font-bold text-white disabled:opacity-50">
+              <button onClick={() => register(n.external_asset_id)} disabled={busy === n.external_asset_id} className="min-h-11 rounded-full bg-[#00a884] px-5 text-[12px] font-semibold text-white disabled:opacity-50">
                 {busy === n.external_asset_id ? "Registering…" : "Register"}
               </button>
             </div>

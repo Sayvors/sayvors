@@ -17,9 +17,9 @@ export default function TemplatesList() {
   }, [q]);
 
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-sm sm:p-5">
+    <div className="rounded-lg bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.15)] sm:p-5" style={{ fontFamily: '"Segoe UI",Helvetica Neue,Helvetica,Arial,sans-serif' }}>
       <div className="flex flex-wrap items-center gap-2">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search templates…" aria-label="Search templates" className="min-h-11 min-w-0 flex-1 rounded-xl border border-black/10 bg-white px-3 text-[13px] outline-none focus:border-[#25D366]" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search templates…" aria-label="Search templates" className="min-h-11 min-w-0 flex-1 rounded-lg bg-[#f0f2f5] px-4 text-[13px] text-[#111b21] outline-none placeholder:text-[#667781] focus:ring-2 focus:ring-[#00a884]/40" />
         <span className="text-[12px] text-black/45">{rows.length} shown</span>
       </div>
       {rows.length === 0 ? (

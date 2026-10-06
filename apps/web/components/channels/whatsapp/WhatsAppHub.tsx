@@ -11,16 +11,31 @@ import TemplatesList from "./TemplatesList";
 const TABS = ["profile", "numbers", "templates", "settings"] as const;
 type Tab = (typeof TABS)[number];
 
-const TOKENS = ":root{--wa-paper:#F6F3EC;--wa-ink:#16130E;--wa-green:#25D366}";
+/* Official WhatsApp palette + doodle. Font matches WhatsApp Web (Segoe UI stack). */
+const WA_CSS = `
+.wa-font{font-family:"Segoe UI",Helvetica Neue,Helvetica,"Lucida Grande",Arial,sans-serif}
+.wa-doodle{background-color:#efeae2;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%23000' stroke-opacity='0.055' stroke-width='1.4'%3E%3Ccircle cx='18' cy='22' r='6'/%3E%3Cpath d='M45 12h14M52 5v14'/%3E%3Crect x='78' y='10' width='12' height='12' rx='2'/%3E%3Cpath d='M10 58q6-8 12 0t12 0'/%3E%3Ccircle cx='52' cy='62' r='3'/%3E%3Cpath d='M78 56l4 8 8 4-8 4-4 8-4-8-8-4 8-4z'/%3E%3Crect x='100' y='52' width='10' height='14' rx='5'/%3E%3Cpath d='M14 92l10-10M24 92L14 82'/%3E%3Ccircle cx='60' cy='100' r='7'/%3E%3Cpath d='M92 92h12M98 86v12'/%3E%3C/g%3E%3C/svg%3E")}
+.wa-scroll::-webkit-scrollbar{width:6px}
+.wa-scroll::-webkit-scrollbar-thumb{background:rgba(0,0,0,.25)}
+`;
+
+function initialsOf(n: MetaAsset): string {
+  const base = (n.name || n.phone || "?").trim();
+  const parts = base.split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return base.slice(0, 2).toUpperCase();
+}
 
 export default function WhatsAppHub() {
   const params = useSearchParams();
   const router = useRouter();
-  const tab = (params.get("tab") as Tab) || "profile";
+  const rawTab = params.get("tab");
+  const tab: Tab = (["profile", "numbers", "templates", "settings"] as string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "profile";
   const locParam = params.get("location") ?? "";
   const [numbers, setNumbers] = useState<MetaAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     let dead = false;
@@ -39,90 +54,158 @@ export default function WhatsAppHub() {
     };
   }, []);
 
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return numbers;
+    return numbers.filter((n) => `${n.name ?? ""} ${n.phone ?? ""}`.toLowerCase().includes(q));
+  }, [numbers, query]);
+
   const activeId = useMemo(
     () => locParam || numbers.find((n) => n.active)?.external_asset_id || numbers[0]?.external_asset_id || "",
     [locParam, numbers]
   );
   const active = numbers.find((n) => n.external_asset_id === activeId) ?? numbers[0] ?? null;
+  const needsFix = numbers.filter((n) => !n.active).length;
 
   const goto = (t: Tab, loc?: string) => {
     const q = new URLSearchParams();
     q.set("tab", t);
-    if (loc ?? activeId) q.set("location", (loc ?? activeId) as string);
+    const l = loc ?? activeId;
+    if (l) q.set("location", l);
     router.replace(`?${q.toString()}`);
   };
 
   return (
-    <div className="flex h-full flex-col" style={{ background: "#F6F3EC" }}>
-      <style>{TOKENS}</style>
-      <div className="border-b border-black/[0.06] bg-white px-4 py-4 sm:px-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#25D366] text-xl text-white shadow-md">💬</div>
+    <div className="wa-font flex h-full overflow-hidden bg-[#eae6df]">
+      <style>{WA_CSS}</style>
+
+      {/* ── Left: WhatsApp chat-list style number picker ── */}
+      <aside className="flex w-[300px] shrink-0 flex-col border-r border-black/10 bg-white xl:w-[340px]">
+        <div className="flex items-center gap-3 bg-[#008069] px-4 py-3.5 text-white">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-lg">💬</div>
           <div className="min-w-0 flex-1">
-            <h1 className="text-[18px] font-bold text-[#16130E]">WhatsApp</h1>
-            <p className="text-[12px] text-black/50">
-              {loading ? "Loading numbers…" : numbers.length === 0 ? "Not connected yet" : `${numbers.length} number${numbers.length > 1 ? "s" : ""} · ${active?.phone ?? active?.name ?? ""}`}
+            <p className="truncate text-[16px] font-semibold leading-tight">WhatsApp Business</p>
+            <p className="text-[12px] text-white/80">
+              {loading ? "loading…" : numbers.length === 0 ? "not connected" : needsFix > 0 ? `${needsFix} need attention` : "all connected"}
             </p>
           </div>
-          {numbers.length > 1 && (
-            <select
-              value={activeId}
-              onChange={(e) => goto(tab as Tab, e.target.value)}
-              aria-label="Switch location / number"
-              className="min-h-11 rounded-xl border border-black/10 bg-white px-3 text-[13px] font-semibold outline-none focus:border-[#25D366]"
-            >
-              {numbers.map((n) => (
-                <option key={n.external_asset_id} value={n.external_asset_id}>
-                  {(n.name || n.phone || n.external_asset_id).slice(0, 32)}
-                </option>
-              ))}
-            </select>
-          )}
-          <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${active?.active ? "bg-emerald-500/15 text-emerald-700" : "bg-black/[0.05] text-black/50"}`}>
-            {active?.active ? "● Connected" : active ? "○ Check needed" : "○ Off"}
-          </span>
         </div>
-        <div className="mt-3 flex gap-1 overflow-x-auto" role="tablist" aria-label="WhatsApp sections">
+        <div className="bg-[#f0f2f5] px-3 py-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search numbers"
+            aria-label="Search numbers"
+            className="min-h-9 w-full rounded-lg bg-white px-4 text-[13px] text-[#111b21] outline-none placeholder:text-[#667781] focus:ring-2 focus:ring-[#00a884]/40"
+          />
+        </div>
+        <div className="wa-scroll min-h-0 flex-1 overflow-y-auto">
+          {loading && (
+            <div className="space-y-1 p-2">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex animate-pulse items-center gap-3 px-2 py-2.5">
+                  <div className="h-[49px] w-[49px] rounded-full bg-black/10" />
+                  <div className="flex-1"><div className="h-3.5 w-2/3 rounded bg-black/10" /><div className="mt-1.5 h-3 w-1/2 rounded bg-black/[0.07]" /></div>
+                </div>
+              ))}
+            </div>
+          )}
+          {!loading && filtered.map((n) => {
+            const isActive = n.external_asset_id === activeId;
+            return (
+              <button
+                key={n.external_asset_id}
+                onClick={() => goto(tab, n.external_asset_id)}
+                aria-current={isActive}
+                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition ${isActive ? "bg-[#f0f2f5]" : "hover:bg-[#f5f6f6]"}`}
+              >
+                <span className="flex h-[49px] w-[49px] shrink-0 items-center justify-center rounded-full bg-[#00a884]/15 text-[15px] font-semibold text-[#008069]">
+                  {initialsOf(n)}
+                </span>
+                <span className="min-w-0 flex-1 border-b border-black/[0.06] pb-2.5">
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-[16px] text-[#111b21]">{n.phone || n.name || "Number"}</span>
+                    {!n.active && <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[#00a884] px-1.5 text-[11px] font-bold text-white">!</span>}
+                  </span>
+                  <span className="mt-0.5 flex items-center justify-between gap-2">
+                    <span className="truncate text-[13px] text-[#667781]">{n.name || n.status || "tap to manage"}</span>
+                    <span className={`shrink-0 text-[11px] ${n.active ? "text-[#667781]" : "font-semibold text-[#00a884]"}`}>{n.active ? "live" : "fix"}</span>
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+          {!loading && numbers.length === 0 && (
+            <div className="p-6 text-center">
+              <p className="text-[14px] font-semibold text-[#111b21]">No numbers yet</p>
+              <p className="mt-1 text-[13px] text-[#667781]">Connect via Embedded Signup first.</p>
+              <Link href="/dashboard/channels" className="mt-3 inline-block rounded-full bg-[#00a884] px-5 py-2 text-[13px] font-semibold text-white">Connect →</Link>
+            </div>
+          )}
+        </div>
+        <div className="border-t border-black/[0.06] px-4 py-2.5 text-[12px] text-[#667781]">
+          {numbers.length > 0 ? `${numbers.length} number${numbers.length > 1 ? "s" : ""}` : "WhatsApp Cloud API"}
+        </div>
+      </aside>
+
+      {/* ── Main: doodle chat area ── */}
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center gap-3 bg-[#f0f2f5] px-4 py-2.5">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#00a884]/15 text-[14px] font-semibold text-[#008069]">
+            {active ? initialsOf(active) : "WA"}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15px] font-semibold text-[#111b21]">
+              {active?.phone || active?.name || "WhatsApp"} {active && <span className="text-[#00a884]" title="verified">✓</span>}
+            </p>
+            <p className="truncate text-[12px] text-[#667781]">
+              {loading ? "loading…" : active ? (active.active ? "online · connected" : "needs attention") : "not connected"}
+            </p>
+          </div>
+        </header>
+        <nav className="flex gap-1 overflow-x-auto bg-white px-4 shadow-[0_1px_2px_rgba(0,0,0,0.08)]" role="tablist" aria-label="WhatsApp sections">
           {(["profile", "numbers", "templates", "settings"] as Tab[]).map((t) => (
             <button
               key={t}
               role="tab"
               aria-selected={tab === t}
               onClick={() => goto(t)}
-              className={`min-h-11 shrink-0 rounded-xl px-3.5 text-[13px] font-semibold transition ${tab === t ? "bg-[#16130E] text-white" : "text-black/55 hover:bg-black/[0.04]"}`}
+              className={`min-h-11 shrink-0 border-b-[3px] px-3.5 text-[13px] font-semibold uppercase tracking-wide transition ${tab === t ? "border-[#00a884] text-[#008069]" : "border-transparent text-[#667781] hover:text-[#111b21]"}`}
             >
-              {t === "profile" ? "Profile" : t === "numbers" ? "Numbers & Health" : t === "templates" ? "Templates" : "Settings"}
+              {t === "profile" ? "Profile" : t === "numbers" ? "Numbers" : t === "templates" ? "Templates" : "Settings"}
             </button>
           ))}
-        </div>
-      </div>
+        </nav>
 
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-        <div className="mx-auto max-w-5xl">
-          {loadError && (
-            <p role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700">
-              {loadError} <button onClick={() => window.location.reload()} className="font-bold underline">Retry</button>
-            </p>
-          )}
-          {numbers.length === 0 && !loading && (
-            <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
-              <p className="text-[15px] font-bold">Connect WhatsApp first</p>
-              <p className="mt-1 text-[13px] text-black/50">Link a number via Embedded Signup, then edit its business profile here.</p>
-              <Link href="/dashboard/channels" className="mt-4 inline-block min-h-11 rounded-xl bg-[#25D366] px-5 py-2.5 text-[13px] font-bold text-white">Go to Channels →</Link>
-            </div>
-          )}
-          {active && tab === "profile" && <ProfileForm phoneId={active.external_asset_id} />}
-          {active && tab === "numbers" && <NumbersHealth numbers={numbers} activeId={active.external_asset_id} />}
-          {active && tab === "templates" && <TemplatesList />}
-          {tab === "settings" && (
-            <div className="rounded-2xl bg-white p-5 shadow-sm">
-              <p className="text-[14px] font-bold">Settings</p>
-              <p className="mt-1 text-[13px] text-black/50">Agent, response style, auto-reply and working hours live in the channel settings page.</p>
-              <Link href="/dashboard/channels/whatsapp/settings" className="mt-3 inline-block min-h-11 rounded-xl border border-black/10 px-4 py-2.5 text-[13px] font-semibold">Open channel settings →</Link>
-            </div>
-          )}
+        <div className="wa-doodle wa-scroll min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+          <div className="mx-auto max-w-4xl">
+            {loadError && (
+              <div role="alert" className="mx-auto mb-3 flex max-w-md items-center gap-2 rounded-lg bg-[#fff3cd] px-4 py-2.5 text-[13px] text-[#664d03] shadow">
+                <span className="flex-1">{loadError}</span>
+                <button onClick={() => window.location.reload()} className="font-bold underline">Retry</button>
+              </div>
+            )}
+            {numbers.length === 0 && !loading && (
+              <div className="mx-auto max-w-md rounded-lg bg-white p-8 text-center shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#00a884]/10 text-3xl">💬</div>
+                <p className="mt-3 text-[16px] font-semibold text-[#111b21]">Connect WhatsApp first</p>
+                <p className="mt-1 text-[13px] text-[#667781]">Link a number via Embedded Signup, then edit its business profile here.</p>
+                <Link href="/dashboard/channels" className="mt-4 inline-block rounded-full bg-[#00a884] px-6 py-2.5 text-[13px] font-semibold text-white">Go to Channels →</Link>
+              </div>
+            )}
+            {active && tab === "profile" && <ProfileForm phoneId={active.external_asset_id} />}
+            {active && tab === "numbers" && <NumbersHealth numbers={numbers} activeId={active.external_asset_id} />}
+            {active && tab === "templates" && <TemplatesList />}
+            {tab === "settings" && (
+              <div className="rounded-lg bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
+                <p className="text-[15px] font-semibold text-[#111b21]">Settings</p>
+                <p className="mt-1 text-[13px] text-[#667781]">Agent, response style, auto-reply and working hours live in the channel settings page.</p>
+                <Link href="/dashboard/channels/whatsapp/settings" className="mt-3 inline-block rounded-full border border-black/15 px-5 py-2 text-[13px] font-semibold text-[#008069]">Open channel settings →</Link>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
