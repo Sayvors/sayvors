@@ -6,10 +6,10 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   // The dev server rejects requests whose Origin is not on this list, and it
   // answers a blocked HMR websocket upgrade with 503. Facebook Login needs an
-  // HTTPS origin, so local Meta testing goes through a tunnel (ngrok) whose
-  // subdomain is randomly reassigned on every restart — hence the wildcard.
+  // HTTPS origin, so local Meta testing goes through a tunnel — ngrok was
+  // replaced by permanent cloudflared hostnames (see services/api/.env).
   // Dev-only: has no effect on `next build` / `next start`.
-  allowedDevOrigins: ["*.ngrok-free.app", "*.ngrok.io", "*.trycloudflare.com"],
+  allowedDevOrigins: ["dev-web.sayvors.com", "*.ngrok-free.app", "*.ngrok-free.dev"],
   // Same-origin /api/* proxy to the FastAPI backend. Lets the SPA point
   // NEXT_PUBLIC_API_URL at the PAGE origin (e.g. the ngrok HTTPS tunnel used
   // for Meta Embedded Signup testing) so auth + csrf_token cookies are set on
