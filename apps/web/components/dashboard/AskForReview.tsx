@@ -66,7 +66,8 @@ export default function AskForReview() {
         const data = await apiFetch("/api/v1/integrations/localith/connections");
         if (cancelled) return;
         const conns = (Array.isArray(data) ? data : (data.connections ?? [])) as {
-          id?: string; listing_id?: string | null; listing_name?: string | null; website_url?: string | null;
+          id?: string; listing_id?: string | null; listing_name?: string | null;
+          listing_google_id?: string | null; maps_url?: string | null; website_url?: string | null;
         }[];
         setBusinesses(
           conns
@@ -74,7 +75,13 @@ export default function AskForReview() {
             .map((c) => ({
               id: c.listing_id ?? c.id!,
               name: c.listing_name ?? "Location",
-              reviewUrl: c.website_url ?? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.listing_name ?? "")}`,
+              // place_id link opens the review composer; profile/maps links
+              // leave the customer to find "Write a review" themselves.
+              reviewUrl:
+                (c.listing_google_id && `https://search.google.com/local/writereview?placeid=${c.listing_google_id}`) ||
+                c.maps_url ||
+                c.website_url ||
+                `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.listing_name ?? "")}`,
             }))
         );
       } catch {
