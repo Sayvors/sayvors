@@ -10,6 +10,7 @@ changed either.
 """
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -98,13 +99,16 @@ async def _seed_channel(db, platform_user_id=IG_ID):
 
 
 def _dm_bytes(field="messages", raw=None, mid=MID, provider="instagram",
-              asset_id=IG_ID):
+              asset_id=IG_ID, occurred_at=None):
     """The envelope _process_message consumes (what the outbox ships)."""
+    # Fresh by default — a live DM must get an AI reply; only the staleness
+    # test backdates occurred_at.
+    when = occurred_at or datetime.now(timezone.utc).isoformat()
     if raw is None:
         raw = {
             "sender": {"id": IGSID},
             "recipient": {"id": IG_ID},
-            "timestamp": "2026-10-04T00:00:00+00:00",
+            "timestamp": when,
             "message": {"mid": mid, "text": "do you deliver to Maadi?"},
         }
     envelope = {
@@ -112,7 +116,7 @@ def _dm_bytes(field="messages", raw=None, mid=MID, provider="instagram",
         "external_asset_id": asset_id,
         "external_event_id": mid,
         "event_type": "message.received",
-        "occurred_at": "2026-10-04T00:00:00+00:00",
+        "occurred_at": when,
         "payload": {"field": field, "raw": raw},
     }
     return json.dumps(envelope).encode("utf-8")
@@ -265,6 +269,21 @@ async def test_instagram_inbound_stored_and_ai_reply_sent(db, ig_mocks):
     )).scalar_one()
     assert channel.platform_user_id == IG_ID
     assert channel.display_name == "myshop"
+
+
+@pytest.mark.asyncio
+async def test_stale_dm_is_stored_but_never_answered(db, ig_mocks):
+    """A redelivered / backlogged DM (hours old) still lands in the inbox —
+    the AI must stay silent: the conversation already moved on."""
+    await _seed_ig_stack(db)
+    stale = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+    await _consumer._process_message(_dm_bytes(occurred_at=stale))
+
+    rows = await _messages(db)
+    assert len([r for r in rows if r.direction == "inbound"]) == 1
+    assert [r for r in rows if r.direction == "outbound"] == []
+    ig_mocks.send.assert_not_called()
+    ig_mocks.typing.assert_not_called()
 
 
 @pytest.mark.asyncio

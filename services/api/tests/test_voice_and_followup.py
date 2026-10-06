@@ -967,6 +967,36 @@ async def test_consumer_confused_advanced_sends_voice_note(db, user_id, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_consumer_stale_webhook_is_stored_but_never_answered(db, user_id, monkeypatch):
+    """Redelivered / backlogged webhooks (Meta retry, outbox drain after a
+    downtime window) keep their inbox row — but the AI must not answer a
+    message from hours ago: the conversation has already moved on."""
+    await _seed_voice_tenant(db, user_id, voice_replies="advanced")
+    adapter = _VoiceAdapter()
+    _wire_voice_consumer(
+        monkeypatch, adapter,
+        reply="Should never be sent", confused=False, language="en",
+        voice_result=None,
+    )
+
+    event, data = _event()
+    event["occurred_at"] = (datetime.now(timezone.utc) - timedelta(hours=20)).isoformat()
+    await meta_consumer._handle_message_received(event, data)
+
+    # No typing dots, no generation, no send — history only.
+    assert adapter.typing == []
+    assert adapter.sent == []
+    assert await _outbound_rows() == []
+    async with _test_session_factory()() as session:
+        inbound = (
+            await session.execute(
+                select(ChannelMessage).where(ChannelMessage.direction == "inbound")
+            )
+        ).scalars().all()
+    assert len(inbound) == 1
+
+
+@pytest.mark.asyncio
 async def test_consumer_non_ogg_audio_sends_as_plain_media(db, user_id, monkeypatch):
     """Without Ogg/Opus the audio cannot be a voice note — it still goes out,
     just with the voice flag off (media bubble instead of mic bubble)."""

@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -28,6 +29,25 @@ from ...kafka.client import create_consumer
 from .models import MetaAsset
 
 logger = logging.getLogger(__name__)
+
+# Webhooks can land long after the message was sent: Meta redelivers, and our
+# transactional outbox drains a backlog once the API is back up. Answering a
+# message from hours ago lands on a conversation that has already moved on —
+# the inbox still records it (history is useful), the AI just stays quiet.
+_STALE_REPLY_MAX_AGE = timedelta(minutes=15)
+
+
+def _message_age(occurred_at: str | None) -> timedelta | None:
+    """Age of the inbound message per Meta's own timestamp (None if unusable)."""
+    if not occurred_at:
+        return None
+    try:
+        when = datetime.fromisoformat(occurred_at)
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - when
 
 
 async def _upsert_whatsapp_profile_name(
@@ -374,6 +394,18 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             logger.info(
                 "WhatsApp AI reply skipped for non-text message type=%s wamid=%s",
                 msg_type, wamid[:32],
+            )
+            return
+
+        # Stale event (redelivery / drained backlog): keep it in the inbox,
+        # never reply to it. Meta's timestamp is the source of truth, not
+        # when we happened to process it.
+        age = _message_age(event.get("occurred_at"))
+        if age is not None and age > _STALE_REPLY_MAX_AGE:
+            logger.info(
+                "WhatsApp AI reply skipped (stale event %d min old) "
+                "wamid=%s from=+%s",
+                int(age.total_seconds() // 60), wamid[:32], from_wa[-6:],
             )
             return
 
@@ -976,6 +1008,15 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         # turned off.
         if not asset.active:
             logger.info("Instagram AI reply skipped (asset deselected) mid=%s", mid[:32])
+            return
+        # Same staleness rule as WhatsApp: a redelivered/backlogged DM is
+        # stored for the inbox but never answered.
+        age = _message_age(event.get("occurred_at"))
+        if age is not None and age > _STALE_REPLY_MAX_AGE:
+            logger.info(
+                "Instagram AI reply skipped (stale event %d min old) mid=%s",
+                int(age.total_seconds() // 60), mid[:32],
+            )
             return
 
         adapter = InstagramAdapter()
