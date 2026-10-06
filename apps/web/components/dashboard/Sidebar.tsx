@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
+import { visibleChannelNav, type ChannelNavRow } from "@/lib/channel-nav";
 
 interface NavItem {
   key: string;
@@ -14,8 +15,8 @@ interface NavItem {
   href: string;
 }
 
-// The eight surfaces people live in day to day. Everything else folds into
-// the "Advanced" drawer at the bottom so the everyday nav stays scannable.
+// The everyday surfaces. Channels is expandable (Inbox + per-network manage)
+// and rendered separately below so it can hold children.
 const MAIN_ITEMS: NavItem[] = [
   { key: "dashboard", icon: <LayoutIcon />, href: "/dashboard" },
   { key: "analytics", icon: <ChartIcon />, href: "/dashboard/analytics" },
@@ -23,13 +24,10 @@ const MAIN_ITEMS: NavItem[] = [
   { key: "services", icon: <WrenchIcon />, href: "/dashboard/services" },
   { key: "postsMedia", icon: <MegaphoneIcon />, href: "/dashboard/posts-media" },
   { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
-  { key: "inbox", icon: <InboxIcon />, href: "/dashboard/inbox" },
   { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
 ];
 
 const ADVANCED_ITEMS: NavItem[] = [
-  { key: "connect", icon: <LinkIcon />, href: "/dashboard/channels" },
-  { key: "automations", icon: <ZapIcon />, href: "/dashboard/automations" },
   { key: "outbox", icon: <OutboxIcon />, href: "/dashboard/outbox" },
   { key: "notifications", icon: <BellIcon />, href: "/dashboard/notifications" },
   { key: "insights", icon: <BulbIcon />, href: "/dashboard/insights" },
@@ -251,7 +249,13 @@ export default function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 pt-3 pb-4" aria-label={t.nav.mainNavigation}>
         <div className="space-y-0.5">
-          {MAIN_ITEMS.map((item) => (
+          {MAIN_ITEMS.slice(0, 3).map((item) => (
+            <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
+          ))}
+        </div>
+        <ChannelsNav pathname={pathname} rail={rail} dir={dir} labels={t.nav as unknown as Record<string, string>} />
+        <div className="mt-0.5 space-y-0.5">
+          {MAIN_ITEMS.slice(3).map((item) => (
             <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
           ))}
         </div>
@@ -411,6 +415,109 @@ function NavRow({
       </span>
       {!rail && <span className="flex-1 truncate">{label}</span>}
     </Link>
+  );
+}
+
+function ChannelsNav({
+  pathname,
+  rail,
+  dir,
+  labels,
+}: {
+  pathname: string;
+  rail: boolean;
+  dir: "ltr" | "rtl";
+  labels: Record<string, string>;
+}) {
+  const [open, setOpen] = useState(true);
+  const [rows, setRows] = useState<ChannelNavRow[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { apiFetch } = await import("@/lib/api-rag");
+        const [ch, meta] = await Promise.all([
+          apiFetch("/api/v1/channels?limit=100").catch(() => ({ channels: [] })),
+          apiFetch("/api/v1/meta/connections").catch(() => ({ connections: [] })),
+        ]);
+        if (cancelled) return;
+        const list = (ch?.channels ?? []) as { platform: string }[];
+        const conns = (meta?.connections ?? []) as { provider: string; status: string }[];
+        setRows(visibleChannelNav(list, conns));
+      } catch {
+        if (!cancelled) setRows((prev) => prev ?? [{ key: "connect" }]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (pathname.startsWith("/dashboard/channels") || pathname.startsWith("/dashboard/inbox")) setOpen(true);
+  }, [pathname]);
+
+  const activeParent = pathname.startsWith("/dashboard/channels") || pathname.startsWith("/dashboard/inbox");
+  const hrefFor = (k: ChannelNavRow["key"]) =>
+    k === "inbox" ? "/dashboard/channels/inbox" : k === "overview" ? "/dashboard/channels" : k === "connect" ? "/dashboard/channels" : `/dashboard/channels/${k}`;
+  const labelFor = (k: ChannelNavRow["key"]) =>
+    k === "inbox" ? labels.inbox ?? "Inbox" : k === "overview" ? labels.connectMore ?? "Connect more" : k === "connect" ? labels.connectChannel ?? "Connect a channel" : k[0].toUpperCase() + k.slice(1);
+
+  return (
+    <div className="mt-0.5">
+      <div
+        className={`group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/30 ${
+          activeParent ? "bg-deep-violet/[0.07] text-deep-violet" : "text-ink/55 hover:bg-ink/[0.04]"
+        }`}
+      >
+        <Link href="/dashboard/channels/inbox" data-tour="nav-channels" className="flex min-w-0 flex-1 items-center gap-2.5">
+          <span className="h-4 w-4 shrink-0">💬</span>
+          {!rail && <span className="flex-1 truncate">{labels.channels ?? "Channels"}</span>}
+        </Link>
+        {!rail && (
+          <button onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Toggle channels" className="rounded px-1 text-ink/40 hover:text-ink">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`}><path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
+        )}
+      </div>
+      {open && !rail && (
+        <div className="ml-6 mt-0.5 space-y-0.5 border-l border-ink/[0.06] pl-2">
+          {!rows && (
+            <>
+              <div className="h-7 animate-pulse rounded-md bg-ink/[0.05]" />
+              <div className="h-7 animate-pulse rounded-md bg-ink/[0.05]" />
+            </>
+          )}
+          {rows?.map((r) =>
+            r.key === "overview" ? (
+              <Link key="overview" href="/dashboard/channels" className="block rounded-md px-2 py-1.5 text-[12px] font-semibold text-deep-violet hover:bg-deep-violet/[0.06]">
+                ＋ {labelFor("overview")}
+              </Link>
+            ) : r.key === "connect" ? (
+              <Link key="connect" href="/dashboard/channels" data-tour="nav-channels-connect" className="block rounded-md bg-deep-violet/[0.07] px-2 py-1.5 text-[12px] font-semibold text-deep-violet hover:bg-deep-violet/[0.1]">
+                ＋ {labelFor("connect")}
+              </Link>
+            ) : (
+              <Link
+                key={r.key}
+                href={hrefFor(r.key)}
+                data-tour={`nav-channels-${r.key}`}
+                aria-current={pathname === hrefFor(r.key) ? "page" : undefined}
+                className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] font-medium transition hover:bg-ink/[0.04] ${pathname === hrefFor(r.key) ? "bg-deep-violet/[0.07] text-deep-violet" : "text-ink/60"}`}
+              >
+                {r.key === "inbox" ? "✉️" : r.key === "whatsapp" ? "💬" : r.key === "instagram" ? "📸" : "👤"}
+                <span className="flex-1 truncate">{labelFor(r.key)}</span>
+                {r.key !== "inbox" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" title="connected" />}
+              </Link>
+            )
+          )}
+          {rows && rows.some((r) => r.key !== "connect" && r.key !== "inbox" && r.key !== "overview") && (
+            <p className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-widest text-ink/30">{labels.manage ?? "Manage"}</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
