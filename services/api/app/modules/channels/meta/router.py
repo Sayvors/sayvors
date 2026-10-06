@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....config import settings
 from ....core.deps import get_current_user, get_db
+from ...auth.rate_limit import rate_limit
 from ...users.models import User
 from . import oauth as _oauth
 from . import service as _service
@@ -25,6 +26,7 @@ from .schemas import (
     MetaWhatsAppSession,
     WhatsAppProfileOut,
     WhatsAppProfileUpdate,
+    WhatsAppUsageOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,39 @@ def _remember_pin(asset, pin: str | None) -> None:
 
 def discovered_has_number(discovered) -> bool:
     return any(getattr(d, "asset_type", "") == "phone_number" for d in discovered or [])
+
+
+def _persist_profile(asset, data: dict) -> str:
+    """Store the profile snapshot on the number asset (DB copy).
+
+    A NEW dict must be assigned — SQLAlchemy only detects JSON-column
+    changes on reassignment. Merging keeps siblings like pin_encrypted.
+    """
+    from datetime import datetime, timezone
+
+    synced_at = datetime.now(timezone.utc).isoformat()
+    asset.asset_metadata = {
+        **(asset.asset_metadata or {}),
+        "business_profile": data,
+        "business_profile_synced_at": synced_at,
+    }
+    return synced_at
+
+
+def _profile_out(
+    data: dict, synced_at: str | None = None, stale: bool = False
+) -> WhatsAppProfileOut:
+    return WhatsAppProfileOut(
+        about=data.get("about"),
+        address=data.get("address"),
+        description=data.get("description"),
+        email=data.get("email"),
+        websites=data.get("websites") or [],
+        vertical=data.get("vertical"),
+        profile_picture_url=data.get("profile_picture_url"),
+        synced_at=synced_at,
+        stale=stale,
+    )
 
 
 def _conn_out(c) -> MetaConnectionOut:
@@ -367,6 +402,46 @@ async def smb_sync_status(
     }
 
 
+@router.get("/whatsapp/usage", response_model=WhatsAppUsageOut)
+async def whatsapp_usage(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sayvors messaging quota: outbound messages this calendar month against
+    the plan's monthly limit. Deliberately NOT Meta's messaging tier — tenants
+    see our quota, never Meta's."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    from ..models import Channel, ChannelMessage
+
+    month_start = datetime.now(timezone.utc).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    # Outbound only: inbound customer messages are unbounded and must never
+    # spend the quota. Failed sends count — the Graph call was attempted.
+    used = (
+        await db.execute(
+            select(func.count())
+            .select_from(ChannelMessage)
+            .join(Channel, ChannelMessage.channel_id == Channel.id)
+            .where(
+                Channel.user_id == user.id,
+                Channel.platform == "whatsapp",
+                ChannelMessage.direction == "outbound",
+                ChannelMessage.created_at >= month_start,
+            )
+        )
+    ).scalar() or 0
+    # DI-provided stub users carry no flushed column default.
+    plan = getattr(user, "plan", None) or "free"
+    monthly_limit = settings.PLAN_MESSAGE_LIMITS.get(
+        plan, settings.PLAN_MESSAGE_LIMITS["free"]
+    )
+    return WhatsAppUsageOut(used_this_month=int(used), monthly_limit=monthly_limit, plan=plan)
+
+
 @router.post("/whatsapp/session")
 async def whatsapp_session(
     body: MetaWhatsAppSession,
@@ -508,6 +583,15 @@ async def register_whatsapp_number(
     Meta only accepts registration for 14 days after Embedded Signup, and a
     wrong PIN must be recoverable — so this exists as a first-class retry
     instead of forcing a full reconnect."""
+    # The PIN is the only secret protecting registration — throttle guesses
+    # at entry (even malformed bodies burn an attempt). Fail-closed default:
+    # a Redis outage must not disable brute-force protection.
+    if not settings.TESTING and not await rate_limit(
+        f"wa:register:{user.id}:{phone_number_id}", 5, 600
+    ):
+        raise HTTPException(
+            status_code=429, detail="Too many attempts — try again in a few minutes"
+    )
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
@@ -583,16 +667,21 @@ async def get_whatsapp_profile(
     try:
         data = await adapter.get_business_profile(phone_number_id, token)
     except _MetaAPIError as e:
+        # Graph being unreachable is not a reason to blank the editor: fall
+        # back to the persisted copy so the tenant still sees their profile
+        # (flagged stale). 404/5xx only when there is nothing stored.
+        stored = (asset.asset_metadata or {}).get("business_profile")
+        if stored is not None:
+            return _profile_out(
+                stored,
+                (asset.asset_metadata or {}).get("business_profile_synced_at"),
+                stale=True,
+            )
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    return WhatsAppProfileOut(
-        about=data.get("about"),
-        address=data.get("address"),
-        description=data.get("description"),
-        email=data.get("email"),
-        websites=data.get("websites") or [],
-        vertical=data.get("vertical"),
-        profile_picture_url=data.get("profile_picture_url"),
-    )
+    synced_at = _persist_profile(asset, data)
+    db.add(asset)
+    await db.commit()
+    return _profile_out(data, synced_at)
 
 
 @router.patch("/whatsapp/{phone_number_id}/profile", response_model=WhatsAppProfileOut)
@@ -609,6 +698,13 @@ async def update_whatsapp_profile(
     from .credentials import decrypt_connection_token
     from .models import MetaAsset
     from .providers.base import MetaAPIError as _MetaAPIError
+
+    # Convenience surface, not a brute-force target: fail-open on a Redis
+    # blip so an outage never blocks profile editing.
+    if not settings.TESTING and not await rate_limit(
+        f"wa:profile:{user.id}:{phone_number_id}", 10, 60, fail_closed=False
+    ):
+        raise HTTPException(status_code=429, detail="Too many updates — slow down for a moment")
 
     asset = (
         await db.execute(
@@ -635,15 +731,10 @@ async def update_whatsapp_profile(
         data = await adapter.set_business_profile(phone_number_id, token, fields)
     except _MetaAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    return WhatsAppProfileOut(
-        about=data.get("about"),
-        address=data.get("address"),
-        description=data.get("description"),
-        email=data.get("email"),
-        websites=data.get("websites") or [],
-        vertical=data.get("vertical"),
-        profile_picture_url=data.get("profile_picture_url"),
-    )
+    synced_at = _persist_profile(asset, data)
+    db.add(asset)
+    await db.commit()
+    return _profile_out(data, synced_at)
 
 
 @router.post("/instagram/discover", response_model=MetaAssetListResponse)

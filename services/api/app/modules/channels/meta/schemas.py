@@ -98,6 +98,17 @@ class WhatsAppProfileOut(BaseModel):
     websites: list[str] = []
     vertical: str | None = None
     profile_picture_url: str | None = None
+    # When the live Graph read failed, `stale` marks the persisted copy.
+    synced_at: str | None = None
+    stale: bool = False
+
+
+class WhatsAppUsageOut(BaseModel):
+    """Sayvors tenant messaging quota — never Meta's messaging tier."""
+
+    used_this_month: int
+    monthly_limit: int
+    plan: str
 
 
 class WhatsAppProfileUpdate(BaseModel):

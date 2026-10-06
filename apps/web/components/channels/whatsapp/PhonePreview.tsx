@@ -5,11 +5,11 @@ import type { WaProfile } from "@/lib/api-whatsapp-profile";
 const DOODLE = `background-color:#efeae2;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%23000' stroke-opacity='0.06' stroke-width='1.4'%3E%3Ccircle cx='18' cy='22' r='6'/%3E%3Cpath d='M45 12h14M52 5v14'/%3E%3Crect x='78' y='10' width='12' height='12' rx='2'/%3E%3Cpath d='M10 58q6-8 12 0t12 0'/%3E%3Cpath d='M78 56l4 8 8 4-8 4-4 8-4-8-8-4 8-4z'/%3E%3Ccircle cx='60' cy='100' r='7'/%3E%3C/g%3E%3C/svg%3E")`;
 
 /** Real WhatsApp look: phone frame, WA header, doodle chat, business-card bubble + live sample thread. */
-export default function PhonePreview({ draft, photoPreview }: { draft: Partial<WaProfile> & { displayName?: string }; photoPreview?: string | null }) {
-  const name = draft.displayName || "Your business";
+export default function PhonePreview({ draft, photoPreview, businessName }: { draft: Partial<WaProfile> & { displayName?: string }; photoPreview?: string | null; businessName?: string | null }) {
+  const name = draft.displayName || businessName || "Your business";
   const about = draft.about || "Hey there! I am using WhatsApp.";
   return (
-    <div className="lg:sticky lg:top-4">
+    <div className="md:sticky md:top-4">
       <p className="mb-2 text-center text-[11px] font-semibold uppercase tracking-widest text-[#667781]">Live preview · as customers see it</p>
       <div className="mx-auto w-[300px] overflow-hidden rounded-[32px] bg-[#0b141a] p-2 shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
         <div className="overflow-hidden rounded-[24px] bg-white">
@@ -20,7 +20,7 @@ export default function PhonePreview({ draft, photoPreview }: { draft: Partial<W
               {photoPreview ? <img src={photoPreview} alt="" className="h-full w-full object-cover" /> : (name[0] ?? "S")}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold leading-tight">{name} <span className="text-[#53bdeb]">✓</span></span>
+              <span className="block truncate text-[13px] font-semibold leading-tight">{name}</span>
               <span className="block text-[10px] text-white/80">online · business account</span>
             </span>
             <span className="text-[13px] text-white/90">📹  📞</span>
@@ -34,7 +34,7 @@ export default function PhonePreview({ draft, photoPreview }: { draft: Partial<W
                   {photoPreview ? <img src={photoPreview} alt="" className="h-full w-full object-cover" /> : (name[0] ?? "S")}
                 </span>
                 <span className="min-w-0">
-                  <span className="block truncate text-[13px] font-bold text-[#111b21]">{name} <span className="text-[#00a884]">✓</span></span>
+                  <span className="block truncate text-[13px] font-bold text-[#111b21]">{name}</span>
                   <span className="block truncate text-[11px] text-[#667781]">{about}</span>
                 </span>
               </div>
@@ -45,7 +45,8 @@ export default function PhonePreview({ draft, photoPreview }: { draft: Partial<W
                 {(draft.websites ?? [])[0] ? (draft.websites ?? [])[0] : "View business profile ›"}
               </div>
             </div>
-            {/* Sample thread */}
+            {/* Sample thread — illustrative, not real messages */}
+            <p className="pb-0.5 text-center text-[10px] uppercase tracking-widest text-[#667781]">sample conversation</p>
             <div className="flex justify-start">
               <div className="max-w-[80%] rounded-lg rounded-tl-none bg-white px-2.5 py-1.5 shadow-[0_1px_1px_rgba(0,0,0,0.2)]">
                 <p className="text-[12px] text-[#111b21]">Hi! Are you open today?</p>

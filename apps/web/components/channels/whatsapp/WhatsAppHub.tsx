@@ -1,15 +1,14 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchMetaAssets, type MetaAsset } from "@/lib/api-meta";
 import ProfileForm from "./ProfileForm";
 import NumbersHealth from "./NumbersHealth";
-import TemplatesList from "./TemplatesList";
+import WhatsAppSettings from "./WhatsAppSettings";
 
-const TABS = ["profile", "numbers", "templates", "settings"] as const;
-type Tab = (typeof TABS)[number];
+type Tab = "profile" | "numbers" | "settings";
 
 /* Official WhatsApp palette + doodle. Font matches WhatsApp Web (Segoe UI stack). */
 const WA_CSS = `
@@ -30,21 +29,38 @@ export default function WhatsAppHub() {
   const params = useSearchParams();
   const router = useRouter();
   const rawTab = params.get("tab");
-  const tab: Tab = (["profile", "numbers", "templates", "settings"] as string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "profile";
+  const tab: Tab = (["profile", "numbers", "settings"] as string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "profile";
   const locParam = params.get("location") ?? "";
   const [numbers, setNumbers] = useState<MetaAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
+  // Reloadable so child actions (register a number, re-validate) can refresh
+  // the list without a full page reload.
+  const loadNumbers = useCallback(async () => {
+    try {
+      const r = await fetchMetaAssets("whatsapp");
+      setNumbers((r.assets ?? []).filter((a) => a.asset_type === "phone_number"));
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Could not load numbers.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let dead = false;
     (async () => {
       try {
         const r = await fetchMetaAssets("whatsapp");
-        if (!dead) setNumbers((r.assets ?? []).filter((a) => a.asset_type === "phone_number"));
+        if (dead) return;
+        setNumbers((r.assets ?? []).filter((a) => a.asset_type === "phone_number"));
+        setLoadError(null);
       } catch (e) {
-        if (!dead) setLoadError(e instanceof Error ? e.message : "Could not load numbers.");
+        if (dead) return;
+        setLoadError(e instanceof Error ? e.message : "Could not load numbers.");
       } finally {
         if (!dead) setLoading(false);
       }
@@ -79,8 +95,8 @@ export default function WhatsAppHub() {
     <div className="wa-font flex h-full overflow-hidden bg-[#eae6df]">
       <style>{WA_CSS}</style>
 
-      {/* ── Left: WhatsApp chat-list style number picker ── */}
-      <aside className="flex w-[300px] shrink-0 flex-col border-r border-black/10 bg-white xl:w-[340px]">
+      {/* ── Left: WhatsApp chat-list style number picker (tablet/desktop only) ── */}
+      <aside className="hidden w-[300px] shrink-0 flex-col border-r border-black/10 bg-white md:flex xl:w-[340px]">
         <div className="flex items-center gap-3 bg-[#008069] px-4 py-3.5 text-white">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-lg">💬</div>
           <div className="min-w-0 flex-1">
@@ -156,15 +172,36 @@ export default function WhatsAppHub() {
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-[15px] font-semibold text-[#111b21]">
-              {active?.phone || active?.name || "WhatsApp"} {active && <span className="text-[#00a884]" title="verified">✓</span>}
+              {active?.phone || active?.name || "WhatsApp"}
             </p>
             <p className="truncate text-[12px] text-[#667781]">
-              {loading ? "loading…" : active ? (active.active ? "online · connected" : "needs attention") : "not connected"}
+              {loading
+                ? "loading…"
+                : active
+                  ? active.active
+                    ? `online · ${active.status || "connected"}`
+                    : "needs attention"
+                  : "not connected"}
             </p>
           </div>
+          {/* Mobile number picker — the sidebar list is hidden below md */}
+          {numbers.length > 1 && (
+            <select
+              value={activeId}
+              onChange={(e) => goto(tab, e.target.value)}
+              aria-label="Switch number"
+              className="min-h-9 max-w-[140px] shrink-0 truncate rounded-lg bg-white px-2 text-[12px] font-semibold text-[#008069] outline-none focus:ring-2 focus:ring-[#00a884]/40 md:hidden"
+            >
+              {numbers.map((n) => (
+                <option key={n.external_asset_id} value={n.external_asset_id}>
+                  {(n.phone || n.name || n.external_asset_id).slice(0, 24)}
+                </option>
+              ))}
+            </select>
+          )}
         </header>
         <nav className="flex gap-1 overflow-x-auto bg-white px-4 shadow-[0_1px_2px_rgba(0,0,0,0.08)]" role="tablist" aria-label="WhatsApp sections">
-          {(["profile", "numbers", "templates", "settings"] as Tab[]).map((t) => (
+          {(["profile", "numbers", "settings"] as Tab[]).map((t) => (
             <button
               key={t}
               role="tab"
@@ -172,7 +209,7 @@ export default function WhatsAppHub() {
               onClick={() => goto(t)}
               className={`min-h-11 shrink-0 border-b-[3px] px-3.5 text-[13px] font-semibold uppercase tracking-wide transition ${tab === t ? "border-[#00a884] text-[#008069]" : "border-transparent text-[#667781] hover:text-[#111b21]"}`}
             >
-              {t === "profile" ? "Profile" : t === "numbers" ? "Numbers" : t === "templates" ? "Templates" : "Settings"}
+              {t === "profile" ? "Profile" : t === "numbers" ? "Numbers" : "Settings"}
             </button>
           ))}
         </nav>
@@ -193,15 +230,17 @@ export default function WhatsAppHub() {
                 <Link href="/dashboard/channels" className="mt-4 inline-block rounded-full bg-[#00a884] px-6 py-2.5 text-[13px] font-semibold text-white">Go to Channels →</Link>
               </div>
             )}
-            {active && tab === "profile" && <ProfileForm phoneId={active.external_asset_id} />}
-            {active && tab === "numbers" && <NumbersHealth numbers={numbers} activeId={active.external_asset_id} />}
-            {active && tab === "templates" && <TemplatesList />}
-            {tab === "settings" && (
-              <div className="rounded-lg bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
-                <p className="text-[15px] font-semibold text-[#111b21]">Settings</p>
-                <p className="mt-1 text-[13px] text-[#667781]">Agent, response style, auto-reply and working hours live in the channel settings page.</p>
-                <Link href="/dashboard/channels/whatsapp/settings" className="mt-3 inline-block rounded-full border border-black/15 px-5 py-2 text-[13px] font-semibold text-[#008069]">Open channel settings →</Link>
-              </div>
+            {/* key= remounts the form per number, so its loading state resets cleanly */}
+            {active && tab === "profile" && <ProfileForm key={active.external_asset_id} phoneId={active.external_asset_id} businessName={active.name} />}
+            {active && tab === "numbers" && (
+              <NumbersHealth numbers={numbers} activeId={active.external_asset_id} onRefresh={loadNumbers} />
+            )}
+            {active && tab === "settings" && (
+              <WhatsAppSettings
+                phoneId={active.external_asset_id}
+                phone={active.phone}
+                businessName={active.name}
+              />
             )}
           </div>
         </div>

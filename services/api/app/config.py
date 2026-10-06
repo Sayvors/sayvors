@@ -183,6 +183,10 @@ class Settings(BaseSettings):
     # with token type + assets + permissions). Used to build the dialog URL.
     META_FACEBOOK_CONFIG_ID: str = ""
     META_INSTAGRAM_CONFIG_ID: str = ""
+    # Sayvors tenant messaging quota per calendar month, keyed by users.plan.
+    # This is OUR quota surfaced in the UI — never Meta's messaging tier, which
+    # stays invisible to tenants on purpose.
+    PLAN_MESSAGE_LIMITS: dict[str, int] = {"free": 1000, "pro": 25000}
 
     ADMIN_PASSWORD_HASH: str = ""
     ADMIN_SESSION_MINUTES: int = 120
