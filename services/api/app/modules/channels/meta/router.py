@@ -23,6 +23,8 @@ from .schemas import (
     MetaRegisterNumberRequest,
     MetaValidateResponse,
     MetaWhatsAppSession,
+    WhatsAppProfileOut,
+    WhatsAppProfileUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -544,6 +546,104 @@ async def register_whatsapp_number(
     asset.status = "registered"
     await db.commit()
     return {"registered": True, "phone_number_id": phone_number_id}
+
+
+@router.get("/whatsapp/{phone_number_id}/profile", response_model=WhatsAppProfileOut)
+async def get_whatsapp_profile(
+    phone_number_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch the live WhatsApp business profile from Meta (not cached)."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .models import MetaAsset
+    from .providers.base import MetaAPIError as _MetaAPIError
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == user.id,
+                MetaAsset.provider == "whatsapp",
+                MetaAsset.asset_type == "phone_number",
+                MetaAsset.external_asset_id == phone_number_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Number not found for this account")
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        raise HTTPException(status_code=409, detail="Reconnect WhatsApp — the access token is missing")
+    adapter = _service.get_adapter("whatsapp")
+    try:
+        data = await adapter.get_business_profile(phone_number_id, token)
+    except _MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    return WhatsAppProfileOut(
+        about=data.get("about"),
+        address=data.get("address"),
+        description=data.get("description"),
+        email=data.get("email"),
+        websites=data.get("websites") or [],
+        vertical=data.get("vertical"),
+        profile_picture_url=data.get("profile_picture_url"),
+    )
+
+
+@router.patch("/whatsapp/{phone_number_id}/profile", response_model=WhatsAppProfileOut)
+async def update_whatsapp_profile(
+    phone_number_id: str,
+    body: WhatsAppProfileUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update allowlisted business profile fields on Meta."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .models import MetaAsset
+    from .providers.base import MetaAPIError as _MetaAPIError
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == user.id,
+                MetaAsset.provider == "whatsapp",
+                MetaAsset.asset_type == "phone_number",
+                MetaAsset.external_asset_id == phone_number_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Number not found for this account")
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        raise HTTPException(status_code=409, detail="Reconnect WhatsApp — the access token is missing")
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "websites" in fields:
+        fields["websites"] = [w if w.startswith("http") else f"https://{w}" for w in fields["websites"]][:2]
+    adapter = _service.get_adapter("whatsapp")
+    try:
+        data = await adapter.set_business_profile(phone_number_id, token, fields)
+    except _MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    return WhatsAppProfileOut(
+        about=data.get("about"),
+        address=data.get("address"),
+        description=data.get("description"),
+        email=data.get("email"),
+        websites=data.get("websites") or [],
+        vertical=data.get("vertical"),
+        profile_picture_url=data.get("profile_picture_url"),
+    )
 
 
 @router.post("/instagram/discover", response_model=MetaAssetListResponse)

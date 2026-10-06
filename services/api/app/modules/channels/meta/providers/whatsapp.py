@@ -265,3 +265,25 @@ class WhatsAppAdapter(MetaProviderAdapter):
             logger.warning("WhatsApp validate failed: graph error %s", e.status_code)
             return False, f"graph error {e.status_code}"
         return True, f"{len(resp.json().get('data', []))} WABA(s) visible"
+
+    PROFILE_FIELDS = ("about", "address", "description", "email", "websites", "vertical")
+
+    async def get_business_profile(self, phone_number_id: str, token: str) -> dict:
+        """Fetch the WhatsApp business profile for a number."""
+        resp = await self._graph(
+            "GET",
+            f"/{phone_number_id}/whatsapp_business_profile",
+            token,
+            params={"fields": "about,address,description,email,websites,vertical,profile_picture_url"},
+        )
+        data = resp.json().get("data", {})
+        return data if isinstance(data, dict) else {}
+
+    async def set_business_profile(self, phone_number_id: str, token: str, fields: dict) -> dict:
+        """Update allowlisted business profile fields. Returns updated profile."""
+        body = {"messaging_product": "whatsapp"}
+        for k in self.PROFILE_FIELDS:
+            if fields.get(k) is not None:
+                body[k] = fields[k]
+        await self._graph("POST", f"/{phone_number_id}/whatsapp_business_profile", token, json=body)
+        return await self.get_business_profile(phone_number_id, token)

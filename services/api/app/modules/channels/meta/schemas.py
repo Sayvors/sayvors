@@ -88,3 +88,22 @@ class MetaRegisterNumberRequest(BaseModel):
     """Retry number registration — Meta allows this for 14 days after signup."""
 
     pin: str = Field(..., pattern=r"^\d{6}$")
+
+
+class WhatsAppProfileOut(BaseModel):
+    about: str | None = None
+    address: str | None = None
+    description: str | None = None
+    email: str | None = None
+    websites: list[str] = []
+    vertical: str | None = None
+    profile_picture_url: str | None = None
+
+
+class WhatsAppProfileUpdate(BaseModel):
+    about: str | None = Field(None, max_length=139)
+    address: str | None = Field(None, max_length=512)
+    description: str | None = Field(None, max_length=512)
+    email: str | None = Field(None, max_length=128)
+    websites: list[str] | None = Field(None, max_length=2)
+    vertical: str | None = Field(None, max_length=64)
