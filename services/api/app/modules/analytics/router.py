@@ -242,14 +242,37 @@ async def get_timeseries(
     from ..channels.models import Channel, ChannelMessage
 
     cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
-    chan_ids = (
+    chan_rows = (
         await db.execute(
-            select(Channel.id).where(
+            select(Channel).where(
                 Channel.user_id == uid,
                 Channel.platform.in_(("whatsapp", "instagram", "facebook")),
             )
         )
     ).scalars().all()
+    # Deselected/disconnected Meta assets must not keep feeding the Messages
+    # chart — same rule as the inbox thread list: the channel status flag,
+    # plus the inactive-asset lookup that catches disconnects from before the
+    # flag existed.
+    from ..channels.meta.models import MetaAsset
+
+    inactive_assets = {
+        (provider, external)
+        for provider, external in (
+            await db.execute(
+                select(MetaAsset.provider, MetaAsset.external_asset_id).where(
+                    MetaAsset.tenant_id == uid,
+                    MetaAsset.active.is_(False),
+                )
+            )
+        ).all()
+    }
+    chan_ids = [
+        c.id
+        for c in chan_rows
+        if c.status != "disconnected"
+        and (c.platform, c.platform_user_id) not in inactive_assets
+    ]
     msg_stmt = (
         select(func.date(ChannelMessage.created_at), func.count(ChannelMessage.id))
         .where(ChannelMessage.channel_id.in_(chan_ids))

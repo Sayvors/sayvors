@@ -227,7 +227,12 @@ async def save_discovered_assets(
 async def select_assets(
     db: AsyncSession, tenant_id: str, provider: str, asset_ids: list[str]
 ) -> list[MetaAsset]:
-    """Activate tenant-chosen assets; create Channel rows for messaging ones."""
+    """Replace the tenant's active asset set for one provider.
+
+    The frontend always sends the full checked list, so assets left out of
+    asset_ids were deliberately unchecked — they are deactivated here (their
+    inbox threads and dashboard charts go quiet until re-selected).
+    """
     from ..models import Channel
 
     rows = (
@@ -278,6 +283,65 @@ async def select_assets(
                 existing_channel.status = "active"
                 db.add(existing_channel)
         activated.append(asset)
+
+    # Deselection: same-provider active assets the tenant left unchecked go
+    # inactive, and their messaging channel is marked disconnected — the same
+    # semantics as a soft disconnect, so the inbox and dashboard hide the
+    # asset's data while the history is kept for a re-selection.
+    deselected_filter = [
+        MetaAsset.tenant_id == tenant_id,
+        MetaAsset.provider == provider,
+        MetaAsset.active.is_(True),
+    ]
+    if asset_ids:
+        deselected_filter.append(MetaAsset.id.not_in(asset_ids))
+    deselected = (
+        await db.execute(select(MetaAsset).where(*deselected_filter))
+    ).scalars().all()
+
+    # An Instagram account sends through its parent Page's token, so a
+    # deselected page takes its still-active IG children with it — otherwise
+    # they would stay "active" while silently unable to send.
+    page_ids = {a.id for a in deselected if a.asset_type == "page"}
+    cascaded_igs: list[MetaAsset] = []
+    if page_ids:
+        cascaded_igs = list(
+            (
+                await db.execute(
+                    select(MetaAsset).where(
+                        MetaAsset.tenant_id == tenant_id,
+                        MetaAsset.asset_type == "ig_account",
+                        MetaAsset.active.is_(True),
+                        MetaAsset.parent_asset_id.in_(page_ids),
+                    )
+                )
+            ).scalars().all()
+        )
+
+    for asset in [*deselected, *cascaded_igs]:
+        asset.active = False
+        asset.status = "disconnected"
+        db.add(asset)
+        platform = MESSAGING_ASSETS.get(asset.asset_type)
+        if platform:
+            existing_channel = (
+                await db.execute(
+                    select(Channel).where(
+                        Channel.user_id == tenant_id,
+                        Channel.platform == platform,
+                        Channel.platform_user_id == asset.external_asset_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_channel is not None and existing_channel.status == "active":
+                existing_channel.status = "disconnected"
+                db.add(existing_channel)
+    if deselected or cascaded_igs:
+        logger.info(
+            "Meta assets deselected provider=%s tenant=%s count=%d",
+            provider, tenant_id, len(deselected) + len(cascaded_igs),
+        )
+
     await db.commit()
     logger.info(
         "Meta assets selected provider=%s tenant=%s count=%d",

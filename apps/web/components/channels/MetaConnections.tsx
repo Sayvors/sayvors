@@ -170,11 +170,10 @@ export default function MetaConnections({
   const [pendingReg, setPendingReg] = useState<string | null>(null);
   // WhatsApp onboarding mode selection
   const [waMode, setWaMode] = useState<"standard" | "coexistence" | null>(null);
-  // Disconnect confirmation. `wipeData` upgrades the disconnect to a full
-  // purge (messages, channels, assets, connection) so reconnecting starts
-  // from scratch; unchecked, it is the old soft disconnect that keeps history.
+  // Disconnect confirmation — always the soft disconnect that keeps history.
+  // The destructive "disconnect AND delete everything" lives in
+  // Settings → Danger zone, not here.
   const [confirmOff, setConfirmOff] = useState<MetaProvider | null>(null);
-  const [wipeData, setWipeData] = useState(false);
   // Tenant-level WhatsApp response style — a real account setting (the same
   // one the WhatsApp consumer reads per incoming message).
   const [responseStyle, setResponseStyle] = useState<string>("concise");
@@ -256,8 +255,10 @@ export default function MetaConnections({
         })
       );
       setAssets(amap);
+      return amap;
     } catch {
       /* backend down — cards still render */
+      return {};
     }
   }, []);
 
@@ -459,12 +460,16 @@ export default function MetaConnections({
               );
             }
           }
-          setPicked((prev) => {
-            const updated = { ...prev, ["whatsapp"]: [] };
-            return updated;
-          });
+          // Pre-check whatever number is already active so a reconnect
+          // doesn't silently deselect it when the tenant just saves.
+          const fresh = await refresh();
+          setPicked((prev) => ({
+            ...prev,
+            ["whatsapp"]: (fresh["whatsapp"] ?? [])
+              .filter((a) => a.active)
+              .map((a) => a.id),
+          }));
           setPicking("whatsapp");
-          await refresh();
         } catch {
           onNotice("err", "WhatsApp session failed. Please try again.");
         } finally {
@@ -569,17 +574,28 @@ export default function MetaConnections({
   };
 
   const savePick = async (provider: MetaProvider) => {
+    // The list is the FULL checked set, and an empty one is meaningful: it
+    // deselects everything (the backend deactivates what's left out).
     const providerPicked = picked[provider] ?? [];
-    if (providerPicked.length === 0) return;
     setBusy(`${provider}-save`);
     try {
       await selectMetaAssets(provider, providerPicked);
-      onNotice("ok", `${provider} asset(s) activated.`);
+      onNotice(
+        "ok",
+        providerPicked.length > 0
+          ? `${provider} asset(s) activated.`
+          : `${provider} assets deselected — their data is hidden until you pick them again.`,
+      );
       setPicking(null);
       setPicked((prev) => ({ ...prev, [provider]: [] }));
       await refresh();
     } catch {
-      onNotice("err", "Could not activate the selected assets.");
+      onNotice(
+        "err",
+        providerPicked.length > 0
+          ? "Could not activate the selected assets."
+          : "Could not save the selection.",
+      );
     } finally {
       setBusy(null);
     }
@@ -622,9 +638,16 @@ export default function MetaConnections({
     try {
       const res = await discoverInstagram();
       onNotice("ok", `Found ${res.assets.length} Instagram account(s) — pick which to use.`);
-      setPicked((prev) => ({ ...prev, ["instagram"]: [] }));
+      const fresh = await refresh();
+      // Keep any already-active account checked; the new discoveries start
+      // unchecked next to them.
+      setPicked((prev) => ({
+        ...prev,
+        ["instagram"]: (fresh["instagram"] ?? [])
+          .filter((a) => a.active)
+          .map((a) => a.id),
+      }));
       setPicking("instagram");
-      await refresh();
     } catch (e) {
       onNotice("err", e instanceof Error ? e.message : "Connect Facebook first, then discover Instagram.");
     } finally {
@@ -825,7 +848,7 @@ export default function MetaConnections({
                     Re-check
                   </button>
                   <button
-                    onClick={() => { setConfirmOff(p.key); setWipeData(false); }}
+                    onClick={() => setConfirmOff(p.key)}
                     disabled={busy === `${p.key}-off`}
                     className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50"
                   >
@@ -906,10 +929,14 @@ export default function MetaConnections({
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => savePick(p.key)}
-                    disabled={(picked[p.key] ?? []).length === 0 || busy === `${p.key}-save`}
+                    disabled={busy === `${p.key}-save`}
                     className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
                   >
-                    {busy === `${p.key}-save` ? "Saving…" : `Use selected (${(picked[p.key] ?? []).length})`}
+                    {busy === `${p.key}-save`
+                      ? "Saving…"
+                      : (picked[p.key] ?? []).length === 0
+                        ? "Deselect all"
+                        : `Use selected (${(picked[p.key] ?? []).length})`}
                   </button>
                   <button
                     onClick={() => setPicking(null)}
@@ -1030,8 +1057,8 @@ export default function MetaConnections({
         );
       })}
 
-      {/* Disconnect confirmation: soft disconnect keeps history, the wipe
-          option deletes everything so a reconnect starts from scratch. */}
+      {/* Disconnect confirmation — soft disconnect only. Data deletion is a
+          deliberate Settings → Danger zone action, never a checkbox here. */}
       {confirmOff && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
@@ -1043,24 +1070,19 @@ export default function MetaConnections({
             <p className="text-[15px] font-bold text-ink dark:text-fog">
               Disconnect {PROVIDERS.find((x) => x.key === confirmOff)?.name}?
             </p>
-            <label className="mt-3 flex cursor-pointer items-start gap-2.5 text-[12px] text-ink/70 dark:text-fog/70">
-              <input
-                type="checkbox"
-                checked={wipeData}
-                onChange={(e) => setWipeData(e.target.checked)}
-                className="mt-0.5 h-4 w-4 shrink-0 accent-[#5b2d8e]"
-              />
-              <span>
-                Also permanently delete all data — conversations, messages, channels and assets.
-                <span className="mt-1 block text-ink/45 dark:text-fog/45">
-                  If you connect again you start from scratch, as if you were never connected.
-                  This cannot be undone.
-                </span>
-              </span>
-            </label>
-            <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">
-              Leave it unchecked to disconnect only — your history stays and is here when you
+            <p className="mt-2 text-[12px] leading-relaxed text-ink/70 dark:text-fog/70">
+              Your conversations and history are kept — everything is back the moment you
               reconnect.
+            </p>
+            <p className="mt-2 text-[11px] leading-relaxed text-ink/40 dark:text-fog/40">
+              Want to wipe your data instead? Permanently disconnect and delete everything from{" "}
+              <a
+                href="/dashboard/settings"
+                className="font-semibold text-red-600 underline underline-offset-2 hover:text-red-700 dark:text-red-400"
+              >
+                Settings → Danger zone
+              </a>
+              .
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -1070,17 +1092,11 @@ export default function MetaConnections({
                 Cancel
               </button>
               <button
-                onClick={() => void disconnect(confirmOff, wipeData)}
+                onClick={() => void disconnect(confirmOff, false)}
                 disabled={busy === `${confirmOff}-off`}
-                className={`rounded-lg px-3.5 py-1.5 text-[12px] font-semibold text-white transition disabled:opacity-50 ${
-                  wipeData ? "bg-red-600 hover:bg-red-700" : "bg-deep-violet hover:opacity-90"
-                }`}
+                className="rounded-lg bg-deep-violet px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
               >
-                {busy === `${confirmOff}-off`
-                  ? "…"
-                  : wipeData
-                    ? "Disconnect & delete everything"
-                    : "Disconnect"}
+                {busy === `${confirmOff}-off` ? "…" : "Disconnect"}
               </button>
             </div>
           </div>

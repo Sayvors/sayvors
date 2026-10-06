@@ -361,6 +361,15 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 "wamid=%s from=+%s", connection_id, wamid[:32], from_wa[-6:],
             )
             return
+        # Deselected asset: the message is kept (history returns when the
+        # tenant re-selects the asset) but the AI must not speak for a page
+        # or number the tenant turned off.
+        if not asset.active:
+            logger.info(
+                "WhatsApp AI reply skipped (asset deselected) wamid=%s",
+                wamid[:32],
+            )
+            return
         if not text or msg_type != "text":
             logger.info(
                 "WhatsApp AI reply skipped for non-text message type=%s wamid=%s",
@@ -961,6 +970,12 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 "Instagram AI reply skipped (no parent Page token on asset %s) "
                 "mid=%s from=+%s", ig_account_id, mid[:32], igsid[-6:],
             )
+            return
+        # Deselected asset (directly, or via its parent Page): keep the
+        # message, never let the AI answer from an account the tenant
+        # turned off.
+        if not asset.active:
+            logger.info("Instagram AI reply skipped (asset deselected) mid=%s", mid[:32])
             return
 
         adapter = InstagramAdapter()
