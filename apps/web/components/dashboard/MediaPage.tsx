@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
@@ -9,7 +9,7 @@ type MediaSource = "OWN" | "CUSTOMER";
 type MediaTab = "all" | "photos" | "videos" | "customer" | "scheduled";
 type MediaStatus = "DRAFT" | "SCHEDULED" | "PUBLISHED" | "FAILED";
 
-interface MediaItem {
+export interface MediaItem {
   id: string;
   type: MediaType;
   source: MediaSource;
@@ -41,7 +41,7 @@ const BACKEND_STATUS: Record<string, MediaStatus> = {
   failed: "FAILED",
 };
 
-function normalizeMedia(raw: unknown): MediaItem[] {
+export function normalizeMedia(raw: unknown): MediaItem[] {
   const list = Array.isArray(raw) ? raw : (raw as { media?: unknown[] }).media;
   if (!Array.isArray(list)) return [];
   return (list as Record<string, unknown>[]).map((m: Record<string, unknown>, i: number) => {
@@ -65,15 +65,26 @@ function normalizeMedia(raw: unknown): MediaItem[] {
   });
 }
 
-export default function MediaPage() {
+export interface MediaPageProps {
+  /** Start on this location when connected (feed passes its selection). */
+  initialLocationId?: string | null;
+  /** Open the upload dialog on mount (unified page's "Create media"). */
+  autoUpload?: boolean;
+  /** Open this item's details on mount (feed card click). */
+  focusMediaId?: string | null;
+  /** When embedded in the unified page, close/success return there. */
+  onExit?: () => void;
+}
+
+export default function MediaPage(props: MediaPageProps) {
   return (
     <Suspense>
-      <MediaInner />
+      <MediaInner {...props} />
     </Suspense>
   );
 }
 
-function MediaInner() {
+function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: MediaPageProps) {
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -110,6 +121,11 @@ function MediaInner() {
 
   useEffect(() => {
     let cancelled = false;
+    // Feed selection wins when the branch is reachable; else first connected.
+    const preferredId = (locs: LocationOption[]) =>
+      initialLocationId && locs.some((l) => l.id === initialLocationId)
+        ? initialLocationId
+        : locs[0]?.id ?? null;
     (async () => {
       try {
         // Real branches: every Localith-connected listing (same as Posts).
@@ -119,7 +135,7 @@ function MediaInner() {
             const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
             if (!cancelled) {
               setLocations(locs);
-              setSelectedId(locs[0].id);
+              setSelectedId(preferredId(locs));
               return;
             }
           }
@@ -135,7 +151,7 @@ function MediaInner() {
           }));
         if (!cancelled) {
           setLocations(googleChannels);
-          if (googleChannels.length) setSelectedId(googleChannels[0].id);
+          setSelectedId(preferredId(googleChannels));
         }
       } catch {
         if (!cancelled) {
@@ -147,7 +163,7 @@ function MediaInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [initialLocationId]);
 
   const loadItems = async () => {
     const q = selectedId ? `?listing_id=${encodeURIComponent(selectedId)}` : "";
@@ -246,6 +262,7 @@ function MediaInner() {
         }),
       });
       await refreshItems();
+      if (onExit) { onExit(); return; }
       setShowUpload(false);
       setUploadUrl("");
       setUploadFile(null);
@@ -270,7 +287,8 @@ function MediaInner() {
       await apiFetch(`/api/v1/media/${id}`, { method: "DELETE" });
     } catch { /* optimistic */ }
     setItems((prev) => prev.filter((m) => m.id !== id));
-    setViewing(null);
+    if (onExit) onExit();
+    else setViewing(null);
   };
 
   const handlePublishNow = async (id: string) => {
@@ -317,6 +335,34 @@ function MediaInner() {
   const openView = (m: MediaItem) => {
     setViewing(m);
     setEditingCategory(m.category);
+  };
+
+  // Embedded in the unified page: open the requested surface once ready.
+  const uploadApplied = useRef(false);
+  useEffect(() => {
+    if (!autoUpload || uploadApplied.current || loading) return;
+    uploadApplied.current = true;
+    setShowUpload(true);
+  }, [autoUpload, loading]);
+
+  const focusApplied = useRef(false);
+  useEffect(() => {
+    if (!focusMediaId || focusApplied.current) return;
+    const item = items.find((m) => m.id === focusMediaId);
+    if (!item) return;
+    focusApplied.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- opening the requested item on mount
+    openView(item);
+  }, [focusMediaId, items]);
+
+  // Feed-opened dialogs return to the feed; standalone use keeps its list.
+  const closeUpload = () => {
+    if (onExit) onExit();
+    else setShowUpload(false);
+  };
+  const closeViewing = () => {
+    if (onExit) onExit();
+    else setViewing(null);
   };
 
   if (loading) return <div className="flex h-full items-center justify-center"><LogoLoader size={32} /></div>;
@@ -427,11 +473,11 @@ function MediaInner() {
       </div>
 
       {showUpload && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowUpload(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={closeUpload}>
           <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl dark:bg-ink" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-ink/[0.06] px-5 py-4 dark:border-fog/[0.06]">
               <h2 className="text-[15px] font-bold text-ink dark:text-fog">Upload Media</h2>
-              <button onClick={() => setShowUpload(false)} className="text-ink/30 hover:text-ink/60"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg></button>
+              <button onClick={closeUpload} className="text-ink/30 hover:text-ink/60"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg></button>
             </div>
             <div className="flex border-b border-ink/[0.06] dark:border-fog/[0.06]">
               <button onClick={() => setUploadMode("file")} className={`flex-1 py-2.5 text-[13px] font-semibold ${uploadMode === "file" ? "border-b-2 border-deep-violet text-deep-violet" : "text-ink/40"}`}>File upload</button>
@@ -535,7 +581,7 @@ function MediaInner() {
               )}
             </div>
             <div className="flex justify-end gap-2 border-t border-ink/[0.06] px-5 py-3 dark:border-fog/[0.06]">
-              <button onClick={() => setShowUpload(false)} className="btn-secondary">Cancel</button>
+              <button onClick={closeUpload} className="btn-secondary">Cancel</button>
               <button onClick={handleUpload} disabled={uploading || (uploadMode === "url" && !uploadUrl.trim()) || (uploadMode === "file" && !uploadFile) || !scheduleValid} className="btn-primary disabled:opacity-50" title={uploadMode === "file" && !uploadFile ? "Choose a file first" : !scheduleValid ? "Pick a date and time to schedule" : undefined}>
                 {uploading ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Saving...</span> : scheduleEnabled ? "Schedule photo" : "Publish photo"}
               </button>
@@ -545,11 +591,11 @@ function MediaInner() {
       )}
 
       {viewing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setViewing(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={closeViewing}>
           <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl dark:bg-ink" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-ink/[0.06] px-5 py-4 dark:border-fog/[0.06]">
               <h2 className="text-[15px] font-bold text-ink dark:text-fog">Media details</h2>
-              <button onClick={() => setViewing(null)} className="text-ink/30 hover:text-ink/60"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg></button>
+              <button onClick={closeViewing} className="text-ink/30 hover:text-ink/60"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg></button>
             </div>
             <div className="space-y-3 p-5">
               <div className="grid grid-cols-2 gap-3 text-[12px]">

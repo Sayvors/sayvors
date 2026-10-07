@@ -62,7 +62,7 @@ export default function GlanceCharts() {
   return (
     <section aria-label="Messages, reviews and ratings charts" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       {series.map((s) => (
-        <div key={s.title} className="rounded-2xl border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
+        <div key={s.title} className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
           <div className="flex items-baseline justify-between">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">{s.title}</p>
             <p className="text-[11px] text-ink/40">{s.sub}</p>

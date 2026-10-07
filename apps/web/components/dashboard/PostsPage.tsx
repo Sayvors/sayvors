@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
@@ -21,7 +21,7 @@ type PostStatus = "LIVE" | "SCHEDULED" | "ARCHIVED" | "DRAFT" | "FAILED";
 type PostTab = "all" | "scheduled" | "archived";
 type View = { kind: "list" } | { kind: "create" } | { kind: "detail"; id: string; editing: boolean };
 
-interface PostItem {
+export interface PostItem {
   id: string;
   title: string;
   locationId: string;
@@ -61,15 +61,26 @@ const BACKEND_STATUS: Record<string, PostStatus> = {
   failed: "FAILED",
 };
 
-export default function PostsPage() {
+export interface PostsPageProps {
+  /** Start on this location when connected (feed passes its selection). */
+  initialLocationId?: string | null;
+  /** Open the composer on mount (unified page's "Create post"). */
+  autoCreate?: boolean;
+  /** Open this post's detail on mount (feed card click). */
+  focusId?: string | null;
+  /** When embedded in the unified page, back/cancel/success return there. */
+  onExit?: () => void;
+}
+
+export default function PostsPage(props: PostsPageProps) {
   return (
     <Suspense>
-      <PostsInner />
+      <PostsInner {...props} />
     </Suspense>
   );
 }
 
-function PostsInner() {
+function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPageProps) {
   const { groups } = useLocationGroups();
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
@@ -160,6 +171,11 @@ function PostsInner() {
 
   useEffect(() => {
     let cancelled = false;
+    // Feed selection wins when the branch is reachable; else first connected.
+    const preferredId = (locs: LocationOption[]) =>
+      initialLocationId && locs.some((l) => l.id === initialLocationId)
+        ? initialLocationId
+        : locs[0]?.id ?? null;
     (async () => {
       try {
         // Real locations: every Localith-connected branch.
@@ -169,7 +185,7 @@ function PostsInner() {
             const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
             if (!cancelled) {
               setLocations(locs);
-              setSelectedId(locs[0].id);
+              setSelectedId(preferredId(locs));
               return;
             }
           }
@@ -185,7 +201,7 @@ function PostsInner() {
           }));
         if (!cancelled) {
           setLocations(googleChannels);
-          if (googleChannels.length) setSelectedId(googleChannels[0].id);
+          setSelectedId(preferredId(googleChannels));
         }
       } catch {
         if (!cancelled) {
@@ -197,7 +213,7 @@ function PostsInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [initialLocationId]);
 
   const loadPosts = async (overlay?: Record<string, string | null>) => {
     const q = selectedId ? `?listing_id=${encodeURIComponent(selectedId)}` : "";
@@ -476,7 +492,8 @@ function PostsInner() {
       }
       if (nextOverlay !== deleteOverlay) setDeleteOverlay(nextOverlay);
       await refreshPosts(nextOverlay);
-      setView({ kind: "list" });
+      if (onExit) onExit();
+      else setView({ kind: "list" });
       if (list.length > 1) {
         showBannerTimed(failed === 0 ? "ok" : "err",
           failed === 0
@@ -565,7 +582,8 @@ function PostsInner() {
     } catch {
       showBannerTimed("err", "Could not delete post.");
     }
-    setView({ kind: "list" });
+    if (onExit) onExit();
+    else setView({ kind: "list" });
   };
 
   const handleCancelDeletion = async (id: string) => {
@@ -594,7 +612,8 @@ function PostsInner() {
     } catch {
       showBannerTimed("err", "Could not archive post.");
     }
-    setView({ kind: "list" });
+    if (onExit) onExit();
+    else setView({ kind: "list" });
   };
 
   const handleRestore = async (id: string) => {
@@ -622,6 +641,26 @@ function PostsInner() {
       await refreshPosts();
     }
   };
+
+  // Embedded in the unified page: jump straight into the requested view once
+  // data is ready (create composer / a card's detail). Applied once per mount.
+  const createApplied = useRef(false);
+  useEffect(() => {
+    if (!autoCreate || createApplied.current || loading || locations.length === 0) return;
+    createApplied.current = true;
+    openCreate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCreate, loading, locations.length]);
+
+  const focusApplied = useRef(false);
+  useEffect(() => {
+    if (!focusId || focusApplied.current) return;
+    if (!posts.some((p) => p.id === focusId)) return;
+    focusApplied.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- opening the requested post on mount
+    openDetail(focusId, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, posts]);
 
   if (loading) return <div className="flex h-full items-center justify-center"><LogoLoader size={32} /></div>;
 
@@ -657,7 +696,7 @@ function PostsInner() {
         <div className="mx-auto max-w-3xl space-y-4">
           {view.kind !== "list" && (
             <nav className="flex items-center gap-1.5 text-[12px] text-ink/40 dark:text-fog/40">
-              <button onClick={backToList} className="font-medium hover:text-deep-violet">Posts</button>
+              <button onClick={onExit ?? backToList} className="font-medium hover:text-deep-violet">{onExit ? "Posts & Media" : "Posts"}</button>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3"><path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
               <span className="font-semibold text-ink dark:text-fog">
                 {view.kind === "create" ? "Create Post" : view.editing ? "Edit Post" : "Post Details"}
@@ -787,7 +826,7 @@ function PostsInner() {
               deleteErr={deleteErr}
               valid={!!valid}
               aiDrafting={aiDrafting} canAiDraft={!!title.trim()} onAiDraft={() => void handleAiDraft()}
-              onBack={backToList} onSubmit={handleCreate} submitting={submitting}
+              onBack={onExit ?? backToList} onSubmit={handleCreate} submitting={submitting}
               submitLabel={
                 selectedLocIds.length > 1
                   ? scheduleEnabled
@@ -928,7 +967,7 @@ function PostsInner() {
                   </div>
                 </div>
               )}
-              <button onClick={backToList} className="text-[12px] font-medium text-ink/40 hover:text-ink">← Back to all posts</button>
+              <button onClick={onExit ?? backToList} className="text-[12px] font-medium text-ink/40 hover:text-ink">← {onExit ? "Back to Posts & Media" : "Back to all posts"}</button>
             </div>
           )}
         </div>
@@ -982,7 +1021,7 @@ function StatusBadge({ status }: { status: PostStatus }) {  const cls =
   );
 }
 
-function normalizePosts(raw: unknown, deleteOverlay?: Record<string, string | null>): PostItem[] {
+export function normalizePosts(raw: unknown, deleteOverlay?: Record<string, string | null>): PostItem[] {
   if (!Array.isArray(raw)) return [];
   return (raw as Record<string, unknown>[]).map((p: Record<string, unknown>, i: number) => {
     const id = String(p.id ?? `p_${i}`);

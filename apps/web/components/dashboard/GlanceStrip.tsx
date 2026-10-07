@@ -131,7 +131,7 @@ export default function GlanceStrip() {
   return (
     <section aria-label="Glance" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
       {/* Messages card — redesigned with icons, colors, and total */}
-      <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
+      <div className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Messages</p>
           <Image src="/meta.png" alt="Meta" width={32} height={32} />
@@ -139,7 +139,7 @@ export default function GlanceStrip() {
         <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalMsgs}</p>
         <div className="mt-3 space-y-2">
           {platformConfig.map(({ key, label, bg, text, border }) => (
-            <div key={key} className={`flex items-center gap-2 rounded-lg border ${border} ${bg} px-2.5 py-1.5`}>
+            <div key={key} className={`flex items-center gap-2 rounded-[2px] border ${border} ${bg} px-2.5 py-1.5`}>
               <span className={`${text}`}><PlatformIcon name={key} /></span>
               <span className="flex-1 text-[12px] font-medium text-ink/70 dark:text-fog/70">{label}</span>
               <span className="text-[12px] font-bold text-ink dark:text-fog">{platformMsgs[key] ?? 0}</span>
@@ -149,7 +149,7 @@ export default function GlanceStrip() {
       </div>
 
       {/* Tickets card — placeholder, no API call yet */}
-      <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
+      <div className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Tickets</p>
           <Image src="/leads.png" alt="Tickets" width={32} height={32} />
@@ -158,7 +158,7 @@ export default function GlanceStrip() {
         <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">All channels</p>
       </div>
 
-      <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
+      <div className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Reviews</p>
           <Image src="/google-review.png" alt="Google Reviews" width={32} height={32} />
@@ -166,7 +166,7 @@ export default function GlanceStrip() {
         <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalReviews ?? "-"}</p>
         <div className="mt-3 space-y-2">
           {biz.slice(0, 4).map((b) => (
-            <div key={b.id} className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
+            <div key={b.id} className="flex items-center gap-2 rounded-[2px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
               <span className="text-amber-400">
                 <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                   <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z" />
@@ -179,7 +179,7 @@ export default function GlanceStrip() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
+      <div className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Avg rating</p>
           <Image src="/google-business.png" alt="Google Business" width={32} height={32} />
@@ -187,7 +187,7 @@ export default function GlanceStrip() {
         <p className="mt-1 text-[22px] font-bold text-amber-500">{avgRating != null ? avgRating.toFixed(1) : "-"}</p>
         <div className="mt-3 space-y-2">
           {biz.slice(0, 4).map((b) => (
-            <div key={b.id} className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
+            <div key={b.id} className="flex items-center gap-2 rounded-[2px] border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5">
               <span className="text-amber-400">
                 <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                   <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8l-6.2 4.5 2.4-7.4L2 9.4h7.6z" />
@@ -202,7 +202,7 @@ export default function GlanceStrip() {
 
       {/* Posts card — everything in one view */}
       <Link href="/dashboard/posts-media" aria-label="Open posts and media">
-        <div className="h-full rounded-2xl border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-ink/80">
+        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-ink/80">
           <div className="flex items-center justify-between">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Posts</p>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-5 w-5 text-deep-violet/70" aria-hidden>
