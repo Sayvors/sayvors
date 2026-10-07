@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { apiFetch } from "@/lib/api-rag";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
 import { visibleChannelNav, type ChannelNavRow } from "@/lib/channel-nav";
@@ -19,13 +18,13 @@ interface NavItem {
 // The everyday surfaces. Channels is expandable (Inbox + per-network manage)
 // and rendered separately below so it can hold children.
 const MAIN_ITEMS: NavItem[] = [
-  { key: "dashboard", icon: <LayoutIcon />, href: "/dashboard" },
-  { key: "analytics", icon: <ChartIcon />, href: "/dashboard/analytics" },
-  { key: "locations", icon: <LocationIcon />, href: "/dashboard/locations" },
-  { key: "services", icon: <WrenchIcon />, href: "/dashboard/services" },
-  { key: "postsMedia", icon: <MegaphoneIcon />, href: "/dashboard/posts-media" },
-  { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
-  { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
+  { key: "dashboard", icon: <NavAsset src="/nav/dashboard.webp" />, href: "/dashboard" },
+  { key: "analytics", icon: <NavAsset src="/nav/analytics.png" />, href: "/dashboard/analytics" },
+  { key: "locations", icon: <NavAsset src="/nav/locations.jpg" />, href: "/dashboard/locations" },
+  { key: "services", icon: <NavAsset src="/nav/services.webp" />, href: "/dashboard/services" },
+  { key: "postsMedia", icon: <NavAsset src="/nav/posts-media.webp" />, href: "/dashboard/posts-media" },
+  { key: "reviews", icon: <NavAsset src="/nav/reviews.png" />, href: "/dashboard/reviews" },
+  { key: "databank", icon: <NavAsset src="/nav/databank.webp" />, href: "/dashboard/databank" },
 ];
 
 const ADVANCED_ITEMS: NavItem[] = [
@@ -42,8 +41,6 @@ const ADVANCED_ITEMS: NavItem[] = [
   { key: "settings", icon: <GearIcon />, href: "/dashboard/settings" },
 ];
 
-const ADVANCED_OPEN_KEY = "sayvors.sidebar.advanced-open";
-
 function isActive(pathname: string, item: NavItem) {
   const { href } = item;
   if (href === "/dashboard") return pathname === "/dashboard";
@@ -57,20 +54,8 @@ export default function Sidebar() {
   // inline sidebar is 56% of a 390px phone, permanently, before any content.
   const [isMobile, setIsMobile] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(true);
-  const [teamContext, setTeamContext] = useState<{ permissions?: string[]; role_name?: string; is_owner?: boolean } | null>(null);
-  useEffect(() => {
-    (async () => {
-      try {
-        setTeamContext(await apiFetch("/api/v1/team/context"));
-      } catch {
-        /* not authenticated — item hidden */
-      }
-    })();
-  }, []);
-
-  const teamPermitted = teamContext && (teamContext.is_owner || (teamContext.permissions || []).some((p: string) => ["team.manage", "team.view"].includes(p)));
-  const filteredAdvanced = ADVANCED_ITEMS.filter((item) => item.key !== "team" || teamPermitted);
+  // Folded by default; opens on click and closes again on any nav click.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
@@ -137,35 +122,7 @@ export default function Sidebar() {
     ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U"
     : "U";
 
-  // Remember the Advanced choice, then surface it anyway when the user is on
-  // an Advanced page — a collapsed section hiding the active item reads as a
-  // broken highlight.
-  useEffect(() => {
-    // Restore after mount so SSR and client render agree.
-    try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is an external store; reading it during render would break SSR
-      if (localStorage.getItem(ADVANCED_OPEN_KEY) === "1") setAdvancedOpen(true);
-    } catch {
-      /* storage unavailable */
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- a nav highlight hidden under a closed section reads as broken
-    if (filteredAdvanced.some((item) => isActive(pathname, item))) setAdvancedOpen(true);
-  }, [pathname]);
-
-  const toggleAdvanced = () => {
-    setAdvancedOpen((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(ADVANCED_OPEN_KEY, next ? "1" : "0");
-      } catch {
-        /* storage unavailable */
-      }
-      return next;
-    });
-  };
+  const toggleAdvanced = () => setAdvancedOpen((prev) => !prev);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -187,6 +144,9 @@ export default function Sidebar() {
     // Following a link inside the drawer should reveal the page, not leave the
     // nav covering it.
     setDrawerOpen(false);
+    // Any page change folds Advanced again — it only stays open while the
+    // user is browsing it.
+    setAdvancedOpen(false);
   }, [pathname]);
 
   // "Rail" means the icon-only 56px strip. Only the inline desktop sidebar can
@@ -261,17 +221,21 @@ export default function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto px-2 pt-3 pb-4" aria-label={t.nav.mainNavigation}>
+      <nav
+        className="flex-1 overflow-y-auto px-2 pt-3 pb-4"
+        aria-label={t.nav.mainNavigation}
+        onClick={(e) => {
+          // Clicking any page link folds Advanced straight away — including a
+          // re-click of the current page, where pathname never changes.
+          if (!(e.target as HTMLElement).closest("[data-advanced-toggle]")) setAdvancedOpen(false);
+        }}
+      >
         <div className="space-y-0.5">
           {MAIN_ITEMS.slice(0, 3).map((item) => (
             <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
           ))}
         </div>
         <ChannelsNav pathname={pathname} rail={rail} dir={dir} labels={t.nav as unknown as Record<string, string>} />
-        {/* Team — visible near channels / connect */}
-        <div className="mt-0.5 space-y-0.5">
-          <NavRow key="/dashboard/team" item={{ key: "team", icon: <TeamIcon />, href: "/dashboard/team" }} active={isActive(pathname, { key: "team", icon: <TeamIcon />, href: "/dashboard/team" })} rail={rail} dir={dir} label="Team" />
-        </div>
         <div className="mt-0.5 space-y-0.5">
           {MAIN_ITEMS.slice(3).map((item) => (
             <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
@@ -282,6 +246,7 @@ export default function Sidebar() {
         <div className="mt-3 border-t border-ink/[0.05] pt-3 dark:border-fog/[0.06]">
           <button
             onClick={toggleAdvanced}
+            data-advanced-toggle
             aria-expanded={advancedOpen}
             title={rail ? t.nav.advanced : undefined}
             className={`flex w-full items-center rounded-lg px-2.5 py-2 text-ink/35 outline-none transition hover:bg-ink/[0.04] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/35 dark:hover:bg-fog/[0.06] dark:hover:text-fog/60 ${
@@ -306,7 +271,7 @@ export default function Sidebar() {
           </button>
           {advancedOpen && (
             <div className="mt-0.5 space-y-0.5">
-              {filteredAdvanced.map((item) => (
+              {ADVANCED_ITEMS.map((item) => (
                 <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
               ))}
             </div>
@@ -436,6 +401,34 @@ function NavRow({
   );
 }
 
+// Official provider marks live in /public/channels. Rails/labels unchanged —
+// only the glyphs are real logos now instead of emoji.
+const CHANNEL_LOGOS: Record<string, string> = {
+  whatsapp: "/channels/whatsapp.png",
+  instagram: "/channels/instagram.png",
+  facebook: "/channels/facebook.png",
+};
+
+function ChannelLogo({ channel }: { channel: string }) {
+  const src = CHANNEL_LOGOS[channel];
+  if (!src) {
+    return (
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink/35 dark:text-fog/35">
+        <UserIcon />
+      </span>
+    );
+  }
+  return (
+    <Image
+      src={src}
+      alt=""
+      width={16}
+      height={16}
+      className="h-4 w-4 shrink-0 object-contain"
+    />
+  );
+}
+
 function ChannelsNav({
   pathname,
   rail,
@@ -490,7 +483,7 @@ function ChannelsNav({
         }`}
       >
         <Link href="/dashboard/channels/inbox" data-tour="nav-channels" className="flex min-w-0 flex-1 items-center gap-2.5">
-          <span className="h-4 w-4 shrink-0">💬</span>
+          <NavAsset src="/nav/channels.png" />
           {!rail && <span className="flex-1 truncate">{labels.channels ?? "Channels"}</span>}
         </Link>
         {!rail && (
@@ -524,7 +517,7 @@ function ChannelsNav({
                 aria-current={pathname === hrefFor(r.key) ? "page" : undefined}
                 className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] font-medium transition hover:bg-ink/[0.04] ${pathname === hrefFor(r.key) ? "bg-deep-violet/[0.07] text-deep-violet" : "text-ink/60"}`}
               >
-                {r.key === "inbox" ? "✉️" : r.key === "whatsapp" ? "💬" : r.key === "instagram" ? "📸" : "👤"}
+                {r.key === "inbox" ? <NavAsset src="/nav/inbox.webp" /> : <ChannelLogo channel={r.key} />}
                 <span className="flex-1 truncate">{labelFor(r.key)}</span>
                 {r.key !== "inbox" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" title="connected" />}
               </Link>
@@ -552,48 +545,13 @@ function SidebarMenuLink({ href, label }: { href: string; label: string }) {
 
 /* ── Icons ─────────────────────────────────────── */
 
-function LayoutIcon() {
+// Artwork marks (in /public/nav) sit on a white tile so the opaque source
+// images read as intentional chips in both light and dark themes.
+function NavAsset({ src }: { src: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="14" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-    </svg>
-  );
-}
-
-function LocationIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
-      <circle cx="12" cy="10" r="3" />
-    </svg>
-  );
-}
-
-function WrenchIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
-    </svg>
-  );
-}
-
-function MegaphoneIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 11l18-5v12L3 13v-2z" />
-      <path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
-    </svg>
-  );
-}
-
-function StarIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-    </svg>
+    <span className="flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-[2px] bg-white ring-1 ring-ink/[0.06] dark:bg-white/95 dark:ring-fog/10">
+      <Image src={src} alt="" width={14} height={14} className="h-[14px] w-[14px] object-contain" />
+    </span>
   );
 }
 
@@ -613,33 +571,6 @@ function ShieldCheckIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
       <path d="M9 12l2 2 4-4" />
-    </svg>
-  );
-}
-
-function ChartIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M18 20V10" /><path d="M12 20V4" /><path d="M6 20v-6" />
-    </svg>
-  );
-}
-
-function InboxIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12h5l2 3h4l2-3h5" />
-      <path d="M5.5 5h13l2.5 7v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6l2.5-7z" />
-    </svg>
-  );
-}
-
-function DatabaseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <ellipse cx="12" cy="5" rx="9" ry="3" />
-      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
     </svg>
   );
 }
@@ -736,17 +667,6 @@ function UserIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
       <circle cx="12" cy="7" r="4" />
-    </svg>
-  );
-}
-
-function TeamIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 00-3-3.87" />
-      <path d="M16 3.13a4 4 0 010 7.75" />
     </svg>
   );
 }
