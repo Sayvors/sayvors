@@ -675,20 +675,20 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
               <select value={selectedId ?? ""} onChange={(e) => setSelectedId(e.target.value)}
-                className="w-52 appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog">
+                className="w-52 appearance-none rounded-[2px] border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none dark:border-fog/[0.1] dark:bg-ink dark:text-fog">
                 {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
               <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </div>
             {view.kind === "list" && (
-              <button onClick={openCreate} className="rounded-xl bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:opacity-90">
+              <button onClick={openCreate} className="rounded-[2px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:opacity-90">
                 + Create Post
               </button>
             )}
           </div>
         </div>
         {banner && (
-          <div className={`mt-3 rounded-lg px-3 py-1.5 text-[12px] font-medium ${banner.kind === "ok" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>{banner.text}</div>
+          <div className={`mt-3 rounded-[2px] px-3 py-1.5 text-[12px] font-medium ${banner.kind === "ok" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>{banner.text}</div>
         )}
       </div>
 
@@ -706,27 +706,27 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
 
           {view.kind === "list" && (
             <>
-              <div className="flex gap-1 overflow-x-auto rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
+              <div className="flex gap-1 overflow-x-auto rounded-[2px] bg-ink/[0.03] p-1 dark:bg-fog/[0.04]">
                 {([
                   { key: "all", label: `All Posts (${counts.all})` },
                   { key: "scheduled", label: `Scheduled (${counts.scheduled})` },
                   { key: "archived", label: `Archived (${counts.archived})` },
                 ] as const).map((t) => (
                   <button key={t.key} onClick={() => setTab(t.key)}
-                    className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-[12px] font-semibold transition ${tab === t.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"}`}>
+                    className={`whitespace-nowrap rounded-[2px] px-3 py-1.5 text-[12px] font-semibold transition ${tab === t.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"}`}>
                     {t.label}
                   </button>
                 ))}
               </div>
 
               {tagFilter && (
-                <div className="flex items-center gap-2 rounded-xl bg-deep-violet/[0.06] px-3 py-2 text-[12px]">
+                <div className="flex items-center gap-2 rounded-[2px] bg-deep-violet/[0.06] px-3 py-2 text-[12px]">
                   <span className="text-ink/50">Filtered by <strong className="font-semibold text-deep-violet">#{tagFilter}</strong></span>
                   <button onClick={() => setTagFilter(null)} className="ml-auto font-semibold text-deep-violet hover:underline">Clear ✕</button>
                 </div>
               )}
               {filtered.length === 0 ? (
-                <div className="flex flex-col items-center rounded-2xl border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
+                <div className="flex flex-col items-center rounded-[2px] border border-dashed border-ink/[0.12] bg-white py-16 dark:border-fog/[0.12] dark:bg-ink">
                   <p className="text-[14px] font-medium text-ink/40 dark:text-fog/40">
                     {tab === "scheduled" ? "No scheduled posts" : tab === "archived" ? "No archived posts" : "No posts yet"}
                   </p>
@@ -734,7 +734,7 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                     Give it a title, description, tags, keywords and images.
                   </p>
                   {tab === "all" && (
-                    <button onClick={openCreate} className="mt-4 rounded-xl bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white">+ Create Post</button>
+                    <button onClick={openCreate} className="mt-4 rounded-[2px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white">+ Create Post</button>
                   )}
                 </div>
               ) : (
@@ -747,7 +747,7 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                       aria-label={`Open post ${p.title}`}
                       onClick={() => openDetail(p.id, false)}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(p.id, false); } }}
-                      className="block w-full cursor-pointer rounded-2xl border border-ink/[0.06] bg-white p-4 text-left outline-none transition hover:border-deep-violet/25 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-fog/[0.06] dark:bg-ink"
+                      className="block w-full cursor-pointer rounded-[2px] border border-ink/[0.06] bg-white p-4 text-left outline-none transition hover:border-deep-violet/25 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-fog/[0.06] dark:bg-ink"
                     >
                       <span className="flex items-start justify-between gap-3">
                         <span className="min-w-0 flex-1">
@@ -757,7 +757,7 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                         <span className="flex shrink-0 flex-col items-end gap-1">
                           <StatusBadge status={p.status} />
                           {(p.post_type === "offer" || p.post_type === "event") && (
-                            <span className="rounded-full bg-sky-100 px-2 py-px text-[9px] font-bold uppercase tracking-wide text-sky-700">
+                            <span className="rounded-[2px] bg-sky-100 px-2 py-px text-[9px] font-bold uppercase tracking-wide text-sky-700">
                               {p.post_type}
                             </span>
                           )}
@@ -771,19 +771,19 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                             type="button"
                             title={`Filter by #${t}`}
                             onClick={(e) => { e.stopPropagation(); setTagFilter(t); }}
-                            className="rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/20 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                            className="rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/20 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                           >
                             #{t}
                           </button>
                         ))}
                         {p.images.length > 0 && (
-                          <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06]">📷 {p.images.length}</span>
+                          <span className="rounded-[2px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06]">📷 {p.images.length}</span>
                         )}
                         {p.status === "SCHEDULED" && p.scheduledAt && (
                           <span className="ml-auto text-[11px] text-ink/35 dark:text-fog/35">Publishes {new Date(p.scheduledAt).toLocaleString()}</span>
                         )}
                         {p.deleteAt && (
-                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">
+                          <span className="rounded-[2px] bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">
                             🗑 {new Date(p.deleteAt).toLocaleString()}
                           </span>
                         )}
@@ -875,7 +875,7 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                   submitLabel="Save Changes" heading="Edit post" subheading="Update every field, then save."
                 />
               ) : (
-                <div className="overflow-hidden rounded-2xl border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
+                <div className="overflow-hidden rounded-[2px] border border-ink/[0.06] bg-white dark:border-fog/[0.06] dark:bg-ink">
                   {activePost.images.length > 0 && (
                     <div className="grid grid-cols-3 gap-1 bg-ink/[0.03] p-2 dark:bg-fog/[0.03]">
                       {activePost.images.map((img) => (
@@ -892,7 +892,7 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                       <div className="flex shrink-0 flex-col items-end gap-1.5">
                         <StatusBadge status={activePost.status} />
                         {(activePost.post_type === "offer" || activePost.post_type === "event") && (
-                          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">
+                          <span className="rounded-[2px] bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">
                             {activePost.post_type}
                           </span>
                         )}
@@ -906,7 +906,7 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                       </p>
                     )}
                     {activePost.coupon_code && (
-                      <p className="mt-2 inline-block rounded-lg border border-dashed border-deep-violet/40 bg-deep-violet/[0.05] px-2.5 py-1 text-[12px] font-bold text-deep-violet">
+                      <p className="mt-2 inline-block rounded-[2px] border border-dashed border-deep-violet/40 bg-deep-violet/[0.05] px-2.5 py-1 text-[12px] font-bold text-deep-violet">
                         🎟 {activePost.coupon_code}
                       </p>
                     )}
@@ -914,14 +914,14 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                       <p className="mt-2 text-[11px] leading-relaxed text-ink/45 dark:text-fog/45">Terms: {activePost.terms_conditions}</p>
                     )}
                     {activePost.cta_url && (
-                      <a href={activePost.cta_url} target="_blank" rel="noreferrer" className="mt-2 inline-block rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white hover:opacity-90">
+                      <a href={activePost.cta_url} target="_blank" rel="noreferrer" className="mt-2 inline-block rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white hover:opacity-90">
                         {activePost.cta_type ? activePost.cta_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Learn more"} ↗
                       </a>
                     )}
                     {activePost.tags.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {activePost.tags.map((t) => (
-                          <span key={t} className="rounded-full bg-deep-violet/10 px-2.5 py-1 text-[11px] font-semibold text-deep-violet">#{t}</span>
+                          <span key={t} className="rounded-[2px] bg-deep-violet/10 px-2.5 py-1 text-[11px] font-semibold text-deep-violet">#{t}</span>
                         ))}
                       </div>
                     )}
@@ -933,15 +933,15 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                       {activePost.status === "SCHEDULED" && activePost.scheduledAt ? ` · Publishes ${new Date(activePost.scheduledAt).toLocaleString()}` : ""}
                     </p>
                     {activePost.deleteAt && (
-                      <p className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 dark:bg-red-500/10 dark:text-red-300">
+                      <p className="mt-2 flex flex-wrap items-center gap-2 rounded-[2px] bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 dark:bg-red-500/10 dark:text-red-300">
                         <span>🗑 Scheduled deletion {new Date(activePost.deleteAt).toLocaleString()}</span>
-                        <button onClick={() => handleCancelDeletion(activePost.id)} className="ml-auto rounded-lg border border-red-200 px-2.5 py-1 text-[11px] font-semibold hover:bg-red-100 dark:hover:bg-red-500/20">
+                        <button onClick={() => handleCancelDeletion(activePost.id)} className="ml-auto rounded-[2px] border border-red-200 px-2.5 py-1 text-[11px] font-semibold hover:bg-red-100 dark:hover:bg-red-500/20">
                           Cancel deletion
                         </button>
                       </p>
                     )}
                     {activePost.status === "FAILED" && activePost.error && (
-                      <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 dark:border-red-500/20 dark:bg-red-500/10">
+                      <div className="mt-2 rounded-[2px] border border-red-200 bg-red-50 px-3 py-2.5 dark:border-red-500/20 dark:bg-red-500/10">
                         <p className="text-[11px] font-bold uppercase tracking-wide text-red-600 dark:text-red-300">Why publishing failed</p>
                         <p className="mt-1 break-words text-[12px] leading-relaxed text-red-700 dark:text-red-200">{activePost.error}</p>
                       </div>
@@ -951,14 +951,14 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                         <button onClick={() => openDetail(activePost.id, true)} className="btn-secondary">Edit</button>
                       )}
                       {(activePost.status === "SCHEDULED" || activePost.status === "FAILED" || activePost.status === "DRAFT") && (
-                        <button onClick={() => handlePublishNow(activePost.id)} className="rounded-xl bg-emerald-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-emerald-600">
+                        <button onClick={() => handlePublishNow(activePost.id)} className="rounded-[2px] bg-emerald-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-emerald-600">
                           {activePost.status === "FAILED" ? "Retry publish" : "Publish now"}
                         </button>
                       )}
                       {activePost.status !== "ARCHIVED" ? (
                         <>
-                          <button onClick={() => handleArchive(activePost.id)} className="rounded-xl border border-ink/[0.1] px-4 py-2 text-[12px] font-semibold text-ink/50 hover:bg-ink/[0.04] dark:text-fog/50">Archive</button>
-                          <button onClick={() => handleDelete(activePost.id)} className="rounded-xl border border-red-200 px-4 py-2 text-[12px] font-semibold text-red-600 hover:bg-red-50">Delete</button>
+                          <button onClick={() => handleArchive(activePost.id)} className="rounded-[2px] border border-ink/[0.1] px-4 py-2 text-[12px] font-semibold text-ink/50 hover:bg-ink/[0.04] dark:text-fog/50">Archive</button>
+                          <button onClick={() => handleDelete(activePost.id)} className="rounded-[2px] border border-red-200 px-4 py-2 text-[12px] font-semibold text-red-600 hover:bg-red-50">Delete</button>
                         </>
                       ) : (
                         <button onClick={() => handleRestore(activePost.id)} className="btn-primary">Restore</button>
@@ -983,7 +983,7 @@ function PostThumb({ src }: { src: string }) {
     // Bare filename (never hosted) or unreachable URL: identifier tile.
     return (
       <div
-        className="flex aspect-video items-center justify-center rounded-lg bg-gradient-to-br from-violet-soft/40 to-sky/20 px-2 text-center"
+        className="flex aspect-video items-center justify-center rounded-[2px] bg-gradient-to-br from-violet-soft/40 to-sky/20 px-2 text-center"
         title={src}
       >
         <span className="truncate text-[10px] font-medium text-ink/50">{src}</span>
@@ -991,7 +991,7 @@ function PostThumb({ src }: { src: string }) {
     );
   }
   return (
-    <div className="overflow-hidden rounded-lg bg-ink/[0.03]">
+    <div className="overflow-hidden rounded-[2px] bg-ink/[0.03]">
       {/* plain img: arbitrary remote hosts need no next.config allowlist */}
       <img
         src={src}
@@ -1015,7 +1015,7 @@ function StatusBadge({ status }: { status: PostStatus }) {  const cls =
             ? "bg-sky-100 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400"
             : "bg-ink/[0.05] text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40";
   return (
-    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}`}>
+    <span className={`shrink-0 rounded-[2px] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}`}>
       {status}
     </span>
   );
@@ -1084,7 +1084,7 @@ function PostForm(props: {
 }) {
   const p = props;
   return (
-    <div className="rounded-2xl border border-ink/[0.06] bg-white p-6 dark:border-fog/[0.06] dark:bg-ink">
+    <div className="rounded-[2px] border border-ink/[0.06] bg-white p-6 dark:border-fog/[0.06] dark:bg-ink">
       <h2 className="text-[15px] font-bold text-ink dark:text-fog">{p.heading}</h2>
       <p className="mt-0.5 text-[12px] text-ink/40 dark:text-fog/40">{p.subheading}</p>
       <div className="mt-5 space-y-4">
@@ -1094,7 +1094,7 @@ function PostForm(props: {
         </div>
         <div>
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Post type *</label>
-          <div className="flex rounded-xl bg-ink/[0.03] p-1 dark:bg-fog/[0.04]" role="radiogroup" aria-label="Post type">
+          <div className="flex rounded-[2px] bg-ink/[0.03] p-1 dark:bg-fog/[0.04]" role="radiogroup" aria-label="Post type">
             {([
               { key: "update", label: "Update", hint: "News & announcements" },
               { key: "offer", label: "Offer", hint: "Deals with coupon & end date" },
@@ -1107,7 +1107,7 @@ function PostForm(props: {
                 aria-checked={p.postType === t.key}
                 onClick={() => p.setPostType(t.key)}
                 title={t.hint}
-                className={`flex-1 rounded-lg px-2 py-2 text-center outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${p.postType === t.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"}`}
+                className={`flex-1 rounded-[2px] px-2 py-2 text-center outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${p.postType === t.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink dark:text-fog" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"}`}
               >
                 <span className="block text-[12px] font-semibold">{t.label}</span>
                 <span className="block text-[10px] opacity-70">{t.hint}</span>
@@ -1147,12 +1147,12 @@ function PostForm(props: {
               onClick={() => p.onAiDraft()}
               disabled={p.aiDrafting || !p.canAiDraft}
               title="Sayvors AI writes the description, tags and keywords from your title"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-deep-violet/[0.08] px-2.5 py-1 text-[11px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-[2px] bg-deep-violet/[0.08] px-2.5 py-1 text-[11px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
             >
               {p.aiDrafting ? (
                 <LogoLoader size={14} />
               ) : (
-                <Image src="/Sayvors_Icon.png" alt="" width={14} height={14} className="rounded-[4px]" />
+                <Image src="/Sayvors_Icon.png" alt="" width={14} height={14} className="rounded-[2px]" />
               )}
               {p.aiDrafting ? "Writing…" : "Generate with AI"}
             </button>
@@ -1187,9 +1187,9 @@ function PostForm(props: {
           </>
         )}
         {p.typeErr && (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-[11px] font-medium text-red-700">{p.typeErr}</p>
+          <p className="rounded-[2px] bg-red-50 px-3 py-2 text-[11px] font-medium text-red-700">{p.typeErr}</p>
         )}
-        <div className="rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
+        <div className="rounded-[2px] border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
           <p className="text-[12px] font-semibold text-ink dark:text-fog">Call-to-action button</p>
           <p className="text-[11px] text-ink/40">The button Google shows under your post.</p>
           <div className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -1211,14 +1211,14 @@ function PostForm(props: {
             </div>
           </div>
         </div>
-        <div className="rounded-xl border border-dashed border-ink/[0.1] p-3 dark:border-fog/[0.1]">
+        <div className="rounded-[2px] border border-dashed border-ink/[0.1] p-3 dark:border-fog/[0.1]">
           <p className="text-[12px] font-semibold text-ink dark:text-fog">🏷️ Organize</p>
           <p className="text-[11px] text-ink/40">Private labels to find your posts — only you see them. Tap any tag to filter the list.</p>
           <div className="mt-3">
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Tags</label>
           <div className="flex flex-wrap gap-1.5">
             {p.tags.map((t) => (
-              <span key={t} className="inline-flex items-center gap-1 rounded-full bg-deep-violet/10 px-2.5 py-1 text-[11px] font-semibold text-deep-violet">
+              <span key={t} className="inline-flex items-center gap-1 rounded-[2px] bg-deep-violet/10 px-2.5 py-1 text-[11px] font-semibold text-deep-violet">
                 #{t}
                 <button onClick={() => p.onRemoveTag(t)} className="opacity-50 hover:opacity-100">✕</button>
               </span>
@@ -1233,7 +1233,7 @@ function PostForm(props: {
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Keywords</label>
           <div className="flex flex-wrap gap-1.5">
             {p.keywords.map((k) => (
-              <span key={k} className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-medium text-sky-700">
+              <span key={k} className="inline-flex items-center gap-1 rounded-[2px] bg-sky-100 px-2.5 py-1 text-[11px] font-medium text-sky-700">
                 {k}
                 <button onClick={() => p.onRemoveKeyword(k)} className="opacity-50 hover:opacity-100">✕</button>
               </span>
@@ -1247,7 +1247,7 @@ function PostForm(props: {
         </div>
         <div>
           <label className="mb-1 block text-[12px] font-medium text-ink/50">Images (up to 5)</label>
-          <label className="flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-ink/[0.12] py-6 text-[12px] text-ink/40">
+          <label className="flex cursor-pointer flex-col items-center rounded-[2px] border-2 border-dashed border-ink/[0.12] py-6 text-[12px] text-ink/40">
               <span>{p.submitting ? "Uploading…" : "Click to upload images"}</span>
             <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { p.onFiles(e.target.files); e.currentTarget.value = ""; }} />
           </label>
@@ -1267,7 +1267,7 @@ function PostForm(props: {
           {p.images.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {p.images.map((url) => (
-                <span key={url} className="inline-flex items-center gap-1 rounded-lg bg-ink/[0.04] px-2 py-1 text-[11px] text-ink/60">
+                <span key={url} className="inline-flex items-center gap-1 rounded-[2px] bg-ink/[0.04] px-2 py-1 text-[11px] text-ink/60">
                   {decodeURIComponent(url.split("/").pop()?.split("?")[0] ?? "Uploaded media")}
                   <button onClick={() => p.onRemoveImage(url)} className="opacity-50 hover:opacity-100">✕</button>
                 </span>
@@ -1275,7 +1275,7 @@ function PostForm(props: {
             </div>
           )}
         </div>
-        <label className="flex cursor-pointer items-center justify-between rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
+        <label className="flex cursor-pointer items-center justify-between rounded-[2px] border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
           <span>
             <span className="block text-[13px] font-semibold text-ink dark:text-fog">Schedule for later</span>
             <span className="block text-[11px] text-ink/40">Stored in Sayvors, published via Google at that time.</span>
@@ -1288,7 +1288,7 @@ function PostForm(props: {
         {p.scheduleEnabled && (
           <input type="datetime-local" value={p.scheduledAt} onChange={(e) => p.setScheduledAt(e.target.value)} className="input-field" />
         )}
-        <label className="flex cursor-pointer items-center justify-between rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
+        <label className="flex cursor-pointer items-center justify-between rounded-[2px] border border-ink/[0.06] p-3 dark:border-fog/[0.06]">
           <span>
             <span className="block text-[13px] font-semibold text-ink dark:text-fog">Schedule deletion</span>
             <span className="block text-[11px] text-ink/40">Auto-delete this post at that time (Google copy stays).</span>
