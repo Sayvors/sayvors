@@ -38,6 +38,7 @@ const ADVANCED_ITEMS: NavItem[] = [
   { key: "usage", icon: <GaugeIcon />, href: "/dashboard/usage" },
   { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
   { key: "profile", icon: <UserIcon />, href: "/dashboard/profile" },
+  { key: "team", icon: <TeamIcon />, href: "/dashboard/team" },
   { key: "settings", icon: <GearIcon />, href: "/dashboard/settings" },
 ];
 
@@ -57,6 +58,20 @@ export default function Sidebar() {
   const [isMobile, setIsMobile] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [teamContext, setTeamContext] = useState<{ permissions?: string[]; role_name?: string } | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/v1/team/context", { credentials: "include" });
+        if (res.ok) setTeamContext(await res.json());
+      } catch {
+        /* not authenticated — item hidden */
+      }
+    })();
+  }, []);
+
+  const teamPermitted = teamContext && (teamContext.permissions || []).some((p: string) => ["team.manage", "team.view"].includes(p));
+  const filteredAdvanced = ADVANCED_ITEMS.filter((item) => item.key !== "team" || teamPermitted);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
@@ -138,7 +153,7 @@ export default function Sidebar() {
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- a nav highlight hidden under a closed section reads as broken
-    if (ADVANCED_ITEMS.some((item) => isActive(pathname, item))) setAdvancedOpen(true);
+    if (filteredAdvanced.some((item) => isActive(pathname, item))) setAdvancedOpen(true);
   }, [pathname]);
 
   const toggleAdvanced = () => {
@@ -288,7 +303,7 @@ export default function Sidebar() {
           </button>
           {advancedOpen && (
             <div className="mt-0.5 space-y-0.5">
-              {ADVANCED_ITEMS.map((item) => (
+              {filteredAdvanced.map((item) => (
                 <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
               ))}
             </div>
@@ -718,6 +733,17 @@ function UserIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
       <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+function TeamIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 00-3-3.87" />
+      <path d="M16 3.13a4 4 0 010 7.75" />
     </svg>
   );
 }
