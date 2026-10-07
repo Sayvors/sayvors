@@ -166,7 +166,7 @@ export default function Sidebar() {
         aria-label={t.nav.openMenu}
         aria-expanded={drawerOpen}
         aria-controls="dashboard-sidebar"
-        className={`fixed ${dir === "rtl" ? "right-1" : "left-1"} top-1 z-40 flex h-10 w-10 items-center justify-center rounded-xl border border-ink/[0.08] bg-white text-ink shadow-lg transition hover:bg-fog focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-white/10 dark:bg-[#1e1547] dark:text-white dark:hover:bg-[#251b55] md:hidden ${
+        className={`fixed ${dir === "rtl" ? "right-1" : "left-1"} top-1 z-40 flex h-10 w-10 items-center justify-center rounded-[2px] border border-ink/[0.08] bg-white text-ink shadow-lg transition hover:bg-fog focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-white/10 dark:bg-[#1e1547] dark:text-white dark:hover:bg-[#251b55] md:hidden ${
           drawerOpen ? "pointer-events-none opacity-0" : "opacity-100"
         }`}
       >
@@ -212,7 +212,7 @@ export default function Sidebar() {
         <button
           onClick={() => setDrawerOpen(false)}
           aria-label={t.nav.closeMenu}
-          className="ml-auto flex h-7 w-7 items-center justify-center rounded-md text-ink/30 outline-none transition hover:bg-ink/[0.05] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/40 dark:hover:bg-fog/[0.08] dark:hover:text-fog/70 md:hidden"
+          className="ml-auto flex h-7 w-7 items-center justify-center rounded-[2px] text-ink/30 outline-none transition hover:bg-ink/[0.05] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/40 dark:hover:bg-fog/[0.08] dark:hover:text-fog/70 md:hidden"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4">
             <path d="M6 6l12 12M18 6L6 18" />
@@ -249,7 +249,7 @@ export default function Sidebar() {
             data-advanced-toggle
             aria-expanded={advancedOpen}
             title={rail ? t.nav.advanced : undefined}
-            className={`flex w-full items-center rounded-lg px-2.5 py-2 text-ink/35 outline-none transition hover:bg-ink/[0.04] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/35 dark:hover:bg-fog/[0.06] dark:hover:text-fog/60 ${
+            className={`flex w-full items-center rounded-[2px] px-2.5 py-2 text-ink/35 outline-none transition hover:bg-ink/[0.04] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/35 dark:hover:bg-fog/[0.06] dark:hover:text-fog/60 ${
               rail ? "justify-center" : "gap-2"
             }`}
           >
@@ -283,7 +283,7 @@ export default function Sidebar() {
       <div ref={menuRef} className="relative border-t border-ink/[0.05] dark:border-fog/[0.06]">
         {menuOpen && (
           <div
-            className={`absolute bottom-full z-50 mb-2 overflow-hidden rounded-xl border border-ink/[0.08] bg-white shadow-xl dark:border-fog/[0.08] dark:bg-[#221b4d] ${
+            className={`absolute bottom-full z-50 mb-2 overflow-hidden rounded-[2px] border border-ink/[0.08] bg-white shadow-xl dark:border-fog/[0.08] dark:bg-[#221b4d] ${
               rail ? (dir === "rtl" ? "right-12 w-48" : "left-12 w-48") : "inset-x-2"
             }`}
           >
@@ -313,7 +313,7 @@ export default function Sidebar() {
             aria-label={isMobile ? t.nav.closeMenu : t.account.menu}
             aria-expanded={isMobile ? drawerOpen : menuOpen}
             title={!isMobile && collapsed ? displayName : undefined}
-            className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1.5 outline-none transition hover:bg-ink/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:hover:bg-fog/[0.06] ${
+            className={`flex min-w-0 flex-1 items-center gap-2 rounded-[2px] px-1.5 py-1.5 outline-none transition hover:bg-ink/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:hover:bg-fog/[0.06] ${
               collapsed ? "justify-center" : ""
             }`}
           >
@@ -337,7 +337,7 @@ export default function Sidebar() {
             title={collapsed ? t.nav.expand : t.nav.collapse}
             /* The drawer is already the compact form on a phone — a collapse
                toggle there would collapse what is off-screen twice over. */
-            className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink/25 outline-none transition hover:bg-ink/[0.05] hover:text-ink/50 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/25 dark:hover:bg-fog/[0.08] dark:hover:text-fog/50 md:flex"
+            className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-[2px] text-ink/25 outline-none transition hover:bg-ink/[0.05] hover:text-ink/50 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/25 dark:hover:bg-fog/[0.08] dark:hover:text-fog/50 md:flex"
           >
             <svg
               viewBox="0 0 16 16"
@@ -375,7 +375,7 @@ function NavRow({
       data-tour={`nav-${item.key}`}
       aria-current={active ? "page" : undefined}
       title={rail ? label : undefined}
-      className={`group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/30 ${
+      className={`group relative flex items-center gap-2.5 rounded-[2px] px-2.5 py-2 text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/30 ${
         active
           ? "bg-deep-violet/[0.07] text-deep-violet dark:bg-violet-light/[0.14] dark:text-violet-soft"
           : "text-ink/55 hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
@@ -478,7 +478,7 @@ function ChannelsNav({
   return (
     <div className="mt-0.5">
       <div
-        className={`group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/30 ${
+        className={`group relative flex items-center gap-2.5 rounded-[2px] px-2.5 py-2 text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/30 ${
           activeParent ? "bg-deep-violet/[0.07] text-deep-violet" : "text-ink/55 hover:bg-ink/[0.04]"
         }`}
       >
@@ -487,7 +487,7 @@ function ChannelsNav({
           {!rail && <span className="flex-1 truncate">{labels.channels ?? "Channels"}</span>}
         </Link>
         {!rail && (
-          <button onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Toggle channels" className="rounded px-1 text-ink/40 hover:text-ink">
+          <button onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Toggle channels" className="rounded-[2px] px-1 text-ink/40 hover:text-ink">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`}><path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         )}
@@ -496,17 +496,17 @@ function ChannelsNav({
         <div className="ml-6 mt-0.5 space-y-0.5 border-l border-ink/[0.06] pl-2">
           {!rows && (
             <>
-              <div className="h-7 animate-pulse rounded-md bg-ink/[0.05]" />
-              <div className="h-7 animate-pulse rounded-md bg-ink/[0.05]" />
+              <div className="h-7 animate-pulse rounded-[2px] bg-ink/[0.05]" />
+              <div className="h-7 animate-pulse rounded-[2px] bg-ink/[0.05]" />
             </>
           )}
           {rows?.map((r) =>
             r.key === "overview" ? (
-              <Link key="overview" href="/dashboard/channels" className="block rounded-md px-2 py-1.5 text-[12px] font-semibold text-deep-violet hover:bg-deep-violet/[0.06]">
+              <Link key="overview" href="/dashboard/channels" className="block rounded-[2px] px-2 py-1.5 text-[12px] font-semibold text-deep-violet hover:bg-deep-violet/[0.06]">
                 ＋ {labelFor("overview")}
               </Link>
             ) : r.key === "connect" ? (
-              <Link key="connect" href="/dashboard/channels" data-tour="nav-channels-connect" className="block rounded-md bg-deep-violet/[0.07] px-2 py-1.5 text-[12px] font-semibold text-deep-violet hover:bg-deep-violet/[0.1]">
+              <Link key="connect" href="/dashboard/channels" data-tour="nav-channels-connect" className="block rounded-[2px] bg-deep-violet/[0.07] px-2 py-1.5 text-[12px] font-semibold text-deep-violet hover:bg-deep-violet/[0.1]">
                 ＋ {labelFor("connect")}
               </Link>
             ) : (
@@ -515,7 +515,7 @@ function ChannelsNav({
                 href={hrefFor(r.key)}
                 data-tour={`nav-channels-${r.key}`}
                 aria-current={pathname === hrefFor(r.key) ? "page" : undefined}
-                className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px] font-medium transition hover:bg-ink/[0.04] ${pathname === hrefFor(r.key) ? "bg-deep-violet/[0.07] text-deep-violet" : "text-ink/60"}`}
+                className={`flex items-center gap-2 rounded-[2px] px-2 py-1.5 text-[12px] font-medium transition hover:bg-ink/[0.04] ${pathname === hrefFor(r.key) ? "bg-deep-violet/[0.07] text-deep-violet" : "text-ink/60"}`}
               >
                 {r.key === "inbox" ? <NavAsset src="/nav/inbox.webp" /> : <ChannelLogo channel={r.key} />}
                 <span className="flex-1 truncate">{labelFor(r.key)}</span>
