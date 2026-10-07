@@ -1,123 +1,275 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import { getAccessToken, useAuth } from "@/lib/auth-context";
 
-/* Invite /join page — phase 1 skeleton */
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export default function InvitePage() {
-  return (
-    <Suspense fallback={<div className="p-6 text-[13px] text-ink/40">Loading invite…</div>}>
-      <InviteContent />
-    </Suspense>
-  );
+interface InvitePreview {
+  email: string;
+  business_name?: string | null;
+  inviter_name?: string | null;
+  role_name?: string | null;
+  expires_at?: string | null;
+  account_exists?: boolean;
 }
 
-function InviteContent() {
-  const params = useSearchParams();
-  const router = useRouter();
-  const token = params?.get("token") ?? "";
-  const [preview, setPreview] = useState<any | null>(null);
-  const [email, setEmail] = useState("");
+type Mode = "loading" | "invalid" | "preview" | "new" | "signin" | "done";
+
+function detailText(d: unknown, fallback: string): string {
+  if (typeof d === "string") return d;
+  if (d && typeof d === "object") {
+    const o = d as Record<string, unknown>;
+    if (typeof o.message === "string") return o.message;
+  }
+  return fallback;
+}
+
+export default function InvitePage() {
+  const routeParams = useParams<{ token: string }>();
+  const { user, loading: authLoading, logout } = useAuth();
+  const token = routeParams?.token || "";
+
+  const [preview, setPreview] = useState<InvitePreview | null>(null);
+  const [mode, setMode] = useState<Mode>(() => (token ? "loading" : "invalid"));
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"preview" | "new" | "existing" | "done">("preview");
-  const [acceptMsg, setAcceptMsg] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!token) return;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/team/invites/preview?token=${encodeURIComponent(token)}`, { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          setPreview(data);
-          setEmail(data.email || "");
-        } else {
-          setMode("existing");
+        const res = await fetch(`${API}/api/v1/team/invites/preview?token=${encodeURIComponent(token)}`, { credentials: "include" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setMsg(detailText(data?.detail, "This invite link is invalid or was already used."));
+          setMode("invalid");
+          return;
         }
+        setPreview(data as InvitePreview);
+        setMode("preview");
       } catch {
-        setMode("existing");
+        setMsg("Could not load this invite — check your connection and try again.");
+        setMode("invalid");
       }
     })();
   }, [token]);
 
-  if (!token) {
-    return <div className="p-6 text-[13px] text-red-600">Invalid or missing invite token.</div>;
-  }
+  const emailMatches =
+    !!user?.email && !!preview?.email && user.email.toLowerCase() === preview.email.toLowerCase();
+
+  const accept = async (extra: Record<string, unknown>, withBearer: boolean): Promise<boolean> => {
+    setBusy(true); setMsg("");
+    try {
+      const accessToken = withBearer ? getAccessToken() : null;
+      const res = await fetch(`${API}/api/v1/team/invites/accept`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        credentials: "include",
+        body: JSON.stringify({ token, ...extra }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setMode("done");
+        return true;
+      }
+      const d = data?.detail as unknown;
+      const code = d && typeof d === "object" ? (d as Record<string, unknown>).code : undefined;
+      if (res.status === 401 || res.status === 403 || code === "login_required") {
+        setMsg(detailText(d, "Please sign in with the invited account."));
+        setMode("signin");
+        return false;
+      }
+      setMsg(detailText(d, "Could not accept this invite."));
+      return false;
+    } catch {
+      setMsg("Network error — could not accept invite.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const passwordValid = password.length >= 8;
+  const expiresLabel = preview?.expires_at ? new Date(preview.expires_at).toLocaleDateString() : null;
 
   return (
     <div className="mx-auto max-w-md p-6 space-y-6">
       <h1 className="text-[20px] font-bold text-ink dark:text-fog">Team invite</h1>
-      {mode === "preview" && (
-        <div className="rounded-2xl border border-ink/10 bg-white p-5 dark:border-fog/10 dark:bg-ink shadow-sm space-y-3">
-          <p className="text-[13px] text-ink/70 dark:text-fog/70">You were invited by <strong>{preview?.invited_by_email || "a workspace owner"}</strong>.</p>
-          <p className="text-[12px] text-ink/40 dark:text-fog/40">Role: <span className="font-semibold text-ink/70 dark:text-fog/70">{preview?.role || "—"}</span></p>
-          {preview?.channel_levels && Object.keys(preview.channel_levels).length > 0 && (
-            <div className="rounded-lg bg-ink/[0.03] p-3 text-[12px] dark:bg-fog/[0.04]">
-              <p className="font-semibold text-ink/60 dark:text-fog/60 mb-1">Channel access</p>
-              {Object.entries(preview.channel_levels as Record<string, string>).map(([ch, lvl]) => (
-                <p key={ch} className="text-ink/50 dark:text-fog/50">{ch}: <span className="font-medium">{lvl}</span></p>
-              ))}
-            </div>
-          )}
-          <button
-            onClick={() => setMode("new")}
-            className="mt-2 w-full rounded-lg bg-deep-violet px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm hover:bg-deep-violet/90 transition"
-          >
-            Accept invite
-          </button>
+
+      {mode === "loading" && <p className="text-[13px] text-ink/40 dark:text-fog/40">Loading invite…</p>}
+
+      {mode === "invalid" && (
+        <div className="rounded-2xl border border-red-200 bg-red-50/50 p-5 dark:border-red-500/20 dark:bg-red-500/[0.06]">
+          <p className="text-[14px] font-semibold text-red-700 dark:text-red-300">This invite cannot be used</p>
+          <p className="mt-1 text-[13px] text-ink/60 dark:text-fog/60">{msg || "This invite link is invalid or was already used."}</p>
         </div>
       )}
+
+      {mode === "preview" && (
+        <div className="rounded-2xl border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink">
+          <p className="text-[13px] text-ink/70 dark:text-fog/70">
+            <strong>{preview?.business_name || "A workspace"}</strong> invited you, via{" "}
+            <strong>{preview?.inviter_name || "the workspace owner"}</strong>.
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <span className="rounded-full bg-deep-violet/10 px-2.5 py-0.5 text-[11px] font-semibold text-deep-violet">
+              {preview?.role_name || "member"}
+            </span>
+            {expiresLabel && <span className="text-[11px] text-ink/40 dark:text-fog/40">Expires {expiresLabel}</span>}
+          </div>
+          <p className="mt-3 text-[12px] text-ink/50 dark:text-fog/50">For: {preview?.email}</p>
+
+          {authLoading ? (
+            <p className="mt-4 text-[12px] text-ink/40 dark:text-fog/40">Checking your session…</p>
+          ) : preview?.account_exists ? (
+            emailMatches ? (
+              <button
+                onClick={() => accept({}, true)}
+                disabled={busy}
+                className="mt-4 w-full rounded-lg bg-deep-violet px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-40"
+              >
+                {busy ? "Joining…" : `Join as ${preview?.email}`}
+              </button>
+            ) : (
+              <button
+                onClick={() => { setMsg(""); setMode("signin"); }}
+                className="mt-4 w-full rounded-lg bg-deep-violet px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
+              >
+                Continue to sign in
+              </button>
+            )
+          ) : (
+            <button
+              onClick={() => setMode("new")}
+              className="mt-4 w-full rounded-lg bg-deep-violet px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
+            >
+              Accept invite
+            </button>
+          )}
+        </div>
+      )}
+
       {mode === "new" && (
-        <div className="rounded-2xl border border-ink/10 bg-white p-5 dark:border-fog/10 dark:bg-ink shadow-sm space-y-4">
+        <div className="rounded-2xl border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink space-y-4">
           <p className="text-[14px] font-semibold text-ink dark:text-fog">Create your account</p>
           <div className="space-y-2">
             <label className="text-[12px] font-medium text-ink/60 dark:text-fog/60">Email</label>
-            <input value={email} readOnly className="w-full rounded-lg border border-ink/10 bg-ink/[0.04] px-3 py-2 text-[13px] text-ink/50 dark:border-fog/10 dark:bg-fog/[0.04] dark:text-fog/50" />
+            <input
+              value={preview?.email || ""}
+              readOnly
+              className="w-full rounded-lg border border-ink/10 bg-ink/[0.04] px-3 py-2 text-[13px] text-ink/50 dark:border-fog/10 dark:bg-fog/[0.04] dark:text-fog/50"
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-[12px] font-medium text-ink/60 dark:text-fog/60">First name</label>
+              <input
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                placeholder="Optional"
+                className="w-full rounded-lg border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/30 dark:border-fog/10 dark:bg-ink dark:text-fog"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[12px] font-medium text-ink/60 dark:text-fog/60">Last name</label>
+              <input
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                placeholder="Optional"
+                className="w-full rounded-lg border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/30 dark:border-fog/10 dark:bg-ink dark:text-fog"
+              />
+            </div>
           </div>
           <div className="space-y-2">
             <label className="text-[12px] font-medium text-ink/60 dark:text-fog/60">Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Set a password" className="w-full rounded-lg border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.08] dark:border-fog/10 dark:bg-ink dark:text-fog" />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 8 characters"
+              className="w-full rounded-lg border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.08] dark:border-fog/10 dark:bg-ink dark:text-fog"
+            />
+            {password && !passwordValid && <p className="text-[11px] text-red-600">Password must be at least 8 characters.</p>}
           </div>
           <button
-            onClick={async () => {
-              try {
-                const res = await fetch("/api/v1/team/invites/accept", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({ token, password }),
-                });
-                const data = await res.json();
-                if (res.ok) {
-                  setMode("done");
-                } else if (data.detail?.code === "login_required") {
-                  setMode("existing");
-                } else {
-                  setAcceptMsg(data.detail || JSON.stringify(data));
-                }
-              } catch {
-                setAcceptMsg("Network error — could not accept invite.");
-              }
-            }}
-            className="w-full rounded-lg bg-deep-violet px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm hover:bg-deep-violet/90 transition"
+            onClick={() => accept({ password, first_name: firstName || undefined, last_name: lastName || undefined }, false)}
+            disabled={!passwordValid || busy}
+            className="w-full rounded-lg bg-deep-violet px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-40"
           >
-            Create account &amp; join
+            {busy ? "Creating account…" : "Create account & join"}
           </button>
-          {acceptMsg && <p className="text-[11px] text-red-600">{acceptMsg}</p>}
+          {msg && <p className="text-[11px] text-red-600">{msg}</p>}
         </div>
       )}
-      {mode === "existing" && (
+
+      {mode === "signin" && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5 dark:border-amber-500/20 dark:bg-amber-500/[0.06] space-y-3">
-          <p className="text-[14px] font-semibold text-amber-700 dark:text-amber-300">Account already exists</p>
-          <p className="text-[13px] text-ink/60 dark:text-fog/60">This email is already registered. Please sign in first, then return to accept the invite.</p>
-          <a href="/auth/login" className="inline-block rounded-lg bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white hover:bg-deep-violet/90">Sign in</a>
+          <p className="text-[14px] font-semibold text-amber-700 dark:text-amber-300">
+            {user && emailMatches ? "Finish joining" : "Sign in to continue"}
+          </p>
+          {user && emailMatches ? (
+            <p className="text-[13px] text-ink/60 dark:text-fog/60">
+              You are signed in as <strong>{user.email}</strong>. Finish joining{" "}
+              <strong>{preview?.business_name || "the workspace"}</strong>.
+            </p>
+          ) : user ? (
+            <p className="text-[13px] text-ink/60 dark:text-fog/60">
+              You are signed in as <strong>{user.email}</strong>, but this invite is for{" "}
+              <strong>{preview?.email || "another account"}</strong>. Sign out and sign in with the invited account.
+            </p>
+          ) : (
+            <p className="text-[13px] text-ink/60 dark:text-fog/60">
+              This email already has a Sayvors account. Sign in as <strong>{preview?.email}</strong> to join{" "}
+              <strong>{preview?.business_name || "the workspace"}</strong>.
+            </p>
+          )}
+          {msg && <p className="text-[11px] text-red-600">{msg}</p>}
+          <div className="flex gap-2">
+            {user && emailMatches ? (
+              <button
+                onClick={() => accept({}, true)}
+                disabled={busy}
+                className="rounded-lg bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+              >
+                {busy ? "Joining…" : `Join as ${preview?.email}`}
+              </button>
+            ) : user ? (
+              <button
+                onClick={() => logout(false, `/invite/${token}`)}
+                className="rounded-lg bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
+              >
+                Sign out
+              </button>
+            ) : (
+              <a
+                href={`/login?next=${encodeURIComponent(`/invite/${token}`)}`}
+                className="rounded-lg bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
+              >
+                Sign in
+              </a>
+            )}
+          </div>
         </div>
       )}
+
       {mode === "done" && (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5 dark:border-emerald-500/20 dark:bg-emerald-500/[0.06]">
           <p className="text-[15px] font-bold text-emerald-700 dark:text-emerald-300">Welcome to the team!</p>
-          <p className="text-[13px] text-ink/60 dark:text-fog/60 mt-1">You are now a member of this workspace.</p>
+          <p className="mt-1 text-[13px] text-ink/60 dark:text-fog/60">You are now a member of this workspace.</p>
+          <a
+            href="/dashboard"
+            className="mt-4 inline-block rounded-lg bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
+          >
+            Go to dashboard
+          </a>
         </div>
       )}
     </div>

@@ -68,7 +68,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     "Admin": [
         p for p in ALL_PERMISSIONS
         if not p.startswith("billing.") and p != "team.manage"
-    ] + ["team.view"],
+    ],
     "Agent": [
         "inbox.view", "inbox.reply",
         "channels.view",

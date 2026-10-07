@@ -42,6 +42,6 @@ Rules: EXCLUDE user WIP files `apps/web/app/dashboard/analytics/page.tsx` + `app
 - 6 DONE: batch sweep (15 files) + repair (6 files) + compile verified
 - 7 VERIFIED: full suite 968/11 (same pre-existing failures); gates imports added (analytics, assistant, posts, rag)
 - 8 DONE: realtime (_channel, publish/subscribe + websocket endpoint) switched to tenant_id/tenant_key
-- 9 PENDING: /dashboard/team page + /invite/[token] page (no files yet)
+- 9 IN PROGRESS (skeleton pages created): /dashboard/team page + /invite/[token] page (no files yet)
 - 10 PENDING: commit (ask user first; exclude analytics/growth WIP; no Co-Authored-By trailer)
 

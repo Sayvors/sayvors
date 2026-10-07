@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { apiFetch } from "@/lib/api-rag";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
 import { visibleChannelNav, type ChannelNavRow } from "@/lib/channel-nav";
@@ -61,8 +62,7 @@ export default function Sidebar() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/v1/team/context", { credentials: "include" });
-        if (res.ok) setTeamContext(await res.json());
+        setTeamContext(await apiFetch("/api/v1/team/context"));
       } catch {
         /* not authenticated — item hidden */
       }

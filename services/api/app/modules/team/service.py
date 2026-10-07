@@ -16,6 +16,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...security import generate_verification_token, hash_password, hash_token
@@ -28,24 +29,46 @@ logger = logging.getLogger(__name__)
 INVITE_TTL_DAYS = 7
 
 
-async def ensure_system_roles(db: AsyncSession, tenant_id: str) -> list[TeamRole]:
-    """Seed the read-only role templates once per workspace; idempotent."""
-    existing = (
+async def _system_roles_by_name(db: AsyncSession, tenant_id: str) -> dict[str, TeamRole]:
+    rows = (
         await db.execute(
             select(TeamRole).where(TeamRole.tenant_id == tenant_id, TeamRole.is_system.is_(True))
         )
     ).scalars().all()
-    have = {r.name for r in existing}
-    created = []
+    return {r.name: r for r in rows}
+
+
+async def ensure_system_roles(db: AsyncSession, tenant_id: str) -> list[TeamRole]:
+    """Seed the read-only role templates once per workspace; idempotent.
+
+    Existing system roles are re-synced to the current template — they are
+    platform-managed (the API refuses edits), so a row written by an older
+    catalog (e.g. Admin carrying a duplicated team.view) is repaired here.
+
+    Race-safe: two parallel first-load requests (members + roles) can both
+    find an empty workspace and both try to seed. The INSERT runs inside a
+    savepoint, so the loser rolls back, re-reads the winner's rows and returns
+    them instead of dying on uq_team_roles_tenant_name.
+    """
+    have = await _system_roles_by_name(db, tenant_id)
+    if any(name not in have for name in ROLE_TEMPLATES):
+        try:
+            async with db.begin_nested():
+                for name, perms in ROLE_TEMPLATES.items():
+                    if name not in have:
+                        db.add(TeamRole(
+                            tenant_id=tenant_id, name=name, is_system=True, permissions=list(perms),
+                        ))
+                await db.flush()
+        except IntegrityError:
+            pass  # a concurrent request seeded first — re-read below
+        have = await _system_roles_by_name(db, tenant_id)
     for name, perms in ROLE_TEMPLATES.items():
-        if name in have:
-            continue
-        role = TeamRole(tenant_id=tenant_id, name=name, is_system=True, permissions=list(perms))
-        db.add(role)
-        created.append(role)
-    if created:
-        await db.flush()
-    return list(existing) + created
+        role = have.get(name)
+        if role is not None and role.permissions != list(perms):
+            role.permissions = list(perms)
+    await db.flush()
+    return [have[name] for name in ROLE_TEMPLATES if name in have]
 
 
 async def create_custom_role(db: AsyncSession, tenant_id: str, name: str, permissions: list[str]) -> TeamRole:

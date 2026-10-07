@@ -169,15 +169,68 @@ async def test_cannot_delete_role_in_use(client, db):
     assert client.delete(f"/api/v1/team/roles/{custom_id}").status_code == 409
 
 
+# ── permission catalog ───────────────────────────────────
+
+
+def test_admin_template_has_unique_permissions():
+    perms = ROLE_TEMPLATES["Admin"]
+    assert len(perms) == len(set(perms))
+    assert "team.view" in perms
+    assert "team.manage" not in perms
+
+
+@pytest.mark.asyncio
+async def test_ensure_system_roles_syncs_stale_templates(client, db):
+    """System roles are platform-managed: re-seeding repairs rows written by
+    an older catalog (e.g. Admin carrying a duplicated team.view)."""
+    await _make_owner(db)
+    roles = await service.ensure_system_roles(db, TENANT)
+    admin = next(r for r in roles if r.name == "Admin")
+    admin.permissions = ["team.view", "team.view", "inbox.view"]
+    await db.commit()
+
+    refreshed = await service.ensure_system_roles(db, TENANT)
+    admin = next(r for r in refreshed if r.name == "Admin")
+    assert admin.permissions == ROLE_TEMPLATES["Admin"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_system_roles_survives_concurrent_seed(client, db, monkeypatch):
+    """Two parallel first-load requests seed the same workspace; the loser
+    must recover from the unique violation and return the winner's rows."""
+    await _make_owner(db)
+    await service.ensure_system_roles(db, TENANT)
+    await db.commit()
+
+    real = service._system_roles_by_name
+    calls = {"n": 0}
+
+    async def _stale_once(d, tenant):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {}  # this request read before the winner committed
+        return await real(d, tenant)
+
+    monkeypatch.setattr(service, "_system_roles_by_name", _stale_once)
+
+    roles = await service.ensure_system_roles(db, TENANT)
+    assert calls["n"] >= 2
+    assert {r.name for r in roles} == set(ROLE_TEMPLATES)
+    admin = next(r for r in roles if r.name == "Admin")
+    assert len(admin.permissions) == len(set(admin.permissions))
+
+
 # ── context / gating ─────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_owner_context(client):
+async def test_owner_context(client, db):
+    await _make_owner(db)
     body = client.get("/api/v1/team/context").json()
     assert body["is_owner"] is True
     assert body["role_name"] == "Owner"
     assert body["tenant_id"] == TENANT
+    assert body["business_name"] == "Acme"
 
 
 @pytest.mark.asyncio
@@ -299,6 +352,25 @@ async def test_invite_guards(client, db):
     member, _ = await _seed_member(db, status="active")
     res = client.post("/api/v1/team/invites", json={"email": member.email, "role_id": agent["id"]})
     assert res.status_code == 409
+    # same email again while the first invite is still pending — blocked;
+    # resending is its own explicit action
+    res = client.post("/api/v1/team/invites", json={"email": "pending@acme.com", "role_id": agent["id"]})
+    assert res.status_code == 201
+    res = client.post("/api/v1/team/invites", json={"email": "pending@acme.com", "role_id": agent["id"]})
+    assert res.status_code == 409
+    assert "pending" in res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_tenant_channels_lists_display_names(client, channel_id):
+    """The invite/role access matrix reads display_name — Channel has no `name`."""
+    body = client.get("/api/v1/team/channels").json()
+    assert len(body["channels"]) == 1
+    ch = body["channels"][0]
+    assert ch["id"] == channel_id
+    assert ch["name"] == "Test Burgers"
+    assert ch["platform"] == "google_reviews"
+    assert ch["status"] == "active"
 
 
 @pytest.mark.asyncio
@@ -397,6 +469,41 @@ async def test_accept_existing_email_requires_login(client, db, no_email, monkey
 
 
 @pytest.mark.asyncio
+async def test_accept_expired_bearer_is_treated_as_anonymous(client, db, no_email):
+    """A stale access token sitting in the browser must not 500 the public
+    accept endpoint: optional auth degrades to anonymous → login_required."""
+    import jwt as _pyjwt
+    from datetime import datetime, timedelta, timezone
+    from app.config import settings as _settings
+
+    await _make_owner(db)
+    existing = await _make_member_user(db, email="stale@acme.com")
+    roles = client.get("/api/v1/team/roles").json()["roles"]
+    agent = next(r for r in roles if r["name"] == "Agent")
+    client.post("/api/v1/team/invites", json={"email": existing.email, "role_id": agent["id"]})
+    token = no_email[0]["url"].rsplit("/", 1)[-1]
+
+    expired = _pyjwt.encode(
+        {
+            "sub": existing.id,
+            "type": "access",
+            "jti": "expired-test",
+            "ver": 0,
+            "exp": datetime.now(timezone.utc) - timedelta(minutes=5),
+        },
+        _settings.JWT_SECRET,
+        algorithm=_settings.JWT_ALGORITHM,
+    )
+    res = client.post(
+        "/api/v1/team/invites/accept",
+        json={"token": token},
+        headers={"Authorization": f"Bearer {expired}"},
+    )
+    assert res.status_code == 401
+    assert res.json()["detail"]["code"] == "login_required"
+
+
+@pytest.mark.asyncio
 async def test_expired_and_invalid_tokens(client, db, no_email):
     from datetime import datetime, timedelta, timezone
 
@@ -430,6 +537,14 @@ async def test_resend_rotates_token(client, db, no_email, monkeypatch):
     await db.refresh(member)
     assert member.invite_token_hash != old_hash
     assert len(no_email) == 1
+    # The email must carry the NEW RAW token — not the TeamMember repr
+    # (a reversed tuple unpack once emailed "<TeamMember object at 0x...>").
+    from app.security import hash_token
+
+    url = no_email[0]["url"]
+    assert "/invite/" in url and "object at" not in url
+    raw = url.rsplit("/", 1)[-1]
+    assert hash_token(raw) == member.invite_token_hash
 
 
 @pytest.mark.asyncio

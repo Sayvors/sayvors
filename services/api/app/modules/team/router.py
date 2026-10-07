@@ -57,9 +57,16 @@ async def _optional_user(
 
 async def get_current_user_token(token: str, db: AsyncSession) -> User:
     """Same checks as core.deps.get_current_user, from a raw header string."""
+    import jwt as _jwt
+
     from ...security import decode_token
 
-    payload = decode_token(token)
+    try:
+        payload = decode_token(token)
+    except _jwt.InvalidTokenError:
+        # Expired/garbage bearer on the public accept endpoint is optional
+        # auth: _optional_user catches this and treats the caller as anonymous.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
     if payload.get("type") != "access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
     user = await db.get(User, payload.get("sub", ""))
@@ -133,10 +140,22 @@ async def permission_catalog(user: object = Depends(get_current_user)):
 
 
 @router.get("/context")
-async def team_context(ctx: TenantContext = Depends(get_context)):
+async def team_context(
+    ctx: TenantContext = Depends(get_context),
+    db: AsyncSession = Depends(get_db),
+):
     """What the signed-in principal may do — drives sidebar/nav gating."""
+    owner = await db.get(User, ctx.tenant_id)
+    business_name = None
+    if owner is not None:
+        business_name = (
+            owner.business_name
+            or f"{owner.first_name} {owner.last_name}".strip()
+            or owner.email
+        )
     return {
         "tenant_id": ctx.tenant_id,
+        "business_name": business_name,
         "is_owner": ctx.is_owner,
         "role_name": ctx.role_name,
         "member_id": getattr(ctx.member, "id", None),
@@ -308,15 +327,19 @@ async def tenant_channels(
     """Minimal channel list for the invite/role access matrix (no secrets)."""
     rows = (
         await db.execute(
-            select(Channel.id, Channel.platform, Channel.name, Channel.status)
+            select(Channel.id, Channel.platform, Channel.display_name, Channel.platform_user_id, Channel.status)
             .where(Channel.user_id == ctx.tenant_id)
-            .order_by(Channel.name)
+            .order_by(Channel.display_name)
         )
     ).all()
     return {
         "channels": [
-            {"id": r.id, "platform": getattr(r.platform, "value", str(r.platform)),
-             "name": r.name, "status": getattr(r.status, "value", str(r.status))}
+            {
+                "id": r.id,
+                "platform": getattr(r.platform, "value", str(r.platform)),
+                "name": r.display_name or r.platform_user_id or r.id,
+                "status": getattr(r.status, "value", str(r.status)),
+            }
             for r in rows
         ]
     }
@@ -392,6 +415,22 @@ async def create_invite(
 
     if ctx.is_owner and normalized == ctx.user.email.lower():
         raise HTTPException(status_code=400, detail="You already own this workspace — you have full access")
+
+    existing_member = (
+        await db.execute(
+            select(TeamMember).where(
+                TeamMember.tenant_id == ctx.tenant_id,
+                TeamMember.email == normalized,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_member is not None:
+        if existing_member.status == "active":
+            raise HTTPException(status_code=409, detail="This person is already a member of this workspace")
+        raise HTTPException(
+            status_code=409,
+            detail="This person already has a pending invite — use Resend instead",
+        )
 
     existing_user = (
         await db.execute(select(User).where(User.email == normalized))
@@ -585,7 +624,7 @@ async def resend_invite(
     if member.status != "invited":
         raise HTTPException(status_code=400, detail="This member has already accepted their invite")
     role = await db.get(TeamRole, member.role_id)
-    raw, _ = await service.invite_member(
+    _, raw = await service.invite_member(
         db, ctx.tenant_id, ctx.user.id, member.email, role
     )
     await db.commit()

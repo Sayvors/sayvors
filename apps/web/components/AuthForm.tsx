@@ -25,6 +25,14 @@ interface FormValues {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Post-sign-in destination: honor ?next=<same-origin path> (invite acceptance
+// uses it), else the regular dashboard/onboarding landing.
+function postAuthPath(onboarded?: boolean): string {
+  const nextPath = new URLSearchParams(window.location.search).get("next") || "";
+  if (nextPath.startsWith("/") && !nextPath.startsWith("//")) return nextPath;
+  return onboarded ? "/dashboard" : "/onboarding";
+}
+
 const businessTypes = [
   "Food & Restaurant", "Cafe & Bakery", "Retail & Shops", "E-commerce",
   "Pharmacy", "Bank / Finance", "AI / SaaS / Software", "Agency",
@@ -200,7 +208,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           callback: async ({ credential }: { credential: string }) => {
             try {
               const u = await googleLogin(credential);
-              window.location.href = u?.onboarded ? "/dashboard" : "/onboarding";
+              window.location.href = postAuthPath(u?.onboarded);
             } catch {
               setNote("Google sign-in failed. Try again or use your password.");
             }
@@ -304,7 +312,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       (async () => {
         try {
           const u = await facebookLogin(token);
-          window.location.href = u?.onboarded ? "/dashboard" : "/onboarding";
+          window.location.href = postAuthPath(u?.onboarded);
         } catch {
           setNote("Facebook sign-in failed. Try again or use your password.");
         }
@@ -333,7 +341,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         // with a button to click, which only added a step between a working
         // password and the dashboard.
         const u = await login({ email: v.email.trim(), password: v.password });
-        window.location.href = u?.onboarded ? "/dashboard" : "/onboarding";
+        window.location.href = postAuthPath(u?.onboarded);
       } catch (err: any) {
         if (err.code === "email_not_verified") {
           router.push(`/verify-otp?email=${encodeURIComponent(v.email.trim())}`);
