@@ -38,7 +38,6 @@ const ADVANCED_ITEMS: NavItem[] = [
   { key: "usage", icon: <GaugeIcon />, href: "/dashboard/usage" },
   { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
   { key: "profile", icon: <UserIcon />, href: "/dashboard/profile" },
-  { key: "team", icon: <TeamIcon />, href: "/dashboard/team" },
   { key: "settings", icon: <GearIcon />, href: "/dashboard/settings" },
 ];
 
@@ -269,6 +268,10 @@ export default function Sidebar() {
           ))}
         </div>
         <ChannelsNav pathname={pathname} rail={rail} dir={dir} labels={t.nav as unknown as Record<string, string>} />
+        {/* Team — visible near channels / connect */}
+        <div className="mt-0.5 space-y-0.5">
+          <NavRow key="/dashboard/team" item={{ key: "team", icon: <TeamIcon />, href: "/dashboard/team" }} active={isActive(pathname, { key: "team", icon: <TeamIcon />, href: "/dashboard/team" })} rail={rail} dir={dir} label="Team" />
+        </div>
         <div className="mt-0.5 space-y-0.5">
           {MAIN_ITEMS.slice(3).map((item) => (
             <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
