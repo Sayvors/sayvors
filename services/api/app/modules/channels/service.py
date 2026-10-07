@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...config import settings
+from ..team.context import tenant_id_of
 from ..users.models import User
 from .models import Channel, ChannelMessage
 from .schemas import ChannelCreate, ChannelMessageSend
@@ -126,7 +127,7 @@ async def create_channel(body: ChannelCreate, user: User, db: AsyncSession) -> C
     key = channel_listing_key(body.platform, metadata)
     channel = Channel(
         id=str(uuid.uuid4()),
-        user_id=user.id,
+        user_id=tenant_id_of(user),
         platform=body.platform,
         platform_user_id=body.platform_user_id or "",
         display_name=body.display_name,
@@ -191,12 +192,12 @@ async def list_channels(
     user: User, db: AsyncSession, limit: int = 20, offset: int = 0
 ) -> tuple[list[Channel], int]:
     count_result = await db.execute(
-        select(func.count()).where(Channel.user_id == user.id)
+        select(func.count()).where(Channel.user_id == tenant_id_of(user))
     )
     total = count_result.scalar() or 0
     result = await db.execute(
         select(Channel)
-        .where(Channel.user_id == user.id)
+        .where(Channel.user_id == tenant_id_of(user))
         .order_by(Channel.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -208,7 +209,7 @@ async def get_channel(
     channel_id: str, user: User, db: AsyncSession
 ) -> Channel | None:
     result = await db.execute(
-        select(Channel).where(Channel.id == channel_id, Channel.user_id == user.id)
+        select(Channel).where(Channel.id == channel_id, Channel.user_id == tenant_id_of(user))
     )
     return result.scalar_one_or_none()
 
@@ -301,7 +302,7 @@ async def _dispatch_whatsapp(
     result = await db.execute(
         select(MetaAsset)
         .where(
-            MetaAsset.tenant_id == user.id,
+            MetaAsset.tenant_id == tenant_id_of(user),
             MetaAsset.provider == "whatsapp",
             MetaAsset.external_asset_id == phone_number_id,
         )
@@ -354,7 +355,7 @@ async def _dispatch_instagram(
 
     result = await db.execute(
         select(MetaAsset).where(
-            MetaAsset.tenant_id == user.id,
+            MetaAsset.tenant_id == tenant_id_of(user),
             MetaAsset.provider == "instagram",
             MetaAsset.external_asset_id == ig_account_id,
         )
@@ -449,7 +450,7 @@ async def list_inbox_threads(
     # every disconnect path deactivates the asset too.
     channels = (
         (
-            await db.execute(select(Channel).where(Channel.user_id == user.id))
+            await db.execute(select(Channel).where(Channel.user_id == tenant_id_of(user)))
         )
         .scalars()
         .all()
@@ -463,7 +464,7 @@ async def list_inbox_threads(
         for provider, external in (
             await db.execute(
                 select(MetaAsset.provider, MetaAsset.external_asset_id).where(
-                    MetaAsset.tenant_id == user.id,
+                    MetaAsset.tenant_id == tenant_id_of(user),
                     MetaAsset.active.is_(False),
                 )
             )
@@ -524,7 +525,7 @@ async def list_inbox_threads(
         rows = (
             await db.execute(
                 select(ContactProfile).where(
-                    ContactProfile.tenant_id == user.id,
+                    ContactProfile.tenant_id == tenant_id_of(user),
                     ContactProfile.platform.in_({p for p, _ in profile_keys}),
                     ContactProfile.contact_id.in_({c for _, c in profile_keys}),
                 )

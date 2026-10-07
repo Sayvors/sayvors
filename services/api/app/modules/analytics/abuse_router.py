@@ -13,6 +13,7 @@ from .schemas import (
     MeaningCorrectionBody,
     ReviewInsightItem,
 )
+from ..team.context import tenant_id_of
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["abuse"])
 
@@ -109,7 +110,7 @@ async def _owned_insight(db: AsyncSession, insight_id: str, user: User) -> Revie
     ).scalar_one_or_none()
     if insight is None:
         raise HTTPException(status_code=404, detail="Review insight not found")
-    if insight.user_id != user.id:
+    if insight.user_id != tenant_id_of(user):
         raise HTTPException(status_code=403, detail="Not your review")
     return insight
 
@@ -141,7 +142,7 @@ async def flag_abusive_review(
         text=insight.review_text,
         rating=insight.rating,
         reviewer_name=insight.reviewer_name,
-        tenant_id=user.id,
+        tenant_id=tenant_id_of(user),
     )
     if assessment is not None:
         insight.abuse_score = assessment.score

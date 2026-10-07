@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .dimensions import score_dimensions
 from .models import ReviewInsight
+from ..team.context import tenant_id_of
 
 logger = logging.getLogger(__name__)
 
@@ -818,7 +819,7 @@ async def get_review_intelligence(
     date_from: datetime | None = None,
     date_to: datetime | None = None,
 ) -> dict:
-    rows = await _load_reviews(db, user.id, channel_id, days, date_from, date_to)
+    rows = await _load_reviews(db, tenant_id_of(user), channel_id, days, date_from, date_to)
     stats = _verified_stats(rows)
 
     # Business overview comes from the Retrieval Layer — one need, all
@@ -831,7 +832,7 @@ async def get_review_intelligence(
 
         res = await retrieve_evidence(
             [EvidenceNeed(kind="business_overview", query=_overview_query(rows))],
-            tenant_id=user.id, db=db, bank_id=databank_id,
+            tenant_id=tenant_id_of(user), db=db, bank_id=databank_id,
         )
         overview = res.get("business_overview")
         if overview and overview.has_data:
@@ -842,17 +843,17 @@ async def get_review_intelligence(
 
     facts = {"stats": stats, "reviews": rows}
     heuristic_dims = score_dimensions(rows)
-    competitive = await _competitive_facts(db, user.id, channel_id, days or 90, stats)
+    competitive = await _competitive_facts(db, tenant_id_of(user), channel_id, days or 90, stats)
     facts["competitive"] = competitive
     last_error = "no LLM provider configured"
     for model in MODELS_CHAIN:
         try:
-            raw, used = await _call_llm(facts, rag_text, model, user.id)
+            raw, used = await _call_llm(facts, rag_text, model, tenant_id_of(user))
             try:
                 parsed = _parse_ai_json(raw)
             except Exception as e:
                 # Retry once, echoing the contract violation.
-                raw, used = await _call_llm_retry(facts, rag_text, model, str(e), user.id)
+                raw, used = await _call_llm_retry(facts, rag_text, model, str(e), tenant_id_of(user))
                 parsed = _parse_ai_json(raw)
             verified = _verify(parsed, stats, rows)
             return {
@@ -1057,7 +1058,7 @@ async def analyze_and_store(
     window_days = 0 if (date_from or date_to) else int(days or 90)
     existing = await db.execute(
         select(ReviewIntelligenceReport).where(
-            ReviewIntelligenceReport.user_id == user.id,
+            ReviewIntelligenceReport.user_id == tenant_id_of(user),
             ReviewIntelligenceReport.channel_id == scope,
             ReviewIntelligenceReport.scope_key == key,
         )
@@ -1066,7 +1067,7 @@ async def analyze_and_store(
     if report is None:
         report = ReviewIntelligenceReport(
             id=str(uuid.uuid4()),
-            user_id=user.id,
+            user_id=tenant_id_of(user),
             channel_id=scope,
             days=window_days,
             scope_key=key,
@@ -1091,6 +1092,6 @@ async def analyze_and_store(
     await db.commit()
     await db.refresh(report)
     current = await _current_review_count(
-        db, user.id, channel_id, date_from, date_to
+        db, tenant_id_of(user), channel_id, date_from, date_to
     )
     return _report_to_dict(report, current, key)

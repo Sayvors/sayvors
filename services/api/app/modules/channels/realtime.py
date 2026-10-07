@@ -11,21 +11,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _channel(user_id: str) -> str:
-    return f"inbox:{user_id}"
+def _channel(tenant_id: str) -> str:
+    return f"inbox:{tenant_id}"
 
 
-async def publish_inbox_event(user_id: str, event: dict) -> None:
+async def publish_inbox_event(tenant_id: str, event: dict) -> None:
     try:
         from ...modules.redis.client import get_redis
 
         redis = await get_redis()
-        await redis.publish(_channel(user_id), json.dumps(event, default=str))
+        await redis.publish(_channel(tenant_id), json.dumps(event, default=str))
     except Exception as e:  # noqa: BLE001 — redis down must never break ingestion
         logger.debug("inbox realtime publish skipped: %s", e)
 
 
-async def subscribe_inbox(user_id: str):
+async def subscribe_inbox(tenant_id: str):
     """Pub/sub object for this user's event stream. Caller owns aclose()."""
     from redis.asyncio import Redis
 
@@ -39,5 +39,5 @@ async def subscribe_inbox(user_id: str):
         retry_on_timeout=False,
     )
     pubsub = client.pubsub()
-    await pubsub.subscribe(_channel(user_id))
+    await pubsub.subscribe(_channel(tenant_id))
     return client, pubsub

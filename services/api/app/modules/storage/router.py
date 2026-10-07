@@ -24,6 +24,7 @@ from ...core.deps import get_current_user, get_db
 from ..rag.models import Databank, Document
 from ..users.models import User
 from ..media import service as media_service
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 router = APIRouter(prefix="/api/v1/storage", tags=["storage"])
 
@@ -82,7 +83,7 @@ async def upload_object(
     try:
         data = await file.read(max(settings.MEDIA_MAX_MB, 1) * 1024 * 1024 + 1)
         result = await media_service.save_upload(
-            user.id,
+            tenant_id_of(user),
             _safe_filename(file.filename or "upload"),
             file.content_type,
             data,
@@ -110,16 +111,16 @@ async def list_objects(user: User = Depends(get_current_user)):
     """List only this tenant's media objects."""
     from ...core.storage import list_media_objects
 
-    return list_media_objects(user.id)
+    return list_media_objects(tenant_id_of(user))
 
 
 @router.get("/objects/{key:path}")
 async def get_object(key: str, user: User = Depends(get_current_user)):
     from ...core.storage import get_media
 
-    safe_key = _owned_key(key, user.id)
+    safe_key = _owned_key(key, tenant_id_of(user))
     try:
-        content = get_media(user.id, safe_key)
+        content = get_media(tenant_id_of(user), safe_key)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail="Object not found") from e
     except Exception as e:
@@ -137,16 +138,16 @@ async def update_object(
 ):
     from ...core.storage import update_media
 
-    safe_key = _owned_key(key, user.id)
+    safe_key = _owned_key(key, tenant_id_of(user))
     try:
         from ...core.storage import get_media
 
-        get_media(user.id, safe_key)  # prevent PUT from creating an arbitrary new key
+        get_media(tenant_id_of(user), safe_key)  # prevent PUT from creating an arbitrary new key
         data = await file.read(max(settings.MEDIA_MAX_MB, 1) * 1024 * 1024 + 1)
         if not data:
             raise ValueError("Empty file.")
-        result = update_media(user.id, safe_key, data, file.content_type or "")
-        public_url = result.get("url") or f"{str(request.base_url).rstrip('/')}{settings.MEDIA_PUBLIC_PATH}/{user.id}/{Path(safe_key).name}"
+        result = update_media(tenant_id_of(user), safe_key, data, file.content_type or "")
+        public_url = result.get("url") or f"{str(request.base_url).rstrip('/')}{settings.MEDIA_PUBLIC_PATH}/{tenant_id_of(user)}/{Path(safe_key).name}"
         return ObjectOut(
             key=safe_key, url=public_url, size=result["size"],
             content_type=result["content_type"], operation="update",
@@ -167,9 +168,9 @@ async def update_object(
 async def delete_object(key: str, user: User = Depends(get_current_user)):
     from ...core.storage import delete_media
 
-    safe_key = _owned_key(key, user.id)
+    safe_key = _owned_key(key, tenant_id_of(user))
     try:
-        return delete_media(user.id, safe_key)
+        return delete_media(tenant_id_of(user), safe_key)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail="Object not found") from e
     except Exception as e:
@@ -179,18 +180,19 @@ async def delete_object(key: str, user: User = Depends(get_current_user)):
 @router.post("/presign")
 async def presign_private_document(
     body: PresignBody,
+    ctx: TenantContext = Depends(require_perm("media.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Mint a short-lived GET URL only for a document owned by this tenant."""
     bank = (await db.execute(select(Databank.id).where(
-        Databank.id == body.databank_id, Databank.user_id == user.id,
+        Databank.id == body.databank_id, Databank.user_id == tenant_id_of(user),
     ))).scalar_one_or_none()
     if not bank:
         raise HTTPException(status_code=404, detail="Databank not found")
     doc = (await db.execute(select(Document.id, Document.file_type).where(
         Document.databank_id == bank,
-        Document.user_id == user.id,
+        Document.user_id == tenant_id_of(user),
         Document.filename == body.filename,
     ))).first()
     if not doc:

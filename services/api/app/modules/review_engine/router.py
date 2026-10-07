@@ -19,6 +19,7 @@ from .schemas import (
     ReviewStrategyUpdate,
 )
 from .service import process_review, process_review_stream
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,13 @@ router = APIRouter(prefix="/api/v1/review-engine", tags=["review-engine"])
 @router.post("/generate", response_model=ReviewEngineResponse)
 async def generate(
     req: ReviewEngineRequest,
+    ctx: TenantContext = Depends(require_perm("reviews.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate an AI reply to a customer review using the strategy engine."""
     try:
-        return await process_review(req, user.id, db)
+        return await process_review(req, tenant_id_of(user), db)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -41,6 +43,7 @@ async def generate(
 @router.post("/generate-stream")
 async def generate_stream(
     req: ReviewEngineRequest,
+    ctx: TenantContext = Depends(require_perm("reviews.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -56,7 +59,7 @@ async def generate_stream(
 
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
-            async for event in process_review_stream(req, user.id, db):
+            async for event in process_review_stream(req, tenant_id_of(user), db):
                 yield f"data: {json.dumps(event, default=str)}\n\n"
         except Exception as e:
             logger.exception("Review engine stream failed")
@@ -82,6 +85,7 @@ class DialectOut(BaseModel):
 
 @router.get("/dialects", response_model=list[DialectOut])
 async def list_dialects(
+    ctx: TenantContext = Depends(require_perm("reviews.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -100,6 +104,7 @@ class ToneOut(BaseModel):
 
 @router.get("/tones", response_model=list[ToneOut])
 async def list_tones(
+    ctx: TenantContext = Depends(require_perm("reviews.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -111,6 +116,7 @@ async def list_tones(
 
 @router.get("/strategies", response_model=list[ReviewStrategyOut])
 async def list_strategies(
+    ctx: TenantContext = Depends(require_perm("reviews.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -122,6 +128,7 @@ async def list_strategies(
 @router.get("/strategies/{strategy_id}", response_model=ReviewStrategyOut)
 async def get_strategy(
     strategy_id: str,
+    ctx: TenantContext = Depends(require_perm("reviews.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -169,13 +176,14 @@ async def update_strategy(
 @router.get("/logs")
 async def list_logs(
     limit: int = 20,
+    ctx: TenantContext = Depends(require_perm("reviews.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List recent response logs for this tenant."""
     result = await db.execute(
         select(ReviewResponseLog)
-        .where(ReviewResponseLog.tenant_id == user.id)
+        .where(ReviewResponseLog.tenant_id == tenant_id_of(user))
         .order_by(ReviewResponseLog.created_at.desc())
         .limit(limit)
     )

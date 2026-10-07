@@ -31,6 +31,7 @@ from .schemas import (
     TopicsResponse,
     VisibilityResponse,
 )
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 logger = logging.getLogger(__name__)
 
@@ -114,24 +115,25 @@ async def list_issues(
         None, description="open | in_progress | done | dismissed"
     ),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Tracked issues for this tenant, most-negative first."""
     from . import issues as issues_service
 
     try:
-        rows = await issues_service.list_issues(db, user.id, channel_id, status)
+        rows = await issues_service.list_issues(db, tenant_id_of(user), channel_id, status)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    all_rows = await issues_service.list_issues(db, user.id, channel_id)
+    all_rows = await issues_service.list_issues(db, tenant_id_of(user), channel_id)
     counts: dict[str, int] = {s: 0 for s in issues_service.ALL_STATUSES}
     for r in all_rows:
         counts[r.status] = counts.get(r.status, 0) + 1
 
     return {
         "items": await _issue_payload(db, user, rows),
-        "held_out": await _held_out_counts(db, user.id, channel_id),
+        "held_out": await _held_out_counts(db, tenant_id_of(user), channel_id),
         "counts": counts,
     }
 
@@ -141,6 +143,7 @@ async def refresh_issues(
     channel_id: str | None = Query(None),
     days: int = Query(90, ge=1, le=3650),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Recompute issues from current review meaning.
@@ -150,8 +153,8 @@ async def refresh_issues(
     """
     from . import intelligence_ai, issues as issues_service
 
-    rows = await intelligence_ai._load_reviews(db, user.id, channel_id, days)
-    return await issues_service.refresh_issues(db, user.id, rows)
+    rows = await intelligence_ai._load_reviews(db, tenant_id_of(user), channel_id, days)
+    return await issues_service.refresh_issues(db, tenant_id_of(user), rows)
 
 
 @router.patch("/issues/{issue_id}", response_model=LocationIssueOut)
@@ -159,6 +162,7 @@ async def update_issue(
     issue_id: str,
     body: IssueUpdateBody,
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Move an issue along, or add a note about what was done."""
@@ -167,7 +171,7 @@ async def update_issue(
 
     try:
         issue = await issues_service.update_issue(
-            db, user.id, issue_id,
+            db, tenant_id_of(user), issue_id,
             status=body.status,
             resolution_note=body.resolution_note,
         )
@@ -186,10 +190,11 @@ async def get_overview(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """KPI block: ratings, sentiment, response metrics, scores, Google performance."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await service.get_overview(db, uid, channel_id, days)
 
 
@@ -198,10 +203,11 @@ async def get_timeseries(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Daily rollup series for charts (reviews, sentiment, impressions, actions)."""
-    uid = user.id
+    uid = tenant_id_of(user)
     rows = await service.get_timeseries(db, uid, channel_id, days)
 
     def _extra_int(row, key: str) -> int:
@@ -328,12 +334,13 @@ async def list_review_insights(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Enriched reviews for the AI Review Inbox (filter/sort/paginate)."""
     items, total = await service.list_insights(
         db,
-        user.id,
+        tenant_id_of(user),
         channel_id=channel_id,
         sentiment=sentiment,
         rating=rating,
@@ -355,6 +362,7 @@ async def list_review_insights(
 async def skip_review(
     insight_id: str,
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Mark a review as skipped — reviewer deleted it or Google removed it.
@@ -366,7 +374,7 @@ async def skip_review(
     insight = row.scalar_one_or_none()
     if insight is None:
         raise HTTPException(status_code=404, detail="Review insight not found")
-    if insight.user_id != user.id:
+    if insight.user_id != tenant_id_of(user):
         raise HTTPException(status_code=403, detail="Not your review")
     insight.skipped = True
     db.add(insight)
@@ -379,6 +387,7 @@ async def skip_review(
 async def dismiss_review_edit(
     insight_id: str,
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Clear the 'review edited' flag once the merchant has seen the change.
@@ -390,7 +399,7 @@ async def dismiss_review_edit(
     insight = row.scalar_one_or_none()
     if insight is None:
         raise HTTPException(status_code=404, detail="Review insight not found")
-    if insight.user_id != user.id:
+    if insight.user_id != tenant_id_of(user):
         raise HTTPException(status_code=403, detail="Not your review")
     insight.edited = False
     insight.edited_at = None
@@ -435,6 +444,7 @@ async def get_review_intelligence(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Stored intelligence report for an interval (no re-analysis).
@@ -445,7 +455,7 @@ async def get_review_intelligence(
     from .intelligence_ai import get_stored_report
 
     start, end, window = _parse_interval(date_from, date_to, days)
-    stored = await get_stored_report(db, user.id, channel_id, window, start, end)
+    stored = await get_stored_report(db, tenant_id_of(user), channel_id, window, start, end)
     if stored is None:
         return None
     stored["stats"]["distribution"] = {
@@ -458,6 +468,7 @@ async def get_review_intelligence(
 async def analyze_review_intelligence(
     body: AnalyzeIntelligenceRequest,
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Run the AI analysis now for the requested interval and store it.
@@ -484,10 +495,11 @@ async def get_topics(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """What customers talk about: frequency, sentiment, trend, emerging topics."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await intelligence.get_topics(db, uid, channel_id, days)
 
 
@@ -496,10 +508,11 @@ async def get_problems(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Most common problems, AI-prioritized by impact (volume x severity x growth)."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await intelligence.get_problems(db, uid, channel_id, days)
 
 
@@ -508,10 +521,11 @@ async def get_products(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Product/service intelligence: mentions, sentiment, loved vs criticized."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await intelligence.get_products(db, uid, channel_id, days)
 
 
@@ -522,10 +536,11 @@ async def get_visibility(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Google visibility: impressions and conversion into customer actions."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await growth.get_visibility(db, uid, channel_id, days)
 
 
@@ -534,10 +549,11 @@ async def get_acquisition(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Google-generated customer actions: clicks, calls, directions."""
-    return await growth.get_acquisition(db, user.id, channel_id, days)
+    return await growth.get_acquisition(db, tenant_id_of(user), channel_id, days)
 
 
 @router.get("/opportunities", response_model=OpportunitiesResponse)
@@ -545,10 +561,11 @@ async def get_opportunities(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Prioritized growth actions derived from live business data."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await growth.get_opportunities(db, uid, channel_id, days)
 
 
@@ -557,10 +574,11 @@ async def get_keywords(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Search keywords tenants were found by (native Google only)."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await growth.get_keywords(db, uid, channel_id, days)
 
 
@@ -569,10 +587,11 @@ async def get_benchmark_comparison(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Benchmark the tenant against the second demo business profile (stand-in for comparable businesses)."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await benchmark.get_benchmark(db, uid, channel_id, days)
 
 
@@ -581,8 +600,9 @@ async def get_executive_summary(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """AI-composed business briefing pinned to the top of the dashboard."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await summary.get_executive_summary(db, uid, channel_id, days)

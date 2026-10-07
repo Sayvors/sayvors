@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db, get_current_user
+from ..team.context import TenantContext, get_context, require_perm
 from ...database import async_session as _async_session
 from ...config import settings
 from ..auth.rate_limit import rate_limit
@@ -99,11 +100,11 @@ def _channel_response(channel: Channel) -> ChannelResponse:
 @router.post("/", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
 async def connect_channel(
     body: ChannelCreate,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.connect")),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        channel = await create_channel(body, user, db)
+        channel = await create_channel(body, ctx.user, db)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return _channel_response(channel)
@@ -113,10 +114,16 @@ async def connect_channel(
 async def get_channels(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    channels, total = await list_channels(user, db, limit, offset)
+    channels, total = await list_channels(ctx.user, db, limit, offset)
+    # A member with no role-wide channel default only sees channels they
+    # were explicitly granted (per-channel overrides), never the rest.
+    visible = ctx.visible_channel_ids()
+    if visible is not None:
+        channels = [c for c in channels if c.id in visible]
+        total = len(channels)
     return ChannelListResponse(
         channels=[_channel_response(c) for c in channels],
         total=total,
@@ -126,10 +133,12 @@ async def get_channels(
 @router.get("/{channel_id}", response_model=ChannelResponse)
 async def get_channel_by_id(
     channel_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    channel = await get_channel(channel_id, user, db)
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    channel = await get_channel(channel_id, ctx.user, db)
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
     return _channel_response(channel)
@@ -138,10 +147,12 @@ async def get_channel_by_id(
 @router.delete("/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_channel(
     channel_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.remove")),
     db: AsyncSession = Depends(get_db),
 ):
-    deleted = await delete_channel(channel_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=404, detail="Channel not found")
+    deleted = await delete_channel(channel_id, ctx.user, db)
     if not deleted:
         raise HTTPException(status_code=404, detail="Channel not found")
 
@@ -372,10 +383,16 @@ async def inbox_ws(websocket: WebSocket):
 
     await websocket.accept()
 
+    # Resolve user to get tenant for workspace-level realtime
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+    async with _async_session() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user_row = result.scalar_one_or_none()
+        tenant_key = (getattr(user_row, 'tenant_id', None) or user_row.id) if user_row else user_id
     from .realtime import subscribe_inbox
-
     try:
-        client, pubsub = await subscribe_inbox(user_id)
+        client, pubsub = await subscribe_inbox(tenant_key)
     except Exception:
         await websocket.close(code=1013)
         return
@@ -415,10 +432,13 @@ async def inbox_ws(websocket: WebSocket):
 async def inbox_threads(
     search: str | None = Query(None, max_length=200),
     limit: int = Query(100, ge=1, le=500),
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    threads = await list_inbox_threads(user, db, search=search, limit=limit)
+    threads = await list_inbox_threads(ctx.user, db, search=search, limit=limit)
+    visible = ctx.visible_channel_ids()
+    if visible is not None:
+        threads = [t for t in threads if t.get("channel_id") in visible]
     return InboxThreadListResponse(threads=[InboxThread(**t) for t in threads], total=len(threads))
 
 
@@ -427,7 +447,7 @@ async def inbox_thread_messages(
     channel_id: str,
     contact_phone: str,
     limit: int = Query(200, ge=1, le=500),
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Messages in one thread, oldest first.
@@ -435,11 +455,13 @@ async def inbox_thread_messages(
     `contact_phone` is the literal string "unknown" for the catch-all thread
     holding pre-migration rows with no sender.
     """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
     phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
-    msgs = await list_thread_messages(user, db, channel_id, phone, limit=limit)
+    msgs = await list_thread_messages(ctx.user, db, channel_id, phone, limit=limit)
     if not msgs:
         # Distinguish "no such channel" (404) from "empty thread" (200, empty).
-        channel = await get_channel(channel_id, user, db)
+        channel = await get_channel(channel_id, ctx.user, db)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
     return ChannelMessageListResponse(
@@ -466,7 +488,7 @@ async def inbox_thread_messages(
 @_inbox_router.post("/send", response_model=InboxSendResponse)
 async def inbox_send(
     body: InboxSendRequest,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
     db: AsyncSession = Depends(get_db),
 ):
     """Send a message to a contact.
@@ -475,6 +497,8 @@ async def inbox_send(
     rejects it — an out-of-window send is a normal outcome, not a server fault,
     and the thread shows it as failed rather than pretending it went out.
     """
+    if not ctx.can_edit_channel(body.channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
     try:
         msg = await send_message(
             body.channel_id,
@@ -484,7 +508,7 @@ async def inbox_send(
                 contact_phone=body.contact_phone,
                 contact_name=body.contact_name,
             ),
-            user,
+            ctx.user,
             db,
         )
     except ValueError as exc:
@@ -497,7 +521,7 @@ async def inbox_send(
 
     from .realtime import publish_inbox_event
 
-    await publish_inbox_event(user.id, {
+    await publish_inbox_event(ctx.tenant_id, {
         "type": "message",
         "id": msg.id,
         "channel_id": msg.channel_id,
@@ -963,10 +987,12 @@ async def _get_owned_channel(channel_id: str, user: User, db: AsyncSession) -> C
 @router.get("/{channel_id}/autoreply", response_model=AutoReplyConfigResponse)
 async def get_autoreply_config(
     channel_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_owned_channel(channel_id, user, db)
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    await _get_owned_channel(channel_id, ctx.user, db)
     result = await db.execute(
         select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel_id)
     )
@@ -1006,17 +1032,21 @@ def _config_response(config: AutoReplyConfig) -> AutoReplyConfigResponse:
 async def update_autoreply_config(
     channel_id: str,
     body: AutoReplyConfigUpdate,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     db: AsyncSession = Depends(get_db),
 ):
-    channel = await _get_owned_channel(channel_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    channel = await _get_owned_channel(channel_id, ctx.user, db)
 
-    # If a databank is being linked, verify it belongs to this user
+    # If a databank is being linked, verify it belongs to this workspace
     if body.databank_id:
         from ..rag.models import Databank
+        from ..team.context import tenant_id_of
+
         owned = await db.execute(
             select(Databank.id).where(
-                Databank.id == body.databank_id, Databank.user_id == user.id
+                Databank.id == body.databank_id, Databank.user_id == tenant_id_of(ctx.user)
             )
         )
         if not owned.scalar_one_or_none():

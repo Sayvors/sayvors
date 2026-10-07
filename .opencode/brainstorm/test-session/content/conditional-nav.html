@@ -1,0 +1,33 @@
+<h2>Conditional Channels nav — only what’s connected</h2>
+<p class="subtitle">Agreed: show only connected subitems. But hiding Channels entirely when 0 connected = dead end. Here’s the fix.</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">0 connected — onboarding, not hidden</div>
+    <div class="mockup-body" style="font-size:13px;line-height:2;">
+      <div>💬 Channels ▾ <span style="font-size:10px;background:#6d28d9;color:#fff;padding:1px 8px;border-radius:999px;">START HERE</span></div>
+      <div style="margin-left:14px;">＋ Connect a channel →</div>
+      <div style="margin-left:14px;color:#888;">All conversations (disabled, 0 threads)</div>
+      <div style="margin-top:8px;background:#f3f0ff;padding:6px 10px;border-radius:8px;">Click Channels → /dashboard/channels overview grid (Localith + Meta + soon). No empty sidebar.</div>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">1 connected (WhatsApp only) → 2 rows</div>
+    <div class="mockup-body" style="font-size:13px;line-height:2;">
+      <div>💬 Channels ▾ <span style="font-size:10px;background:#25D366;color:#fff;padding:1px 8px;border-radius:999px;">1 live</span></div>
+      <div style="margin-left:14px;">✉️ All conversations (3)</div>
+      <div style="margin-left:14px;">💬 WhatsApp manage ● ok</div>
+      <div style="margin-left:14px;color:#6d28d9;">＋ Connect more →</div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:12px;">
+  <div class="mockup-header">N connected — scales without bloat</div>
+  <div class="mockup-body" style="font-size:13px;">✉️ All conversations (12) · 💬 WhatsApp ●2 fix · 📸 Instagram ● live · ＋ All channels health → <span style="color:#888;">(unconnected never appear; add via overview)</span></div>
+</div>
+
+<div class="section">
+  <span class="label">Logic (frontend, cached 60s)</span>
+  <p style="font-size:13px;"><code>GET /api/v1/channels?limit=100 + meta connections</code> → if 0 rows → show “Connect” only. If 1+ → show All + only connected slugs. Loading: skeleton rows. Error: keep old list + retry dot. Automations item: <b>legacy — redirects to /dashboard/channels</b>, safe to remove from sidebar (AI settings now live inline per channel). That frees 1 slot.</p>
+</div>

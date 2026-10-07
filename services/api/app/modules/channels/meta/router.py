@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....config import settings
 from ....core.deps import get_current_user, get_db
+from ....modules.team.context import tenant_id_of
 from ...auth.rate_limit import rate_limit
 from ...users.models import User
 from . import oauth as _oauth
@@ -156,7 +157,7 @@ async def list_connections(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await _service.list_connections(db, user.id)
+    rows = await _service.list_connections(db, tenant_id_of(user))
     return MetaConnectionListResponse(connections=[_conn_out(c) for c in rows])
 
 
@@ -171,7 +172,7 @@ async def start_connect(
     origin = _request_origin(request)
     try:
         return await _service.start_connect(
-            db, user.id, provider, {"frontend_origin": origin} if origin else None
+            db, tenant_id_of(user), provider, {"frontend_origin": origin} if origin else None
         )
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
@@ -420,7 +421,7 @@ async def smb_sync_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Check SMB App Data sync status for a coexistence connection."""
-    conn = await _service.get_connection(db, user.id, "whatsapp")
+    conn = await _service.get_connection(db, tenant_id_of(user), "whatsapp")
     if conn is None or conn.connection_type != "coexistence":
         raise HTTPException(status_code=404, detail="No coexistence connection")
     meta = conn.connection_metadata or {}
@@ -455,7 +456,7 @@ async def whatsapp_usage(
             .select_from(ChannelMessage)
             .join(Channel, ChannelMessage.channel_id == Channel.id)
             .where(
-                Channel.user_id == user.id,
+                Channel.user_id == tenant_id_of(user),
                 Channel.platform == "whatsapp",
                 ChannelMessage.direction == "outbound",
                 ChannelMessage.created_at >= month_start,
@@ -483,7 +484,7 @@ async def whatsapp_session(
     # The authenticated tenant MUST own the session row. State entropy alone
     # is strong, but this guarantees a cross-tenant state can never be used
     # (defense-in-depth for the tenant-owned connection model).
-    if user.id != txn.tenant_id:
+    if tenant_id_of(user) != txn.tenant_id:
         logger.warning(
             "Meta WhatsApp session rejected: authenticated tenant %s != txn tenant %s",
             user.id, txn.tenant_id,
@@ -632,7 +633,7 @@ async def register_whatsapp_number(
             select(MetaAsset)
             .options(selectinload(MetaAsset.connection))
             .where(
-                MetaAsset.tenant_id == user.id,
+                MetaAsset.tenant_id == tenant_id_of(user),
                 MetaAsset.provider == "whatsapp",
                 MetaAsset.asset_type == "phone_number",
                 MetaAsset.external_asset_id == phone_number_id,
@@ -679,7 +680,7 @@ async def get_whatsapp_profile(
             select(MetaAsset)
             .options(selectinload(MetaAsset.connection))
             .where(
-                MetaAsset.tenant_id == user.id,
+                MetaAsset.tenant_id == tenant_id_of(user),
                 MetaAsset.provider == "whatsapp",
                 MetaAsset.asset_type == "phone_number",
                 MetaAsset.external_asset_id == phone_number_id,
@@ -749,7 +750,7 @@ async def update_whatsapp_profile(
             select(MetaAsset)
             .options(selectinload(MetaAsset.connection))
             .where(
-                MetaAsset.tenant_id == user.id,
+                MetaAsset.tenant_id == tenant_id_of(user),
                 MetaAsset.provider == "whatsapp",
                 MetaAsset.asset_type == "phone_number",
                 MetaAsset.external_asset_id == phone_number_id,
@@ -804,7 +805,7 @@ async def upload_profile_photo(
             select(MetaAsset)
             .options(selectinload(MetaAsset.connection))
             .where(
-                MetaAsset.tenant_id == user.id,
+                MetaAsset.tenant_id == tenant_id_of(user),
                 MetaAsset.provider == "whatsapp",
                 MetaAsset.asset_type == "phone_number",
                 MetaAsset.external_asset_id == phone_number_id,
@@ -867,7 +868,7 @@ async def discover_instagram(
     from .providers.base import MetaAPIError as _MetaAPIError
 
     try:
-        rows = await _service.discover_instagram(db, user.id)
+        rows = await _service.discover_instagram(db, tenant_id_of(user))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except _MetaAPIError as e:
@@ -883,7 +884,7 @@ async def list_assets(
 ):
     if provider not in ("whatsapp", "facebook", "instagram"):
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
-    rows = await _service.list_assets(db, user.id, provider)
+    rows = await _service.list_assets(db, tenant_id_of(user), provider)
     return MetaAssetListResponse(assets=[_asset_out(a) for a in rows])
 
 
@@ -897,7 +898,7 @@ async def select_assets(
     if provider not in ("whatsapp", "facebook", "instagram"):
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
     try:
-        rows = await _service.select_assets(db, user.id, provider, body.asset_ids)
+        rows = await _service.select_assets(db, tenant_id_of(user), provider, body.asset_ids)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return MetaAssetListResponse(assets=[_asset_out(a) for a in rows])
@@ -912,12 +913,12 @@ async def validate_connection(
     if provider not in ("whatsapp", "facebook", "instagram"):
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
     try:
-        status, detail = await _service.validate_connection(db, user.id, provider)
+        status, detail = await _service.validate_connection(db, tenant_id_of(user), provider)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     from datetime import datetime, timezone
 
-    conn = await _service.get_connection(db, user.id, provider)
+    conn = await _service.get_connection(db, tenant_id_of(user), provider)
     return MetaValidateResponse(
         connection_id=conn.id if conn else "",
         status=status,
@@ -940,6 +941,6 @@ async def disconnect(
     if provider not in ("whatsapp", "facebook", "instagram"):
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
     result = await _service.disconnect(
-        db, user.id, provider, revoke=revoke, delete_data=delete_data
+        db, tenant_id_of(user), provider, revoke=revoke, delete_data=delete_data
     )
     return {"disconnected": True, "provider": provider, **result}

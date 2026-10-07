@@ -24,6 +24,7 @@ from .schemas import (
     PublishResult,
     SyncResult,
 )
+from ..team.context import tenant_id_of, require_perm, TenantContext, require_perm
 
 router = APIRouter(prefix="/api/v1/posts", tags=["posts"])
 
@@ -35,11 +36,12 @@ def _out(result: dict) -> PostOut:
 @router.post("/", response_model=PublishResult, status_code=201)
 async def create_post(
     body: PostCreate,
+    ctx: TenantContext = Depends(require_perm("posts.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        result = await service.create_post(db, user.id, body.model_dump())
+        result = await service.create_post(db, tenant_id_of(user), body.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
@@ -55,16 +57,18 @@ async def create_post(
 @router.get("", response_model=list[PostOut])
 async def list_posts(
     listing_id: str | None = Query(None, max_length=64),
+    ctx: TenantContext = Depends(require_perm("posts.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await service.list_posts(db, user.id, listing_id)
+    rows = await service.list_posts(db, tenant_id_of(user), listing_id)
     return [PostOut(**r) for r in rows]
 
 
 @router.post("/ai-draft", response_model=AiDraftResponse)
 async def ai_draft_post(
     body: AiDraftRequest,
+    ctx: TenantContext = Depends(require_perm("posts.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -76,7 +80,7 @@ async def ai_draft_post(
         raise HTTPException(status_code=429, detail="Too many requests")
     try:
         result = await service.draft_post_content(
-            db, user.id, body.title, body.post_type, body.business_name
+            db, tenant_id_of(user), body.title, body.post_type, body.business_name
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -91,10 +95,11 @@ async def ai_draft_post(
 @router.get("/{post_id}", response_model=PostOut)
 async def get_post(
     post_id: str,
+    ctx: TenantContext = Depends(require_perm("posts.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    post = await service._owned_post(db, user.id, post_id)
+    post = await service._owned_post(db, tenant_id_of(user), post_id)
     if post is None:
         raise HTTPException(status_code=404, detail="Post not found.")
     return PostOut(**service._serialize(post))
@@ -104,12 +109,13 @@ async def get_post(
 async def update_post(
     post_id: str,
     body: PostUpdate,
+    ctx: TenantContext = Depends(require_perm("posts.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
         result = await service.update_post(
-            db, user.id, post_id,
+            db, tenant_id_of(user), post_id,
             # exclude_unset: explicit null cancels (delete_at), absent
             # keys stay untouched.
             {k: v for k, v in body.model_dump(exclude_unset=True).items()},
@@ -129,11 +135,12 @@ async def update_post(
 @router.delete("/{post_id}", status_code=204)
 async def delete_post(
     post_id: str,
+    ctx: TenantContext = Depends(require_perm("posts.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await service.delete_post(db, user.id, post_id)
+        await service.delete_post(db, tenant_id_of(user), post_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -141,11 +148,12 @@ async def delete_post(
 @router.post("/{post_id}/publish", response_model=PublishResult)
 async def publish_post_now(
     post_id: str,
+    ctx: TenantContext = Depends(require_perm("posts.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        result = await service.publish_post(db, user.id, post_id)
+        result = await service.publish_post(db, tenant_id_of(user), post_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:

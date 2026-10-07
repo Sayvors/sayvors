@@ -1,0 +1,43 @@
+<h2>Yes — Channels as home: Inbox landing + management subitems</h2>
+<p class="subtitle">Your instinct is spot-on. Your Inbox is already unified (All platforms filter). Make Channels the single home so users never wonder “inbox vs channels?”</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Sidebar — refined (1 home, no dupes)</div>
+    <div class="mockup-body" style="font-size:13px;line-height:2.1;">
+      <div>▭ Dashboard</div>
+      <div>📍 Locations</div>
+      <div style="background:#111;color:#fff;padding:6px 12px;border-radius:12px;">
+        <div><b>💬 Channels ▾ — click = Unified Inbox</b></div>
+        <div style="margin-left:10px;margin-top:6px;display:grid;gap:4px;">
+          <div style="background:#fff;color:#111;border-radius:8px;padding:2px 10px;">✉️ All conversations <span style="background:#6d28d9;color:#fff;font-size:10px;padding:1px 7px;border-radius:999px;">5 unread</span></div>
+          <div style="opacity:.9;">💬 WhatsApp manage <span style="font-size:10px;background:#25D366;padding:1px 7px;border-radius:999px;">●2 fix</span></div>
+          <div style="opacity:.9;">📸 Instagram manage <span style="font-size:10px;">● live</span></div>
+          <div style="opacity:.9;">👤 Facebook manage <span style="font-size:10px;">○ off</span></div>
+          <div style="opacity:.7;">＋ All channels health →</div>
+        </div>
+      </div>
+      <div>🤖 Automations</div>
+      <div>📦 Databank</div>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Click behavior — no confusion</div>
+    <div class="mockup-body" style="font-size:13px;">
+      <p><b>Click “Channels” itself →</b> Unified Inbox (<code>/dashboard/inbox</code> stays, just re-parented). Filters on top: All | WhatsApp | IG | FB. This is the daily triage.</p>
+      <p><b>Click subitem →</b> Management hub (<code>/dashboard/channels/whatsapp</code>). Tabs: Profile | Numbers | Templates | Settings. This is weekly config.</p>
+      <div style="background:#E9F3EC;border-radius:10px;padding:8px 12px;margin-top:8px;">Rule: <b>conversations live in Inbox view, config lives in Manage view.</b> Same sidebar, two jobs, visually separated by divider + “MANAGE” label.</div>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="merge" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content"><h3>Merge — remove standalone Inbox (Recommended)</h3><p>MAIN 8→7. Inbox becomes first child of Channels. One home, badge shows unread. No dupes. Redirect /dashboard/inbox → /dashboard/channels/inbox.</p></div>
+  </div>
+  <div class="option" data-choice="keep-both" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content"><h3>Keep both links (same page, two entries)</h3><p>Less refactor, but two ways to same inbox = confusion you wanted to avoid.</p></div>
+  </div>
+</div>

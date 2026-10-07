@@ -31,6 +31,7 @@ from ..channels.reviews_worker import _resume_failed_row, _save_reply_row
 from ..notifications.service import MAX_PER_SYNC, notify
 from ..outbox.service import enqueue_event
 from ..users.models import User
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 logger = logging.getLogger(__name__)
 
@@ -638,7 +639,7 @@ async def _sync_connection_inner(
     from .models import LocalithConnection  # noqa: F401 (re-export for callers)
 
     if listing_id is None:
-        connections = await list_connections(db, user.id)
+        connections = await list_connections(db, tenant_id_of(user))
         if not connections:
             raise ValueError("Connect a Localith listing before syncing.")
         # Resolve every branch's identity into plain values up front. A failed
@@ -651,7 +652,7 @@ async def _sync_connection_inner(
         totals: dict[str, int | str] = {
             "fetched": 0, "new_reviews": 0, "branches": 0, "errors": 0,
         }
-        owner_id = user.id
+        owner_id = tenant_id_of(user)
         for branch_listing_id, branch_listing_name in plan:
             try:
                 connection = await get_connection(db, owner_id, branch_listing_id)
@@ -685,10 +686,10 @@ async def _sync_connection_inner(
                     pass
         return totals
 
-    connection = await get_connection(db, user.id, listing_id)
+    connection = await get_connection(db, tenant_id_of(user), listing_id)
     if connection is None:
         raise ValueError("Connect a Localith listing before syncing.")
-    return await _sync_single_connection(user.id, db, connection, metrics_days_back)
+    return await _sync_single_connection(tenant_id_of(user), db, connection, metrics_days_back)
 
 
 async def _sync_single_connection(

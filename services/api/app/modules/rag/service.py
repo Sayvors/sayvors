@@ -22,6 +22,7 @@ from .schemas import (
     SearchRequest,
     ScrapeRequest,
 )
+from ..team.context import tenant_id_of, require_perm, TenantContext, require_perm
 
 
 async def create_databank(
@@ -29,7 +30,7 @@ async def create_databank(
 ) -> Databank:
     bank = Databank(
         id=str(uuid.uuid4()),
-        user_id=user.id,
+        user_id=tenant_id_of(user),
         name=body.name,
         description=body.description,
         accent_color=body.accent_color,
@@ -45,7 +46,7 @@ async def list_databanks(
 ) -> list[Databank]:
     result = await db.execute(
         select(Databank)
-        .where(Databank.user_id == user.id)
+        .where(Databank.user_id == tenant_id_of(user))
         .order_by(Databank.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -58,7 +59,7 @@ async def get_databank(
 ) -> Databank | None:
     result = await db.execute(
         select(Databank).where(
-            Databank.id == databank_id, Databank.user_id == user.id
+            Databank.id == databank_id, Databank.user_id == tenant_id_of(user)
         )
     )
     return result.scalar_one_or_none()
@@ -118,7 +119,7 @@ async def upload_document(
     doc = Document(
         id=str(uuid.uuid4()),
         databank_id=databank_id,
-        user_id=user.id,
+        user_id=tenant_id_of(user),
         filename=file.filename or "unnamed",
         source_type="upload",
         file_type=ext,
@@ -142,14 +143,14 @@ async def list_documents(
 ) -> tuple[list[Document], int]:
     count_result = await db.execute(
         select(func.count()).where(
-            Document.databank_id == databank_id, Document.user_id == user.id
+            Document.databank_id == databank_id, Document.user_id == tenant_id_of(user)
         )
     )
     total = count_result.scalar() or 0
 
     result = await db.execute(
         select(Document)
-        .where(Document.databank_id == databank_id, Document.user_id == user.id)
+        .where(Document.databank_id == databank_id, Document.user_id == tenant_id_of(user))
         .order_by(Document.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -177,7 +178,7 @@ async def preview_document(
         select(Document).where(
             Document.id == doc_id,
             Document.databank_id == databank_id,
-            Document.user_id == user.id,
+            Document.user_id == tenant_id_of(user),
         )
     )
     doc = result.scalar_one_or_none()
@@ -237,7 +238,7 @@ async def preview_document(
 
 async def delete_document(doc_id: str, user: User, db: AsyncSession) -> bool:
     result = await db.execute(
-        select(Document).where(Document.id == doc_id, Document.user_id == user.id)
+        select(Document).where(Document.id == doc_id, Document.user_id == tenant_id_of(user))
     )
     doc = result.scalar_one_or_none()
     if not doc:
@@ -267,7 +268,7 @@ async def create_scrape_job(
     job = ScrapeJob(
         id=str(uuid.uuid4()),
         databank_id=databank_id,
-        user_id=user.id,
+        user_id=tenant_id_of(user),
         url=body.url,
         crawl_mode=body.crawl_mode,
         max_pages=body.max_pages,
@@ -290,7 +291,7 @@ async def process_pending(
     result = await db.execute(
         select(Document).where(
             Document.databank_id == databank_id,
-            Document.user_id == user.id,
+            Document.user_id == tenant_id_of(user),
             Document.status == "pending",
         )
     )
@@ -300,7 +301,7 @@ async def process_pending(
 
     job = IngestJob(
         id=str(uuid.uuid4()),
-        user_id=user.id,
+        user_id=tenant_id_of(user),
         databank_id=databank_id,
         job_type="upload",
         status="queued",
@@ -320,7 +321,7 @@ async def process_pending(
 
 async def process_document(doc_id: str, user: User, db: AsyncSession) -> IngestJob:
     result = await db.execute(
-        select(Document).where(Document.id == doc_id, Document.user_id == user.id)
+        select(Document).where(Document.id == doc_id, Document.user_id == tenant_id_of(user))
     )
     doc = result.scalar_one_or_none()
     if not doc:
@@ -328,7 +329,7 @@ async def process_document(doc_id: str, user: User, db: AsyncSession) -> IngestJ
 
     job = IngestJob(
         id=str(uuid.uuid4()),
-        user_id=user.id,
+        user_id=tenant_id_of(user),
         databank_id=doc.databank_id,
         document_id=doc.id,
         job_type="upload",
@@ -361,7 +362,7 @@ async def reindex_databank(databank_id: str, user: User, db: AsyncSession) -> in
     result = await db.execute(
         select(Document).where(
             Document.databank_id == databank_id,
-            Document.user_id == user.id,
+            Document.user_id == tenant_id_of(user),
             Document.status.in_(["completed", "failed"]),
         )
     )
@@ -374,7 +375,7 @@ async def reindex_databank(databank_id: str, user: User, db: AsyncSession) -> in
         doc.status = "pending"
         job = IngestJob(
             id=str(uuid.uuid4()),
-            user_id=user.id,
+            user_id=tenant_id_of(user),
             databank_id=databank_id,
             document_id=doc.id,
             job_type="reindex",
@@ -408,7 +409,7 @@ async def retry_documents(
 
     stmt = select(Document).where(
         Document.databank_id == databank_id,
-        Document.user_id == user.id,
+        Document.user_id == tenant_id_of(user),
     )
     if doc_ids:
         stmt = stmt.where(Document.id.in_(doc_ids))
@@ -428,7 +429,7 @@ async def retry_documents(
         doc.status = "pending"
         job = IngestJob(
             id=str(uuid.uuid4()),
-            user_id=user.id,
+            user_id=tenant_id_of(user),
             databank_id=databank_id,
             document_id=doc.id,
             job_type="reindex",
@@ -449,13 +450,13 @@ async def list_ingest_jobs(
     user: User, db: AsyncSession, limit: int = 20, offset: int = 0
 ) -> tuple[list[IngestJob], int]:
     count_result = await db.execute(
-        select(func.count()).where(IngestJob.user_id == user.id)
+        select(func.count()).where(IngestJob.user_id == tenant_id_of(user))
     )
     total = count_result.scalar() or 0
 
     result = await db.execute(
         select(IngestJob)
-        .where(IngestJob.user_id == user.id)
+        .where(IngestJob.user_id == tenant_id_of(user))
         .order_by(IngestJob.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -628,7 +629,7 @@ async def create_source(body, user: User, databank_id: str, db: AsyncSession) ->
     source = DataSource(
         id=str(uuid.uuid4()),
         databank_id=databank_id,
-        user_id=user.id,
+        user_id=tenant_id_of(user),
         name=body.name,
         db_type=cfg.db_type,
         host=cfg.host,
@@ -649,7 +650,7 @@ async def list_sources(databank_id: str, user: User, db: AsyncSession) -> list[D
         raise ValueError("Databank not found")
     result = await db.execute(
         select(DataSource)
-        .where(DataSource.databank_id == databank_id, DataSource.user_id == user.id)
+        .where(DataSource.databank_id == databank_id, DataSource.user_id == tenant_id_of(user))
         .order_by(DataSource.created_at.desc())
     )
     return list(result.scalars().all())
@@ -657,7 +658,7 @@ async def list_sources(databank_id: str, user: User, db: AsyncSession) -> list[D
 
 async def get_source(source_id: str, user: User, db: AsyncSession) -> DataSource | None:
     result = await db.execute(
-        select(DataSource).where(DataSource.id == source_id, DataSource.user_id == user.id)
+        select(DataSource).where(DataSource.id == source_id, DataSource.user_id == tenant_id_of(user))
     )
     return result.scalar_one_or_none()
 
@@ -691,7 +692,7 @@ async def ingest_query_results(
     doc = Document(
         id=str(uuid.uuid4()),
         databank_id=source.databank_id,
-        user_id=user.id,
+        user_id=tenant_id_of(user),
         filename=f"{label} ({result['row_count']} rows).csv",
         source_type="database",
         source_url=f"{cfg.db_type}://{cfg.host}/{cfg.database} • {label}"[:2000],

@@ -23,6 +23,7 @@ from ..locations.models import LocationProfile
 from ..users.models import User
 from . import service
 from .models import LocalithConnection
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ async def test_listing(
 
 @router.post("/sync")
 async def sync_my_connection(
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     listing_id: str | None = None,
@@ -159,21 +161,23 @@ async def sync_my_connection(
 
 @router.get("/connections", response_model=list[ConnectionResponse])
 async def list_my_connections(
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Every branch this tenant has connected (all listings, all data kept)."""
-    connections = await service.list_connections(db, user.id)
+    connections = await service.list_connections(db, tenant_id_of(user))
     return [_serialize(c) for c in connections]
 
 
 @router.get("/connection", response_model=ConnectionResponse | None)
 async def get_my_connection(
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """First connected branch (legacy single-location callers)."""
-    c = await service.get_connection(db, user.id)
+    c = await service.get_connection(db, tenant_id_of(user))
     return _serialize(c) if c else None
 
 
@@ -186,6 +190,7 @@ class ProfileSnapshot(BaseModel):
 
 @router.get("/profile", response_model=ProfileSnapshot | None)
 async def get_my_profile(
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     listing_id: str | None = None,
@@ -195,7 +200,7 @@ async def get_my_profile(
     With listing_id set, returns exactly that branch; otherwise the first
     connected branch (legacy single-location callers).
     """
-    c = await service.get_connection(db, user.id, listing_id)
+    c = await service.get_connection(db, tenant_id_of(user), listing_id)
     if c is None:
         return None
     return ProfileSnapshot(
@@ -208,6 +213,7 @@ async def get_my_profile(
 
 @router.get("/profiles/aggregate")
 async def get_profiles_aggregate(
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -215,20 +221,21 @@ async def get_profiles_aggregate(
 
     Additive metrics are summed; averages/rates are review-weighted.
     """
-    return await service.aggregate_profiles(db, user.id)
+    return await service.aggregate_profiles(db, tenant_id_of(user))
 
 
 @router.put("/connection", response_model=ConnectionResponse)
 async def save_connection(
     body: ConnectionCreate,
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    c = await service.get_connection(db, user.id, body.listing_id)
+    c = await service.get_connection(db, tenant_id_of(user), body.listing_id)
     if c is None:
         c = LocalithConnection(
             id=__import__("uuid").uuid4().hex,
-            user_id=user.id,
+            user_id=tenant_id_of(user),
             listing_id=body.listing_id,
             listing_name=body.listing_name,
             listing_google_id=body.listing_google_id,
@@ -251,6 +258,7 @@ class ApiKeyUpdate(BaseModel):
 @router.put("/connection/api-key", response_model=ConnectionResponse | None)
 async def set_connection_api_key(
     body: ApiKeyUpdate,
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -261,7 +269,7 @@ async def set_connection_api_key(
     the shared LOCALITH_API_KEY env for this tenant's syncs and publishes.
     The plaintext is never returned or logged.
     """
-    connections = await service.list_connections(db, user.id)
+    connections = await service.list_connections(db, tenant_id_of(user))
     if not connections:
         raise HTTPException(status_code=400, detail="Connect a Localith listing first.")
     encrypted = _encrypt_localith_key(body.api_key.strip())
@@ -275,12 +283,13 @@ async def set_connection_api_key(
 
 @router.delete("/connection/api-key", response_model=ConnectionResponse | None)
 async def remove_connection_api_key(
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Remove the tenant's key from every owned connection row; the tenant
     falls back to the shared LOCALITH_API_KEY env."""
-    connections = await service.list_connections(db, user.id)
+    connections = await service.list_connections(db, tenant_id_of(user))
     if not connections:
         raise HTTPException(status_code=400, detail="Connect a Localith listing first.")
     for c in connections:
@@ -304,6 +313,7 @@ class ListingUpdate(BaseModel):
 @router.patch("/listing", response_model=ConnectionResponse)
 async def update_my_listing(
     body: ListingUpdate,
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     listing_id: str | None = None,
@@ -319,7 +329,7 @@ async def update_my_listing(
     """
     import asyncio
 
-    c = await service.get_connection(db, user.id, listing_id)
+    c = await service.get_connection(db, tenant_id_of(user), listing_id)
     if c is None:
         raise HTTPException(status_code=400, detail="Connect a Localith listing first.")
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -356,6 +366,7 @@ async def update_my_listing(
 
 @router.delete("/connection", status_code=204)
 async def delete_my_connection(
+    ctx: TenantContext = Depends(require_perm("locations.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     listing_id: str | None = None,
@@ -367,9 +378,9 @@ async def delete_my_connection(
     one is never deleted by accident.
     """
     if listing_id:
-        c = await service.get_connection(db, user.id, listing_id)
+        c = await service.get_connection(db, tenant_id_of(user), listing_id)
     else:
-        connections = await service.list_connections(db, user.id)
+        connections = await service.list_connections(db, tenant_id_of(user))
         if len(connections) > 1:
             raise HTTPException(
                 status_code=400,
@@ -387,7 +398,7 @@ async def delete_my_connection(
     channels = (
         await db.execute(
             select(Channel).where(
-                Channel.user_id == user.id,
+                Channel.user_id == tenant_id_of(user),
                 Channel.platform == "google_reviews",
                 Channel.metadata_json.contains(listing_id),
             )
@@ -401,7 +412,7 @@ async def delete_my_connection(
         await db.delete(ch)
     await db.execute(
         delete(LocationProfile).where(
-            LocationProfile.user_id == user.id,
+            LocationProfile.user_id == tenant_id_of(user),
             LocationProfile.listing_id == listing_id,
         )
     )

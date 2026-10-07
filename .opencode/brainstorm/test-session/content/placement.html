@@ -1,0 +1,32 @@
+<h2>Where should the WhatsApp hub live?</h2>
+<p class="subtitle">You picked Conversational Warmth. Now placement — for multi-location, discoverability beats nav minimalism.</p>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="dedicated" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Dedicated hub — /dashboard/whatsapp (Recommended)</h3>
+      <p>New MAIN nav item with green dot + health badge. Tabs: Profile | Numbers | Templates | Settings. Location switcher on top. 1 click from anywhere. Channels page stays as onboarding only.</p>
+      <div class="mock-nav" style="margin-top:8px;">Sidebar: Dashboard · Locations · <b style="background:#25D366;color:#fff;padding:2px 8px;border-radius:999px;">WhatsApp ●2</b> · Inbox · Reviews…</div>
+    </div>
+  </div>
+  <div class="option" data-choice="nested" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Nested under Channels — /dashboard/channels/whatsapp</h3>
+      <p>No new nav. Expands existing channel workspace. Cleanest nav, but buried: Advanced → Connect → WhatsApp → Profile (3 clicks). Daily edits suffer. Good if WhatsApp is rarely touched.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="locations" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Inside Locations — /dashboard/locations/[id]/whatsapp</h3>
+      <p>Profile lives where location lives. Contextual, but health/templates split per location, no global view. Hard to see “2 numbers need re-auth” at a glance.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <span class="label">Recommendation</span>
+  <p><b>A — dedicated hub.</b> WhatsApp is revenue-critical + multi-location needs a global health glance. Promote to MAIN between Locations and Inbox. Deep-link from Channels cards (“Manage →”) so both paths work. URL: <code>/dashboard/whatsapp</code> with <code>?location=downtown&tab=profile</code> for shareable links.</p>
+</div>

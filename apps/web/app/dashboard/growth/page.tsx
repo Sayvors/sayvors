@@ -18,7 +18,6 @@ import {
 import { apiFetch } from "@/lib/api-rag";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import { StatCard } from "@/components/analytics/StatCard";
-import { MetricChart } from "@/components/analytics/Charts";
 
 function num(v: unknown): number {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
@@ -343,17 +342,9 @@ function TrendChart({ points, metric, granularity }: {
             />
           </div>
 
-          {/* Chart + CTR */}
+          {/* CTR panel */}
           {showMain && (
-          <div className="grid gap-3 lg:grid-cols-3">
-            <div className="lg:col-span-2">
-              {loading ? (
-                <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" aria-hidden />
-              ) : (
-                <MetricChart points={points} />
-              )}
-            </div>
-            <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
               <h3 className="text-[14px] font-bold text-ink">Conversion</h3>
               <p className="mt-3 text-[32px] font-bold text-ink">
                 {ctr !== null ? `${ctr}%` : "—"}
@@ -373,7 +364,6 @@ function TrendChart({ points, metric, granularity }: {
                   <span className="font-semibold text-ink">{overview ? `${Math.round(overview.response_rate)}%` : "—"}</span>
                 </p>
               </div>
-            </div>
           </div>
           )}
 
