@@ -57,7 +57,7 @@ export default function Sidebar() {
   // inline sidebar is 56% of a 390px phone, permanently, before any content.
   const [isMobile, setIsMobile] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(true);
   const [teamContext, setTeamContext] = useState<{ permissions?: string[]; role_name?: string } | null>(null);
   useEffect(() => {
     (async () => {
