@@ -58,7 +58,7 @@ export default function Sidebar() {
   const [isMobile, setIsMobile] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(true);
-  const [teamContext, setTeamContext] = useState<{ permissions?: string[]; role_name?: string } | null>(null);
+  const [teamContext, setTeamContext] = useState<{ permissions?: string[]; role_name?: string; is_owner?: boolean } | null>(null);
   useEffect(() => {
     (async () => {
       try {
