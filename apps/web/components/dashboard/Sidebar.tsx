@@ -70,7 +70,7 @@ export default function Sidebar() {
     })();
   }, []);
 
-  const teamPermitted = teamContext && (teamContext.permissions || []).some((p: string) => ["team.manage", "team.view"].includes(p));
+  const teamPermitted = teamContext && (teamContext.is_owner || (teamContext.permissions || []).some((p: string) => ["team.manage", "team.view"].includes(p)));
   const filteredAdvanced = ADVANCED_ITEMS.filter((item) => item.key !== "team" || teamPermitted);
 
   useEffect(() => {
