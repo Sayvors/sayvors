@@ -149,10 +149,65 @@ async def test_custom_role_crud_and_guards(client):
         r["id"] for r in client.get("/api/v1/team/roles").json()["roles"] if r["name"] == "Admin"
     )
     assert client.patch(f"/api/v1/team/roles/{system_id}", json={
-        "permissions": ["inbox.view"],
-    }).status_code == 400
+        "name": "Admin v2",
+    }).status_code == 400  # a built-in role keeps its name
     assert client.delete(f"/api/v1/team/roles/{system_id}").status_code == 400
     assert client.delete(f"/api/v1/team/roles/{role_id}").status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_builtin_role_permissions_are_admin_editable(client, db):
+    """Every checkbox on every role belongs to the admin — built-ins included."""
+    admin_id = next(
+        r["id"] for r in client.get("/api/v1/team/roles").json()["roles"] if r["name"] == "Admin"
+    )
+    trimmed = ["inbox.view", "inbox.reply", "team.view"]
+
+    patched = client.patch(f"/api/v1/team/roles/{admin_id}", json={"permissions": trimmed})
+    assert patched.status_code == 200
+    body = patched.json()
+    assert body["permissions"] == trimmed
+    assert body["is_system"] is True
+    assert body["name"] == "Admin"
+
+    # The choice survives a reload — seeding must not re-sync the template.
+    reloaded = next(
+        r for r in client.get("/api/v1/team/roles").json()["roles"] if r["name"] == "Admin"
+    )
+    assert reloaded["permissions"] == trimmed
+
+    # And it actually gates: a member on the trimmed Admin keeps inbox but
+    # loses team.manage.
+    member, mu = await _seed_member(db, role_name="Admin")
+    _auth_as(mu)
+    ctx = client.get("/api/v1/team/context").json()
+    assert ctx["role_name"] == "Admin"
+    assert ctx["permissions"] == sorted(trimmed)
+    assert client.post("/api/v1/team/roles", json={
+        "name": "Nope", "permissions": ["inbox.view"],
+    }).status_code == 403
+
+    roles = await service.ensure_system_roles(db, TENANT)
+    next(r for r in roles if r.name == "Admin").permissions = list(ROLE_TEMPLATES["Admin"])
+    await db.commit()  # leave the shared fixture as we found it
+
+
+@pytest.mark.asyncio
+async def test_builtin_role_rename_and_delete_still_refused(client):
+    for name in ("Admin", "Agent", "Viewer"):
+        role_id = next(
+            r["id"] for r in client.get("/api/v1/team/roles").json()["roles"] if r["name"] == name
+        )
+        renamed = client.patch(f"/api/v1/team/roles/{role_id}", json={"name": f"{name} v2"})
+        assert renamed.status_code == 400, name
+        assert client.delete(f"/api/v1/team/roles/{role_id}").status_code == 400, name
+
+
+@pytest.mark.asyncio
+async def test_role_cannot_be_emptied(client):
+    created = client.post("/api/v1/team/roles", json={"name": "Empty", "permissions": ["inbox.view"]})
+    role_id = created.json()["id"]
+    assert client.patch(f"/api/v1/team/roles/{role_id}", json={"permissions": []}).status_code == 422
 
 
 @pytest.mark.asyncio
@@ -180,18 +235,23 @@ def test_admin_template_has_unique_permissions():
 
 
 @pytest.mark.asyncio
-async def test_ensure_system_roles_syncs_stale_templates(client, db):
-    """System roles are platform-managed: re-seeding repairs rows written by
-    an older catalog (e.g. Admin carrying a duplicated team.view)."""
+async def test_ensure_system_roles_preserves_edits_and_prunes_dead(client, db):
+    """Built-in roles are admin-owned: seeding never re-syncs the template, it
+    only drops entries the current catalog no longer knows about."""
     await _make_owner(db)
     roles = await service.ensure_system_roles(db, TENANT)
     admin = next(r for r in roles if r.name == "Admin")
-    admin.permissions = ["team.view", "team.view", "inbox.view"]
+    original = list(admin.permissions)
+    admin.permissions = ["team.view", "team.view", "inbox.view", "legacy.removed"]
     await db.commit()
 
     refreshed = await service.ensure_system_roles(db, TENANT)
     admin = next(r for r in refreshed if r.name == "Admin")
-    assert admin.permissions == ROLE_TEMPLATES["Admin"]
+    assert admin.permissions == ["inbox.view", "team.view"]  # deduped, unknown dropped
+    assert admin.permissions != ROLE_TEMPLATES["Admin"]      # template NOT re-applied
+
+    admin.permissions = original  # leave the shared fixture as we found it
+    await db.commit()
 
 
 @pytest.mark.asyncio

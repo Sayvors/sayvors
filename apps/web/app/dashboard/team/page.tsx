@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 
-/* Team management — members, roles and per-channel access. */
+/* Team management â€” members, roles and per-channel access. */
 
 interface TeamRoleOption { id: string; name: string; is_system?: boolean; permissions?: string[] }
 interface TeamChannelOption { id: string; platform: string; name?: string | null; status?: string }
@@ -44,7 +44,7 @@ function errText(e: unknown): string {
       if (typeof d === "string") return d;
       if (d && typeof d === "object" && typeof d.message === "string") return d.message;
     } catch {
-      /* not JSON — fall through */
+      /* not JSON â€” fall through */
     }
     return e.message;
   }
@@ -115,7 +115,7 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
   const perms = role.permissions || [];
   const labels = areaLabels(roleAreas(role), catalog);
   if (perms.length === 0) {
-    return <p className="text-[11px] text-ink/35 dark:text-fog/35">No permissions — cannot access anything.</p>;
+    return <p className="text-[11px] text-ink/35 dark:text-fog/35">No permissions â€” cannot access anything.</p>;
   }
   const shown = compact ? labels.slice(0, 4) : labels;
   const hidden = labels.length - shown.length;
@@ -123,7 +123,7 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] text-ink/45 dark:text-fog/45">
         {perms.length} permission{perms.length === 1 ? "" : "s"}
-        {membersCount > 0 ? ` · ${membersCount} member${membersCount === 1 ? "" : "s"}` : ""}
+        {membersCount > 0 ? ` Â· ${membersCount} member${membersCount === 1 ? "" : "s"}` : ""}
       </span>
       {shown.map((label) => (
         <span key={label} className="rounded-[2px] bg-ink/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06] dark:text-fog/50">
@@ -162,7 +162,7 @@ function ConfirmButton({
         disabled={pending}
         onClick={() => { setArmed(false); onConfirm(); }}
       >
-        {pending ? "Working…" : confirmLabel}
+        {pending ? "Workingâ€¦" : confirmLabel}
       </button>
       <button
         type="button"
@@ -239,7 +239,7 @@ function ChannelAccess({
           disabled={pending || !dirty}
           onClick={() => onSave(levels as Record<string, Level>)}
         >
-          {pending ? "Saving…" : "Save access"}
+          {pending ? "Savingâ€¦" : "Save access"}
         </button>
       </div>
     </div>
@@ -270,7 +270,7 @@ function RoleSelect({
           const m = membersCount?.(r.id) ?? 0;
           return (
             <option key={r.id} value={r.id}>
-              {r.name} — {n} permission{n === 1 ? "" : "s"}{r.is_system ? " · built-in" : ""}{m > 0 ? ` · ${m} member${m === 1 ? "" : "s"}` : ""}
+              {r.name} â€” {n} permission{n === 1 ? "" : "s"}{r.is_system ? " Â· built-in" : ""}{m > 0 ? ` Â· ${m} member${m === 1 ? "" : "s"}` : ""}
             </option>
           );
         })}
@@ -350,7 +350,7 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
             <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
               {duplicate.is_owner || duplicate.status === "active"
                 ? "This person is already in the workspace."
-                : "This person already has a pending invite — use Resend in the members list."}
+                : "This person already has a pending invite â€” use Resend in the members list."}
             </p>
           )}
         </div>
@@ -369,7 +369,7 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-1 xl:justify-end">
           <button type="button" onClick={handleSubmit} disabled={!canSend} className={BTN_PRIMARY}>
-            {sending ? "Sending…" : "Send invite"}
+            {sending ? "Sendingâ€¦" : "Send invite"}
           </button>
         </div>
       </div>
@@ -444,7 +444,8 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const areas = catalog;
+  const areas = catalog.filter((a) => a.area !== "billing");
+  const isSystem = !!editing?.is_system;
 
   const selectedSet = new Set(selected);
   const q = query.trim().toLowerCase();
@@ -475,7 +476,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
     );
   };
 
-  const canSave = name.trim().length > 0 && selected.length > 0 && !busy;
+  const canSave = (isSystem || name.trim().length > 0) && selected.length > 0 && !busy;
 
   const handleSave = async () => {
     setBusy(true); setError(""); setSuccess("");
@@ -483,7 +484,9 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       if (editing) {
         const data = await apiFetch(`/api/v1/team/roles/${editing.id}`, {
           method: "PATCH",
-          body: JSON.stringify({ name: name.trim(), permissions: selected }),
+          body: JSON.stringify(
+            isSystem ? { permissions: selected } : { name: name.trim(), permissions: selected },
+          ),
         });
         setSuccess(`Role "${data.name}" updated.`);
       } else {
@@ -507,14 +510,16 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="flex-1">
           <label htmlFor="role-name" className="text-[11px] font-medium text-ink/60 dark:text-fog/60">
-            {editing ? `Editing "${editing.name}" — role name` : "Role name"}
+            {isSystem ? `Built-in role "${editing?.name}" â€” name is fixed` : editing ? `Editing "${editing.name}" â€” role name` : "Role name"}
           </label>
           <input
             id="role-name"
             value={name}
+            readOnly={isSystem}
+            aria-readonly={isSystem}
             onChange={(e) => { setName(e.target.value); setError(""); setSuccess(""); }}
             placeholder="e.g. Shift lead"
-            className={`mt-1 ${FIELD}`}
+            className={`mt-1 ${FIELD} ${isSystem ? "cursor-not-allowed opacity-60" : ""}`}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -522,7 +527,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
             {selected.length} permission{selected.length === 1 ? "" : "s"} selected
           </span>
           <button type="button" onClick={handleSave} disabled={!canSave} className={BTN_PRIMARY}>
-            {busy ? "Saving…" : editing ? "Save changes" : selected.length ? `Create role · ${selected.length}` : "Create role"}
+            {busy ? "Savingâ€¦" : editing ? "Save changes" : selected.length ? `Create role Â· ${selected.length}` : "Create role"}
           </button>
           {editing && (
             <button type="button" onClick={onDone} className={BTN_GHOST}>Cancel</button>
@@ -535,7 +540,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search permissions…"
+        placeholder="Search permissionsâ€¦"
         aria-label="Search permissions"
         className={FIELD}
       />
@@ -660,7 +665,7 @@ export default function TeamPage() {
       try {
         setContext(await apiFetch("/api/v1/team/context"));
       } catch {
-        /* not authenticated — nav gating handles the redirect */
+        /* not authenticated â€” nav gating handles the redirect */
       }
       try {
         const data = await apiFetch("/api/v1/team/channels");
@@ -788,14 +793,14 @@ export default function TeamPage() {
         </div>
         {context && (
           <p className="text-[12px] text-ink/50 dark:text-fog/50">
-            {context.business_name || "Your workspace"} · <span className="font-semibold text-deep-violet">{context.role_name || "Owner"}</span>
+            {context.business_name || "Your workspace"} Â· <span className="font-semibold text-deep-violet">{context.role_name || "Owner"}</span>
             {!canManage && <span className="ml-2 text-ink/35 dark:text-fog/35">read-only</span>}
           </p>
         )}
       </div>
 
       {loading ? (
-        <p className="text-[13px] text-ink/40 dark:text-fog/40">Loading…</p>
+        <p className="text-[13px] text-ink/40 dark:text-fog/40">Loadingâ€¦</p>
       ) : (
         <div className="space-y-6">
           {notice && (
@@ -837,7 +842,7 @@ export default function TeamPage() {
                   const why = isOwner
                     ? "The workspace owner always has full access."
                     : isSelf
-                      ? "You cannot change your own role — ask the workspace owner."
+                      ? "You cannot change your own role â€” ask the workspace owner."
                       : !canManage
                         ? "Your role cannot manage the team."
                         : undefined;
@@ -895,17 +900,17 @@ export default function TeamPage() {
                           >
                             Channel access
                             {m.channels && Object.keys(m.channels).length > 0
-                              ? ` · ${Object.keys(m.channels).length}`
+                              ? ` Â· ${Object.keys(m.channels).length}`
                               : ""}
                           </button>
                           {m.status === "invited" && (
                             <button type="button" onClick={() => void resendInvite(m)} disabled={pending[`resend:${m.id}`]} className={BTN_GHOST}>
-                              {pending[`resend:${m.id}`] ? "Sending…" : "Resend invite"}
+                              {pending[`resend:${m.id}`] ? "Sendingâ€¦" : "Resend invite"}
                             </button>
                           )}
                           {m.status !== "invited" && (
                             <button type="button" onClick={() => void toggleStatus(m)} disabled={pending[`status:${m.id}`]} className={BTN_GHOST}>
-                              {pending[`status:${m.id}`] ? "Working…" : m.status === "suspended" ? "Reactivate" : "Suspend"}
+                              {pending[`status:${m.id}`] ? "Workingâ€¦" : m.status === "suspended" ? "Reactivate" : "Suspend"}
                             </button>
                           )}
                           <ConfirmButton
@@ -940,7 +945,7 @@ export default function TeamPage() {
               The recipient gets an email with a link to set up their access. Pending invites can be resent from the members list.
             </p>
             {inviteableRoles.length === 0 ? (
-              <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No roles available yet — create one below first.</p>
+              <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No roles available yet â€” create one below first.</p>
             ) : (
               <InviteForm
                 roles={inviteableRoles}
@@ -957,7 +962,8 @@ export default function TeamPage() {
           <section className="rounded-[2px] border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink">
             <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Roles</h2>
             <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
-              Built-in roles (Admin, Agent, Viewer) are read-only — clone one with the Role builder below to change what it can do.
+              Every role is yours to set â€” tick or untick any permission, on built-in roles too. Built-in roles keep their
+              names and can never be deleted.
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {roles.length === 0 ? (
@@ -989,7 +995,7 @@ export default function TeamPage() {
                             </div>
                           </details>
                         )}
-                        {!r.is_system && canManage && (
+                        {canManage && (
                           <>
                             <button
                               type="button"
@@ -998,13 +1004,15 @@ export default function TeamPage() {
                             >
                               Edit role
                             </button>
-                            <ConfirmButton
-                              label="Delete"
-                              confirmLabel="Yes, delete"
-                              pending={pending[`deleterole:${r.id}`]}
-                              onConfirm={() => void deleteRole(r)}
-                              className={BTN_DANGER}
-                            />
+                            {!r.is_system && (
+                              <ConfirmButton
+                                label="Delete"
+                                confirmLabel="Yes, delete"
+                                pending={pending[`deleterole:${r.id}`]}
+                                onConfirm={() => void deleteRole(r)}
+                                className={BTN_DANGER}
+                              />
+                            )}
                           </>
                         )}
                       </div>
@@ -1027,7 +1035,9 @@ export default function TeamPage() {
             </h2>
             <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
               {editingRole
-                ? "Change the name or the permissions, then save. Members keep this role and pick up the new access."
+                ? editingRole.is_system
+                  ? `Built-in "${editingRole.name}" â€” tick exactly what it can do. Members keep this role and pick up the new access.`
+                  : "Change the name or the permissions, then save. Members keep this role and pick up the new access."
                 : "Pick permissions and give the role a name. New roles appear in the list above and in the invite form."}
             </p>
             {canManage ? (

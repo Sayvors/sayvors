@@ -219,14 +219,18 @@ async def patch_role(
     ctx: TenantContext = Depends(require_perm("team.manage")),
     db: AsyncSession = Depends(get_db),
 ):
+    """Edit a role's permissions. Built-in roles (Admin/Agent/Viewer) are
+    editable too — the admin decides every checkbox. Their NAMES stay fixed
+    (system seeding matches by name) and they can never be deleted."""
     role = await _tenant_role(db, ctx.tenant_id, role_id)
-    if role.is_system:
-        raise HTTPException(status_code=400, detail="System roles cannot be edited — clone it as a custom role")
     if body.permissions is not None:
         if not body.permissions:
             raise HTTPException(status_code=422, detail="A role needs at least one permission")
         role.permissions = validate_role_permissions(body.permissions)
-    if body.name is not None and body.name.strip() != role.name:
+    if role.is_system:
+        if body.name is not None and body.name.strip() != role.name:
+            raise HTTPException(status_code=400, detail="Built-in roles keep their names — clone it to rename")
+    elif body.name is not None and body.name.strip() != role.name:
         dup = (
             await db.execute(
                 select(TeamRole).where(TeamRole.tenant_id == ctx.tenant_id, TeamRole.name == body.name.strip())
@@ -236,7 +240,7 @@ async def patch_role(
             raise HTTPException(status_code=409, detail="A role with this name already exists")
         role.name = body.name.strip()
     await db.commit()
-    return {"id": role.id, "name": role.name, "is_system": False, "permissions": role.permissions}
+    return {"id": role.id, "name": role.name, "is_system": role.is_system, "permissions": role.permissions}
 
 
 @router.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)

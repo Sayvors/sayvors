@@ -17,9 +17,10 @@ from ...database import Base
 
 class TeamRole(Base):
     """A tenant-scoped role: a named set of permission strings.
-    `is_system` rows are the seeded templates (read-only); tenants create
-    custom (dynamic) roles as normal rows. The workspace owner is implicit
-    and has every permission without a row."""
+    `is_system` rows are the seeded built-ins (Admin/Agent/Viewer) — their
+    permissions are admin-editable, but they keep their names and can never be
+    deleted. Tenants create custom roles as normal rows. The workspace owner is
+    implicit and has every permission without a row."""
 
     __tablename__ = "team_roles"
     __table_args__ = (

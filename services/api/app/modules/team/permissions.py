@@ -60,7 +60,7 @@ def is_valid_permission(perm: str) -> bool:
     return action in PERMISSION_CATALOG.get(area, ())
 
 
-# ── Seeded role templates (is_system=True, read-only) ──────────────
+# ── Seeded role templates (is_system=True; permissions admin-editable) ──
 # Owner is implicit — the workspace creator always has every permission
 # and is never stored as a membership row.
 

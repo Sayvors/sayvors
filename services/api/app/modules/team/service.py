@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...security import generate_verification_token, hash_password, hash_token
 from ..users.models import User
 from .models import TeamMember, TeamMemberChannel, TeamRole
-from .permissions import ROLE_TEMPLATES
+from .permissions import ALL_PERMISSIONS, ROLE_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,13 @@ async def _system_roles_by_name(db: AsyncSession, tenant_id: str) -> dict[str, T
 
 
 async def ensure_system_roles(db: AsyncSession, tenant_id: str) -> list[TeamRole]:
-    """Seed the read-only role templates once per workspace; idempotent.
+    """Seed the built-in role templates once per workspace; idempotent.
 
-    Existing system roles are re-synced to the current template — they are
-    platform-managed (the API refuses edits), so a row written by an older
-    catalog (e.g. Admin carrying a duplicated team.view) is repaired here.
+    Admins own every checkbox on a built-in role, so permissions are NEVER
+    re-synced to the template — that would silently undo their changes. Only
+    entries the current catalog no longer knows about are stripped, repairing a
+    row written by an older catalog (e.g. a permission that has since been
+    removed) while leaving deliberate choices alone.
 
     Race-safe: two parallel first-load requests (members + roles) can both
     find an empty workspace and both try to seed. The INSERT runs inside a
@@ -63,10 +65,13 @@ async def ensure_system_roles(db: AsyncSession, tenant_id: str) -> list[TeamRole
         except IntegrityError:
             pass  # a concurrent request seeded first — re-read below
         have = await _system_roles_by_name(db, tenant_id)
-    for name, perms in ROLE_TEMPLATES.items():
+    for name in ROLE_TEMPLATES:
         role = have.get(name)
-        if role is not None and role.permissions != list(perms):
-            role.permissions = list(perms)
+        if role is None:
+            continue
+        live = [p for p in ALL_PERMISSIONS if p in set(role.permissions or [])]
+        if live != list(role.permissions or []):
+            role.permissions = live
     await db.flush()
     return [have[name] for name in ROLE_TEMPLATES if name in have]
 
