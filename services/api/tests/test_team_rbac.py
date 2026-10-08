@@ -193,6 +193,35 @@ async def test_builtin_role_permissions_are_admin_editable(client, db):
 
 
 @pytest.mark.asyncio
+async def test_owner_cannot_be_locked_out_by_role_edits(client, db):
+    """The owner has no membership row — no role edit can ever gate them."""
+    admin_id = next(
+        r["id"] for r in client.get("/api/v1/team/roles").json()["roles"] if r["name"] == "Admin"
+    )
+    original = client.get(f"/api/v1/team/roles").json()["roles"]
+    admin_next = next(r for r in original if r["name"] == "Admin")
+
+    # Strip Admin down to a single harmless permission.
+    assert client.patch(
+        f"/api/v1/team/roles/{admin_id}", json={"permissions": ["inbox.view"]},
+    ).status_code == 200
+
+    ctx = client.get("/api/v1/team/context").json()
+    assert ctx["is_owner"] is True
+    assert ctx["permissions"] == []  # owners hold no role, so no role can gate them
+    assert client.post("/api/v1/team/roles", json={
+        "name": "Owner can still", "permissions": ["inbox.view"],
+    }).status_code == 201
+    assert client.get("/api/v1/team/members").status_code == 200
+    assert client.get("/api/v1/team/channels").status_code == 200
+
+    # Put Admin back so the shared fixture is unchanged.
+    client.patch(
+        f"/api/v1/team/roles/{admin_id}", json={"permissions": admin_next["permissions"]},
+    )
+
+
+@pytest.mark.asyncio
 async def test_builtin_role_rename_and_delete_still_refused(client):
     for name in ("Admin", "Agent", "Viewer"):
         role_id = next(
@@ -626,6 +655,32 @@ async def test_member_channel_overrides_roundtrip(client, db, channel_id):
     await service.set_member_channels(db, member, {CHANNEL: "view"}, tenant_id=TENANT)
     rows = await service.list_member_overrides(db, member.id)
     assert rows == {CHANNEL: "view"}
+
+
+@pytest.mark.asyncio
+async def test_channel_none_is_a_real_denial_and_absence_follows_role(client, db, channel_id):
+    """"No access" must be stored as a denial; a channel left alone must keep
+    inheriting the role. The role builder UI depends on exactly this split."""
+    member, mu = await _seed_member(db, role_name="Viewer")  # Viewer has channels.view
+
+    # A stored "none" overrides the role's channels.view and blocks the channel.
+    res = client.patch(
+        f"/api/v1/team/members/{member.id}", json={"channel_levels": {CHANNEL: "none"}},
+    )
+    assert res.status_code == 200
+    assert await service.list_member_overrides(db, member.id) == {CHANNEL: "none"}
+
+    _auth_as(mu)
+    # A denied channel reports "not found" rather than 403 — no existence leak.
+    assert client.get(f"/api/v1/channels/{CHANNEL}").status_code == 404
+    assert client.get("/api/v1/channels").status_code == 200  # list stays visible
+
+    # Omitting the channel deletes the override, so the role decides again.
+    _auth_owner()
+    client.patch(f"/api/v1/team/members/{member.id}", json={"channel_levels": {}})
+    assert await service.list_member_overrides(db, member.id) == {}
+    _auth_as(mu)
+    assert client.get(f"/api/v1/channels/{CHANNEL}").status_code == 200
 
 
 @pytest.mark.asyncio

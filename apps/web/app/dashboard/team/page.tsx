@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 
-/* Team management â€” members, roles and per-channel access. */
+/* Team management Ã¢â‚¬â€ members, roles and per-channel access. */
 
 interface TeamRoleOption { id: string; name: string; is_system?: boolean; permissions?: string[] }
 interface TeamChannelOption { id: string; platform: string; name?: string | null; status?: string }
@@ -35,6 +35,23 @@ interface CatalogArea {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LEVELS = ["none", "view", "edit"] as const;
 type Level = (typeof LEVELS)[number];
+/** "No override stored" â€” the member inherits whatever the role allows.
+ * Deliberately distinct from "none", which is a stored denial. */
+const FOLLOW = "follow" as const;
+type Access = Level | typeof FOLLOW;
+
+const LEVEL_LABELS: Record<Access, string> = {
+  follow: "Follow role",
+  none: "No access",
+  view: "View",
+  edit: "Edit",
+};
+
+const LEVEL_PHRASES: Record<Level, string> = {
+  none: "no access",
+  view: "viewing",
+  edit: "editing",
+};
 
 function errText(e: unknown): string {
   if (e instanceof Error) {
@@ -44,7 +61,7 @@ function errText(e: unknown): string {
       if (typeof d === "string") return d;
       if (d && typeof d === "object" && typeof d.message === "string") return d.message;
     } catch {
-      /* not JSON â€” fall through */
+      /* not JSON Ã¢â‚¬â€ fall through */
     }
     return e.message;
   }
@@ -115,7 +132,7 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
   const perms = role.permissions || [];
   const labels = areaLabels(roleAreas(role), catalog);
   if (perms.length === 0) {
-    return <p className="text-[11px] text-ink/35 dark:text-fog/35">No permissions â€” cannot access anything.</p>;
+    return <p className="text-[11px] text-ink/35 dark:text-fog/35">No permissions Ã¢â‚¬â€ cannot access anything.</p>;
   }
   const shown = compact ? labels.slice(0, 4) : labels;
   const hidden = labels.length - shown.length;
@@ -123,7 +140,7 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] text-ink/45 dark:text-fog/45">
         {perms.length} permission{perms.length === 1 ? "" : "s"}
-        {membersCount > 0 ? ` Â· ${membersCount} member${membersCount === 1 ? "" : "s"}` : ""}
+        {membersCount > 0 ? ` Ã‚Â· ${membersCount} member${membersCount === 1 ? "" : "s"}` : ""}
       </span>
       {shown.map((label) => (
         <span key={label} className="rounded-[2px] bg-ink/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06] dark:text-fog/50">
@@ -162,7 +179,7 @@ function ConfirmButton({
         disabled={pending}
         onClick={() => { setArmed(false); onConfirm(); }}
       >
-        {pending ? "Workingâ€¦" : confirmLabel}
+        {pending ? "WorkingÃ¢â‚¬Â¦" : confirmLabel}
       </button>
       <button
         type="button"
@@ -186,18 +203,30 @@ function Spinner({ label }: { label: string }) {
 }
 
 function ChannelAccess({
-  channels, value, pending, onSave,
+  channels, value, roleLabel, roleDefault, pending, onSave,
 }: {
-  channels: TeamChannelOption[]; value: Record<string, string>; pending?: boolean; onSave: (levels: Record<string, Level>) => void;
+  channels: TeamChannelOption[]; value: Record<string, string>; roleLabel: string; roleDefault: Level;
+  pending?: boolean; onSave: (levels: Record<string, Level>) => void;
 }) {
-  const [levels, setLevels] = useState<Record<string, string>>(value);
+  // Seeded from the stored overrides; every other channel inherits the role.
+  const [levels, setLevels] = useState<Record<string, Access>>(value as Record<string, Access>);
 
-  const dirty = JSON.stringify(levels) !== JSON.stringify(value);
+  // A channel absent from `levels` has no override stored: the member inherits
+  // the role. Keep it absent on save so "no override" stays "no override" and
+  // the member keeps tracking the role.
+  const overrides = (src: Record<string, Access>) =>
+    Object.fromEntries(Object.entries(src).filter(([, lvl]) => lvl !== FOLLOW)) as Record<string, Level>;
 
-  const setAll = (lvl: string) => {
-    const next: Record<string, string> = {};
-    for (const ch of channels) next[ch.id] = lvl;
-    setLevels(next);
+  const norm = (o: Record<string, string>) =>
+    JSON.stringify(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
+  const dirty = norm(overrides(levels)) !== norm(value);
+
+  const setAll = (lvl: Access) => {
+    if (lvl === FOLLOW) {
+      setLevels({});
+      return;
+    }
+    setLevels(Object.fromEntries(channels.map((ch) => [ch.id, lvl])));
   };
 
   if (channels.length === 0) {
@@ -206,30 +235,48 @@ function ChannelAccess({
 
   return (
     <div className="mt-2.5 rounded-[2px] border border-ink/[0.06] bg-white/60 p-2.5 dark:border-fog/[0.08] dark:bg-ink/30">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-semibold text-ink/60 dark:text-fog/60">Per-channel access</p>
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            className={`${BTN} border border-ink/10 text-ink/50 hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/10 dark:text-fog/50`}
+            onClick={() => setAll(FOLLOW)}
+          >
+            All follow role
+          </button>
           {LEVELS.map((lvl) => (
             <button key={lvl} type="button" className={`${BTN} border border-ink/10 text-ink/50 hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/10 dark:text-fog/50`} onClick={() => setAll(lvl)}>
-              All {lvl}
+              All {LEVEL_LABELS[lvl].toLowerCase()}
             </button>
           ))}
         </div>
       </div>
+      <p className="mb-2 text-[10px] text-ink/40 dark:text-fog/40">
+        The {roleLabel} role allows {LEVEL_PHRASES[roleDefault]} on every channel. Only store an override when this
+        member differs from that â€” an override survives later role changes.
+      </p>
       <div className="space-y-1">
-        {channels.map((ch) => (
-          <div key={ch.id} className="flex items-center justify-between gap-2 rounded-[2px] px-1.5 py-1 hover:bg-ink/[0.03] dark:hover:bg-fog/[0.04]">
-            <span className="truncate text-[11px] text-ink/70 dark:text-fog/70">{ch.name || ch.platform}</span>
-            <select
-              value={levels[ch.id] || "none"}
-              aria-label={`Access for ${ch.name || ch.platform}`}
-              onChange={(e) => setLevels({ ...levels, [ch.id]: e.target.value })}
-              className="rounded-[2px] border border-ink/10 bg-white px-1.5 py-1 text-[10px] capitalize text-ink outline-none focus:border-deep-violet/30 dark:border-fog/10 dark:bg-ink dark:text-fog"
-            >
-              {LEVELS.map((lvl) => <option key={lvl} value={lvl}>{lvl}</option>)}
-            </select>
-          </div>
-        ))}
+        {channels.map((ch) => {
+          const lvl: Access = levels[ch.id] ?? FOLLOW;
+          const effective: Access = lvl === FOLLOW ? roleDefault : lvl;
+          return (
+            <div key={ch.id} className="flex items-center justify-between gap-2 rounded-[2px] px-1.5 py-1 hover:bg-ink/[0.03] dark:hover:bg-fog/[0.04]">
+              <span className="truncate text-[11px] text-ink/70 dark:text-fog/70">{ch.name || ch.platform}</span>
+              <select
+                value={lvl}
+                aria-label={`Access for ${ch.name || ch.platform}`}
+                onChange={(e) => setLevels({ ...levels, [ch.id]: e.target.value as Access })}
+                className={`rounded-[2px] border border-ink/10 bg-white px-1.5 py-1 text-[10px] text-ink outline-none focus:border-deep-violet/30 dark:border-fog/10 dark:bg-ink dark:text-fog ${
+                  lvl === FOLLOW ? "text-ink/45 dark:text-fog/45" : effective === "none" ? "text-red-600 dark:text-red-400" : ""
+                }`}
+              >
+                <option value={FOLLOW}>Follow role â†’ {LEVEL_LABELS[roleDefault]}</option>
+                {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_LABELS[l]}</option>)}
+              </select>
+            </div>
+          );
+        })}
       </div>
       <div className="mt-2 flex items-center justify-end gap-2">
         {dirty && <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">Unsaved changes</span>}
@@ -237,9 +284,9 @@ function ChannelAccess({
           type="button"
           className={BTN_PRIMARY}
           disabled={pending || !dirty}
-          onClick={() => onSave(levels as Record<string, Level>)}
+          onClick={() => onSave(overrides(levels))}
         >
-          {pending ? "Savingâ€¦" : "Save access"}
+          {pending ? "SavingÃ¢â‚¬Â¦" : "Save access"}
         </button>
       </div>
     </div>
@@ -270,7 +317,7 @@ function RoleSelect({
           const m = membersCount?.(r.id) ?? 0;
           return (
             <option key={r.id} value={r.id}>
-              {r.name} â€” {n} permission{n === 1 ? "" : "s"}{r.is_system ? " Â· built-in" : ""}{m > 0 ? ` Â· ${m} member${m === 1 ? "" : "s"}` : ""}
+              {r.name} Ã¢â‚¬â€ {n} permission{n === 1 ? "" : "s"}{r.is_system ? " Ã‚Â· built-in" : ""}{m > 0 ? ` Ã‚Â· ${m} member${m === 1 ? "" : "s"}` : ""}
             </option>
           );
         })}
@@ -350,7 +397,7 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
             <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
               {duplicate.is_owner || duplicate.status === "active"
                 ? "This person is already in the workspace."
-                : "This person already has a pending invite â€” use Resend in the members list."}
+                : "This person already has a pending invite Ã¢â‚¬â€ use Resend in the members list."}
             </p>
           )}
         </div>
@@ -369,7 +416,7 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-1 xl:justify-end">
           <button type="button" onClick={handleSubmit} disabled={!canSend} className={BTN_PRIMARY}>
-            {sending ? "Sendingâ€¦" : "Send invite"}
+            {sending ? "SendingÃ¢â‚¬Â¦" : "Send invite"}
           </button>
         </div>
       </div>
@@ -510,7 +557,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="flex-1">
           <label htmlFor="role-name" className="text-[11px] font-medium text-ink/60 dark:text-fog/60">
-            {isSystem ? `Built-in role "${editing?.name}" â€” name is fixed` : editing ? `Editing "${editing.name}" â€” role name` : "Role name"}
+            {isSystem ? `Built-in role "${editing?.name}" Ã¢â‚¬â€ name is fixed` : editing ? `Editing "${editing.name}" Ã¢â‚¬â€ role name` : "Role name"}
           </label>
           <input
             id="role-name"
@@ -527,7 +574,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
             {selected.length} permission{selected.length === 1 ? "" : "s"} selected
           </span>
           <button type="button" onClick={handleSave} disabled={!canSave} className={BTN_PRIMARY}>
-            {busy ? "Savingâ€¦" : editing ? "Save changes" : selected.length ? `Create role Â· ${selected.length}` : "Create role"}
+            {busy ? "SavingÃ¢â‚¬Â¦" : editing ? "Save changes" : selected.length ? `Create role Ã‚Â· ${selected.length}` : "Create role"}
           </button>
           {editing && (
             <button type="button" onClick={onDone} className={BTN_GHOST}>Cancel</button>
@@ -540,7 +587,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search permissionsâ€¦"
+        placeholder="Search permissionsÃ¢â‚¬Â¦"
         aria-label="Search permissions"
         className={FIELD}
       />
@@ -665,7 +712,7 @@ export default function TeamPage() {
       try {
         setContext(await apiFetch("/api/v1/team/context"));
       } catch {
-        /* not authenticated â€” nav gating handles the redirect */
+        /* not authenticated Ã¢â‚¬â€ nav gating handles the redirect */
       }
       try {
         const data = await apiFetch("/api/v1/team/channels");
@@ -684,7 +731,9 @@ export default function TeamPage() {
     })();
   }, [loadMembers, loadRoles]);
 
-  const canManage = context?.permissions?.length ? context.permissions.includes("team.manage") : true;
+  // The owner is the backstop: their row is implicit and never gated by a role,
+  // so trimming every checkbox on Admin can never lock them out.
+  const canManage = !!context && (context.is_owner || !!context.permissions?.includes("team.manage"));
   const selfId = context?.member_id ?? null;
   const editingRole = roles.find((r) => r.id === editingRoleId) ?? null;
 
@@ -726,12 +775,12 @@ export default function TeamPage() {
 
   const saveChannels = (m: TeamMemberRow, levels: Record<string, Level>) =>
     run(`chan:${m.id}`, async () => {
-      const payload = Object.fromEntries(
-        Object.entries(levels).filter(([, v]) => v === "view" || v === "edit"),
-      );
+      // Send every stored level verbatim, "none" included â€” it is a real
+      // denial. Only channels left on "follow role" are absent, and the API
+      // deletes the override row for those so the role decides again.
       await apiFetch(`/api/v1/team/members/${m.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ channel_levels: payload }),
+        body: JSON.stringify({ channel_levels: levels }),
       });
       await loadMembers();
       setOpenAccess(null);
@@ -793,14 +842,14 @@ export default function TeamPage() {
         </div>
         {context && (
           <p className="text-[12px] text-ink/50 dark:text-fog/50">
-            {context.business_name || "Your workspace"} Â· <span className="font-semibold text-deep-violet">{context.role_name || "Owner"}</span>
+            {context.business_name || "Your workspace"} Ã‚Â· <span className="font-semibold text-deep-violet">{context.role_name || "Owner"}</span>
             {!canManage && <span className="ml-2 text-ink/35 dark:text-fog/35">read-only</span>}
           </p>
         )}
       </div>
 
       {loading ? (
-        <p className="text-[13px] text-ink/40 dark:text-fog/40">Loadingâ€¦</p>
+        <p className="text-[13px] text-ink/40 dark:text-fog/40">LoadingÃ¢â‚¬Â¦</p>
       ) : (
         <div className="space-y-6">
           {notice && (
@@ -842,11 +891,21 @@ export default function TeamPage() {
                   const why = isOwner
                     ? "The workspace owner always has full access."
                     : isSelf
-                      ? "You cannot change your own role â€” ask the workspace owner."
+                      ? "You cannot change your own role Ã¢â‚¬â€ ask the workspace owner."
                       : !canManage
                         ? "Your role cannot manage the team."
                         : undefined;
                   const key = m.id || m.email;
+                  const overrideCount = Object.keys(m.channels || {}).length;
+                  // Mirrors the backend fallback: an override wins, else the
+                  // role's channels.edit / channels.view default decides.
+                  const memberRole = roles.find((r) => r.id === m.role_id);
+                  const rolePerms = new Set(memberRole?.permissions || []);
+                  const roleDefault: Level = rolePerms.has("channels.edit")
+                    ? "edit"
+                    : rolePerms.has("channels.view")
+                      ? "view"
+                      : "none";
                   return (
                     <div
                       key={key}
@@ -899,18 +958,16 @@ export default function TeamPage() {
                             className={BTN_GHOST}
                           >
                             Channel access
-                            {m.channels && Object.keys(m.channels).length > 0
-                              ? ` Â· ${Object.keys(m.channels).length}`
-                              : ""}
+                            {overrideCount > 0 ? ` Â· ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : " Â· follows role"}
                           </button>
                           {m.status === "invited" && (
                             <button type="button" onClick={() => void resendInvite(m)} disabled={pending[`resend:${m.id}`]} className={BTN_GHOST}>
-                              {pending[`resend:${m.id}`] ? "Sendingâ€¦" : "Resend invite"}
+                              {pending[`resend:${m.id}`] ? "SendingÃ¢â‚¬Â¦" : "Resend invite"}
                             </button>
                           )}
                           {m.status !== "invited" && (
                             <button type="button" onClick={() => void toggleStatus(m)} disabled={pending[`status:${m.id}`]} className={BTN_GHOST}>
-                              {pending[`status:${m.id}`] ? "Workingâ€¦" : m.status === "suspended" ? "Reactivate" : "Suspend"}
+                              {pending[`status:${m.id}`] ? "WorkingÃ¢â‚¬Â¦" : m.status === "suspended" ? "Reactivate" : "Suspend"}
                             </button>
                           )}
                           <ConfirmButton
@@ -925,8 +982,11 @@ export default function TeamPage() {
 
                       {editable && openAccess === key && (
                         <ChannelAccess
+                          key={key}
                           channels={channels}
                           value={m.channels || {}}
+                          roleLabel={memberRole?.name || m.role_name || "current"}
+                          roleDefault={roleDefault}
                           pending={pending[`chan:${m.id}`]}
                           onSave={(levels) => void saveChannels(m, levels)}
                         />
@@ -945,7 +1005,7 @@ export default function TeamPage() {
               The recipient gets an email with a link to set up their access. Pending invites can be resent from the members list.
             </p>
             {inviteableRoles.length === 0 ? (
-              <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No roles available yet â€” create one below first.</p>
+              <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No roles available yet Ã¢â‚¬â€ create one below first.</p>
             ) : (
               <InviteForm
                 roles={inviteableRoles}
@@ -962,7 +1022,7 @@ export default function TeamPage() {
           <section className="rounded-[2px] border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink">
             <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Roles</h2>
             <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
-              Every role is yours to set â€” tick or untick any permission, on built-in roles too. Built-in roles keep their
+              Every role is yours to set Ã¢â‚¬â€ tick or untick any permission, on built-in roles too. Built-in roles keep their
               names and can never be deleted.
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -1036,7 +1096,7 @@ export default function TeamPage() {
             <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
               {editingRole
                 ? editingRole.is_system
-                  ? `Built-in "${editingRole.name}" â€” tick exactly what it can do. Members keep this role and pick up the new access.`
+                  ? `Built-in "${editingRole.name}" Ã¢â‚¬â€ tick exactly what it can do. Members keep this role and pick up the new access.`
                   : "Change the name or the permissions, then save. Members keep this role and pick up the new access."
                 : "Pick permissions and give the role a name. New roles appear in the list above and in the invite form."}
             </p>

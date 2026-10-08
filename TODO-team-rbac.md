@@ -20,3 +20,11 @@ Audit findings being fixed, in order. (Frontend permission-aware nav deferred as
 - [x] **12. Frontend**: Edit button on built-in roles + read-only name for them + dead billing.* checkboxes hidden
 - [x] **13. Tests**: system-role permission edit passes, rename/delete still refused (32 green; full suite 1001 passed / 11 pre-existing failures)
 - [x] **14. Verify + commit (local, no push)** — tsc + eslint clean
+
+## Round 3 — no confusing "unset looks denied"
+
+- [x] **15. Owner immunity made explicit** — `canManage` reads `is_owner` instead of relying on an empty permissions list; test proves a stripped Admin cannot lock the owner out
+- [x] **16. "Follow role" state** — channel panel distinguishes "no override stored" from a stored `none` denial, shows the role's effective level, and only stores real overrides
+- [x] **17. Bug: "none" was dropped on save** — `saveChannels` filtered `none` out of the payload, so a denial silently became "follow the role". Now sent verbatim; the API deletes rows only for channels left on follow
+- [x] **18. Honest badge** — "Channel access · N overrides" or "· follows role"
+- [x] **19. Tests + verify** — 34 green in test_team_rbac.py; full suite 1003 passed / same 11 pre-existing failures; tsc + eslint clean
