@@ -133,6 +133,74 @@ class InstagramProfileOut(BaseModel):
     stale: bool = False
 
 
+class InstagramPerson(BaseModel):
+    """One person who engaged with the account.
+
+    source is comment (live from Graph) or dm (from our own inbox). Every row
+    carries a real instagram.com profile link because we hold their username -
+    which is exactly what a follower list could never give us.
+    """
+
+    source: str
+    ig_id: str | None = None
+    username: str | None = None
+    name: str | None = None
+    text: str | None = None
+    like_count: int = 0
+    occurred_at: str | None = None
+    media_id: str | None = None
+    permalink: str | None = None
+    profile_url: str | None = None
+
+
+class InstagramDemographics(BaseModel):
+    """Aggregate follower demographics. vailable is False with a reason
+    when the insights scope is missing or the account has under 100 followers."""
+
+    available: bool = False
+    reason: str | None = None
+    age: list[dict] = []
+    gender: list[dict] = []
+    cities: list[dict] = []
+    countries: list[dict] = []
+
+
+class InstagramCommentOut(BaseModel):
+    id: str | None = None
+    text: str | None = None
+    username: str | None = None
+    name: str | None = None
+    ig_id: str | None = None
+    like_count: int = 0
+    timestamp: str | None = None
+    hidden: bool = False
+    media_id: str | None = None
+    profile_url: str | None = None
+
+
+class InstagramPostOut(BaseModel):
+    id: str | None = None
+    caption: str | None = None
+    media_type: str | None = None
+    media_url: str | None = None
+    permalink: str | None = None
+    timestamp: str | None = None
+    like_count: int = 0
+    comments_count: int = 0
+    comments: list[InstagramCommentOut] = []
+
+
+class InstagramPostsOut(BaseModel):
+    posts: list[InstagramPostOut] = []
+    unavailable: str | None = None
+
+
+class InstagramAudienceOut(BaseModel):
+    people: list[InstagramPerson] = []
+    demographics: InstagramDemographics = InstagramDemographics()
+    comments_unavailable: str | None = None
+
+
 class WhatsAppUsageOut(BaseModel):
     """Sayvors tenant messaging quota — never Meta's messaging tier."""
 

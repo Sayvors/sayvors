@@ -138,6 +138,78 @@ export const fetchInstagramProfile = (
 ): Promise<InstagramProfile> =>
   apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/profile`);
 
+/**
+ * Instagram audience.
+ *
+ * There is no follower list here and there cannot be: Meta does not expose
+ * follower/following lists. What this returns is who actually engaged - people
+ * who commented (live from Graph) and people who DMed you (from your inbox) -
+ * each with a real instagram.com link, plus aggregate follower demographics.
+ */
+export interface InstagramPerson {
+  source: "comment" | "dm";
+  ig_id: string | null;
+  username: string | null;
+  name: string | null;
+  text: string | null;
+  like_count: number;
+  occurred_at: string | null;
+  media_id: string | null;
+  permalink: string | null;
+  profile_url: string | null;
+}
+
+export interface InstagramDemographics {
+  available: boolean;
+  reason: string | null;
+  age: { label: string | null; value: number }[];
+  gender: { label: string | null; value: number }[];
+  cities: { label: string | null; value: number }[];
+  countries: { label: string | null; value: number }[];
+}
+
+export interface InstagramAudience {
+  people: InstagramPerson[];
+  demographics: InstagramDemographics;
+  comments_unavailable: string | null;
+}
+
+export const fetchInstagramAudience = (igId: string): Promise<InstagramAudience> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/audience`);
+
+export interface InstagramComment {
+  id: string | null;
+  text: string | null;
+  username: string | null;
+  name: string | null;
+  ig_id: string | null;
+  like_count: number;
+  timestamp: string | null;
+  hidden: boolean;
+  media_id: string | null;
+  profile_url: string | null;
+}
+
+export interface InstagramPost {
+  id: string | null;
+  caption: string | null;
+  media_type: string | null;
+  media_url: string | null;
+  permalink: string | null;
+  timestamp: string | null;
+  like_count: number;
+  comments_count: number;
+  comments: InstagramComment[];
+}
+
+export interface InstagramPosts {
+  posts: InstagramPost[];
+  unavailable: string | null;
+}
+
+export const fetchInstagramPosts = (igId: string): Promise<InstagramPosts> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/posts`);
+
 export const disconnectMeta = (provider: MetaProvider, opts?: { deleteData?: boolean }) =>
   apiFetch(
     `/api/v1/meta/${provider}/disconnect${opts?.deleteData ? "?delete_data=true" : ""}`,

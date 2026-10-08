@@ -161,7 +161,175 @@ class InstagramAdapter(MetaProviderAdapter):
         except MetaAPIError:
             return {}
 
-    # ── Profile (READ ONLY) ──────────────────────────────────
+    # ── Audience ─────────────────────────────────────────────
+    # Meta does NOT expose follower/following lists ("Read anyone's
+    # follower/following lists - not exposed" in the API reference), so there is
+    # no follower roster to build. What IS available, and what a "followers"
+    # request is usually actually after, is the people who engaged: commenters
+    # on your own posts, plus follower DEMOGRAPHICS in aggregate.
+
+    COMMENTER_FIELDS = (
+        "id,permalink,caption,"
+        "comments{id,text,timestamp,username,like_count,from{id}}"
+    )
+
+    async def get_recent_commenters(
+        self, ig_id: str, token: str, media_limit: int = 10
+    ) -> list[dict]:
+        """People who commented on recent posts, newest first.
+
+        Needs instagram_manage_comments. If that scope is missing the read
+        fails; callers treat an empty list as "no data" rather than an error so
+        the rest of the audience tab still works.
+        """
+        try:
+            resp = await self._graph(
+                "GET",
+                f"/{ig_id}/media",
+                token,
+                params={
+                    "fields": self.COMMENTER_FIELDS,
+                    "limit": max(1, min(media_limit, 25)),
+                },
+            )
+        except MetaAPIError:
+            logger.info("Instagram comment read unavailable (scope?)")
+            return []
+        media = (resp.json() or {}).get("data") or []
+        out: list[dict] = []
+        for item in media:
+            permalink = item.get("permalink")
+            for c in item.get("comments", {}).get("data", []) or []:
+                username = c.get("username")
+                out.append(
+                    {
+                        "source": "comment",
+                        "ig_id": (c.get("from") or {}).get("id"),
+                        "username": username,
+                        "name": username,
+                        "text": c.get("text"),
+                        "like_count": int(c.get("like_count") or 0),
+                        "occurred_at": c.get("timestamp"),
+                        "media_id": item.get("id"),
+                        "permalink": permalink,
+                        # The profile link Meta itself exposes for a person.
+                        "profile_url": f"https://instagram.com/{username}" if username else None,
+                    }
+                )
+        out.sort(key=lambda r: r.get("occurred_at") or "", reverse=True)
+        return out
+
+    POST_FIELDS = (
+        "id,caption,media_type,media_url,permalink,timestamp,"
+        "like_count,comments_count,comments{id,text,timestamp,username,like_count,from{id},hidden}"
+    )
+
+    async def get_recent_posts(
+        self, ig_id: str, token: str, limit: int = 12, comment_limit: int = 20
+    ) -> list[dict]:
+        """Your own recent posts, each with its most recent comments.
+
+        This is where a "who is interacting with me" list actually comes from:
+        commenters carry usernames, so every one of them gets a real profile
+        link. Returns [] when the account has no posts yet - an empty feed is
+        the truthful answer, not an error.
+        """
+        try:
+            resp = await self._graph(
+                "GET",
+                f"/{ig_id}/media",
+                token,
+                params={"fields": self.POST_FIELDS, "limit": max(1, min(limit, 50))},
+            )
+        except MetaAPIError as e:
+            # No posts, or the comments sub-field was refused: fall back to the
+            # post itself so the feed still renders.
+            logger.info("Instagram post read degraded: %s", e)
+            try:
+                resp = await self._graph(
+                    "GET",
+                    f"/{ig_id}/media",
+                    token,
+                    params={
+                        "fields": "id,caption,media_type,media_url,permalink,timestamp,like_count,comments_count",
+                        "limit": max(1, min(limit, 50)),
+                    },
+                )
+            except MetaAPIError:
+                return []
+        media = (resp.json() or {}).get("data") or []
+        posts: list[dict] = []
+        for item in media:
+            comments = []
+            for c in (item.get("comments", {}) or {}).get("data", []) or []:
+                username = c.get("username")
+                comments.append(
+                    {
+                        "id": c.get("id"),
+                        "text": c.get("text"),
+                        "username": username,
+                        "name": username,
+                        "ig_id": (c.get("from") or {}).get("id"),
+                        "like_count": int(c.get("like_count") or 0),
+                        "timestamp": c.get("timestamp"),
+                        "hidden": bool(c.get("hidden")),
+                        "media_id": item.get("id"),
+                        "profile_url": f"https://instagram.com/{username}" if username else None,
+                    }
+                )
+            posts.append(
+                {
+                    "id": item.get("id"),
+                    "caption": item.get("caption"),
+                    "media_type": item.get("media_type"),
+                    "media_url": item.get("media_url"),
+                    "permalink": item.get("permalink"),
+                    "timestamp": item.get("timestamp"),
+                    "like_count": int(item.get("like_count") or 0),
+                    "comments_count": int(item.get("comments_count") or 0),
+                    "comments": comments[:comment_limit],
+                }
+            )
+        return posts
+
+    async def get_follower_demographics(self, ig_id: str, token: str) -> dict:
+        """Aggregate follower demographics (age, gender, top cities/countries).
+
+        Requires instagram_manage_insights AND 100+ followers. Raises
+        MetaAPIError when either is missing so the UI can say why.
+        """
+        resp = await self._graph(
+            "GET",
+            f"/{ig_id}",
+            token,
+            params={"fields": "insights.metric(follower_demographics)"},
+        )
+        insights = (resp.json() or {}).get("insights", {}).get("data", []) or []
+        buckets: dict[str, list[dict]] = {}
+        for row in insights:
+            for entry in row.get("values", []) or []:
+                for b in entry.get("breakdowns", []) or []:
+                    # Real payloads put the dimension on the VALUE
+                    # ("age", "gender", ...). Fall back to the breakdown's
+                    # dim_keys, then to the row metric, so a shape change
+                    # never silently drops the data.
+                    dim_keys = b.get("dim_keys") or []
+                    metric = (
+                        entry.get("metric")
+                        or (dim_keys[0] if dim_keys else "")
+                        or row.get("metric")
+                        or ""
+                    )
+                    for dim in b.get("dimension_values", []) or []:
+                        buckets.setdefault(metric, []).append(
+                            {"label": dim.get("display_value") or dim.get("value"), "value": dim.get("value", 0)}
+                        )
+        return {
+            "age": buckets.get("age", []),
+            "gender": buckets.get("gender", []),
+            "cities": buckets.get("cities", []),
+            "countries": buckets.get("countries", []),
+        }
     # Meta's IG User reference states it plainly: "Updating: This operation is
     # not supported." name, biography, website, username and the avatar are all
     # readable and none of them are writable over the Graph API, so there is

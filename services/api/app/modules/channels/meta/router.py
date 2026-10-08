@@ -17,6 +17,11 @@ from . import oauth as _oauth
 from . import service as _service
 from .providers.base import MetaAPIError
 from .schemas import (
+    InstagramAudienceOut,
+    InstagramDemographics,
+    InstagramPerson,
+    InstagramPostOut,
+    InstagramPostsOut,
     InstagramProfileOut,
     MetaAssetListResponse,
     MetaAssetOut,
@@ -875,6 +880,161 @@ async def get_instagram_profile(
     db.add(asset)
     await db.commit()
     return _out(data, synced_at, stale=False)
+
+
+@router.get("/instagram/{ig_id}/audience", response_model=InstagramAudienceOut)
+async def get_instagram_audience(
+    ig_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """People who engaged with the account, plus aggregate follower demographics.
+
+    There is no follower roster anywhere in this response on purpose: Meta does
+    not expose follower/following lists. Commenters are read live from Graph
+    (our webhooks parse comment events but the consumer drops them), and DM
+    contacts come from our own inbox, so both sides hold real usernames and
+    therefore real profile links.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from ..models import ContactProfile
+    from .credentials import decrypt_connection_token
+    from .models import MetaAsset
+    from .providers.base import MetaAPIError as _MetaAPIError
+
+    tenant = tenant_id_of(user)
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            # The token lives on the connection; lazy-loading it here would
+            # touch the DB outside the async context.
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == tenant,
+                MetaAsset.provider == "instagram",
+                MetaAsset.asset_type == "ig_account",
+                MetaAsset.external_asset_id == ig_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(
+            status_code=404, detail="Instagram account not found for this workspace"
+        )
+
+    people: list[InstagramPerson] = []
+
+    # 1. DM contacts — people who actually wrote to us.
+    contacts = (
+        await db.execute(
+            select(ContactProfile)
+            .where(
+                ContactProfile.tenant_id == tenant,
+                ContactProfile.platform == "instagram",
+            )
+            .order_by(ContactProfile.profile_fetched_at.desc().nullslast())
+        )
+    ).scalars().all()
+    for c in contacts:
+        people.append(
+            InstagramPerson(
+                source="dm",
+                ig_id=c.contact_id,
+                username=c.username,
+                name=c.name or c.username,
+                occurred_at=c.profile_fetched_at.isoformat() if c.profile_fetched_at else None,
+                profile_url=f"https://instagram.com/{c.username}" if c.username else None,
+            )
+        )
+
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    comments_unavailable = None
+    demographics = InstagramDemographics()
+
+    if not token:
+        comments_unavailable = "Reconnect Instagram to read comments and insights."
+    else:
+        adapter = _service.get_adapter("instagram")
+        try:
+            people.extend(
+                InstagramPerson(**c)
+                for c in await adapter.get_recent_commenters(ig_id, token)
+            )
+        except _MetaAPIError as e:
+            comments_unavailable = str(e)
+
+        try:
+            demographics = InstagramDemographics(
+                available=True, **await adapter.get_follower_demographics(ig_id, token)
+            )
+        except _MetaAPIError as e:
+            # Common and expected: missing insights scope, or under 100
+            # followers. Say so instead of rendering an empty panel.
+            demographics = InstagramDemographics(
+                available=False, reason=_demographics_reason(e)
+            )
+
+    people.sort(key=lambda p: p.occurred_at or "", reverse=True)
+    return InstagramAudienceOut(
+        people=people, demographics=demographics, comments_unavailable=comments_unavailable
+    )
+
+
+def _demographics_reason(exc: MetaAPIError) -> str:
+    detail = str(exc).lower()
+    if "metric" in detail or "permission" in detail or "(#10" in detail:
+        return (
+            "Instagram does not share follower demographics for this account "
+            "yet — it needs the insights permission and at least 100 followers."
+        )
+    return f"Could not read follower demographics: {exc}"
+
+
+@router.get("/instagram/{ig_id}/posts", response_model=InstagramPostsOut)
+async def get_instagram_posts(
+    ig_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Your own recent Instagram posts with their recent comments.
+
+    An account with no posts returns an empty list - that is the truthful
+    answer, not an error. `unavailable` is only set when the read itself could
+    not be made (missing token, revoked scope).
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .models import MetaAsset
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == tenant_id_of(user),
+                MetaAsset.provider == "instagram",
+                MetaAsset.asset_type == "ig_account",
+                MetaAsset.external_asset_id == ig_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(
+            status_code=404, detail="Instagram account not found for this workspace"
+        )
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        return InstagramPostsOut(
+            unavailable="Reconnect Instagram to see your posts."
+        )
+    adapter = _service.get_adapter("instagram")
+    return InstagramPostsOut(posts=[InstagramPostOut(**p) for p in await adapter.get_recent_posts(ig_id, token)])
 
 
 @router.post("/whatsapp/{phone_number_id}/profile-photo")

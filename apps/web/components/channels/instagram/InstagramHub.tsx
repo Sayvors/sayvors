@@ -9,6 +9,8 @@ import {
   type MetaAsset,
 } from "@/lib/api-meta";
 import PlatformMark from "@/components/channels/PlatformMark";
+import AudienceTab from "./AudienceTab";
+import { CommentsTab, MessagesTab, PostsTab } from "./ListsTab";
 
 /*
  * Instagram hub.
@@ -31,13 +33,14 @@ const FIELD_LABEL = "text-[12px] font-semibold text-[var(--ui-ink-2)]";
 const VALUE = "mt-1 text-[13px] text-[var(--ui-ink)]";
 const HAIRLINE = "border-b border-[var(--ui-line)] pb-4";
 
-type Tab = "profile" | "messages" | "posts" | "comments";
+type Tab = "profile" | "audience" | "messages" | "posts" | "comments";
 
 const TABS: { key: Tab; label: string; live: boolean }[] = [
   { key: "profile", label: "Profile", live: true },
-  { key: "messages", label: "Messages", live: false },
-  { key: "posts", label: "Posts", live: false },
-  { key: "comments", label: "Comments", live: false },
+  { key: "audience", label: "Audience", live: true },
+  { key: "messages", label: "Messages", live: true },
+  { key: "posts", label: "Posts", live: true },
+  { key: "comments", label: "Comments", live: true },
 ];
 
 function Row({ label, value, href }: { label: string; value: string; href?: string }) {
@@ -251,18 +254,6 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
   );
 }
 
-function ComingSoon({ label }: { label: string }) {
-  return (
-    <div className={PANEL}>
-      <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">{label}</h3>
-      <p className="mt-2 text-[13px] text-[var(--ui-ink-2)]">
-        Not built yet. This tab is wired up so the rest of Instagram can land here without changing the
-        navigation.
-      </p>
-    </div>
-  );
-}
-
 export default function InstagramHub() {
   const [tab, setTab] = useState<Tab>("profile");
   const [assets, setAssets] = useState<MetaAsset[] | null>(null);
@@ -339,7 +330,7 @@ export default function InstagramHub() {
         )}
 
         {!error && assets !== null && assets.length > 0 && (
-          active.live ? (
+          active.key === "profile" ? (
             assets.length === 1 ? (
               <ProfileTab asset={assets[0]} />
             ) : (
@@ -354,8 +345,14 @@ export default function InstagramHub() {
                 <ProfileTab asset={assets[0]} />
               </div>
             )
+          ) : active.key === "audience" ? (
+            <AudienceTab igId={assets[0].external_asset_id} />
+          ) : active.key === "posts" ? (
+            <PostsTab igId={assets[0].external_asset_id} />
+          ) : active.key === "comments" ? (
+            <CommentsTab igId={assets[0].external_asset_id} />
           ) : (
-            <ComingSoon label={active.label} />
+            <MessagesTab />
           )
         )}
       </div>
