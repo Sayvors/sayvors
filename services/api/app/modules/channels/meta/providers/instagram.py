@@ -152,3 +152,29 @@ class InstagramAdapter(MetaProviderAdapter):
             return resp.json() or {}
         except MetaAPIError:
             return {}
+
+    # ── Profile (READ ONLY) ──────────────────────────────────
+    # Meta's IG User reference states it plainly: "Updating: This operation is
+    # not supported." name, biography, website, username and the avatar are all
+    # readable and none of them are writable over the Graph API, so there is
+    # deliberately no set_business_profile counterpart to WhatsApp's. Do not
+    # add one: a save button here would 400 from Graph and lose the tenant's
+    # edits. capabilities.py agrees - Instagram has read_profile, never
+    # manage_profile.
+
+    PROFILE_FIELDS = (
+        "id,username,name,biography,website,profile_picture_url,"
+        "followers_count,follows_count,media_count,account_type"
+    )
+
+    async def get_business_profile(self, ig_id: str, token: str) -> dict:
+        """Live IG business profile. Read-only by Meta's design."""
+        resp = await self._graph(
+            "GET", f"/{ig_id}", token, params={"fields": self.PROFILE_FIELDS}
+        )
+        data = resp.json() or {}
+        # Normalise the counters: Meta omits them rather than sending null.
+        for key in ("followers_count", "follows_count", "media_count"):
+            if data.get(key) is None:
+                data[key] = 0
+        return data

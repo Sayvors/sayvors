@@ -107,6 +107,34 @@ export const discoverInstagram = (): Promise<{ assets: MetaAsset[] }> =>
 export const validateMeta = (provider: MetaProvider) =>
   apiFetch(`/api/v1/meta/${provider}/validate`, { method: "POST" });
 
+/**
+ * Instagram business profile — READ ONLY.
+ *
+ * Meta's IG User reference states updating a profile is not supported, so
+ * there is deliberately no update call here. Everything on this page is
+ * rendered as a value, never as an editable field.
+ */
+export interface InstagramProfile {
+  username: string | null;
+  name: string | null;
+  biography: string | null;
+  website: string | null;
+  profile_picture_url: string | null;
+  followers_count: number;
+  follows_count: number;
+  media_count: number;
+  account_type: string | null;
+  parent_page_id: string | null;
+  parent_page_name: string | null;
+  synced_at: string | null;
+  stale: boolean;
+}
+
+export const fetchInstagramProfile = (
+  igId: string
+): Promise<InstagramProfile> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/profile`);
+
 export const disconnectMeta = (provider: MetaProvider, opts?: { deleteData?: boolean }) =>
   apiFetch(
     `/api/v1/meta/${provider}/disconnect${opts?.deleteData ? "?delete_data=true" : ""}`,

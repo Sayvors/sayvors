@@ -104,6 +104,31 @@ class WhatsAppProfileOut(BaseModel):
     stale: bool = False
 
 
+class InstagramProfileOut(BaseModel):
+    """Live Instagram business profile - READ ONLY.
+
+    Meta's IG User reference states updating is not supported, so there is no
+    matching Update schema on purpose. See InstagramAdapter.get_business_profile.
+    """
+
+    username: str | None = None
+    name: str | None = None
+    biography: str | None = None
+    website: str | None = None
+    profile_picture_url: str | None = None
+    followers_count: int = 0
+    follows_count: int = 0
+    media_count: int = 0
+    account_type: str | None = None
+    # The Facebook Page the IG account hangs off, so the UI can say which Page
+    # it belongs to (IG is always Page-backed here).
+    parent_page_id: str | None = None
+    parent_page_name: str | None = None
+    # When the live Graph read failed, stale marks the persisted copy.
+    synced_at: str | None = None
+    stale: bool = False
+
+
 class WhatsAppUsageOut(BaseModel):
     """Sayvors tenant messaging quota — never Meta's messaging tier."""
 

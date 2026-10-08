@@ -17,6 +17,7 @@ from . import oauth as _oauth
 from . import service as _service
 from .providers.base import MetaAPIError
 from .schemas import (
+    InstagramProfileOut,
     MetaAssetListResponse,
     MetaAssetOut,
     MetaAssetSelect,
@@ -791,6 +792,88 @@ async def update_whatsapp_profile(
     db.add(asset)
     await db.commit()
     return _profile_out(data, synced_at)
+
+
+@router.get("/instagram/{ig_id}/profile", response_model=InstagramProfileOut)
+async def get_instagram_profile(
+    ig_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch the live Instagram business profile from Meta (not cached).
+
+    Read-only by Meta's design: the IG User reference states updating is not
+    supported, so there is no sibling PATCH. A failed Graph read falls back to
+    the persisted snapshot (flagged stale) rather than blanking the page.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .models import MetaAsset
+    from .providers.base import MetaAPIError as _MetaAPIError
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == tenant_id_of(user),
+                MetaAsset.provider == "instagram",
+                MetaAsset.asset_type == "ig_account",
+                MetaAsset.external_asset_id == ig_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Instagram account not found for this workspace")
+
+    meta = asset.asset_metadata or {}
+    stored = meta.get("business_profile") or {}
+    page_name = meta.get("parent_page_name")
+
+    def _out(data: dict, synced_at: str | None, stale: bool) -> InstagramProfileOut:
+        return InstagramProfileOut(
+            username=data.get("username"),
+            name=data.get("name"),
+            biography=data.get("biography"),
+            website=data.get("website"),
+            profile_picture_url=data.get("profile_picture_url"),
+            followers_count=int(data.get("followers_count") or 0),
+            follows_count=int(data.get("follows_count") or 0),
+            media_count=int(data.get("media_count") or 0),
+            account_type=data.get("account_type"),
+            parent_page_id=asset.parent_asset_id,
+            parent_page_name=page_name,
+            synced_at=synced_at,
+            stale=stale,
+        )
+
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        if stored:
+            return _out(stored, meta.get("business_profile_synced_at"), stale=True)
+        raise HTTPException(
+            status_code=409, detail="Reconnect Instagram — the access token is missing"
+        )
+
+    adapter = _service.get_adapter("instagram")
+    try:
+        data = await adapter.get_business_profile(ig_id, token)
+    except _MetaAPIError as e:
+        if stored:
+            return _out(stored, meta.get("business_profile_synced_at"), stale=True)
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    # An empty live read must never blank the page or wipe the snapshot.
+    if not data or not data.get("username"):
+        return _out(stored or data, meta.get("business_profile_synced_at"), stale=True)
+
+    synced_at = _persist_profile(asset, data)
+    db.add(asset)
+    await db.commit()
+    return _out(data, synced_at, stale=False)
 
 
 @router.post("/whatsapp/{phone_number_id}/profile-photo")
