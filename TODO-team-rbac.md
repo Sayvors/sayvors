@@ -83,3 +83,20 @@ glassmorphism shipped. Glass is now gone from the page entirely.
 - [x] **45. Verified** — axe-core **0 violations light and dark**; no overflow at
       1440 or 390; 0 box-shadow values on the page; 0 targets under 44px; 0 console
       errors; tsc + eslint clean
+
+## Round 7 — roles matrix, member rows
+
+Both sections were card grids doing a table's job.
+
+- [x] **46. Roles → permission matrix** — one row per role, one column per
+      permission area, each cell `granted/total` (bold = every action, `—` = none).
+      Comparing two roles was reading two chip clouds; now it is scanning a column.
+      `RoleSummary` dropped its chips for one line of text, so the invite form's
+      role preview stops wrapping into ragged rows too
+- [x] **47. Members → aligned rows** — name / role / actions in fixed columns with
+      hairline separators. The cards were mostly empty, the role select was full
+      width for one short value, and unequal heights left ragged dead space
+- [x] **48. Channel editor gets full width** — expanded under its row instead of
+      squeezed into a 437px card column (it was 989px tall in a 3-column grid)
+- [x] **49. Verified** — page overflow 390 = 390 (table scrolls inside its own
+      container), tsc + eslint clean, rendered at 1440 and 390

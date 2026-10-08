@@ -157,24 +157,173 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
   const perms = role.permissions || [];
   const labels = areaLabels(roleAreas(role), catalog);
   if (perms.length === 0) {
-    return <p className="text-[11px] text-[var(--ui-ink-2)]">No permissions — cannot access anything.</p>;
+    return <p className="text-[12px] text-[var(--ui-ink-2)]">No permissions — cannot access anything.</p>;
   }
-  const shown = compact ? labels.slice(0, 4) : labels;
+  // One line of text, not a cloud of chips: chips wrapped into ragged rows and
+  // collided with the count beside them.
+  const cap = compact ? 4 : 7;
+  const shown = labels.slice(0, cap);
   const hidden = labels.length - shown.length;
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-      <span className="text-[11px] text-[var(--ui-ink-2)]">
+    <p className="mt-1 text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
+      <span className="font-semibold text-[var(--ui-ink)]">
         {perms.length} permission{perms.length === 1 ? "" : "s"}
-        {membersCount > 0 ? ` · ${membersCount} member${membersCount === 1 ? "" : "s"}` : ""}
       </span>
-      {shown.map((label) => (
-        <span key={label} className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">
-          {label}
-        </span>
-      ))}
-      {hidden > 0 && (
-        <span className="text-[12px] text-[var(--ui-ink-2)]">+{hidden} more</span>
-      )}
+      {membersCount > 0 && ` · ${membersCount} member${membersCount === 1 ? "" : "s"}`}
+      <span className="block">
+        {shown.join(", ")}
+        {hidden > 0 && ` +${hidden} more`}
+      </span>
+    </p>
+  );
+}
+
+/** Short column headings for the permission matrix. */
+const MATRIX_LABELS: Record<string, string> = {
+  inbox: "Inbox",
+  channels: "Channels",
+  reviews: "Reviews",
+  posts: "Posts",
+  analytics: "Analytics",
+  media: "Media",
+  ai: "AI",
+  locations: "Locations",
+  databank: "Databank",
+  notifications: "Notifications",
+  team: "Team",
+  settings: "Settings",
+};
+
+/**
+ * Roles as a matrix: one row per role, one column per permission area, and
+ * each cell reads "granted / total" for that area. Comparing two roles used to
+ * mean reading two chip clouds; now the eye just scans a column.
+ */
+function PermissionMatrix({
+  roles, catalog, membersCount, canManage, onEdit, onDelete, pending,
+}: {
+  roles: TeamRoleOption[];
+  catalog: CatalogArea[];
+  membersCount: (id: string) => number;
+  canManage: boolean;
+  onEdit: (r: TeamRoleOption) => void;
+  onDelete: (r: TeamRoleOption) => void;
+  pending: Record<string, boolean>;
+}) {
+  // Hide areas the catalog does not offer, and never show billing: nothing
+  // enforces those, so they would be checkboxes that do nothing.
+  const areas = catalog
+    .filter((a) => a.area !== "billing" && a.actions.length > 0)
+    .map((a) => ({
+      area: a.area,
+      label: MATRIX_LABELS[a.area] || a.label,
+      actions: a.actions.map((act) => act.permission),
+    }));
+
+  return (
+    <div className="mt-4 overflow-x-auto">
+      <table className="w-full min-w-[860px] border-collapse text-left">
+        <caption className="sr-only">
+          Permissions per role, by area. Each cell shows how many of the area&apos;s actions the role grants.
+        </caption>
+        <thead>
+          <tr className="border-b border-[var(--ui-line)]">
+            <th scope="col" className="pb-2 pr-4 text-[12px] font-semibold text-[var(--ui-ink-2)]">Role</th>
+            {areas.map((a) => (
+              <th
+                key={a.area}
+                scope="col"
+                className="pb-2 pr-3 text-[12px] font-semibold whitespace-nowrap text-[var(--ui-ink-2)]"
+              >
+                {a.label}
+              </th>
+            ))}
+            <th scope="col" className="pb-2 pr-4 text-[12px] font-semibold whitespace-nowrap text-[var(--ui-ink-2)]">Members</th>
+            {canManage && <th scope="col" className="pb-2 text-[12px] font-semibold text-[var(--ui-ink-2)]"><span className="sr-only">Actions</span></th>}
+          </tr>
+        </thead>
+        <tbody>
+          {roles.map((r) => {
+            const perms = new Set(r.permissions || []);
+            const inUse = membersCount(r.id);
+            return (
+              <tr key={r.id} className="border-b border-[var(--ui-line)] last:border-0">
+                <th scope="row" className="py-3 pr-4 align-top font-normal">
+                  <span className="flex items-center gap-2 whitespace-nowrap">
+                    <span className="text-[13px] font-semibold text-[var(--ui-ink)]">{r.name}</span>
+                    {r.is_system ? (
+                      <span className="ui-chip px-2 py-0.5 text-[11px] font-semibold text-[var(--ui-ink-2)]">Built-in</span>
+                    ) : (
+                      <span className="ui-chip px-2 py-0.5 text-[11px] font-semibold text-[var(--ui-ink-2)]">Custom</span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block text-[12px] tabular-nums text-[var(--ui-ink-2)]">
+                    {perms.size} permission{perms.size === 1 ? "" : "s"}
+                  </span>
+                </th>
+                {areas.map((a) => {
+                  const granted = a.actions.filter((p) => perms.has(p));
+                  const total = a.actions.length;
+                  const full = granted.length === total;
+                  const none = granted.length === 0;
+                  const detail = `${granted.join(", ") || "none"}`;
+                  return (
+                    <td
+                      key={a.area}
+                      className="py-3 pr-3 align-top text-[12px] tabular-nums"
+                      title={detail}
+                    >
+                      <span
+                        className={
+                          none
+                            ? "text-[var(--ui-ink-2)]"
+                            : full
+                              ? "font-bold text-[var(--ui-ink)]"
+                              : "text-[var(--ui-ink)]"
+                        }
+                      >
+                        {none ? "—" : `${granted.length}/${total}`}
+                      </span>
+                      <span className="sr-only">
+                        {a.label}: {detail} of {total}
+                      </span>
+                    </td>
+                  );
+                })}
+                <td className="py-3 pr-4 align-top text-[12px] text-[var(--ui-ink-2)]">
+                  {inUse > 0 ? `${inUse}` : <span className="text-[var(--ui-ink-2)]">—</span>}
+                </td>
+                {canManage && (
+                  <td className="py-3 text-right align-top">
+                    <span className="inline-flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onEdit(r)}
+                        className={`${BTN} px-4 py-2 text-[12px] font-semibold`}
+                      >
+                        Edit
+                      </button>
+                      {!r.is_system && (
+                        <ConfirmButton
+                          label="Delete"
+                          confirmLabel="Yes, delete"
+                          pending={pending[`deleterole:${r.id}`]}
+                          onConfirm={() => onDelete(r)}
+                          className={`${BTN_DANGER} px-4 py-2`}
+                        />
+                      )}
+                    </span>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">
+        <span className="font-semibold text-[var(--ui-ink)]">2/2</span> means every action in that area ·
+        bold means all of them · <span className="font-semibold text-[var(--ui-ink)]">—</span> means none
+      </p>
     </div>
   );
 }
@@ -932,7 +1081,7 @@ export default function TeamPage() {
                 )}
               </div>
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <div className="mt-4">
               {members.length === 0 ? (
                 error ? (
                   // A failed load must not look like an empty team: say what
@@ -974,30 +1123,24 @@ export default function TeamPage() {
                       ? "view"
                       : "none";
                   return (
-                    <div
-                      key={key}
-                      className={`flex min-w-0 flex-col ui-card bg-[var(--ui-surface)] p-6 ${
-                        openAccess === key ? "sm:col-span-2" : ""
-                      }`}
-                    >
-                      <div className="flex items-start gap-4">
+                    <div key={key} className="border-b border-[var(--ui-line)] last:border-0">
+                      <div
+                        className="grid items-center gap-3 py-4 lg:grid-cols-[minmax(0,1fr)_280px_auto]"
+                      >
+                      <div className="flex min-w-0 items-center gap-3">
                         <Initial label={m.name || m.email} owner={isOwner} />
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-0">
                           <p className="truncate text-[13px] font-semibold text-[var(--ui-ink)]">{m.email}</p>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-[var(--ui-ink-2)]">
                             <StatusBadge status={m.status} />
-                            {m.status === "invited" && m.invited_at && (
-                              <span className="text-[12px] text-[var(--ui-ink-2)]">sent {shortDate(m.invited_at)}</span>
-                            )}
-                            {m.status === "active" && m.accepted_at && (
-                              <span className="text-[12px] text-[var(--ui-ink-2)]">joined {shortDate(m.accepted_at)}</span>
-                            )}
-                            {isSelf && <span className="text-[12px] text-[var(--ui-ink-2)]">you</span>}
-                          </div>
+                            {m.status === "invited" && m.invited_at && <span>sent {shortDate(m.invited_at)}</span>}
+                            {m.status === "active" && m.accepted_at && <span>joined {shortDate(m.accepted_at)}</span>}
+                            {isSelf && <span>you</span>}
+                          </p>
                         </div>
                       </div>
 
-                      <div className="mt-3">
+                      <div className="min-w-0">
                         {editable ? (
                           <RoleSelect
                             value={m.role_id || ""}
@@ -1008,6 +1151,7 @@ export default function TeamPage() {
                             pending={pending[`role:${m.id}`]}
                             label={`Role for ${m.email}`}
                             summary={false}
+                            className={`${FIELD} min-w-0 px-3 py-2.5 text-[12px]`}
                           />
                         ) : (
                           <div className="min-w-0">
@@ -1017,25 +1161,24 @@ export default function TeamPage() {
                         )}
                       </div>
 
-                      {editable && (
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {editable ? (
+                        <div className="flex flex-wrap items-center justify-end gap-2">
                           {pending[`role:${m.id}`] && <Spinner label="Saving role" />}
                           <button
                             type="button"
                             onClick={() => setOpenAccess(openAccess === key ? null : key)}
                             aria-expanded={openAccess === key}
-                            className={BTN_GHOST}
+                            className={`${BTN_GHOST} px-4 py-2.5 text-[12px] whitespace-nowrap`}
                           >
-                            Channel access
-                            {overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : " · follows role"}
+                            {overrideCount > 0 ? `${overrideCount} override${overrideCount === 1 ? "" : "s"}` : "Follows role"}
                           </button>
                           {m.status === "invited" && (
-                            <button type="button" onClick={() => void resendInvite(m)} disabled={pending[`resend:${m.id}`]} className={BTN_GHOST}>
+                            <button type="button" onClick={() => void resendInvite(m)} disabled={pending[`resend:${m.id}`]} className={`${BTN_GHOST} px-4 py-2.5 text-[12px] whitespace-nowrap`}>
                               {pending[`resend:${m.id}`] ? "Sending…" : "Resend invite"}
                             </button>
                           )}
                           {m.status !== "invited" && (
-                            <button type="button" onClick={() => void toggleStatus(m)} disabled={pending[`status:${m.id}`]} className={BTN_GHOST}>
+                            <button type="button" onClick={() => void toggleStatus(m)} disabled={pending[`status:${m.id}`]} className={`${BTN_GHOST} px-4 py-2.5 text-[12px] whitespace-nowrap`}>
                               {pending[`status:${m.id}`] ? "Working…" : m.status === "suspended" ? "Reactivate" : "Suspend"}
                             </button>
                           )}
@@ -1044,12 +1187,15 @@ export default function TeamPage() {
                             confirmLabel={m.status === "invited" ? "Yes, revoke" : "Yes, remove"}
                             pending={pending[`remove:${m.id}`]}
                             onConfirm={() => void removeMember(m)}
-                            className={BTN_DANGER}
+                            className={`${BTN_DANGER} px-4 py-2.5`}
                           />
                         </div>
-                      )}
+                      ) : null}
+
+                      </div>
 
                       {editable && openAccess === key && (
+                        <div className="pb-5">
                         <ChannelAccess
                           key={key}
                           channels={channels}
@@ -1059,6 +1205,7 @@ export default function TeamPage() {
                           pending={pending[`chan:${m.id}`]}
                           onSave={(levels) => void saveChannels(m, levels)}
                         />
+                        </div>
                       )}
                     </div>
                   );
@@ -1094,73 +1241,25 @@ export default function TeamPage() {
               Every role is yours to set — tick or untick any permission, on built-in roles too. Built-in roles keep their
               names and can never be deleted.
             </p>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {roles.length === 0 ? (
-                error ? (
-                  <p className="col-span-full text-[13px] font-bold text-[var(--ui-ink)]" role="alert">
-                    {error}
-                  </p>
-                ) : (
-                  <p className="col-span-full text-[13px] text-[var(--ui-ink-2)]">No roles yet.</p>
-                )
+            {roles.length === 0 ? (
+              error ? (
+                <p className="mt-4 text-[13px] font-bold text-[var(--ui-ink)]" role="alert">
+                  {error}
+                </p>
               ) : (
-                roles.map((r) => {
-                  const perms = Array.from(new Set(r.permissions || []));
-                  const inUse = membersCount(r.id);
-                  return (
-                    <div key={r.id} className="flex min-w-0 flex-col ui-card bg-[var(--ui-surface)] p-6">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{r.name}</p>
-                        <span className={`ui-chip px-3 py-1 text-[12px] font-semibold ${r.is_system ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]" : "bg-[var(--ui-surface)] text-[var(--ui-ink-2)]"}`}>
-                          {r.is_system ? "Built-in" : "Custom"}
-                        </span>
-                        <span className="ml-auto text-[11px] text-[var(--ui-ink-2)]">
-                          {inUse > 0 ? `${inUse} member${inUse === 1 ? "" : "s"}` : "unused"}
-                        </span>
-                      </div>
-                      <RoleSummary role={r} catalog={catalog} membersCount={inUse} />
-                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                        {perms.length > 0 && (
-                          <details className="text-[11px]">
-                            <summary className="cursor-pointer text-[var(--ui-ink-2)]">View permissions</summary>
-                            <div className="mt-1.5 flex flex-wrap gap-1">
-                              {perms.map((p) => (
-                                <span key={p} className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{p}</span>
-                              ))}
-                            </div>
-                          </details>
-                        )}
-                        {canManage && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => { setEditingRoleId(r.id); setNotice(null); }}
-                              className={`${BTN} ml-auto text-[var(--ui-ink-2)]`}
-                            >
-                              Edit role
-                            </button>
-                            {!r.is_system && (
-                              <ConfirmButton
-                                label="Delete"
-                                confirmLabel="Yes, delete"
-                                pending={pending[`deleterole:${r.id}`]}
-                                onConfirm={() => void deleteRole(r)}
-                                className={BTN_DANGER}
-                              />
-                            )}
-                          </>
-                        )}
-                      </div>
-                      {!r.is_system && canManage && inUse > 0 && (
-                        <span className="mt-1.5 text-[12px] text-[var(--ui-ink-2)]">
-                          Move the {inUse} member{inUse === 1 ? "" : "s"} off this role before deleting it.
-                        </span>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
+                <p className="mt-4 text-[13px] text-[var(--ui-ink-2)]">No roles yet.</p>
+              )
+            ) : (
+              <PermissionMatrix
+                roles={roles}
+                catalog={catalog}
+                membersCount={membersCount}
+                canManage={canManage}
+                onEdit={(r) => { setEditingRoleId(r.id); setNotice(null); }}
+                onDelete={(r) => void deleteRole(r)}
+                pending={pending}
+              />
+            )}
           </section>
 
           {/* Role builder */}
