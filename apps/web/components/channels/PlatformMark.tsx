@@ -41,11 +41,13 @@ export default function PlatformMark({
   const src = LOGOS[platform];
   if (!src) {
     // No official mark (e.g. Google Business): a letter tile, not an emoji.
+    // Uses the shared --ui-* tokens so it inherits the host surface's palette
+    // instead of carrying its own colours into a page that locks three.
     const initial = (LABELS[platform] ?? platform).trim().charAt(0).toUpperCase();
     return (
       <span
         aria-hidden
-        className={`inline-flex shrink-0 items-center justify-center rounded-[2px] border border-ink/10 bg-white/70 font-semibold text-ink/60 dark:border-fog/15 dark:bg-white/10 dark:text-fog/70 ${className}`}
+        className={`inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--ui-line,rgba(0,0,0,0.12))] bg-[var(--ui-sunken,#f5f5f5)] font-bold text-[var(--ui-ink,#000)] ${className}`}
         style={{ width: size, height: size, fontSize: Math.max(9, size - 6) }}
       >
         {initial}

@@ -76,71 +76,63 @@ function shortDate(iso?: string | null): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-const FIELD =
-  "w-full rounded-[2px] border border-ink/10 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/30 dark:border-fog/10 dark:bg-ink dark:text-fog";
-const BTN =
-  "rounded-[2px] px-3 py-1.5 text-[11px] font-semibold transition disabled:opacity-40";
-const BTN_PRIMARY = `${BTN} bg-deep-violet text-white shadow-sm hover:bg-deep-violet/90`;
-const BTN_GHOST =
-  `${BTN} border border-ink/10 text-ink/60 hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/10 dark:text-fog/60`;
-const BTN_DANGER = `${BTN} border border-red-500/30 text-red-600 hover:bg-red-500/10 dark:text-red-400`;
-
 /*
- * Glass, deliberately rationed: ONE blur (on panes), ONE hairline, ONE shadow
- * trio, and radius stays 2px like the rest of the product. Cards inside a pane
- * get an opaque-ish fill but no second backdrop-filter - nested blurs are what
- * make "glassmorphism" turn to grey mush. The inset top highlight is the whole
- * trick: it reads as light catching a pane edge and gives the blur something to
- * sit against on an already pale background.
+ * Three colours only: #000000 ink, #FFFFFF surfaces, #F5F5F5 page. Depth
+ * comes from hairlines, not shadows - see the .ui-* primitives in globals.css.
  */
-const GLASS_PANE =
-  "rounded-[2px] border border-white/80 bg-white/45 shadow-[0_1px_1px_rgba(26,18,48,0.04),0_20px_44px_-26px_rgba(26,18,48,0.55),inset_0_1px_0_rgba(255,255,255,0.95)] backdrop-blur-2xl backdrop-saturate-150 dark:border-white/[0.09] dark:bg-white/[0.04] dark:shadow-[0_20px_44px_-26px_rgba(0,0,0,0.8),inset_0_1px_0_rgba(255,255,255,0.07)]";
-const GLASS_CARD =
-  "rounded-[2px] border border-white/90 bg-white/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]";
+const UI_BTN = "ui-btn rounded-lg text-[12px] font-bold";
+
+const FIELD =
+  "ui-input w-full bg-[var(--ui-surface)] px-4 py-3 text-[13px] font-medium text-[var(--ui-ink)] placeholder:text-[var(--ui-ink-2)]";
+const BTN = `${UI_BTN} px-5 py-3`;
+const BTN_PRIMARY = `${BTN} bg-[var(--ui-ink)] text-[var(--ui-on-ink)]`;
+const BTN_GHOST = `${BTN} bg-[var(--ui-surface)] text-[var(--ui-ink)]`;
+const BTN_DANGER = `${UI_BTN.replace("ui-btn", "ui-btn-danger")} bg-[var(--ui-sunken)] px-5 py-3 text-[var(--ui-ink)]`;
 
 function StatusBadge({ status }: { status?: string }) {
   const s = (status || "active").toLowerCase();
-  const cls =
-    s === "active"
-      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-      : s === "invited"
-        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-        : s === "suspended"
-          ? "bg-red-500/10 text-red-600 dark:text-red-400"
-          : "bg-ink/[0.06] text-ink/50 dark:bg-fog/[0.06] dark:text-fog/50";
+  // Three colours only, so status is carried by the word and by weight, never
+  // by a hue: "Suspended" in bold black reads differently from "Active"
+  // without inventing a fifth colour.
   const label = s === "invited" ? "Invite pending" : s.charAt(0).toUpperCase() + s.slice(1);
-  return <span className={`rounded-[2px] px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span>;
+  const strong = s === "suspended" || s === "expired";
+  return (
+    <span
+      className={`rounded-[8px] px-3 py-1 text-[12px] ${
+        strong ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
+      }`}
+    >
+      {label}
+    </span>
+  );
 }
 
 /** Connection state of a channel — quiet enough to sit next to the name. */
 function StatusDot({ status }: { status?: string }) {
   const s = (status || "active").toLowerCase();
-  const tone =
-    s === "active"
-      ? "bg-emerald-500"
-      : s === "error"
-        ? "bg-red-500"
-        : s === "disconnected"
-          ? "bg-ink/30 dark:bg-fog/30"
-          : "bg-amber-500";
+  // The dot is decoration; the state is always spelled out, because a colour
+  // dot alone tells a screen-reader user nothing.
   return (
-    <span className="inline-flex items-center gap-1" title={s}>
-      <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${tone}`} />
-      {s !== "active" && <span>{s}</span>}
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        aria-hidden
+        className={`inline-block h-1.5 w-1.5 rounded-full ${s === "active" ? "bg-[var(--ui-ink)]" : "bg-[var(--ui-ink-2)]"}`}
+      />
+      {s !== "active" ? <span className="font-semibold">{s}</span> : <span className="sr-only">{s}</span>}
     </span>
   );
 }
 
 function RoleBadge({ name, isOwner }: { name?: string; isOwner?: boolean }) {
   if (isOwner || name === "Owner") {
-    return <span className="rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet dark:bg-violet-light/15 dark:text-violet-soft">Owner</span>;
+    return <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">Owner</span>;
   }
-  return <span className="rounded-[2px] bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/60 dark:bg-fog/[0.06] dark:text-fog/60">{name || "No role"}</span>;
+  return <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{name || "No role"}</span>;
 }
 
 function Initial({ label, owner }: { label: string; owner?: boolean }) {
   return (
-    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${owner ? "bg-deep-violet text-white" : "bg-ink/[0.07] text-ink/60 dark:bg-fog/[0.08] dark:text-fog/70"}`}>
+    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${owner ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
       {(label || "?").trim().charAt(0).toUpperCase()}
     </div>
   );
@@ -165,23 +157,23 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
   const perms = role.permissions || [];
   const labels = areaLabels(roleAreas(role), catalog);
   if (perms.length === 0) {
-    return <p className="text-[11px] text-ink/35 dark:text-fog/35">No permissions — cannot access anything.</p>;
+    return <p className="text-[11px] text-[var(--ui-ink-2)]">No permissions — cannot access anything.</p>;
   }
   const shown = compact ? labels.slice(0, 4) : labels;
   const hidden = labels.length - shown.length;
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-      <span className="text-[11px] text-ink/45 dark:text-fog/45">
+      <span className="text-[11px] text-[var(--ui-ink-2)]">
         {perms.length} permission{perms.length === 1 ? "" : "s"}
         {membersCount > 0 ? ` · ${membersCount} member${membersCount === 1 ? "" : "s"}` : ""}
       </span>
       {shown.map((label) => (
-        <span key={label} className="rounded-[2px] bg-ink/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06] dark:text-fog/50">
+        <span key={label} className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">
           {label}
         </span>
       ))}
       {hidden > 0 && (
-        <span className="text-[10px] text-ink/55 dark:text-fog/55">+{hidden} more</span>
+        <span className="text-[12px] text-[var(--ui-ink-2)]">+{hidden} more</span>
       )}
     </div>
   );
@@ -216,7 +208,7 @@ function ConfirmButton({
       </button>
       <button
         type="button"
-        className={`${BTN} text-ink/40 hover:text-ink/70 dark:text-fog/40`}
+        className={`${BTN} text-[var(--ui-ink-2)]`}
         disabled={pending}
         onClick={() => setArmed(false)}
       >
@@ -228,8 +220,8 @@ function ConfirmButton({
 
 function Spinner({ label }: { label: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-deep-violet dark:text-violet-soft">
-      <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-deep-violet/25 border-t-deep-violet" aria-hidden />
+    <span className="inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ui-ink)]">
+      <span className="h-2.5 w-2.5 animate-spin rounded-full border-2  border-t-[var(--ui-ink)]" aria-hidden />
       {label}
     </span>
   );
@@ -263,29 +255,29 @@ function ChannelAccess({
   };
 
   if (channels.length === 0) {
-    return <p className="text-[11px] text-ink/40 dark:text-fog/40">No channels in this workspace yet.</p>;
+    return <p className="text-[11px] text-[var(--ui-ink-2)]">No channels in this workspace yet.</p>;
   }
 
   return (
-    <div className={`mt-2.5 ${GLASS_CARD} p-2.5`}>
+    <div className="mt-3 rounded-[8px] bg-[var(--ui-sunken)] p-4">
       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold text-ink/60 dark:text-fog/60">Per-channel access</p>
-        <div className="flex items-center gap-1.5">
+        <p className="text-[11px] font-semibold text-[var(--ui-ink-2)]">Per-channel access</p>
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            className={`${BTN} border border-ink/10 text-ink/50 hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/10 dark:text-fog/50`}
+            className={`${BTN} text-[var(--ui-ink-2)]`}
             onClick={() => setAll(FOLLOW)}
           >
             All follow role
           </button>
           {LEVELS.map((lvl) => (
-            <button key={lvl} type="button" className={`${BTN} border border-ink/10 text-ink/50 hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/10 dark:text-fog/50`} onClick={() => setAll(lvl)}>
+            <button key={lvl} type="button" className={`${BTN} text-[var(--ui-ink-2)]`} onClick={() => setAll(lvl)}>
               All {LEVEL_LABELS[lvl].toLowerCase()}
             </button>
           ))}
         </div>
       </div>
-      <p className="mb-2 text-[10px] text-ink/55 dark:text-fog/55">
+      <p className="mb-2 text-[12px] text-[var(--ui-ink-2)]">
         The {roleLabel} role allows {LEVEL_PHRASES[roleDefault]} on every channel. Only store an override when this
         member differs from that — an override survives later role changes.
       </p>
@@ -298,25 +290,30 @@ function ChannelAccess({
           return (
             <div
               key={ch.id}
-              title={`${name} · ${label}`}
-              className="flex items-start gap-2.5 rounded-[2px] px-1.5 py-1.5 transition hover:bg-white/70 dark:hover:bg-white/[0.05]"
+              title={`${name} · ${label} · ${effective === "none" ? LEVEL_LABELS.none.toLowerCase() : LEVEL_LABELS[effective].toLowerCase()}`}
+              className="flex flex-wrap items-start gap-3 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 transition hover:bg-[var(--ui-sunken)]"
             >
-              <PlatformMark platform={ch.platform} size={18} className="mt-0.5" />
-              {/* Full name, wrapped: several channels can share a display name and
-                  only the provider tells them apart. */}
-              <div className="min-w-0 flex-1">
-                <p className="text-[12px] leading-snug break-words text-ink/80 dark:text-fog/80">{name}</p>
-                <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-ink/60 dark:text-fog/60">
-                  <span>{label}</span>
-                  <StatusDot status={ch.status} />
-                </p>
+              {/* Mark and name travel together so a wrap never orphans the mark. */}
+              <div className="flex min-w-[11rem] flex-1 items-start gap-3">
+                <PlatformMark platform={ch.platform} size={18} className="mt-0.5" />
+                {/* Full name, wrapped: several channels can share a display name and
+                    only the provider tells them apart. */}
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] leading-snug font-bold break-words text-[var(--ui-ink)]">{name}</p>
+                  <p className="mt-0.5 flex items-center gap-1.5 text-[12px] text-[var(--ui-ink-2)]">
+                    <span>{label}</span>
+                    <StatusDot status={ch.status} />
+                  </p>
+                </div>
               </div>
               <select
                 value={lvl}
                 aria-label={`Access for ${name} on ${label}`}
                 onChange={(e) => setLevels({ ...levels, [ch.id]: e.target.value as Access })}
-                className={`shrink-0 rounded-[2px] border border-ink/10 bg-white/85 px-1.5 py-1 text-[10px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/15 dark:bg-ink/80 dark:text-fog ${
-                  lvl === FOLLOW ? "text-ink/50 dark:text-fog/50" : effective === "none" ? "text-red-600 dark:text-red-400" : ""
+                className={`ui-input ml-auto w-full bg-[var(--ui-surface)] px-3 py-3 text-[12px] font-bold sm:w-auto ${
+                  lvl === FOLLOW
+                    ? "text-[var(--ui-ink-2)]"
+                    : "text-[var(--ui-ink)] font-bold"
                 }`}
               >
                 <option value={FOLLOW}>Follow role → {LEVEL_LABELS[roleDefault]}</option>
@@ -327,7 +324,7 @@ function ChannelAccess({
         })}
       </div>
       <div className="mt-2 flex items-center justify-end gap-2">
-        {dirty && <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">Unsaved changes</span>}
+        {dirty && <span className="rounded-[8px] bg-[var(--ui-sunken)] px-3 py-1 text-[12px] font-bold text-[var(--ui-ink)]">Unsaved changes</span>}
         <button
           type="button"
           className={BTN_PRIMARY}
@@ -373,7 +370,7 @@ function RoleSelect({
       {summary && (selected ? (
         <RoleSummary role={selected} catalog={catalog} membersCount={membersCount?.(selected.id) ?? 0} compact />
       ) : (
-        <p className="mt-1 text-[11px] text-ink/35 dark:text-fog/35">Pick a role to see exactly what this person can do.</p>
+        <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Pick a role to see exactly what this person can do.</p>
       ))}
     </div>
   );
@@ -431,7 +428,7 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
     <div className="mt-3 max-w-5xl space-y-3">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <div>
-          <label htmlFor="invite-email" className="text-[11px] font-medium text-ink/60 dark:text-fog/60">Email</label>
+          <label htmlFor="invite-email" className="text-[11px] font-medium text-[var(--ui-ink-2)]">Email</label>
           <input
             id="invite-email"
             type="email"
@@ -440,9 +437,9 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
             placeholder="team-member@example.com"
             className={`mt-1 ${FIELD}`}
           />
-          {email && !emailValid && <p className="mt-1 text-[11px] text-red-600">Enter a valid email address.</p>}
+          {email && !emailValid && <p className="mt-1 text-[12px] font-semibold text-[var(--ui-ink)]">Enter a valid email address.</p>}
           {duplicate && (
-            <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+            <p className="mt-1 text-[12px] font-medium text-[var(--ui-ink-2)]">
               {duplicate.is_owner || duplicate.status === "active"
                 ? "This person is already in the workspace."
                 : "This person already has a pending invite — use Resend in the members list."}
@@ -450,7 +447,7 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
           )}
         </div>
         <div>
-          <span className="text-[11px] font-medium text-ink/60 dark:text-fog/60">Role</span>
+          <span className="text-[11px] font-medium text-[var(--ui-ink-2)]">Role</span>
           <div className="mt-1">
             <RoleSelect
               value={roleId}
@@ -472,36 +469,36 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
       {(success || error) && (
         <p
           role="status"
-          className={`text-[11px] ${success ? "font-medium text-emerald-600 dark:text-emerald-400" : "text-red-600"}`}
+          className={`text-[12px] font-medium ${success ? "text-[var(--ui-ink)]" : "text-[var(--ui-ink)]"}`}
         >
           {success || error}
         </p>
       )}
 
       {channels.length > 0 && (
-        <div className="rounded-[2px] border border-ink/[0.06] bg-ink/[0.02] dark:border-fog/[0.08] dark:bg-fog/[0.03]">
+        <div className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
           <button
             type="button"
             aria-expanded={showChannels}
             onClick={() => setShowChannels((v) => !v)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-ink/[0.04] dark:hover:bg-fog/[0.05]"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-[var(--ui-sunken)]"
           >
-            <svg viewBox="0 0 12 12" fill="none" className={`h-3 w-3 shrink-0 text-ink/35 transition-transform dark:text-fog/35 ${showChannels ? "rotate-90" : ""}`} aria-hidden>
+            <svg viewBox="0 0 12 12" fill="none" className={`h-3 w-3 shrink-0 text-[var(--ui-ink-2)] transition-transform ${showChannels ? "rotate-90" : ""}`} aria-hidden>
               <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <span className="text-[11px] font-semibold text-ink/60 dark:text-fog/60">Per-channel access</span>
-            <span className="text-[10px] text-ink/55 dark:text-fog/55">optional</span>
-            <span className="ml-auto text-[10px] font-medium text-ink/60 dark:text-fog/60">
+            <span className="text-[11px] font-semibold text-[var(--ui-ink-2)]">Per-channel access</span>
+            <span className="text-[12px] text-[var(--ui-ink-2)]">optional</span>
+            <span className="ml-auto text-[12px] font-medium text-[var(--ui-ink-2)]">
               {overrideCount > 0 ? `${overrideCount} override${overrideCount === 1 ? "" : "s"}` : "inherits role"}
             </span>
           </button>
           {showChannels && (
-            <div className="border-t border-ink/[0.05] p-2.5 dark:border-fog/[0.06]">
+            <div className="p-3">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[11px] text-ink/45 dark:text-fog/45">Narrow what this person can touch, channel by channel.</p>
-                <div className="flex items-center gap-1.5">
+                <p className="text-[11px] text-[var(--ui-ink-2)]">Narrow what this person can touch, channel by channel.</p>
+                <div className="flex flex-wrap items-center gap-1.5">
                   {LEVELS.map((lvl) => (
-                    <button key={lvl} type="button" className={`${BTN} border border-ink/10 text-ink/50 hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/10 dark:text-fog/50`} onClick={() => setAllChannels(lvl)}>
+                    <button key={lvl} type="button" className={`${BTN} text-[var(--ui-ink-2)]`} onClick={() => setAllChannels(lvl)}>
                       All {lvl}
                     </button>
                   ))}
@@ -509,13 +506,13 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
               </div>
               <div className="space-y-1">
                 {channels.map((ch) => (
-                  <div key={ch.id} className="flex items-center justify-between gap-2 rounded-[2px] px-1.5 py-1 hover:bg-ink/[0.03] dark:hover:bg-fog/[0.04]">
-                    <span className="truncate text-[11px] text-ink/70 dark:text-fog/70">{ch.name || ch.platform}</span>
+                  <div key={ch.id} className="flex items-center justify-between gap-2 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 transition hover:bg-[var(--ui-sunken)]">
+                    <span className="truncate text-[11px] text-[var(--ui-ink)]">{ch.name || ch.platform}</span>
                     <select
                       value={channelLevels[ch.id] || "none"}
                       aria-label={`Access for ${ch.name || ch.platform}`}
                       onChange={(e) => { setChannelLevels({ ...channelLevels, [ch.id]: e.target.value }); setSuccess(""); }}
-                      className="rounded-[2px] border border-ink/10 bg-white px-1.5 py-1 text-[10px] capitalize text-ink outline-none focus:border-deep-violet/30 dark:border-fog/10 dark:bg-ink dark:text-fog"
+                      className="ui-input shrink-0 px-3 py-3 text-[12px] font-semibold capitalize text-[var(--ui-ink)]"
                     >
                       {LEVELS.map((lvl) => <option key={lvl} value={lvl}>{lvl}</option>)}
                     </select>
@@ -604,7 +601,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
     <div className="mt-3 space-y-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="flex-1">
-          <label htmlFor="role-name" className="text-[11px] font-medium text-ink/60 dark:text-fog/60">
+          <label htmlFor="role-name" className="text-[11px] font-medium text-[var(--ui-ink-2)]">
             {isSystem ? `Built-in role "${editing?.name}" — name is fixed` : editing ? `Editing "${editing.name}" — role name` : "Role name"}
           </label>
           <input
@@ -618,7 +615,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
           />
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium text-ink/45 dark:text-fog/45">
+          <span className="text-[11px] font-medium text-[var(--ui-ink-2)]">
             {selected.length} permission{selected.length === 1 ? "" : "s"} selected
           </span>
           <button type="button" onClick={handleSave} disabled={!canSave} className={BTN_PRIMARY}>
@@ -629,8 +626,8 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
           )}
         </div>
       </div>
-      {success && <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">{success}</p>}
-      {error && <p className="text-[11px] text-red-600">{error}</p>}
+      {success && <p className="text-[12px] font-medium text-[var(--ui-ink-2)]">{success}</p>}
+      {error && <p className="text-[12px] font-semibold text-[var(--ui-ink)]">{error}</p>}
 
       <input
         value={query}
@@ -641,9 +638,9 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       />
 
       {areas.length === 0 ? (
-        <p className="text-[12px] text-ink/40 dark:text-fog/40">Could not load the permission catalog.</p>
+        <p className="text-[12px] text-[var(--ui-ink-2)]">Could not load the permission catalog.</p>
       ) : visibleAreas.length === 0 ? (
-        <p className="text-[12px] text-ink/40 dark:text-fog/40">No permissions match your search.</p>
+        <p className="text-[12px] text-[var(--ui-ink-2)]">No permissions match your search.</p>
       ) : (
         <div className="grid gap-1.5 lg:grid-cols-2">
           {visibleAreas.map((area) => {
@@ -651,15 +648,15 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
             const all = count === area.actions.length && count > 0;
             const open = q ? true : !!openAreas[area.area];
             return (
-              <div key={area.area} className="overflow-hidden rounded-[2px] border border-ink/[0.06] dark:border-fog/[0.08]">
-                <div className="flex items-center gap-2 bg-ink/[0.02] px-3 py-2 dark:bg-fog/[0.03]">
+              <div key={area.area} className="overflow-hidden rounded-[8px] border border-[var(--ui-line)]">
+                <div className="flex items-center gap-2 bg-[var(--ui-surface)] px-3 py-2">
                   <input
                     type="checkbox"
                     checked={all}
                     ref={(el) => { if (el) el.indeterminate = count > 0 && !all; }}
                     onChange={() => setArea(area, !all)}
                     aria-label={`Select all permissions in ${area.label}`}
-                    className="h-3.5 w-3.5 shrink-0 accent-deep-violet"
+                    className="h-3.5 w-3.5 shrink-0 accent-[var(--ui-ink)]"
                   />
                   <button
                     type="button"
@@ -670,46 +667,46 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
                     <svg
                       viewBox="0 0 12 12"
                       fill="none"
-                      className={`h-3 w-3 shrink-0 text-ink/35 transition-transform dark:text-fog/35 ${open ? "rotate-90" : ""}`}
+                      className={`h-3 w-3 shrink-0 text-[var(--ui-ink-2)] transition-transform ${open ? "rotate-90" : ""}`}
                       aria-hidden
                     >
                       <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                    <span className="truncate text-[12px] font-semibold text-ink/70 dark:text-fog/70">{area.label}</span>
+                    <span className="truncate text-[12px] font-semibold text-[var(--ui-ink)]">{area.label}</span>
                     {count > 0 && (
-                      <span className="rounded-[2px] bg-deep-violet/10 px-1.5 py-0.5 text-[10px] font-semibold text-deep-violet dark:bg-violet-light/15 dark:text-violet-soft">{count}</span>
+                      <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{count}</span>
                     )}
-                    <span className="ml-auto text-[10px] tabular-nums text-ink/55 dark:text-fog/55">{count}/{area.actions.length}</span>
+                    <span className="ml-auto text-[12px] tabular-nums text-[var(--ui-ink-2)]">{count}/{area.actions.length}</span>
                   </button>
                 </div>
                 {open && (
-                  <div className="border-t border-ink/[0.04] p-1.5 dark:border-fog/[0.06]">
+                  <div className="p-4">
                     <div className="grid gap-0.5 sm:grid-cols-2">
                       {area.actions.map((act) => {
                         const on = selectedSet.has(act.permission);
                         return (
                           <label
                             key={act.permission}
-                            className="flex cursor-pointer items-center gap-2 rounded-[2px] px-2 py-1.5 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.04]"
+                            className="flex cursor-pointer items-center gap-2 rounded-[8px] px-3 py-2 transition hover:bg-[var(--ui-sunken)]"
                           >
                             <input
                               type="checkbox"
                               checked={on}
                               onChange={() => toggle(act.permission)}
-                              className="h-3.5 w-3.5 shrink-0 accent-deep-violet"
+                              className="h-3.5 w-3.5 shrink-0 accent-[var(--ui-ink)]"
                             />
-                            <span className="text-[12px] font-medium text-ink/75 dark:text-fog/75">{act.label}</span>
-                            <span className="ml-auto font-mono text-[10px] text-ink/50 dark:text-fog/50">{act.permission}</span>
+                            <span className="text-[12px] font-medium text-[var(--ui-ink)]">{act.label}</span>
+                            <span className="ml-auto font-mono text-[12px] text-[var(--ui-ink-2)]">{act.permission}</span>
                           </label>
                         );
                       })}
                     </div>
                     {!q && (
                       <div className="flex justify-end gap-3 px-2 pb-1 pt-1.5">
-                        <button type="button" onClick={() => setArea(area, true)} className="text-[10px] font-semibold text-deep-violet hover:underline">
+                        <button type="button" onClick={() => setArea(area, true)} className="text-[12px] font-semibold text-[var(--ui-ink)] hover:underline">
                           Select all
                         </button>
-                        <button type="button" onClick={() => setArea(area, false)} className="text-[10px] font-semibold text-ink/55 hover:underline dark:text-fog/55">
+                        <button type="button" onClick={() => setArea(area, false)} className="text-[12px] font-semibold text-[var(--ui-ink-2)] hover:underline">
                           Clear
                         </button>
                       </div>
@@ -736,13 +733,16 @@ export default function TeamPage() {
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const [openAccess, setOpenAccess] = useState<string | null>(null);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const loadMembers = useCallback(async () => {
     try {
       const data = await apiFetch("/api/v1/team/members");
+      setError(null);
       setMembers(data.members || []);
     } catch {
       setMembers([]);
+      setError("Could not load your team. Check your connection and try again.");
     }
   }, []);
 
@@ -752,6 +752,7 @@ export default function TeamPage() {
       setRoles(data.roles || []);
     } catch {
       setRoles([]);
+      setError("Could not load roles. Check your connection and try again.");
     }
   }, []);
 
@@ -880,41 +881,36 @@ export default function TeamPage() {
   const inviteableRoles = roles;
 
   return (
-    <div className="team-brand relative h-full space-y-6 overflow-y-auto p-4 pb-24 sm:p-6">
-      {/* Colour for the panes to diffuse, on the brand ramp: Deep Violet to
-          Coral through Magenta. Sits inside the scroll box, so it holds still
-          while the content scrolls. */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -left-24 -top-28 h-72 w-72 rounded-full bg-deep-violet/25 blur-3xl dark:bg-deep-violet/45" />
-        <div className="absolute -right-16 top-1/3 h-64 w-64 rounded-full bg-magenta/25 blur-3xl dark:bg-magenta/35" />
-        <div className="absolute bottom-24 left-1/3 h-56 w-56 rounded-full bg-coral/20 blur-3xl dark:bg-coral/30" />
-      </div>
+    <div className="team-ui relative h-full space-y-8 overflow-y-auto p-4 pb-24 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-[20px] font-bold text-ink dark:text-fog">Team management</h1>
-          <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
+          <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">Team management</h1>
+          <p className="mt-0.5 text-[13px] text-[var(--ui-ink-2)]">
             Members, roles and per-channel access.
           </p>
         </div>
         {context && (
-          <p className="text-[12px] text-ink/50 dark:text-fog/50">
-            {context.business_name || "Your workspace"} · <span className="font-semibold text-deep-violet dark:text-violet-soft">{context.role_name || "Owner"}</span>
-            {!canManage && <span className="ml-2 text-ink/35 dark:text-fog/35">read-only</span>}
+          <p className="text-[12px] text-[var(--ui-ink-2)]">
+            {context.business_name || "Your workspace"} · <span className="font-semibold text-[var(--ui-ink)]">{context.role_name || "Owner"}</span>
+            {!canManage && <span className="ml-2 text-[var(--ui-ink-2)]">read-only</span>}
           </p>
         )}
       </div>
 
       {loading ? (
-        <p className="text-[13px] text-ink/40 dark:text-fog/40">Loading…</p>
+        <p className="text-[13px] text-[var(--ui-ink-2)]">Loading…</p>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-10">
           {notice && (
             <p
               role="status"
-              className={`rounded-[2px] border px-3 py-2 text-[12px] ${
+              aria-live="polite"
+              // Three colours only, so an error is a heavier border and bolder
+              // text rather than a red tint.
+              className={`rounded-[8px] border px-4 py-3 text-[12px] ${
                 notice.kind === "ok"
-                  ? "border-emerald-500/25 bg-emerald-500/[0.06] text-emerald-700 dark:text-emerald-400"
-                  : "border-red-500/25 bg-red-500/[0.06] text-red-700 dark:text-red-400"
+                  ? "border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
+                  : "border-[var(--ui-ink)] bg-[var(--ui-sunken)] font-bold text-[var(--ui-ink)]"
               }`}
             >
               {notice.text}
@@ -922,15 +918,15 @@ export default function TeamPage() {
           )}
 
           {/* Members */}
-          <section className={`${GLASS_PANE} p-5`}>
+          <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Members</h2>
+              <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">Members</h2>
               <div className="flex items-center gap-2">
-                <span className="rounded-[2px] bg-ink/[0.06] px-2 py-0.5 text-[10px] font-semibold text-ink/50 dark:bg-fog/[0.06] dark:text-fog/50">
+                <span className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">
                   {members.length}
                 </span>
                 {members.some((m) => m.status === "invited") && (
-                  <span className="text-[11px] text-ink/40 dark:text-fog/40">
+                  <span className="text-[11px] text-[var(--ui-ink-2)]">
                     {members.filter((m) => m.status === "invited").length} awaiting response
                   </span>
                 )}
@@ -938,7 +934,22 @@ export default function TeamPage() {
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {members.length === 0 ? (
-                <p className="col-span-full text-[13px] text-ink/35 dark:text-fog/35">No members yet.</p>
+                error ? (
+                  // A failed load must not look like an empty team: say what
+                  // happened and offer the one action that fixes it.
+                  <div className="col-span-full rounded-[8px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-4" role="alert">
+                    <p className="text-[13px] font-bold text-[var(--ui-ink)]">{error}</p>
+                    <button
+                      type="button"
+                      onClick={() => void Promise.all([loadMembers(), loadRoles()])}
+                      className={`${BTN} mt-3`}
+                    >
+                      Try again
+                    </button>
+                  </div>
+                ) : (
+                  <p className="col-span-full text-[13px] text-[var(--ui-ink-2)]">No members yet.</p>
+                )
               ) : (
                 members.map((m) => {
                   const isOwner = !!m.is_owner;
@@ -965,26 +976,28 @@ export default function TeamPage() {
                   return (
                     <div
                       key={key}
-                      className={`flex flex-col self-start ${GLASS_CARD} p-3`}
+                      className={`flex min-w-0 flex-col ui-card bg-[var(--ui-surface)] p-6 ${
+                        openAccess === key ? "sm:col-span-2" : ""
+                      }`}
                     >
-                      <div className="flex items-start gap-2.5">
+                      <div className="flex items-start gap-4">
                         <Initial label={m.name || m.email} owner={isOwner} />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-[13px] font-semibold text-ink dark:text-fog">{m.email}</p>
+                          <p className="truncate text-[13px] font-semibold text-[var(--ui-ink)]">{m.email}</p>
                           <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                             <StatusBadge status={m.status} />
                             {m.status === "invited" && m.invited_at && (
-                              <span className="text-[10px] text-ink/55 dark:text-fog/55">sent {shortDate(m.invited_at)}</span>
+                              <span className="text-[12px] text-[var(--ui-ink-2)]">sent {shortDate(m.invited_at)}</span>
                             )}
                             {m.status === "active" && m.accepted_at && (
-                              <span className="text-[10px] text-ink/55 dark:text-fog/55">joined {shortDate(m.accepted_at)}</span>
+                              <span className="text-[12px] text-[var(--ui-ink-2)]">joined {shortDate(m.accepted_at)}</span>
                             )}
-                            {isSelf && <span className="text-[10px] text-ink/55 dark:text-fog/55">you</span>}
+                            {isSelf && <span className="text-[12px] text-[var(--ui-ink-2)]">you</span>}
                           </div>
                         </div>
                       </div>
 
-                      <div className="mt-2.5">
+                      <div className="mt-3">
                         {editable ? (
                           <RoleSelect
                             value={m.role_id || ""}
@@ -999,7 +1012,7 @@ export default function TeamPage() {
                         ) : (
                           <div className="min-w-0">
                             <RoleBadge name={m.role_name} isOwner={isOwner} />
-                            {why && <p className="mt-1 text-[10px] text-ink/55 dark:text-fog/55">{why}</p>}
+                            {why && <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">{why}</p>}
                           </div>
                         )}
                       </div>
@@ -1055,13 +1068,13 @@ export default function TeamPage() {
           </section>
 
           {/* Invite member */}
-          <section className={`${GLASS_PANE} border-deep-violet/25 bg-deep-violet/[0.05] p-5 dark:border-deep-violet/30 dark:bg-deep-violet/[0.10]`}>
-            <h2 className="text-[15px] font-semibold text-deep-violet dark:text-violet-soft">Invite member</h2>
-            <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
+          <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
+            <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">Invite member</h2>
+            <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
               The recipient gets an email with a link to set up their access. Pending invites can be resent from the members list.
             </p>
             {inviteableRoles.length === 0 ? (
-              <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No roles available yet — create one below first.</p>
+              <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">No roles available yet — create one below first.</p>
             ) : (
               <InviteForm
                 roles={inviteableRoles}
@@ -1075,27 +1088,33 @@ export default function TeamPage() {
           </section>
 
           {/* Roles */}
-          <section className={`${GLASS_PANE} p-5`}>
-            <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Roles</h2>
-            <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
+          <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
+            <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">Roles</h2>
+            <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
               Every role is yours to set — tick or untick any permission, on built-in roles too. Built-in roles keep their
               names and can never be deleted.
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {roles.length === 0 ? (
-                <p className="col-span-full text-[13px] text-ink/35 dark:text-fog/35">No roles yet.</p>
+                error ? (
+                  <p className="col-span-full text-[13px] font-bold text-[var(--ui-ink)]" role="alert">
+                    {error}
+                  </p>
+                ) : (
+                  <p className="col-span-full text-[13px] text-[var(--ui-ink-2)]">No roles yet.</p>
+                )
               ) : (
                 roles.map((r) => {
                   const perms = Array.from(new Set(r.permissions || []));
                   const inUse = membersCount(r.id);
                   return (
-                    <div key={r.id} className={`flex flex-col self-start ${GLASS_CARD} p-3`}>
+                    <div key={r.id} className="flex min-w-0 flex-col ui-card bg-[var(--ui-surface)] p-6">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-[13px] font-semibold text-ink dark:text-fog">{r.name}</p>
-                        <span className={`rounded-[2px] px-2 py-0.5 text-[10px] font-semibold ${r.is_system ? "bg-deep-violet/10 text-deep-violet dark:bg-violet-light/15 dark:text-violet-soft" : "bg-ink/[0.06] text-ink/50 dark:bg-fog/[0.06] dark:text-fog/50"}`}>
+                        <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{r.name}</p>
+                        <span className={`ui-chip px-3 py-1 text-[12px] font-semibold ${r.is_system ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]" : "bg-[var(--ui-surface)] text-[var(--ui-ink-2)]"}`}>
                           {r.is_system ? "Built-in" : "Custom"}
                         </span>
-                        <span className="ml-auto text-[11px] text-ink/40 dark:text-fog/40">
+                        <span className="ml-auto text-[11px] text-[var(--ui-ink-2)]">
                           {inUse > 0 ? `${inUse} member${inUse === 1 ? "" : "s"}` : "unused"}
                         </span>
                       </div>
@@ -1103,10 +1122,10 @@ export default function TeamPage() {
                       <div className="mt-1.5 flex flex-wrap items-center gap-2">
                         {perms.length > 0 && (
                           <details className="text-[11px]">
-                            <summary className="cursor-pointer text-ink/45 dark:text-fog/45">View permissions</summary>
+                            <summary className="cursor-pointer text-[var(--ui-ink-2)]">View permissions</summary>
                             <div className="mt-1.5 flex flex-wrap gap-1">
                               {perms.map((p) => (
-                                <span key={p} className="rounded-[2px] bg-white/70 px-2 py-0.5 text-[10px] text-ink/55 dark:bg-fog/[0.06] dark:text-fog/55">{p}</span>
+                                <span key={p} className="ui-chip shrink-0 px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)]">{p}</span>
                               ))}
                             </div>
                           </details>
@@ -1116,7 +1135,7 @@ export default function TeamPage() {
                             <button
                               type="button"
                               onClick={() => { setEditingRoleId(r.id); setNotice(null); }}
-                              className={`${BTN} ml-auto text-ink/50 hover:text-deep-violet dark:text-fog/50`}
+                              className={`${BTN} ml-auto text-[var(--ui-ink-2)]`}
                             >
                               Edit role
                             </button>
@@ -1133,7 +1152,7 @@ export default function TeamPage() {
                         )}
                       </div>
                       {!r.is_system && canManage && inUse > 0 && (
-                        <span className="mt-1.5 text-[10px] text-ink/55 dark:text-fog/55">
+                        <span className="mt-1.5 text-[12px] text-[var(--ui-ink-2)]">
                           Move the {inUse} member{inUse === 1 ? "" : "s"} off this role before deleting it.
                         </span>
                       )}
@@ -1145,11 +1164,11 @@ export default function TeamPage() {
           </section>
 
           {/* Role builder */}
-          <section className={`${GLASS_PANE} p-5`}>
-            <h2 className="text-[15px] font-semibold text-ink dark:text-fog">
+          <section className={`ui-panel bg-[var(--ui-surface)] p-8`}>
+            <h2 className="text-[15px] font-semibold text-[var(--ui-ink)]">
               {editingRole ? `Editing ${editingRole.name}` : "Role builder"}
             </h2>
-            <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
+            <p className="mt-0.5 text-[11px] text-[var(--ui-ink-2)]">
               {editingRole
                 ? editingRole.is_system
                   ? `Built-in "${editingRole.name}" — tick exactly what it can do. Members keep this role and pick up the new access.`
@@ -1164,7 +1183,7 @@ export default function TeamPage() {
                 onDone={() => { setEditingRoleId(null); void loadRoles(); }}
               />
             ) : (
-              <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">Your role cannot create or edit roles.</p>
+              <p className="mt-3 text-[12px] text-[var(--ui-ink-2)]">Your role cannot create or edit roles.</p>
             )}
           </section>
         </div>
