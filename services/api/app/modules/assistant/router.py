@@ -547,7 +547,7 @@ async def _llm_reply(
 @router.post("/chat", response_model=AssistantChatResponse)
 async def chat(
     body: AssistantChatRequest,
-    ctx: TenantContext = Depends(require_perm("assistant.chat")),
+    ctx: TenantContext = Depends(require_perm("ai.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -595,7 +595,7 @@ def _plural(n: int, word: str) -> str:
 @router.post("/chat/stream")
 async def chat_stream(
     body: AssistantChatRequest,
-    ctx: TenantContext = Depends(require_perm("assistant.chat")),
+    ctx: TenantContext = Depends(require_perm("ai.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

@@ -38,7 +38,7 @@ def _out(result: dict) -> PostOut:
 @router.post("/", response_model=PublishResult, status_code=201)
 async def create_post(
     body: PostCreate,
-    ctx: TenantContext = Depends(require_perm("posts.view")),
+    ctx: TenantContext = Depends(require_perm("posts.create")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -102,7 +102,7 @@ async def sync_post_metrics(
 @router.post("/ai-draft", response_model=AiDraftResponse)
 async def ai_draft_post(
     body: AiDraftRequest,
-    ctx: TenantContext = Depends(require_perm("posts.view")),
+    ctx: TenantContext = Depends(require_perm("posts.create")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -143,7 +143,7 @@ async def get_post(
 async def update_post(
     post_id: str,
     body: PostUpdate,
-    ctx: TenantContext = Depends(require_perm("posts.view")),
+    ctx: TenantContext = Depends(require_perm("posts.create")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -169,7 +169,7 @@ async def update_post(
 @router.delete("/{post_id}", status_code=204)
 async def delete_post(
     post_id: str,
-    ctx: TenantContext = Depends(require_perm("posts.view")),
+    ctx: TenantContext = Depends(require_perm("posts.publish")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -182,7 +182,7 @@ async def delete_post(
 @router.post("/{post_id}/publish", response_model=PublishResult)
 async def publish_post_now(
     post_id: str,
-    ctx: TenantContext = Depends(require_perm("posts.view")),
+    ctx: TenantContext = Depends(require_perm("posts.publish")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

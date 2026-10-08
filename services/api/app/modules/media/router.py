@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/v1/media", tags=["media"])
 async def upload_media_file(
     request: Request,
     file: UploadFile = File(...),
-    ctx: TenantContext = Depends(require_perm("media.view")),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -69,7 +69,7 @@ async def list_media(
 @router.post("/", response_model=MediaPublishResult, status_code=201)
 async def create_media(
     body: MediaCreate,
-    ctx: TenantContext = Depends(require_perm("media.view")),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -102,7 +102,7 @@ async def get_media(
 async def update_media(
     media_id: str,
     body: MediaUpdate,
-    ctx: TenantContext = Depends(require_perm("media.view")),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -126,7 +126,7 @@ async def update_media(
 @router.delete("/{media_id}", status_code=204)
 async def delete_media(
     media_id: str,
-    ctx: TenantContext = Depends(require_perm("media.view")),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -139,7 +139,7 @@ async def delete_media(
 @router.post("/{media_id}/publish", response_model=MediaPublishResult)
 async def publish_media_now(
     media_id: str,
-    ctx: TenantContext = Depends(require_perm("media.view")),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

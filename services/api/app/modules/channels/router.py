@@ -179,10 +179,12 @@ def _verification_response(record: VerificationRecord | None, channel_id: str) -
 @router.get("/{channel_id}/verification", response_model=VerificationResponse)
 async def get_verification(
     channel_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    await _google_channel(channel_id, user, db)
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    await _google_channel(channel_id, ctx.user, db)
     result = await db.execute(select(VerificationRecord).where(VerificationRecord.channel_id == channel_id))
     return _verification_response(result.scalar_one_or_none(), channel_id)
 
@@ -191,10 +193,12 @@ async def get_verification(
 async def request_verification(
     channel_id: str,
     body: VerificationRequest,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     db: AsyncSession = Depends(get_db),
 ):
-    channel = await _google_channel(channel_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    channel = await _google_channel(channel_id, ctx.user, db)
     result = await db.execute(select(VerificationRecord).where(VerificationRecord.channel_id == channel_id))
     record = result.scalar_one_or_none()
     now = datetime.now(timezone.utc)
@@ -228,10 +232,12 @@ def _service_response(service: BusinessService) -> ServiceResponse:
 @router.get("/{channel_id}/services")
 async def list_services(
     channel_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    await _google_channel(channel_id, user, db)
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    await _google_channel(channel_id, ctx.user, db)
     result = await db.execute(
         select(BusinessService).where(BusinessService.channel_id == channel_id).order_by(BusinessService.created_at)
     )
@@ -242,10 +248,12 @@ async def list_services(
 async def create_service(
     channel_id: str,
     body: ServiceCreate,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     db: AsyncSession = Depends(get_db),
 ):
-    await _google_channel(channel_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _google_channel(channel_id, ctx.user, db)
     service = BusinessService(channel_id=channel_id, **body.model_dump())
     db.add(service)
     await db.commit()
@@ -260,10 +268,12 @@ async def update_service(
     channel_id: str,
     service_id: str,
     body: ServiceUpdate,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     db: AsyncSession = Depends(get_db),
 ):
-    await _google_channel(channel_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _google_channel(channel_id, ctx.user, db)
     result = await db.execute(select(BusinessService).where(BusinessService.id == service_id, BusinessService.channel_id == channel_id))
     service = result.scalar_one_or_none()
     if service is None:
@@ -281,10 +291,12 @@ async def update_service(
 async def delete_service(
     channel_id: str,
     service_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     db: AsyncSession = Depends(get_db),
 ):
-    await _google_channel(channel_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    await _google_channel(channel_id, ctx.user, db)
     result = await db.execute(select(BusinessService).where(BusinessService.id == service_id, BusinessService.channel_id == channel_id))
     service = result.scalar_one_or_none()
     if service is None:
@@ -299,11 +311,13 @@ async def delete_service(
 async def send_to_channel(
     channel_id: str,
     body: ChannelMessageSend,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
     db: AsyncSession = Depends(get_db),
 ):
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
     try:
-        msg = await send_message(channel_id, body, user, db)
+        msg = await send_message(channel_id, body, ctx.user, db)
     except ValueError as exc:
         message = str(exc)
         if message == "Channel not found":
@@ -330,10 +344,12 @@ async def get_channel_messages(
     channel_id: str,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    msgs, total = await list_messages(channel_id, user, db, limit, offset)
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    msgs, total = await list_messages(channel_id, ctx.user, db, limit, offset)
     return ChannelMessageListResponse(
         messages=[
             ChannelMessageResponse(
@@ -1132,10 +1148,12 @@ async def list_review_replies(
     status_filter: str | None = Query(None, alias="status", pattern="^(posted|pending_approval|failed|approved)$"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.view")),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_owned_channel(channel_id, user, db)
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    await _get_owned_channel(channel_id, ctx.user, db)
 
     from ..analytics.models import ReviewInsight
 
@@ -1206,7 +1224,7 @@ async def list_review_replies(
 @router.post("/{channel_id}/reviews/verify-posted", response_model=dict)
 async def verify_posted_replies(
     channel_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Re-check every `posted` reply against live Google data.
@@ -1219,7 +1237,9 @@ async def verify_posted_replies(
     from .google_reviews import GoogleReviewsClient, GoogleReviewsError
     from .service import decrypt_token
 
-    channel = await _get_owned_channel(channel_id, user, db)
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    channel = await _get_owned_channel(channel_id, ctx.user, db)
     all_posted = (
         await db.execute(
             select(ReviewReply)
@@ -1340,11 +1360,13 @@ async def _clear_edited_flag(db, channel_id: str, review_id: str) -> None:
 async def approve_review_reply(
     channel_id: str,
     reply_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.publish")),
     db: AsyncSession = Depends(get_db),
 ):
     """Approve a pending (low-rating) reply and post it to Google."""
-    channel = await _get_owned_channel(channel_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    channel = await _get_owned_channel(channel_id, ctx.user, db)
     result = await db.execute(
         select(ReviewReply).where(
             ReviewReply.id == reply_id, ReviewReply.channel_id == channel.id
@@ -1381,7 +1403,7 @@ async def approve_review_reply(
             reply.status = "failed"
             reply.error = str(e)[:2000]
             await db.commit()
-            await _notify_reply_failed(db, user.id, channel, reply, str(e))
+            await _notify_reply_failed(db, ctx.user.id, channel, reply, str(e))
             raise HTTPException(
                 status_code=502,
                 detail=f"Failed to post reply via Localith: {e}",
@@ -1391,7 +1413,7 @@ async def approve_review_reply(
         await db.commit()
         await _clear_edited_flag(db, channel.id, reply.review_id)
         await db.commit()
-        await _notify_reply_posted(db, user.id, channel, reply)
+        await _notify_reply_posted(db, ctx.user.id, channel, reply)
     else:
         access_token = decrypt_token(channel.access_token) if channel.access_token else None
         refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
@@ -1416,19 +1438,19 @@ async def approve_review_reply(
                     "listing. Approve again to retry."
                 )
                 await db.commit()
-                await _notify_reply_failed(db, user.id, channel, reply, reply.error)
+                await _notify_reply_failed(db, ctx.user.id, channel, reply, reply.error)
                 raise HTTPException(status_code=502, detail=reply.error)
             reply.status = "posted"
             reply.error = None
             await db.commit()
             await _clear_edited_flag(db, channel.id, reply.review_id)
             await db.commit()
-            await _notify_reply_posted(db, user.id, channel, reply)
+            await _notify_reply_posted(db, ctx.user.id, channel, reply)
         except GoogleReviewsError as e:
             reply.status = "failed"
             reply.error = str(e)[:2000]
             await db.commit()
-            await _notify_reply_failed(db, user.id, channel, reply, str(e))
+            await _notify_reply_failed(db, ctx.user.id, channel, reply, str(e))
             # Surface the real reason (e.g. "No refresh token available") —
             # a generic message hides that re-consent is the only fix.
             raise HTTPException(
@@ -1461,7 +1483,7 @@ async def approve_review_reply(
         await enqueue_event(
             "review.replied",
             {
-                "user_id": user.id,
+                "user_id": ctx.user.id,
                 "channel_id": channel.id,
                 "review_id": reply.review_id,
                 "status": "posted",
@@ -1492,13 +1514,15 @@ async def approve_review_reply(
 async def generate_reply_for_review(
     channel_id: str,
     body: ReviewReplyGenerate,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
     db: AsyncSession = Depends(get_db),
 ):
     """Draft an AI reply for a review that has no reply row yet (inbox flow)."""
     if not settings.TESTING and not await rate_limit(f"gen:{channel_id}", 100, 60):
         raise HTTPException(status_code=429, detail="Too many requests")
-    channel = await _get_owned_channel(channel_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    channel = await _get_owned_channel(channel_id, ctx.user, db)
     config = (
         await db.execute(select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel.id))
     ).scalar_one_or_none()
@@ -1575,7 +1599,7 @@ async def edit_pending_reply(
     channel_id: str,
     reply_id: str,
     body: ReviewReplyEdit,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
     db: AsyncSession = Depends(get_db),
 ):
     """Edit any live response to a review.
@@ -1586,7 +1610,9 @@ async def edit_pending_reply(
     update only goes live after a fresh approval — nothing edits Google
     behind the merchant's back.
     """
-    reply = await _get_owned_reply(channel_id, reply_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    reply = await _get_owned_reply(channel_id, reply_id, ctx.user, db)
     if reply.status not in ("pending_approval", "failed", "posted"):
         raise HTTPException(
             status_code=400,
@@ -1608,7 +1634,7 @@ async def edit_pending_reply(
 async def regenerate_reply(
     channel_id: str,
     reply_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
     db: AsyncSession = Depends(get_db),
 ):
     """Re-generate a pending reply through the review engine.
@@ -1619,7 +1645,9 @@ async def regenerate_reply(
     """
     if not settings.TESTING and not await rate_limit(f"regen:{channel_id}", 100, 60):
         raise HTTPException(status_code=429, detail="Too many requests")
-    reply = await _get_owned_reply(channel_id, reply_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    reply = await _get_owned_reply(channel_id, reply_id, ctx.user, db)
     if reply.status != "pending_approval":
         raise HTTPException(status_code=400, detail="Only pending replies can be regenerated")
     attempt = (reply.generation_attempt or 1) + 1
@@ -1638,7 +1666,7 @@ async def regenerate_reply(
     # The model knows this is a rejected draft so it writes a fresh variation.
     try:
         reply.reply_text = await generate_auto_reply(
-            config, SimpleNamespace(id=channel_id, user_id=user.id),
+            config, SimpleNamespace(id=channel_id, user_id=ctx.user.id),
             reply.rating, reply.review_text, reply.reviewer_name, db,
             review_id=(reply.review_id or "")[:120] or None,
             attempt=attempt, previous_draft=reply.reply_text,
@@ -1658,12 +1686,14 @@ async def regenerate_reply(
 async def retry_failed_reply(
     channel_id: str,
     reply_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
     db: AsyncSession = Depends(get_db),
 ):
     """Retry a failed reply: regenerate the text if generation failed, then
     return it to the approval queue with the error cleared."""
-    reply = await _get_owned_reply(channel_id, reply_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    reply = await _get_owned_reply(channel_id, reply_id, ctx.user, db)
     if reply.status != "failed":
         raise HTTPException(status_code=400, detail="Only failed replies can be retried")
     # Generation attempt: only counts real generations. A retry with text
@@ -1685,7 +1715,7 @@ async def retry_failed_reply(
         attempt += 1
         try:
             reply.reply_text = await generate_auto_reply(
-                config, SimpleNamespace(id=channel_id, user_id=user.id),
+                config, SimpleNamespace(id=channel_id, user_id=ctx.user.id),
                 reply.rating, reply.review_text, reply.reviewer_name, db,
                 review_id=(reply.review_id or "")[:120] or None,
                 attempt=attempt,
@@ -1708,7 +1738,7 @@ async def retry_failed_reply(
 async def reject_reply(
     channel_id: str,
     reply_id: str,
-    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
     db: AsyncSession = Depends(get_db),
 ):
     """Discard a reply draft without posting anything to Google.
@@ -1716,7 +1746,9 @@ async def reject_reply(
     Failed drafts can be discarded too — e.g. when the review was
     deleted on Google and no retry can ever succeed.
     """
-    reply = await _get_owned_reply(channel_id, reply_id, user, db)
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    reply = await _get_owned_reply(channel_id, reply_id, ctx.user, db)
     if reply.status not in ("pending_approval", "failed"):
         raise HTTPException(status_code=400, detail="Only pending or failed replies can be rejected")
     reply.status = "rejected"

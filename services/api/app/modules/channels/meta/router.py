@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....config import settings
 from ....core.deps import get_current_user, get_db
-from ....modules.team.context import tenant_id_of
+from ....modules.team.context import TenantContext, require_perm, tenant_id_of
 from ...auth.rate_limit import rate_limit
 from ...users.models import User
 from . import oauth as _oauth
@@ -154,6 +154,7 @@ def _asset_out(a) -> MetaAssetOut:
 
 @router.get("/connections", response_model=MetaConnectionListResponse)
 async def list_connections(
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -165,6 +166,7 @@ async def list_connections(
 async def start_connect(
     provider: str,
     request: Request,
+    ctx: TenantContext = Depends(require_perm("channels.connect")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -417,6 +419,7 @@ async def oauth_callback(
 
 @router.get("/whatsapp/smb-sync-status")
 async def smb_sync_status(
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -433,6 +436,7 @@ async def smb_sync_status(
 
 @router.get("/whatsapp/usage", response_model=WhatsAppUsageOut)
 async def whatsapp_usage(
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -474,6 +478,7 @@ async def whatsapp_usage(
 @router.post("/whatsapp/session")
 async def whatsapp_session(
     body: MetaWhatsAppSession,
+    ctx: TenantContext = Depends(require_perm("channels.connect")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -604,6 +609,7 @@ async def whatsapp_session(
 async def register_whatsapp_number(
     phone_number_id: str,
     body: MetaRegisterNumberRequest,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -664,6 +670,7 @@ async def register_whatsapp_number(
 @router.get("/whatsapp/{phone_number_id}/profile", response_model=WhatsAppProfileOut)
 async def get_whatsapp_profile(
     phone_number_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -727,6 +734,7 @@ async def get_whatsapp_profile(
 async def update_whatsapp_profile(
     phone_number_id: str,
     body: WhatsAppProfileUpdate,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -789,6 +797,7 @@ async def update_whatsapp_profile(
 async def upload_profile_photo(
     phone_number_id: str,
     file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -861,6 +870,7 @@ async def upload_profile_photo(
 
 @router.post("/instagram/discover", response_model=MetaAssetListResponse)
 async def discover_instagram(
+    ctx: TenantContext = Depends(require_perm("channels.connect")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -879,6 +889,7 @@ async def discover_instagram(
 @router.get("/{provider}/assets", response_model=MetaAssetListResponse)
 async def list_assets(
     provider: str,
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -892,6 +903,7 @@ async def list_assets(
 async def select_assets(
     provider: str,
     body: MetaAssetSelect,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -907,6 +919,7 @@ async def select_assets(
 @router.post("/{provider}/validate", response_model=MetaValidateResponse)
 async def validate_connection(
     provider: str,
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -935,6 +948,7 @@ async def disconnect(
         False,
         description="Permanently delete this provider's channels, messages and assets",
     ),
+    ctx: TenantContext = Depends(require_perm("channels.remove")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
