@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 
-/* Team management Ã¢â‚¬â€ members, roles and per-channel access. */
+/* Team management — members, roles and per-channel access. */
 
 interface TeamRoleOption { id: string; name: string; is_system?: boolean; permissions?: string[] }
 interface TeamChannelOption { id: string; platform: string; name?: string | null; status?: string }
@@ -35,7 +35,7 @@ interface CatalogArea {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LEVELS = ["none", "view", "edit"] as const;
 type Level = (typeof LEVELS)[number];
-/** "No override stored" â€” the member inherits whatever the role allows.
+/** "No override stored" — the member inherits whatever the role allows.
  * Deliberately distinct from "none", which is a stored denial. */
 const FOLLOW = "follow" as const;
 type Access = Level | typeof FOLLOW;
@@ -61,7 +61,7 @@ function errText(e: unknown): string {
       if (typeof d === "string") return d;
       if (d && typeof d === "object" && typeof d.message === "string") return d.message;
     } catch {
-      /* not JSON Ã¢â‚¬â€ fall through */
+      /* not JSON — fall through */
     }
     return e.message;
   }
@@ -132,7 +132,7 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
   const perms = role.permissions || [];
   const labels = areaLabels(roleAreas(role), catalog);
   if (perms.length === 0) {
-    return <p className="text-[11px] text-ink/35 dark:text-fog/35">No permissions Ã¢â‚¬â€ cannot access anything.</p>;
+    return <p className="text-[11px] text-ink/35 dark:text-fog/35">No permissions — cannot access anything.</p>;
   }
   const shown = compact ? labels.slice(0, 4) : labels;
   const hidden = labels.length - shown.length;
@@ -140,7 +140,7 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] text-ink/45 dark:text-fog/45">
         {perms.length} permission{perms.length === 1 ? "" : "s"}
-        {membersCount > 0 ? ` Ã‚Â· ${membersCount} member${membersCount === 1 ? "" : "s"}` : ""}
+        {membersCount > 0 ? ` · ${membersCount} member${membersCount === 1 ? "" : "s"}` : ""}
       </span>
       {shown.map((label) => (
         <span key={label} className="rounded-[2px] bg-ink/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06] dark:text-fog/50">
@@ -179,7 +179,7 @@ function ConfirmButton({
         disabled={pending}
         onClick={() => { setArmed(false); onConfirm(); }}
       >
-        {pending ? "WorkingÃ¢â‚¬Â¦" : confirmLabel}
+        {pending ? "Working…" : confirmLabel}
       </button>
       <button
         type="button"
@@ -254,7 +254,7 @@ function ChannelAccess({
       </div>
       <p className="mb-2 text-[10px] text-ink/40 dark:text-fog/40">
         The {roleLabel} role allows {LEVEL_PHRASES[roleDefault]} on every channel. Only store an override when this
-        member differs from that â€” an override survives later role changes.
+        member differs from that — an override survives later role changes.
       </p>
       <div className="space-y-1">
         {channels.map((ch) => {
@@ -271,7 +271,7 @@ function ChannelAccess({
                   lvl === FOLLOW ? "text-ink/45 dark:text-fog/45" : effective === "none" ? "text-red-600 dark:text-red-400" : ""
                 }`}
               >
-                <option value={FOLLOW}>Follow role â†’ {LEVEL_LABELS[roleDefault]}</option>
+                <option value={FOLLOW}>Follow role → {LEVEL_LABELS[roleDefault]}</option>
                 {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_LABELS[l]}</option>)}
               </select>
             </div>
@@ -286,7 +286,7 @@ function ChannelAccess({
           disabled={pending || !dirty}
           onClick={() => onSave(overrides(levels))}
         >
-          {pending ? "SavingÃ¢â‚¬Â¦" : "Save access"}
+          {pending ? "Saving…" : "Save access"}
         </button>
       </div>
     </div>
@@ -317,7 +317,7 @@ function RoleSelect({
           const m = membersCount?.(r.id) ?? 0;
           return (
             <option key={r.id} value={r.id}>
-              {r.name} Ã¢â‚¬â€ {n} permission{n === 1 ? "" : "s"}{r.is_system ? " Ã‚Â· built-in" : ""}{m > 0 ? ` Ã‚Â· ${m} member${m === 1 ? "" : "s"}` : ""}
+              {r.name} — {n} permission{n === 1 ? "" : "s"}{r.is_system ? " · built-in" : ""}{m > 0 ? ` · ${m} member${m === 1 ? "" : "s"}` : ""}
             </option>
           );
         })}
@@ -397,7 +397,7 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
             <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
               {duplicate.is_owner || duplicate.status === "active"
                 ? "This person is already in the workspace."
-                : "This person already has a pending invite Ã¢â‚¬â€ use Resend in the members list."}
+                : "This person already has a pending invite — use Resend in the members list."}
             </p>
           )}
         </div>
@@ -416,7 +416,7 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-1 xl:justify-end">
           <button type="button" onClick={handleSubmit} disabled={!canSend} className={BTN_PRIMARY}>
-            {sending ? "SendingÃ¢â‚¬Â¦" : "Send invite"}
+            {sending ? "Sending…" : "Send invite"}
           </button>
         </div>
       </div>
@@ -557,7 +557,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="flex-1">
           <label htmlFor="role-name" className="text-[11px] font-medium text-ink/60 dark:text-fog/60">
-            {isSystem ? `Built-in role "${editing?.name}" Ã¢â‚¬â€ name is fixed` : editing ? `Editing "${editing.name}" Ã¢â‚¬â€ role name` : "Role name"}
+            {isSystem ? `Built-in role "${editing?.name}" — name is fixed` : editing ? `Editing "${editing.name}" — role name` : "Role name"}
           </label>
           <input
             id="role-name"
@@ -574,7 +574,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
             {selected.length} permission{selected.length === 1 ? "" : "s"} selected
           </span>
           <button type="button" onClick={handleSave} disabled={!canSave} className={BTN_PRIMARY}>
-            {busy ? "SavingÃ¢â‚¬Â¦" : editing ? "Save changes" : selected.length ? `Create role Ã‚Â· ${selected.length}` : "Create role"}
+            {busy ? "Saving…" : editing ? "Save changes" : selected.length ? `Create role · ${selected.length}` : "Create role"}
           </button>
           {editing && (
             <button type="button" onClick={onDone} className={BTN_GHOST}>Cancel</button>
@@ -587,7 +587,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search permissionsÃ¢â‚¬Â¦"
+        placeholder="Search permissions…"
         aria-label="Search permissions"
         className={FIELD}
       />
@@ -712,7 +712,7 @@ export default function TeamPage() {
       try {
         setContext(await apiFetch("/api/v1/team/context"));
       } catch {
-        /* not authenticated Ã¢â‚¬â€ nav gating handles the redirect */
+        /* not authenticated — nav gating handles the redirect */
       }
       try {
         const data = await apiFetch("/api/v1/team/channels");
@@ -775,7 +775,7 @@ export default function TeamPage() {
 
   const saveChannels = (m: TeamMemberRow, levels: Record<string, Level>) =>
     run(`chan:${m.id}`, async () => {
-      // Send every stored level verbatim, "none" included â€” it is a real
+      // Send every stored level verbatim, "none" included — it is a real
       // denial. Only channels left on "follow role" are absent, and the API
       // deletes the override row for those so the role decides again.
       await apiFetch(`/api/v1/team/members/${m.id}`, {
@@ -842,14 +842,14 @@ export default function TeamPage() {
         </div>
         {context && (
           <p className="text-[12px] text-ink/50 dark:text-fog/50">
-            {context.business_name || "Your workspace"} Ã‚Â· <span className="font-semibold text-deep-violet">{context.role_name || "Owner"}</span>
+            {context.business_name || "Your workspace"} · <span className="font-semibold text-deep-violet">{context.role_name || "Owner"}</span>
             {!canManage && <span className="ml-2 text-ink/35 dark:text-fog/35">read-only</span>}
           </p>
         )}
       </div>
 
       {loading ? (
-        <p className="text-[13px] text-ink/40 dark:text-fog/40">LoadingÃ¢â‚¬Â¦</p>
+        <p className="text-[13px] text-ink/40 dark:text-fog/40">Loading…</p>
       ) : (
         <div className="space-y-6">
           {notice && (
@@ -891,7 +891,7 @@ export default function TeamPage() {
                   const why = isOwner
                     ? "The workspace owner always has full access."
                     : isSelf
-                      ? "You cannot change your own role Ã¢â‚¬â€ ask the workspace owner."
+                      ? "You cannot change your own role — ask the workspace owner."
                       : !canManage
                         ? "Your role cannot manage the team."
                         : undefined;
@@ -958,16 +958,16 @@ export default function TeamPage() {
                             className={BTN_GHOST}
                           >
                             Channel access
-                            {overrideCount > 0 ? ` Â· ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : " Â· follows role"}
+                            {overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : " · follows role"}
                           </button>
                           {m.status === "invited" && (
                             <button type="button" onClick={() => void resendInvite(m)} disabled={pending[`resend:${m.id}`]} className={BTN_GHOST}>
-                              {pending[`resend:${m.id}`] ? "SendingÃ¢â‚¬Â¦" : "Resend invite"}
+                              {pending[`resend:${m.id}`] ? "Sending…" : "Resend invite"}
                             </button>
                           )}
                           {m.status !== "invited" && (
                             <button type="button" onClick={() => void toggleStatus(m)} disabled={pending[`status:${m.id}`]} className={BTN_GHOST}>
-                              {pending[`status:${m.id}`] ? "WorkingÃ¢â‚¬Â¦" : m.status === "suspended" ? "Reactivate" : "Suspend"}
+                              {pending[`status:${m.id}`] ? "Working…" : m.status === "suspended" ? "Reactivate" : "Suspend"}
                             </button>
                           )}
                           <ConfirmButton
@@ -1005,7 +1005,7 @@ export default function TeamPage() {
               The recipient gets an email with a link to set up their access. Pending invites can be resent from the members list.
             </p>
             {inviteableRoles.length === 0 ? (
-              <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No roles available yet Ã¢â‚¬â€ create one below first.</p>
+              <p className="mt-3 text-[12px] text-ink/40 dark:text-fog/40">No roles available yet — create one below first.</p>
             ) : (
               <InviteForm
                 roles={inviteableRoles}
@@ -1022,7 +1022,7 @@ export default function TeamPage() {
           <section className="rounded-[2px] border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink">
             <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Roles</h2>
             <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
-              Every role is yours to set Ã¢â‚¬â€ tick or untick any permission, on built-in roles too. Built-in roles keep their
+              Every role is yours to set — tick or untick any permission, on built-in roles too. Built-in roles keep their
               names and can never be deleted.
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -1096,7 +1096,7 @@ export default function TeamPage() {
             <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
               {editingRole
                 ? editingRole.is_system
-                  ? `Built-in "${editingRole.name}" Ã¢â‚¬â€ tick exactly what it can do. Members keep this role and pick up the new access.`
+                  ? `Built-in "${editingRole.name}" — tick exactly what it can do. Members keep this role and pick up the new access.`
                   : "Change the name or the permissions, then save. Members keep this role and pick up the new access."
                 : "Pick permissions and give the role a name. New roles appear in the list above and in the invite form."}
             </p>
