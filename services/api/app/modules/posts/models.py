@@ -71,6 +71,13 @@ class LocationPost(Base):
     # returns one. Reserved for true remote deletion the day an API
     # (Localith delete or per-tenant native Google) supports it.
     google_post_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Per-post performance, pulled from Google's reportInsights (native
+    # OAuth path only — Localith exposes no post-level metrics). None =
+    # never synced (or no native Google connection). Rows are matched to
+    # Google's copies by caption prefix, publish time as fallback.
+    views: Mapped[int | None] = mapped_column(nullable=True)
+    cta_clicks: Mapped[int | None] = mapped_column(nullable=True)
+    metrics_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Retry-then-park: consecutive publish failures + next retry time.
     # Kept scheduled until MAX_PUBLISH_ATTEMPTS, then parked as failed.
     attempts: Mapped[int] = mapped_column(default=0, server_default="0")

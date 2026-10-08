@@ -22,6 +22,8 @@ from .schemas import (
     PostOut,
     PostUpdate,
     PublishResult,
+    SyncMetricsRequest,
+    SyncMetricsResult,
     SyncResult,
 )
 from ..team.context import tenant_id_of, require_perm, TenantContext, require_perm
@@ -63,6 +65,38 @@ async def list_posts(
 ):
     rows = await service.list_posts(db, tenant_id_of(user), listing_id)
     return [PostOut(**r) for r in rows]
+
+
+@router.post("/sync-metrics", response_model=SyncMetricsResult)
+async def sync_post_metrics(
+    body: SyncMetricsRequest,
+    ctx: TenantContext = Depends(require_perm("posts.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pull per-post views + CTA clicks from Google (reportInsights).
+
+    Called by the posts UI on feed load; numbers land on the rows and come
+    back for in-place refresh. Needs a native Google OAuth channel —
+    Localith-backed tenants get a note, never an error. Rate limited to
+    30/hour per tenant (the whole point is one or two calls per visit)."""
+    import sys as _sys
+
+    if not _sys.modules.get("pytest") and not await rate_limit(
+        f"post-metrics:{user.id}", 30, 3600
+    ):
+        raise HTTPException(status_code=429, detail="Metrics sync limit reached. Try again later.")
+    try:
+        result = await service.sync_post_metrics(db, tenant_id_of(user), body.listing_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return SyncMetricsResult(
+        checked=result["checked"],
+        matched=result["matched"],
+        synced=result["synced"],
+        posts=[PostOut(**p) for p in result["posts"]],
+        note=result.get("note"),
+    )
 
 
 @router.post("/ai-draft", response_model=AiDraftResponse)

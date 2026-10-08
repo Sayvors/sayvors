@@ -296,6 +296,92 @@ class GoogleReviewsClient:
             raise GoogleReviewsError(f"list_locations failed: {resp.status_code}", resp.status_code)
         return resp.json().get("locations", [])
 
+    # ── Local posts (v4) ─────────────────────────────────
+
+    # Per-post performance metrics (reportInsights): views on Google Search
+    # and call-to-action button clicks. The only per-post numbers Google
+    # exposes — Localith's API has no post-level metrics at all.
+    LOCAL_POST_METRICS = (
+        "LOCAL_POST_VIEWS_SEARCH",
+        "LOCAL_POST_ACTIONS_CALL_TO_ACTION",
+    )
+
+    async def list_accounts(self) -> list[dict]:
+        """Business Profile accounts on the OAuth grant (v1 accountmanagement)."""
+        resp = await self._authed_request(
+            "GET", f"{GBP_ACCOUNTS_API}/accounts", params={"pageSize": 50})
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"list_accounts failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code)
+        return resp.json().get("accounts", []) or []
+
+    async def list_local_posts(self, account_id: str, location_id: str) -> list[dict]:
+        """All local posts for a location (v4), following pages.
+
+        Returns raw LocalPost dicts — ``name`` (full resource name, the
+        reportInsights handle), ``summary``, ``createTime``, ``state``.
+        """
+        out: list[dict] = []
+        page_token: str | None = None
+        url = (f"{GBP_REVIEWS_API}/accounts/{account_id}"
+               f"/locations/{location_id}/localPosts")
+        for _ in range(10):  # 10 x 100 — far past any real feed
+            params: dict = {"pageSize": 100}
+            if page_token:
+                params["pageToken"] = page_token
+            resp = await self._authed_request("GET", url, params=params)
+            if resp.status_code != 200:
+                raise GoogleReviewsError(
+                    f"list_local_posts failed ({resp.status_code}): "
+                    f"{resp.text[:300]}",
+                    resp.status_code)
+            data = resp.json()
+            out.extend(data.get("localPosts", []) or [])
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+        return out
+
+    async def report_local_post_insights(
+        self,
+        account_id: str,
+        location_id: str,
+        post_names: list[str],
+        start: datetime,
+        end: datetime,
+    ) -> dict:
+        """Per-post views + call-to-action clicks (v4 reportInsights).
+
+        ``post_names`` are full resource names; Google caps one call at 100
+        (caller batches). Time range caps at 18 months — pass the widest
+        window you want per-post totals over. Returns the raw response
+        (``localPostMetrics`` keyed by ``localPostName``).
+        """
+        url = (f"{GBP_REVIEWS_API}/accounts/{account_id}"
+               f"/locations/{location_id}/localPosts:reportInsights")
+        body = {
+            "localPostNames": post_names[:100],
+            "basicRequest": {
+                "metricRequests": [
+                    {"metric": metric, "options": ["AGGREGATED_TOTAL"]}
+                    for metric in self.LOCAL_POST_METRICS
+                ],
+                "timeRange": {
+                    "startTime": start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "endTime": end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                },
+            },
+        }
+        resp = await self._authed_request("POST", url, json=body)
+        if resp.status_code != 200:
+            raise GoogleReviewsError(
+                f"report_local_post_insights failed ({resp.status_code}): "
+                f"{resp.text[:300]}",
+                resp.status_code)
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
     # ── Reviews ──────────────────────────────────────────
 
     async def list_reviews(

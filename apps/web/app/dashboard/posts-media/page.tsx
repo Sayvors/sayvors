@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
-import PostsPage, { normalizePosts, type PostItem } from "@/components/dashboard/PostsPage";
+import PostsPage, {
+  mergePostMetrics,
+  normalizePosts,
+  syncPostMetricsThrottled,
+  type PostItem,
+} from "@/components/dashboard/PostsPage";
 import MediaPage, { normalizeMedia, type MediaItem } from "@/components/dashboard/MediaPage";
 import { FeedEmpty, FeedGrid, FeedHeader, feedEntries } from "@/components/dashboard/PostsMediaFeed";
 import { useI18n } from "@/lib/i18n/I18nProvider";
@@ -89,9 +94,15 @@ export default function PostsMediaPage() {
       apiFetch(`/api/v1/posts/${q}`),
       apiFetch(`/api/v1/media/${q}`),
     ]);
-    setPosts(postsRes.status === "fulfilled" ? normalizePosts(postsRes.value) : []);
+    const list = postsRes.status === "fulfilled" ? normalizePosts(postsRes.value) : [];
+    setPosts(list);
     setMedia(mediaRes.status === "fulfilled" ? normalizeMedia(mediaRes.value) : []);
     setFeedLoading(false);
+    // Fresh Google views/clicks for live posts (throttled; silent on failure).
+    if (list.some((p) => p.status === "LIVE")) {
+      const fresh = await syncPostMetricsThrottled(selectedId);
+      if (fresh) setPosts((prev) => mergePostMetrics(prev, fresh));
+    }
   }, [selectedId]);
 
   // Refresh when the location changes and whenever a composer/detail returns.

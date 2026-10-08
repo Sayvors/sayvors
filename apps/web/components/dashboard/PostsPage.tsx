@@ -5,6 +5,7 @@ import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import LocationMultiSelect from "@/components/LocationMultiSelect";
+import { formatMetricCount } from "./PostsMediaFeed";
 import { useLocationGroups } from "@/lib/location-groups";
 
 // ── Future backend contract for scheduled deletion (UI-first: the UI
@@ -46,6 +47,11 @@ export interface PostItem {
   terms_conditions?: string;
   cta_type?: string | null;
   cta_url?: string | null;
+  // Google per-post performance (reportInsights). null = never synced —
+  // the backend needs a native Google connection; chips render only for
+  // synced live posts.
+  views?: number | null;
+  clicks?: number | null;
 }
 
 interface LocationOption {
@@ -234,6 +240,18 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
+
+  // Fresh Google numbers for live posts (throttled in syncPostMetricsThrottled).
+  useEffect(() => {
+    if (view.kind !== "list" || !selectedId) return;
+    if (!posts.some((p) => p.status === "LIVE")) return;
+    let cancelled = false;
+    (async () => {
+      const fresh = await syncPostMetricsThrottled(selectedId);
+      if (!cancelled && fresh) setPosts((prev) => mergePostMetrics(prev, fresh));
+    })();
+    return () => { cancelled = true; };
+  }, [view.kind, selectedId, posts]);
 
   const counts = useMemo(() => ({
     all: posts.filter((p) => p.status === "LIVE").length,
@@ -779,6 +797,29 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
                         {p.images.length > 0 && (
                           <span className="rounded-[2px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:bg-fog/[0.06]">📷 {p.images.length}</span>
                         )}
+                        {p.status === "LIVE" && p.views != null && (
+                          <span
+                            className="flex items-center gap-1 rounded-[2px] bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                            title="Views on Google Search"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
+                              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+                              <circle cx="12" cy="12" r="3" />
+                            </svg>
+                            {formatMetricCount(p.views)}
+                          </span>
+                        )}
+                        {p.status === "LIVE" && p.clicks != null && (
+                          <span
+                            className="flex items-center gap-1 rounded-[2px] bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-500/10 dark:text-sky-400"
+                            title="Call-to-action button clicks on Google"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
+                              <path d="M4 4l7.5 16 2.2-6.3L20 11.5 4 4z" strokeLinejoin="round" />
+                            </svg>
+                            {formatMetricCount(p.clicks)}
+                          </span>
+                        )}
                         {p.status === "SCHEDULED" && p.scheduledAt && (
                           <span className="ml-auto text-[11px] text-ink/35 dark:text-fog/35">Publishes {new Date(p.scheduledAt).toLocaleString()}</span>
                         )}
@@ -1049,7 +1090,43 @@ export function normalizePosts(raw: unknown, deleteOverlay?: Record<string, stri
       terms_conditions: typeof p.terms_conditions === "string" ? p.terms_conditions : undefined,
       cta_type: typeof p.cta_type === "string" ? p.cta_type : undefined,
       cta_url: typeof p.cta_url === "string" ? p.cta_url : undefined,
+      views: p.views == null ? null : Number(p.views) || 0,
+      clicks: (p.cta_clicks ?? p.clicks) == null ? null : Number(p.cta_clicks ?? p.clicks) || 0,
     };
+  });
+}
+
+/* Fresh per-post numbers from Google (reportInsights), throttled to one
+   call per listing per 10 minutes across every surface that shows them.
+   Returns null when throttled or when the backend can't sync (no native
+   Google connection) — the stored numbers stay. */
+const metricsLastSync: Record<string, number> = {};
+const METRICS_SYNC_INTERVAL = 10 * 60 * 1000;
+
+export async function syncPostMetricsThrottled(listingId: string): Promise<PostItem[] | null> {
+  const last = metricsLastSync[listingId] ?? 0;
+  if (Date.now() - last < METRICS_SYNC_INTERVAL) return null;
+  metricsLastSync[listingId] = Date.now();
+  try {
+    const res = await apiFetch("/api/v1/posts/sync-metrics", {
+      method: "POST",
+      body: JSON.stringify({ listing_id: listingId }),
+    });
+    return normalizePosts(res?.posts);
+  } catch {
+    return null;
+  }
+}
+
+/* Merge fresh views/clicks into the rows on screen (never the whole
+   post — the list may hold newer composer state than the sync). */
+export function mergePostMetrics(prev: PostItem[], rawUpdates: unknown): PostItem[] {
+  const updates = normalizePosts(rawUpdates);
+  if (!updates.length) return prev;
+  const byId = new Map(updates.map((u) => [u.id, u]));
+  return prev.map((p) => {
+    const u = byId.get(p.id);
+    return u ? { ...p, views: u.views, clicks: u.clicks } : p;
   });
 }
 

@@ -78,6 +78,13 @@ function prettyCategory(value: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/* Compact Google-metrics numbers: 1234 → "1.2k". */
+export function formatMetricCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}m`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k`;
+  return String(n);
+}
+
 function CardThumb({ src, fallback }: { src?: string; fallback: React.ReactNode }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) return <>{fallback}</>;
@@ -136,6 +143,29 @@ export function PostCard({ post, onOpen }: { post: PostItem; onOpen: () => void 
               #{t}
             </span>
           ))}
+          {post.status === "LIVE" && post.views != null && (
+            <span
+              className="flex shrink-0 items-center gap-1 rounded-[2px] bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+              title="Views on Google Search"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              {formatMetricCount(post.views)}
+            </span>
+          )}
+          {post.status === "LIVE" && post.clicks != null && (
+            <span
+              className="flex shrink-0 items-center gap-1 rounded-[2px] bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-500/10 dark:text-sky-400"
+              title="Call-to-action button clicks on Google"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
+                <path d="M4 4l7.5 16 2.2-6.3L20 11.5 4 4z" strokeLinejoin="round" />
+              </svg>
+              {formatMetricCount(post.clicks)}
+            </span>
+          )}
           <span className="ml-auto shrink-0 text-[10px] text-ink/35 dark:text-fog/35">{formatDay(post.createdAt)}</span>
         </span>
       </span>
