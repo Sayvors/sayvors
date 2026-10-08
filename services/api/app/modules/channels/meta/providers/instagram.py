@@ -220,8 +220,11 @@ class InstagramAdapter(MetaProviderAdapter):
         return out
 
     POST_FIELDS = (
-        "id,caption,media_type,media_url,permalink,timestamp,"
-        "like_count,comments_count,comments{id,text,timestamp,username,like_count,from{id},hidden}"
+        "id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,"
+        "like_count,comments_count,"
+        "children{id,media_type,media_url,thumbnail_url},"
+        "comments{id,text,timestamp,username,like_count,from{id},hidden,"
+        "replies{id,text,timestamp,username,like_count,hidden}}"
     )
 
     async def get_recent_posts(
@@ -242,8 +245,9 @@ class InstagramAdapter(MetaProviderAdapter):
                 params={"fields": self.POST_FIELDS, "limit": max(1, min(limit, 50))},
             )
         except MetaAPIError as e:
-            # No posts, or the comments sub-field was refused: fall back to the
-            # post itself so the feed still renders.
+            # No posts, or a sub-field was refused (comments scope, children,
+            # media_product_type): fall back to the plain post set so the feed
+            # still renders.
             logger.info("Instagram post read degraded: %s", e)
             try:
                 resp = await self._graph(
@@ -251,7 +255,7 @@ class InstagramAdapter(MetaProviderAdapter):
                     f"/{ig_id}/media",
                     token,
                     params={
-                        "fields": "id,caption,media_type,media_url,permalink,timestamp,like_count,comments_count",
+                        "fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count",
                         "limit": max(1, min(limit, 50)),
                     },
                 )
@@ -263,6 +267,17 @@ class InstagramAdapter(MetaProviderAdapter):
             comments = []
             for c in (item.get("comments", {}) or {}).get("data", []) or []:
                 username = c.get("username")
+                replies = [
+                    {
+                        "id": r.get("id"),
+                        "text": r.get("text"),
+                        "username": r.get("username"),
+                        "timestamp": r.get("timestamp"),
+                        "like_count": int(r.get("like_count") or 0),
+                        "hidden": bool(r.get("hidden")),
+                    }
+                    for r in (c.get("replies", {}) or {}).get("data", []) or []
+                ]
                 comments.append(
                     {
                         "id": c.get("id"),
@@ -275,6 +290,7 @@ class InstagramAdapter(MetaProviderAdapter):
                         "hidden": bool(c.get("hidden")),
                         "media_id": item.get("id"),
                         "profile_url": f"https://instagram.com/{username}" if username else None,
+                        "replies": replies,
                     }
                 )
             posts.append(
@@ -282,15 +298,92 @@ class InstagramAdapter(MetaProviderAdapter):
                     "id": item.get("id"),
                     "caption": item.get("caption"),
                     "media_type": item.get("media_type"),
+                    "media_product_type": item.get("media_product_type"),
                     "media_url": item.get("media_url"),
+                    "thumbnail_url": item.get("thumbnail_url"),
                     "permalink": item.get("permalink"),
                     "timestamp": item.get("timestamp"),
                     "like_count": int(item.get("like_count") or 0),
                     "comments_count": int(item.get("comments_count") or 0),
+                    "children": [
+                        {
+                            "id": ch.get("id"),
+                            "media_type": ch.get("media_type"),
+                            "media_url": ch.get("media_url"),
+                            "thumbnail_url": ch.get("thumbnail_url"),
+                        }
+                        for ch in (item.get("children", {}) or {}).get("data", []) or []
+                    ],
                     "comments": comments[:comment_limit],
                 }
             )
         return posts
+
+    # ── Stories ──────────────────────────────────────────────
+    # GET /{ig-user-id}/stories is the ONLY stories surface in the API, and
+    # it covers the account's own live stories (they expire after 24h).
+    # Other accounts' stories are private; the viewer list ("seen by") is
+    # exposed to no one, anywhere.
+
+    STORY_FIELDS = "id,media_type,media_url,timestamp"
+
+    async def get_stories(self, ig_id: str, token: str) -> list[dict]:
+        """The account's live stories, newest first. [] when none are up."""
+        try:
+            resp = await self._graph(
+                "GET", f"/{ig_id}/stories", token,
+                params={"fields": self.STORY_FIELDS},
+            )
+        except MetaAPIError:
+            logger.info("Instagram stories read unavailable (none live, or scope refused)")
+            return []
+        return [
+            {
+                "id": s.get("id"),
+                "media_type": s.get("media_type"),
+                "media_url": s.get("media_url"),
+                "timestamp": s.get("timestamp"),
+            }
+            for s in (resp.json() or {}).get("data", []) or []
+        ]
+
+    # Per-post insights. Metric names differ by media type and Graph rejects
+    # the WHOLE call when one metric is wrong for the type, so each type gets
+    # its own conservative set. REELS is the only surface that exposes shares.
+    _INSIGHT_METRICS = {
+        "IMAGE": "impressions,reach,saved",
+        "CAROUSEL_ALBUM": "impressions,reach",
+        "VIDEO": "impressions,reach,video_views",
+        "REELS": "plays,reach,saved,shares",
+    }
+
+    async def get_media_insights(
+        self, media_id: str, token: str, media_type: str | None
+    ) -> dict:
+        """Reach/saves/shares for one post. {} when refused or unsupported.
+
+        Metrics are an owner-only, insights-scoped read; raising here would
+        make every modal open brittle, so any failure degrades to {} and the
+        UI simply hides the line.
+        """
+        metrics = self._INSIGHT_METRICS.get(
+            (media_type or "").upper()
+        ) or self._INSIGHT_METRICS["IMAGE"]
+        try:
+            resp = await self._graph(
+                "GET", f"/{media_id}/insights", token,
+                params={"metric": metrics},
+            )
+        except MetaAPIError:
+            return {}
+        out: dict = {}
+        for row in (resp.json() or {}).get("data", []) or []:
+            name = row.get("name", "")
+            value = ((row.get("values") or [{}])[0].get("value"))
+            if value is None:
+                continue
+            out[name] = int(value)
+        return out
 
     async def get_follower_demographics(self, ig_id: str, token: str) -> dict:
         """Aggregate follower demographics (age, gender, top cities/countries).

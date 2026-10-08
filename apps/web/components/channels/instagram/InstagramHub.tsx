@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   fetchInstagramProfile,
   fetchMetaAssets,
@@ -10,7 +10,9 @@ import {
 } from "@/lib/api-meta";
 import PlatformMark from "@/components/channels/PlatformMark";
 import AudienceTab from "./AudienceTab";
-import { CommentsTab, MessagesTab, PostsTab } from "./ListsTab";
+import PostsGrid from "./PostsGrid";
+import StoriesStrip from "./StoriesStrip";
+import { CommentsTab, MessagesTab } from "./ListsTab";
 
 /*
  * Instagram hub.
@@ -78,24 +80,20 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
   const [profile, setProfile] = useState<InstagramProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Bumping this re-runs the single fetch effect below; the button owns the
+  // spinner so a manual refresh never blanks the page.
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const load = useCallback(async () => {
-    try {
-      setProfile(await fetchInstagramProfile(asset.external_asset_id));
-      setError(null);
-    } catch (e) {
-      setProfile(null);
-      setError(e instanceof Error ? e.message : "Could not load the Instagram profile.");
-    } finally {
-      setLoading(false);
-    }
-  }, [asset.external_asset_id]);
-
-  // Fetch inside the effect (with a cancel flag) rather than calling a helper
-  // that sets state: this is the same shape the dashboard sidebar uses.
+  // One fetch, owned by the effect with a cancel flag — the same shape the
+  // dashboard sidebar uses. No state changes synchronously during mount.
   useEffect(() => {
     let cancelled = false;
-    fetchInstagramProfile(asset.external_asset_id).then(
+    // Manual refreshes (refreshKey > 0) bypass the server's redis cache —
+    // a Refresh button that serves a 5-minute-old copy would be a lie.
+    fetchInstagramProfile(
+      asset.external_asset_id,
+      refreshKey > 0 ? { refresh: true } : undefined
+    ).then(
       (data) => {
         if (!cancelled) {
           setProfile(data);
@@ -114,13 +112,13 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
     return () => {
       cancelled = true;
     };
-  }, [asset.external_asset_id]);
+  }, [asset.external_asset_id, refreshKey]);
 
-  // The button owns the spinner, so a manual refresh never blanks the page.
   const refresh = () => {
-    setLoading(true);
+    setProfile(null);
     setError(null);
-    void load();
+    setLoading(true);
+    setRefreshKey((k) => k + 1);
   };
 
   const handle = profile?.username ? `https://instagram.com/${profile.username}` : undefined;
@@ -250,6 +248,21 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
           </div>
         </section>
       )}
+
+      <section className={PANEL}>
+        <h3 className="text-[15px] font-semibold text-[var(--ui-ink)]">Posts</h3>
+        <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">
+          Your feed, laid out like your profile. Live stories sit on top; tap any
+          post to open it with its comments.
+        </p>
+        <div className="mt-4 space-y-5">
+          <StoriesStrip igId={asset.external_asset_id} />
+          <PostsGrid
+            igId={asset.external_asset_id}
+            accountUsername={profile?.username ?? asset.username}
+          />
+        </div>
+      </section>
     </div>
   );
 }
@@ -257,6 +270,7 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
 export default function InstagramHub() {
   const [tab, setTab] = useState<Tab>("profile");
   const [assets, setAssets] = useState<MetaAsset[] | null>(null);
+  const [selected, setSelected] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -264,7 +278,11 @@ export default function InstagramHub() {
     (async () => {
       try {
         const data = await fetchMetaAssets("instagram");
-        if (!cancelled) setAssets((data.assets ?? []).filter((a) => a.active));
+        if (!cancelled) {
+          const list = (data.assets ?? []).filter((a) => a.active);
+          setAssets(list);
+          setSelected((i) => Math.min(i, Math.max(0, list.length - 1)));
+        }
       } catch {
         if (!cancelled) setError("Could not load your Instagram accounts.");
       }
@@ -275,6 +293,7 @@ export default function InstagramHub() {
   }, []);
 
   const active = TABS.find((t) => t.key === tab)!;
+  const account = assets && assets.length > 0 ? assets[Math.min(selected, assets.length - 1)] : null;
 
   return (
     <div className="team-ui min-h-full overflow-y-auto p-4 pb-24 sm:p-6">
@@ -329,30 +348,60 @@ export default function InstagramHub() {
           </div>
         )}
 
-        {!error && assets !== null && assets.length > 0 && (
+        {!error && account && assets !== null && assets.length > 1 && (
+          <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Instagram accounts">
+            {assets.map((a, i) => (
+              <button
+                key={a.id}
+                type="button"
+                role="tab"
+                aria-selected={i === selected}
+                onClick={() => setSelected(i)}
+                className={`ui-chip px-3 py-1.5 text-[12px] font-semibold ${
+                  i === selected
+                    ? `bg-[var(--ui-ink)] text-[var(--ui-on-ink)]`
+                    : `bg-[var(--ui-sunken)] ${INK} hover:bg-[var(--ui-line)]`
+                }`}
+              >
+                @{a.username || a.name || a.external_asset_id}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {!error && account && (
           active.key === "profile" ? (
-            assets.length === 1 ? (
-              <ProfileTab asset={assets[0]} />
-            ) : (
-              <div className="space-y-4">
-                <div className="flex flex-wrap gap-2">
-                  {assets.map((a) => (
-                    <span key={a.id} className={`ui-chip px-3 py-1.5 text-[12px] font-semibold ${INK}`}>
-                      @{a.username || a.name || a.external_asset_id}
-                    </span>
-                  ))}
-                </div>
-                <ProfileTab asset={assets[0]} />
-              </div>
-            )
+            <div className="mt-6">
+              <ProfileTab asset={account} />
+            </div>
           ) : active.key === "audience" ? (
-            <AudienceTab igId={assets[0].external_asset_id} />
+            <div className="mt-6">
+              <AudienceTab igId={account.external_asset_id} />
+            </div>
           ) : active.key === "posts" ? (
-            <PostsTab igId={assets[0].external_asset_id} />
+            <div className="mt-6">
+              <section className={PANEL}>
+                <h3 className={`text-[15px] font-semibold ${INK}`}>Posts</h3>
+                <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">
+                  Laid out like your profile. Tap a post to open it with its
+                  comments, likes and reach.
+                </p>
+                <div className="mt-4">
+                  <PostsGrid
+                    igId={account.external_asset_id}
+                    accountUsername={account.username}
+                  />
+                </div>
+              </section>
+            </div>
           ) : active.key === "comments" ? (
-            <CommentsTab igId={assets[0].external_asset_id} />
+            <div className="mt-6">
+              <CommentsTab igId={account.external_asset_id} />
+            </div>
           ) : (
-            <MessagesTab />
+            <div className="mt-6">
+              <MessagesTab />
+            </div>
           )
         )}
       </div>

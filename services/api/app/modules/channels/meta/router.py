@@ -19,10 +19,12 @@ from .providers.base import MetaAPIError
 from .schemas import (
     InstagramAudienceOut,
     InstagramDemographics,
+    InstagramMediaInsightsOut,
     InstagramPerson,
     InstagramPostOut,
     InstagramPostsOut,
     InstagramProfileOut,
+    InstagramStoriesOut,
     MetaAssetListResponse,
     MetaAssetOut,
     MetaAssetSelect,
@@ -802,20 +804,24 @@ async def update_whatsapp_profile(
 @router.get("/instagram/{ig_id}/profile", response_model=InstagramProfileOut)
 async def get_instagram_profile(
     ig_id: str,
+    refresh: bool = Query(False),
     ctx: TenantContext = Depends(require_perm("channels.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Fetch the live Instagram business profile from Meta (not cached).
+    """Fetch the live Instagram business profile from Meta.
 
     Read-only by Meta's design: the IG User reference states updating is not
-    supported, so there is no sibling PATCH. A failed Graph read falls back to
-    the persisted snapshot (flagged stale) rather than blanking the page.
+    supported, so there is no sibling PATCH. A short redis cache absorbs tab
+    clicks between live reads (`refresh=1` bypasses it); a failed Graph read
+    falls back to the persisted snapshot (flagged stale) rather than blanking
+    the page.
     """
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     from .credentials import decrypt_connection_token
+    from .igcache import PROFILE_TTL_SECONDS, get as _cache_get, set as _cache_set
     from .models import MetaAsset
     from .providers.base import MetaAPIError as _MetaAPIError
 
@@ -864,6 +870,11 @@ async def get_instagram_profile(
             status_code=409, detail="Reconnect Instagram — the access token is missing"
         )
 
+    if not refresh:
+        cached = await _cache_get("profile", ig_id)
+        if cached:
+            return _out(cached, cached.get("_synced_at"), stale=False)
+
     adapter = _service.get_adapter("instagram")
     try:
         data = await adapter.get_business_profile(ig_id, token)
@@ -879,12 +890,16 @@ async def get_instagram_profile(
     synced_at = _persist_profile(asset, data)
     db.add(asset)
     await db.commit()
+    await _cache_set(
+        "profile", ig_id, {**data, "_synced_at": synced_at}, PROFILE_TTL_SECONDS
+    )
     return _out(data, synced_at, stale=False)
 
 
 @router.get("/instagram/{ig_id}/audience", response_model=InstagramAudienceOut)
 async def get_instagram_audience(
     ig_id: str,
+    refresh: bool = Query(False),
     ctx: TenantContext = Depends(require_perm("channels.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -895,13 +910,15 @@ async def get_instagram_audience(
     not expose follower/following lists. Commenters are read live from Graph
     (our webhooks parse comment events but the consumer drops them), and DM
     contacts come from our own inbox, so both sides hold real usernames and
-    therefore real profile links.
+    therefore real profile links. A short redis cache absorbs tab clicks;
+    `refresh=1` bypasses it.
     """
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     from ..models import ContactProfile
     from .credentials import decrypt_connection_token
+    from .igcache import LIST_TTL_SECONDS, get as _cache_get, set as _cache_set
     from .models import MetaAsset
     from .providers.base import MetaAPIError as _MetaAPIError
 
@@ -926,6 +943,11 @@ async def get_instagram_audience(
         )
 
     people: list[InstagramPerson] = []
+
+    if not refresh:
+        cached = await _cache_get("audience", ig_id)
+        if cached is not None:
+            return InstagramAudienceOut(**cached)
 
     # 1. DM contacts — people who actually wrote to us.
     contacts = (
@@ -978,9 +1000,14 @@ async def get_instagram_audience(
             )
 
     people.sort(key=lambda p: p.occurred_at or "", reverse=True)
-    return InstagramAudienceOut(
+    out = InstagramAudienceOut(
         people=people, demographics=demographics, comments_unavailable=comments_unavailable
     )
+    # Only the token-present path is cached — a "Reconnect" banner must not
+    # outlive the reconnect itself.
+    if token:
+        await _cache_set("audience", ig_id, out.model_dump(), LIST_TTL_SECONDS)
+    return out
 
 
 def _demographics_reason(exc: MetaAPIError) -> str:
@@ -996,6 +1023,7 @@ def _demographics_reason(exc: MetaAPIError) -> str:
 @router.get("/instagram/{ig_id}/posts", response_model=InstagramPostsOut)
 async def get_instagram_posts(
     ig_id: str,
+    refresh: bool = Query(False),
     ctx: TenantContext = Depends(require_perm("channels.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -1004,12 +1032,15 @@ async def get_instagram_posts(
 
     An account with no posts returns an empty list - that is the truthful
     answer, not an error. `unavailable` is only set when the read itself could
-    not be made (missing token, revoked scope).
+    not be made (missing token, revoked scope). The Posts and Comments tabs
+    both read this endpoint, so a short redis cache halves the Graph traffic;
+    `refresh=1` bypasses it.
     """
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     from .credentials import decrypt_connection_token
+    from .igcache import LIST_TTL_SECONDS, get as _cache_get, set as _cache_set
     from .models import MetaAsset
 
     asset = (
@@ -1033,8 +1064,153 @@ async def get_instagram_posts(
         return InstagramPostsOut(
             unavailable="Reconnect Instagram to see your posts."
         )
+
+    if not refresh:
+        cached = await _cache_get("posts", ig_id)
+        if cached is not None:
+            return InstagramPostsOut(**cached)
+
     adapter = _service.get_adapter("instagram")
-    return InstagramPostsOut(posts=[InstagramPostOut(**p) for p in await adapter.get_recent_posts(ig_id, token)])
+    out = InstagramPostsOut(
+        posts=[InstagramPostOut(**p) for p in await adapter.get_recent_posts(ig_id, token)]
+    )
+    await _cache_set("posts", ig_id, out.model_dump(), LIST_TTL_SECONDS)
+    return out
+
+
+@router.get("/instagram/{ig_id}/stories", response_model=InstagramStoriesOut)
+async def get_instagram_stories(
+    ig_id: str,
+    refresh: bool = Query(False),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The account's own live stories — the only stories edge the API offers.
+
+    Stories expire after 24h, so this is a "what is up right now" read: an
+    empty list means nothing is live, not that something failed. Other
+    accounts' stories are private, and the viewer list is exposed to no one.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .igcache import LIST_TTL_SECONDS, get as _cache_get, set as _cache_set
+    from .models import MetaAsset
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == tenant_id_of(user),
+                MetaAsset.provider == "instagram",
+                MetaAsset.asset_type == "ig_account",
+                MetaAsset.external_asset_id == ig_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(
+            status_code=404, detail="Instagram account not found for this workspace"
+        )
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        return InstagramStoriesOut()
+
+    if not refresh:
+        cached = await _cache_get("stories", ig_id)
+        if cached is not None:
+            return InstagramStoriesOut(**cached)
+
+    adapter = _service.get_adapter("instagram")
+    out = InstagramStoriesOut(
+        stories=[{"id": s.get("id"), "media_type": s.get("media_type"),
+                  "media_url": s.get("media_url"), "timestamp": s.get("timestamp")}
+                 for s in await adapter.get_stories(ig_id, token)]
+    )
+    await _cache_set("stories", ig_id, out.model_dump(), LIST_TTL_SECONDS)
+    return out
+
+
+@router.get(
+    "/instagram/{ig_id}/media/{media_id}/insights",
+    response_model=InstagramMediaInsightsOut,
+)
+async def get_instagram_media_insights(
+    ig_id: str,
+    media_id: str,
+    media_type: str | None = Query(None),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reach / saves / shares for one post, fetched lazily on modal open.
+
+    Owner-only insights: the read needs instagram_manage_insights and carousels
+    refuse the `saved` metric entirely, so an unavailable answer is a normal
+    response (available=false with the reason), never an error.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .igcache import LIST_TTL_SECONDS, get as _cache_get, set as _cache_set
+    from .models import MetaAsset
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == tenant_id_of(user),
+                MetaAsset.provider == "instagram",
+                MetaAsset.asset_type == "ig_account",
+                MetaAsset.external_asset_id == ig_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(
+            status_code=404, detail="Instagram account not found for this workspace"
+        )
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        return InstagramMediaInsightsOut(
+            reason="Reconnect Instagram to see post insights."
+        )
+
+    cache_kind = "insights"
+    if not (cached := await _cache_get(cache_kind, media_id)):
+        from .providers.base import MetaAPIError as _MetaAPIError
+
+        adapter = _service.get_adapter("instagram")
+        try:
+            raw = await adapter.get_media_insights(media_id, token, media_type)
+        except _MetaAPIError as e:
+            raw = {}
+            reason = str(e)
+        else:
+            reason = None
+        if not raw:
+            out = InstagramMediaInsightsOut(
+                available=False,
+                reason=reason
+                or "Instagram did not return insights for this post (it needs the insights permission).",
+            )
+        else:
+            out = InstagramMediaInsightsOut(
+                available=True,
+                impressions=raw.get("impressions"),
+                reach=raw.get("reach"),
+                saves=raw.get("saved"),
+                shares=raw.get("shares"),
+                views=raw.get("video_views") or raw.get("plays"),
+            )
+        await _cache_set(cache_kind, media_id, out.model_dump(), LIST_TTL_SECONDS)
+        return out
+    return InstagramMediaInsightsOut(**cached)
 
 
 @router.post("/whatsapp/{phone_number_id}/profile-photo")

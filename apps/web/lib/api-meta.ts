@@ -134,9 +134,14 @@ export interface InstagramProfile {
 }
 
 export const fetchInstagramProfile = (
-  igId: string
+  igId: string,
+  opts?: { refresh?: boolean }
 ): Promise<InstagramProfile> =>
-  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/profile`);
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/profile${
+      opts?.refresh ? "?refresh=true" : ""
+    }`
+  );
 
 /**
  * Instagram audience.
@@ -177,6 +182,15 @@ export interface InstagramAudience {
 export const fetchInstagramAudience = (igId: string): Promise<InstagramAudience> =>
   apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/audience`);
 
+export interface InstagramReply {
+  id: string | null;
+  text: string | null;
+  username: string | null;
+  timestamp: string | null;
+  like_count: number;
+  hidden: boolean;
+}
+
 export interface InstagramComment {
   id: string | null;
   text: string | null;
@@ -188,17 +202,30 @@ export interface InstagramComment {
   hidden: boolean;
   media_id: string | null;
   profile_url: string | null;
+  replies: InstagramReply[];
+}
+
+export interface InstagramChildMedia {
+  id: string | null;
+  media_type: string | null;
+  media_url: string | null;
+  thumbnail_url: string | null;
 }
 
 export interface InstagramPost {
   id: string | null;
   caption: string | null;
   media_type: string | null;
+  /** FEED / REELS / STORY. */
+  media_product_type: string | null;
   media_url: string | null;
+  /** Static poster frame for videos/carousels (media_url of a video is the file). */
+  thumbnail_url: string | null;
   permalink: string | null;
   timestamp: string | null;
   like_count: number;
   comments_count: number;
+  children: InstagramChildMedia[];
   comments: InstagramComment[];
 }
 
@@ -209,6 +236,43 @@ export interface InstagramPosts {
 
 export const fetchInstagramPosts = (igId: string): Promise<InstagramPosts> =>
   apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/posts`);
+
+export interface InstagramStory {
+  id: string | null;
+  media_type: string | null;
+  media_url: string | null;
+  timestamp: string | null;
+}
+
+export interface InstagramStories {
+  stories: InstagramStory[];
+}
+
+/** The account's own live stories — the only stories edge the API has. */
+export const fetchInstagramStories = (igId: string): Promise<InstagramStories> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/stories`);
+
+export interface InstagramMediaInsights {
+  available: boolean;
+  reason: string | null;
+  impressions: number | null;
+  reach: number | null;
+  saves: number | null;
+  shares: number | null;
+  views: number | null;
+}
+
+/** Owner-only per-post insights, fetched lazily when a post is opened. */
+export const fetchInstagramMediaInsights = (
+  igId: string,
+  mediaId: string,
+  mediaType?: string | null
+): Promise<InstagramMediaInsights> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/media/${encodeURIComponent(
+      mediaId
+    )}/insights${mediaType ? `?media_type=${encodeURIComponent(mediaType)}` : ""}`
+  );
 
 export const disconnectMeta = (provider: MetaProvider, opts?: { deleteData?: boolean }) =>
   apiFetch(

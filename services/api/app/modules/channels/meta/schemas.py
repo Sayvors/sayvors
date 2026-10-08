@@ -165,6 +165,15 @@ class InstagramDemographics(BaseModel):
     countries: list[dict] = []
 
 
+class InstagramReplyOut(BaseModel):
+    id: str | None = None
+    text: str | None = None
+    username: str | None = None
+    timestamp: str | None = None
+    like_count: int = 0
+    hidden: bool = False
+
+
 class InstagramCommentOut(BaseModel):
     id: str | None = None
     text: str | None = None
@@ -176,23 +185,64 @@ class InstagramCommentOut(BaseModel):
     hidden: bool = False
     media_id: str | None = None
     profile_url: str | None = None
+    replies: list[InstagramReplyOut] = []
+
+
+class InstagramChildMediaOut(BaseModel):
+    """One slide of a carousel — the modal flips through these."""
+
+    id: str | None = None
+    media_type: str | None = None
+    media_url: str | None = None
+    thumbnail_url: str | None = None
 
 
 class InstagramPostOut(BaseModel):
     id: str | None = None
     caption: str | None = None
     media_type: str | None = None
+    # FEED / REELS / STORY — reels get their own badge and insights set.
+    media_product_type: str | None = None
     media_url: str | None = None
+    # Static poster frame for videos/carousels — a video's media_url is the
+    # file itself, useless as a grid thumbnail.
+    thumbnail_url: str | None = None
     permalink: str | None = None
     timestamp: str | None = None
     like_count: int = 0
     comments_count: int = 0
+    children: list[InstagramChildMediaOut] = []
     comments: list[InstagramCommentOut] = []
 
 
 class InstagramPostsOut(BaseModel):
     posts: list[InstagramPostOut] = []
     unavailable: str | None = None
+
+
+class InstagramStoryOut(BaseModel):
+    """The account's own live story — the only stories edge the API has."""
+
+    id: str | None = None
+    media_type: str | None = None
+    media_url: str | None = None
+    timestamp: str | None = None
+
+
+class InstagramStoriesOut(BaseModel):
+    stories: list[InstagramStoryOut] = []
+
+
+class InstagramMediaInsightsOut(BaseModel):
+    """Owner-only per-post insights; fields stay None when Meta refuses."""
+
+    available: bool = False
+    reason: str | None = None
+    impressions: int | None = None
+    reach: int | None = None
+    saves: int | None = None
+    shares: int | None = None
+    views: int | None = None
 
 
 class InstagramAudienceOut(BaseModel):

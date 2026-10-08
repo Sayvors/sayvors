@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   fetchInstagramPosts,
@@ -9,7 +9,8 @@ import {
 import { apiFetch } from "@/lib/api-rag";
 
 /*
- * Posts / Comments / Messages lists, read live from Instagram.
+ * Comments / Messages lists, read live from Instagram. Posts live in
+ * PostsGrid (the profile-style grid + viewer).
  *
  * No follower list anywhere: Meta does not expose one, so there is nothing to
  * show and no link to offer. Everything below comes from the account's own
@@ -19,7 +20,6 @@ import { apiFetch } from "@/lib/api-rag";
 const INK = "text-[var(--ui-ink)]";
 const INK2 = "text-[var(--ui-ink-2)]";
 const PANEL = "ui-panel bg-[var(--ui-surface)] p-6";
-const CHIP = "rounded-[8px] bg-[var(--ui-sunken)] px-3 py-1 text-[12px] font-semibold";
 
 function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
   const [data, setData] = useState<T | null>(null);
@@ -78,91 +78,6 @@ function LinkBtn({
     >
       {children}
     </a>
-  );
-}
-
-/* ── Posts ───────────────────────────────────────────────────────────── */
-
-export function PostsTab({ igId }: { igId: string }) {
-  const { data, error, loading } = useAsync(
-    () => fetchInstagramPosts(igId),
-    [igId],
-  );
-  if (loading) return <p className={`text-[13px] ${INK2}`}>Loading your posts…</p>;
-  if (error) {
-    return (
-      <div role="alert" className={`rounded-[8px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-4 text-[13px] font-bold ${INK}`}>
-        {error}
-      </div>
-    );
-  }
-  if (data?.unavailable) return <Notice>{data.unavailable}</Notice>;
-  const posts = data?.posts ?? [];
-  if (posts.length === 0) {
-    return (
-      <div className={PANEL}>
-        <h3 className={`text-[15px] font-semibold ${INK}`}>Posts</h3>
-        <p className={`mt-2 text-[13px] ${INK2}`}>
-          Instagram returned no posts for this account. Nothing has been published, or the posts are not
-          reachable with the permissions this connection was granted.
-        </p>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-4">
-      {posts.map((p: InstagramPost, i: number) => (
-        <article key={p.id ?? `post-${i}`} className={PANEL}>
-          <div className="flex flex-wrap items-start gap-4">
-            {p.media_url ? (
-              <Image
-                src={p.media_url}
-                alt=""
-                width={84}
-                height={84}
-                unoptimized
-                className="h-[84px] w-[84px] shrink-0 rounded-[8px] border border-[var(--ui-line)] object-cover"
-              />
-            ) : (
-              <span
-                aria-hidden
-                className="flex h-[84px] w-[84px] shrink-0 items-center justify-center rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] text-[10px] text-[var(--ui-ink-2)]"
-              >
-                {p.media_type || "media"}
-              </span>
-            )}
-            <div className="min-w-[12rem] flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={`${CHIP} ${INK}`}>{p.media_type || "POST"}</span>
-                {p.timestamp && (
-                  <span className={`text-[12px] ${INK2}`}>
-                    {new Date(p.timestamp).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
-                  </span>
-                )}
-              </div>
-              {p.caption ? (
-                <p className={`mt-2 line-clamp-3 text-[13px] ${INK}`}>{p.caption}</p>
-              ) : (
-                <p className={`mt-2 text-[12px] ${INK2}`}>No caption</p>
-              )}
-              <p className={`mt-2 text-[12px] tabular-nums ${INK2}`}>
-                {p.like_count.toLocaleString()} like{p.like_count === 1 ? "" : "s"} ·{" "}
-                {p.comments_count.toLocaleString()} comment{p.comments_count === 1 ? "" : "s"}
-              </p>
-              {p.permalink && (
-                <div className="mt-3">
-                  <LinkBtn href={p.permalink}>View on Instagram</LinkBtn>
-                </div>
-              )}
-            </div>
-          </div>
-        </article>
-      ))}
-    </div>
   );
 }
 
@@ -246,15 +161,17 @@ export function CommentsTab({ igId }: { igId: string }) {
 
 /* ── Messages ────────────────────────────────────────────────────────── */
 
+/* Mirrors the API's InboxThread schema (channels/schemas.py): key is the
+ * stable thread id, username carries the IG handle when one exists. */
 type Thread = {
-  id?: string;
+  key: string;
+  channel_id: string;
   platform?: string | null;
-  platform_user_id?: string | null;
-  contact_name?: string | null;
-  contact_username?: string | null;
+  display_name?: string | null;
+  username?: string | null;
   last_message?: string | null;
   last_message_at?: string | null;
-  unread_count?: number;
+  unread?: number;
 };
 
 export function MessagesTab() {
@@ -289,18 +206,42 @@ export function MessagesTab() {
       </div>
       <ul className="mt-4">
         {threads.map((t) => (
-          <li key={t.id} className="flex flex-wrap items-center gap-3 border-b border-[var(--ui-line)] py-3 last:border-0">
+          <li
+            key={t.key}
+            className="flex flex-wrap items-center gap-3 border-b border-[var(--ui-line)] py-3 last:border-0"
+          >
             <div className="min-w-[10rem] flex-1">
               <p className={`text-[13px] font-semibold ${INK}`}>
-                {t.contact_name || t.contact_username || "Instagram user"}
+                {t.display_name || (t.username ? `@${t.username}` : "Instagram user")}
+                {!!t.unread && t.unread > 0 && (
+                  <span className="ml-2 rounded-[8px] bg-[var(--ui-ink)] px-2 py-0.5 text-[11px] font-bold text-[var(--ui-on-ink)]">
+                    {t.unread} new
+                  </span>
+                )}
               </p>
               <p className={`mt-0.5 line-clamp-1 text-[12px] ${INK2}`}>{t.last_message || "—"}</p>
             </div>
-            {t.contact_username && (
-              <LinkBtn href={`https://instagram.com/${t.contact_username}`} primary>
-                Profile
-              </LinkBtn>
+            {t.last_message_at && (
+              <time
+                dateTime={t.last_message_at}
+                className={`shrink-0 text-[12px] tabular-nums ${INK2}`}
+              >
+                {new Date(t.last_message_at).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </time>
             )}
+            <div className="flex shrink-0 items-center gap-2">
+              {/* In-dashboard route: same-tab Link, not a new tab. */}
+              <Link
+                href={`/dashboard/channels/inbox?channel=${encodeURIComponent(t.channel_id)}&key=${encodeURIComponent(t.key)}`}
+                className={`ui-btn rounded-lg bg-[var(--ui-ink)] px-4 py-2.5 text-[12px] font-semibold text-[var(--ui-on-ink)]`}
+              >
+                Open
+              </Link>
+              {t.username && <LinkBtn href={`https://instagram.com/${t.username}`}>Profile</LinkBtn>}
+            </div>
           </li>
         ))}
       </ul>

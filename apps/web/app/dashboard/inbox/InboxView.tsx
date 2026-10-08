@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
+import { useSearchParams } from "next/navigation";
 import LogoLoader from "@/components/LogoLoader";
 import {
   fetchInboxThreads,
@@ -150,6 +151,21 @@ export default function InboxView() {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  // Deep link (?channel=…&key=…) — the Instagram hub's Messages tab links
+  // straight into a conversation. Captured once, applied on the first
+  // threads load that contains the thread, then cleared so manual
+  // navigation afterwards wins.
+  const searchParams = useSearchParams();
+  const deepLinkRef = useRef<{ channel: string | null; key: string | null }>({
+    channel: null,
+    key: null,
+  });
+  useEffect(() => {
+    const ch = searchParams.get("channel");
+    const key = searchParams.get("key");
+    if (ch && key) deepLinkRef.current = { channel: ch, key };
+  }, [searchParams]);
+
   const togglePin = (compositeKey: string) => {
     setPinned((prev) => {
       const next = new Set(prev);
@@ -166,7 +182,16 @@ export default function InboxView() {
     setLoading(true);
     setError(null);
     try {
-      setThreads(await fetchInboxThreads(q));
+      const list = await fetchInboxThreads(q);
+      setThreads(list);
+      const deep = deepLinkRef.current;
+      if (deep.channel && deep.key) {
+        const hit = list.find((t) => t.channel_id === deep.channel && t.key === deep.key);
+        if (hit) {
+          setSelectedKey(`${hit.channel_id}:${hit.key}`);
+          deepLinkRef.current = { channel: null, key: null };
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load conversations.");
     } finally {
