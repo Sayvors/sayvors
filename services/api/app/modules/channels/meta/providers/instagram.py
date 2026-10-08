@@ -83,20 +83,28 @@ class InstagramAdapter(MetaProviderAdapter):
         return out
 
     async def check_eligibility(self, ig_id: str, token: str) -> tuple[bool, str]:
-        """Validate the IG account can use the API (professional + public)."""
+        """Validate the IG account can use the API (professional + reachable).
+
+        Note: do NOT ask for `account_type` here. It is not a readable field on
+        the IG User node in current Graph versions — requesting it returns
+        "(#100) Tried accessing nonexisting field (account_type)" and failed
+        the whole call, which marked every discovered account "ineligible".
+        Meta already refuses API access for personal accounts, so a successful
+        read IS the eligibility signal.
+        """
         try:
             resp = await self._graph(
                 "GET",
                 f"/{ig_id}",
                 token,
-                params={"fields": "id,username,account_type,media_count"},
+                params={"fields": "id,username,media_count"},
             )
         except MetaAPIError as e:
             return False, f"graph error {e.status_code}"
-        data = resp.json()
-        if (data.get("account_type") or "").upper() not in ("BUSINESS", "CREATOR", "MEDIA_CREATOR"):
-            return False, "not a Business/Creator account — switch in Instagram settings"
-        return True, f"eligible (@{data.get('username', ig_id)})"
+        data = resp.json() or {}
+        if not data.get("username"):
+            return False, "account not readable — it may be private or personal"
+        return True, f"eligible (@{data['username']})"
 
     async def validate_connection(self, connection, credentials: dict) -> tuple[bool, str]:
         token = credentials.get("access_token", "")
@@ -162,17 +170,36 @@ class InstagramAdapter(MetaProviderAdapter):
     # edits. capabilities.py agrees - Instagram has read_profile, never
     # manage_profile.
 
+    # Fields documented on the IG User node. `account_type` is deliberately
+    # absent: Meta rejects the whole request with "(#100) Tried accessing
+    # nonexisting field (account_type)", which is how this page first shipped
+    # broken. Keep this list to fields the reference actually lists.
     PROFILE_FIELDS = (
         "id,username,name,biography,website,profile_picture_url,"
-        "followers_count,follows_count,media_count,account_type"
+        "followers_count,follows_count,media_count"
     )
 
+    # If Meta ever rejects one of the optional fields again, degrade to this
+    # set rather than showing an empty profile.
+    MINIMAL_FIELDS = "id,username,name"
+
     async def get_business_profile(self, ig_id: str, token: str) -> dict:
-        """Live IG business profile. Read-only by Meta's design."""
-        resp = await self._graph(
-            "GET", f"/{ig_id}", token, params={"fields": self.PROFILE_FIELDS}
-        )
-        data = resp.json() or {}
+        """Live IG business profile. Read-only by Meta's design.
+
+        Field availability shifts with Graph version and app permissions, so a
+        rejected optional field falls back to the minimal read instead of
+        failing the whole page.
+        """
+        try:
+            resp = await self._graph(
+                "GET", f"/{ig_id}", token, params={"fields": self.PROFILE_FIELDS}
+            )
+            data = resp.json() or {}
+        except MetaAPIError:
+            resp = await self._graph(
+                "GET", f"/{ig_id}", token, params={"fields": self.MINIMAL_FIELDS}
+            )
+            data = resp.json() or {}
         # Normalise the counters: Meta omits them rather than sending null.
         for key in ("followers_count", "follows_count", "media_count"):
             if data.get(key) is None:

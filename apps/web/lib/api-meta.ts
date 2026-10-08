@@ -123,7 +123,10 @@ export interface InstagramProfile {
   followers_count: number;
   follows_count: number;
   media_count: number;
-  account_type: string | null;
+  // Meta does not expose account_type on the IG User node, so Sayvors reports
+  // what it stores at connect time instead.
+  status: string | null;
+  eligibility: string | null;
   parent_page_id: string | null;
   parent_page_name: string | null;
   synced_at: string | null;

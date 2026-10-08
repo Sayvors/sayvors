@@ -30,7 +30,6 @@ _PROFILE = {
     "followers_count": 12400,
     "follows_count": 845,
     "media_count": 234,
-    "account_type": "BUSINESS",
 }
 
 
@@ -85,7 +84,7 @@ async def test_adapter_requests_the_readable_fields(monkeypatch):
     assert seen["path"] == f"/{IG}"
     assert seen["token"] == "page-token"
     fields = seen["params"]["fields"]
-    for f in ("username", "name", "biography", "website", "followers_count", "account_type"):
+    for f in ("username", "name", "biography", "website", "followers_count"):
         assert f in fields
     assert out["username"] == "sayvors"
     assert out["followers_count"] == 12400
@@ -134,7 +133,7 @@ async def test_profile_endpoint_returns_live_data(client, db, monkeypatch):
     assert body["website"] == "https://sayvors.com"
     assert body["followers_count"] == 12400
     assert body["media_count"] == 234
-    assert body["account_type"] == "BUSINESS"
+    assert body["status"]
     assert body["stale"] is False
     assert body["synced_at"]
 

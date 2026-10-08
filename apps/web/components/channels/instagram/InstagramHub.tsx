@@ -193,13 +193,14 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
               {profile?.username ? `@${profile.username}` : "—"}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              {profile?.account_type && (
+              {profile?.status && (
                 <span className="rounded-[8px] bg-[var(--ui-sunken)] px-3 py-1 text-[12px] font-semibold text-[var(--ui-ink)]">
-                  {profile.account_type === "BUSINESS"
-                    ? "Business"
-                    : profile.account_type === "CREATOR"
-                      ? "Creator"
-                      : profile.account_type}
+                  {profile.status === "connected" ? "Connected" : profile.status}
+                </span>
+              )}
+              {profile?.eligibility && (
+                <span className="rounded-[8px] border border-[var(--ui-line)] px-3 py-1 text-[12px] text-[var(--ui-ink-2)]">
+                  {profile.eligibility}
                 </span>
               )}
               {profile?.parent_page_name && (

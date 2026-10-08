@@ -119,7 +119,11 @@ class InstagramProfileOut(BaseModel):
     followers_count: int = 0
     follows_count: int = 0
     media_count: int = 0
-    account_type: str | None = None
+    # What Sayvors knows for certain. Meta does not expose `account_type` on
+    # the IG User node (requesting it fails the whole read), so the UI reports
+    # the asset state we store at connect time instead of guessing.
+    status: str | None = None
+    eligibility: str | None = None
     # The Facebook Page the IG account hangs off, so the UI can say which Page
     # it belongs to (IG is always Page-backed here).
     parent_page_id: str | None = None
