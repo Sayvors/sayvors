@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
+import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 
 /* Team management — members, roles and per-channel access. */
 
@@ -84,6 +85,19 @@ const BTN_GHOST =
   `${BTN} border border-ink/10 text-ink/60 hover:border-deep-violet/30 hover:text-deep-violet dark:border-fog/10 dark:text-fog/60`;
 const BTN_DANGER = `${BTN} border border-red-500/30 text-red-600 hover:bg-red-500/10 dark:text-red-400`;
 
+/*
+ * Glass, deliberately rationed: ONE blur (on panes), ONE hairline, ONE shadow
+ * trio, and radius stays 2px like the rest of the product. Cards inside a pane
+ * get an opaque-ish fill but no second backdrop-filter - nested blurs are what
+ * make "glassmorphism" turn to grey mush. The inset top highlight is the whole
+ * trick: it reads as light catching a pane edge and gives the blur something to
+ * sit against on an already pale background.
+ */
+const GLASS_PANE =
+  "rounded-[2px] border border-white/80 bg-white/45 shadow-[0_1px_1px_rgba(26,18,48,0.04),0_20px_44px_-26px_rgba(26,18,48,0.55),inset_0_1px_0_rgba(255,255,255,0.95)] backdrop-blur-2xl backdrop-saturate-150 dark:border-white/[0.09] dark:bg-white/[0.04] dark:shadow-[0_20px_44px_-26px_rgba(0,0,0,0.8),inset_0_1px_0_rgba(255,255,255,0.07)]";
+const GLASS_CARD =
+  "rounded-[2px] border border-white/90 bg-white/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]";
+
 function StatusBadge({ status }: { status?: string }) {
   const s = (status || "active").toLowerCase();
   const cls =
@@ -98,9 +112,28 @@ function StatusBadge({ status }: { status?: string }) {
   return <span className={`rounded-[2px] px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span>;
 }
 
+/** Connection state of a channel — quiet enough to sit next to the name. */
+function StatusDot({ status }: { status?: string }) {
+  const s = (status || "active").toLowerCase();
+  const tone =
+    s === "active"
+      ? "bg-emerald-500"
+      : s === "error"
+        ? "bg-red-500"
+        : s === "disconnected"
+          ? "bg-ink/30 dark:bg-fog/30"
+          : "bg-amber-500";
+  return (
+    <span className="inline-flex items-center gap-1" title={s}>
+      <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${tone}`} />
+      {s !== "active" && <span>{s}</span>}
+    </span>
+  );
+}
+
 function RoleBadge({ name, isOwner }: { name?: string; isOwner?: boolean }) {
   if (isOwner || name === "Owner") {
-    return <span className="rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet">Owner</span>;
+    return <span className="rounded-[2px] bg-deep-violet/10 px-2 py-0.5 text-[10px] font-semibold text-deep-violet dark:bg-violet-light/15 dark:text-violet-soft">Owner</span>;
   }
   return <span className="rounded-[2px] bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/60 dark:bg-fog/[0.06] dark:text-fog/60">{name || "No role"}</span>;
 }
@@ -148,7 +181,7 @@ function RoleSummary({ role, catalog, membersCount, compact }: { role: TeamRoleO
         </span>
       ))}
       {hidden > 0 && (
-        <span className="text-[10px] text-ink/35 dark:text-fog/35">+{hidden} more</span>
+        <span className="text-[10px] text-ink/55 dark:text-fog/55">+{hidden} more</span>
       )}
     </div>
   );
@@ -195,7 +228,7 @@ function ConfirmButton({
 
 function Spinner({ label }: { label: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-deep-violet">
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-deep-violet dark:text-violet-soft">
       <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-deep-violet/25 border-t-deep-violet" aria-hidden />
       {label}
     </span>
@@ -234,7 +267,7 @@ function ChannelAccess({
   }
 
   return (
-    <div className="mt-2.5 rounded-[2px] border border-ink/[0.06] bg-white/60 p-2.5 dark:border-fog/[0.08] dark:bg-ink/30">
+    <div className={`mt-2.5 ${GLASS_CARD} p-2.5`}>
       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-semibold text-ink/60 dark:text-fog/60">Per-channel access</p>
         <div className="flex items-center gap-1.5">
@@ -252,7 +285,7 @@ function ChannelAccess({
           ))}
         </div>
       </div>
-      <p className="mb-2 text-[10px] text-ink/40 dark:text-fog/40">
+      <p className="mb-2 text-[10px] text-ink/55 dark:text-fog/55">
         The {roleLabel} role allows {LEVEL_PHRASES[roleDefault]} on every channel. Only store an override when this
         member differs from that — an override survives later role changes.
       </p>
@@ -260,15 +293,30 @@ function ChannelAccess({
         {channels.map((ch) => {
           const lvl: Access = levels[ch.id] ?? FOLLOW;
           const effective: Access = lvl === FOLLOW ? roleDefault : lvl;
+          const name = ch.name || ch.platform;
+          const label = platformLabel(ch.platform);
           return (
-            <div key={ch.id} className="flex items-center justify-between gap-2 rounded-[2px] px-1.5 py-1 hover:bg-ink/[0.03] dark:hover:bg-fog/[0.04]">
-              <span className="truncate text-[11px] text-ink/70 dark:text-fog/70">{ch.name || ch.platform}</span>
+            <div
+              key={ch.id}
+              title={`${name} · ${label}`}
+              className="flex items-start gap-2.5 rounded-[2px] px-1.5 py-1.5 transition hover:bg-white/70 dark:hover:bg-white/[0.05]"
+            >
+              <PlatformMark platform={ch.platform} size={18} className="mt-0.5" />
+              {/* Full name, wrapped: several channels can share a display name and
+                  only the provider tells them apart. */}
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] leading-snug break-words text-ink/80 dark:text-fog/80">{name}</p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-ink/60 dark:text-fog/60">
+                  <span>{label}</span>
+                  <StatusDot status={ch.status} />
+                </p>
+              </div>
               <select
                 value={lvl}
-                aria-label={`Access for ${ch.name || ch.platform}`}
+                aria-label={`Access for ${name} on ${label}`}
                 onChange={(e) => setLevels({ ...levels, [ch.id]: e.target.value as Access })}
-                className={`rounded-[2px] border border-ink/10 bg-white px-1.5 py-1 text-[10px] text-ink outline-none focus:border-deep-violet/30 dark:border-fog/10 dark:bg-ink dark:text-fog ${
-                  lvl === FOLLOW ? "text-ink/45 dark:text-fog/45" : effective === "none" ? "text-red-600 dark:text-red-400" : ""
+                className={`shrink-0 rounded-[2px] border border-ink/10 bg-white/85 px-1.5 py-1 text-[10px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/15 dark:bg-ink/80 dark:text-fog ${
+                  lvl === FOLLOW ? "text-ink/50 dark:text-fog/50" : effective === "none" ? "text-red-600 dark:text-red-400" : ""
                 }`}
               >
                 <option value={FOLLOW}>Follow role → {LEVEL_LABELS[roleDefault]}</option>
@@ -442,8 +490,8 @@ function InviteForm({ roles, catalog, members, channels, membersCount, onInvited
               <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <span className="text-[11px] font-semibold text-ink/60 dark:text-fog/60">Per-channel access</span>
-            <span className="text-[10px] text-ink/35 dark:text-fog/35">optional</span>
-            <span className="ml-auto text-[10px] font-medium text-ink/45 dark:text-fog/45">
+            <span className="text-[10px] text-ink/55 dark:text-fog/55">optional</span>
+            <span className="ml-auto text-[10px] font-medium text-ink/60 dark:text-fog/60">
               {overrideCount > 0 ? `${overrideCount} override${overrideCount === 1 ? "" : "s"}` : "inherits role"}
             </span>
           </button>
@@ -629,9 +677,9 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
                     </svg>
                     <span className="truncate text-[12px] font-semibold text-ink/70 dark:text-fog/70">{area.label}</span>
                     {count > 0 && (
-                      <span className="rounded-[2px] bg-deep-violet/10 px-1.5 py-0.5 text-[10px] font-semibold text-deep-violet">{count}</span>
+                      <span className="rounded-[2px] bg-deep-violet/10 px-1.5 py-0.5 text-[10px] font-semibold text-deep-violet dark:bg-violet-light/15 dark:text-violet-soft">{count}</span>
                     )}
-                    <span className="ml-auto text-[10px] tabular-nums text-ink/35 dark:text-fog/35">{count}/{area.actions.length}</span>
+                    <span className="ml-auto text-[10px] tabular-nums text-ink/55 dark:text-fog/55">{count}/{area.actions.length}</span>
                   </button>
                 </div>
                 {open && (
@@ -651,7 +699,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
                               className="h-3.5 w-3.5 shrink-0 accent-deep-violet"
                             />
                             <span className="text-[12px] font-medium text-ink/75 dark:text-fog/75">{act.label}</span>
-                            <span className="ml-auto font-mono text-[10px] text-ink/30 dark:text-fog/30">{act.permission}</span>
+                            <span className="ml-auto font-mono text-[10px] text-ink/50 dark:text-fog/50">{act.permission}</span>
                           </label>
                         );
                       })}
@@ -661,7 +709,7 @@ function RoleBuilder({ editing, catalog, onDone }: { editing: TeamRoleOption | n
                         <button type="button" onClick={() => setArea(area, true)} className="text-[10px] font-semibold text-deep-violet hover:underline">
                           Select all
                         </button>
-                        <button type="button" onClick={() => setArea(area, false)} className="text-[10px] font-semibold text-ink/40 hover:underline dark:text-fog/40">
+                        <button type="button" onClick={() => setArea(area, false)} className="text-[10px] font-semibold text-ink/55 hover:underline dark:text-fog/55">
                           Clear
                         </button>
                       </div>
@@ -832,7 +880,15 @@ export default function TeamPage() {
   const inviteableRoles = roles;
 
   return (
-    <div className="h-full space-y-6 overflow-y-auto p-4 pb-24 sm:p-6">
+    <div className="team-brand relative h-full space-y-6 overflow-y-auto p-4 pb-24 sm:p-6">
+      {/* Colour for the panes to diffuse, on the brand ramp: Deep Violet to
+          Coral through Magenta. Sits inside the scroll box, so it holds still
+          while the content scrolls. */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -left-24 -top-28 h-72 w-72 rounded-full bg-deep-violet/25 blur-3xl dark:bg-deep-violet/45" />
+        <div className="absolute -right-16 top-1/3 h-64 w-64 rounded-full bg-magenta/25 blur-3xl dark:bg-magenta/35" />
+        <div className="absolute bottom-24 left-1/3 h-56 w-56 rounded-full bg-coral/20 blur-3xl dark:bg-coral/30" />
+      </div>
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="text-[20px] font-bold text-ink dark:text-fog">Team management</h1>
@@ -842,7 +898,7 @@ export default function TeamPage() {
         </div>
         {context && (
           <p className="text-[12px] text-ink/50 dark:text-fog/50">
-            {context.business_name || "Your workspace"} · <span className="font-semibold text-deep-violet">{context.role_name || "Owner"}</span>
+            {context.business_name || "Your workspace"} · <span className="font-semibold text-deep-violet dark:text-violet-soft">{context.role_name || "Owner"}</span>
             {!canManage && <span className="ml-2 text-ink/35 dark:text-fog/35">read-only</span>}
           </p>
         )}
@@ -866,7 +922,7 @@ export default function TeamPage() {
           )}
 
           {/* Members */}
-          <section className="rounded-[2px] border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink">
+          <section className={`${GLASS_PANE} p-5`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Members</h2>
               <div className="flex items-center gap-2">
@@ -909,7 +965,7 @@ export default function TeamPage() {
                   return (
                     <div
                       key={key}
-                      className="flex flex-col self-start rounded-[2px] border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.03]"
+                      className={`flex flex-col self-start ${GLASS_CARD} p-3`}
                     >
                       <div className="flex items-start gap-2.5">
                         <Initial label={m.name || m.email} owner={isOwner} />
@@ -918,12 +974,12 @@ export default function TeamPage() {
                           <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                             <StatusBadge status={m.status} />
                             {m.status === "invited" && m.invited_at && (
-                              <span className="text-[10px] text-ink/35 dark:text-fog/35">sent {shortDate(m.invited_at)}</span>
+                              <span className="text-[10px] text-ink/55 dark:text-fog/55">sent {shortDate(m.invited_at)}</span>
                             )}
                             {m.status === "active" && m.accepted_at && (
-                              <span className="text-[10px] text-ink/35 dark:text-fog/35">joined {shortDate(m.accepted_at)}</span>
+                              <span className="text-[10px] text-ink/55 dark:text-fog/55">joined {shortDate(m.accepted_at)}</span>
                             )}
-                            {isSelf && <span className="text-[10px] text-ink/35 dark:text-fog/35">you</span>}
+                            {isSelf && <span className="text-[10px] text-ink/55 dark:text-fog/55">you</span>}
                           </div>
                         </div>
                       </div>
@@ -943,7 +999,7 @@ export default function TeamPage() {
                         ) : (
                           <div className="min-w-0">
                             <RoleBadge name={m.role_name} isOwner={isOwner} />
-                            {why && <p className="mt-1 text-[10px] text-ink/35 dark:text-fog/35">{why}</p>}
+                            {why && <p className="mt-1 text-[10px] text-ink/55 dark:text-fog/55">{why}</p>}
                           </div>
                         )}
                       </div>
@@ -999,8 +1055,8 @@ export default function TeamPage() {
           </section>
 
           {/* Invite member */}
-          <section className="rounded-[2px] border border-deep-violet/10 bg-deep-violet/[0.03] p-5 dark:border-deep-violet/20 dark:bg-deep-violet/[0.06]">
-            <h2 className="text-[15px] font-semibold text-deep-violet">Invite member</h2>
+          <section className={`${GLASS_PANE} border-deep-violet/25 bg-deep-violet/[0.05] p-5 dark:border-deep-violet/30 dark:bg-deep-violet/[0.10]`}>
+            <h2 className="text-[15px] font-semibold text-deep-violet dark:text-violet-soft">Invite member</h2>
             <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
               The recipient gets an email with a link to set up their access. Pending invites can be resent from the members list.
             </p>
@@ -1019,7 +1075,7 @@ export default function TeamPage() {
           </section>
 
           {/* Roles */}
-          <section className="rounded-[2px] border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink">
+          <section className={`${GLASS_PANE} p-5`}>
             <h2 className="text-[15px] font-semibold text-ink dark:text-fog">Roles</h2>
             <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
               Every role is yours to set — tick or untick any permission, on built-in roles too. Built-in roles keep their
@@ -1033,10 +1089,10 @@ export default function TeamPage() {
                   const perms = Array.from(new Set(r.permissions || []));
                   const inUse = membersCount(r.id);
                   return (
-                    <div key={r.id} className="flex flex-col self-start rounded-[2px] border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.03]">
+                    <div key={r.id} className={`flex flex-col self-start ${GLASS_CARD} p-3`}>
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-[13px] font-semibold text-ink dark:text-fog">{r.name}</p>
-                        <span className={`rounded-[2px] px-2 py-0.5 text-[10px] font-semibold ${r.is_system ? "bg-deep-violet/10 text-deep-violet" : "bg-ink/[0.06] text-ink/50 dark:bg-fog/[0.06] dark:text-fog/50"}`}>
+                        <span className={`rounded-[2px] px-2 py-0.5 text-[10px] font-semibold ${r.is_system ? "bg-deep-violet/10 text-deep-violet dark:bg-violet-light/15 dark:text-violet-soft" : "bg-ink/[0.06] text-ink/50 dark:bg-fog/[0.06] dark:text-fog/50"}`}>
                           {r.is_system ? "Built-in" : "Custom"}
                         </span>
                         <span className="ml-auto text-[11px] text-ink/40 dark:text-fog/40">
@@ -1077,7 +1133,7 @@ export default function TeamPage() {
                         )}
                       </div>
                       {!r.is_system && canManage && inUse > 0 && (
-                        <span className="mt-1.5 text-[10px] text-ink/35 dark:text-fog/35">
+                        <span className="mt-1.5 text-[10px] text-ink/55 dark:text-fog/55">
                           Move the {inUse} member{inUse === 1 ? "" : "s"} off this role before deleting it.
                         </span>
                       )}
@@ -1089,7 +1145,7 @@ export default function TeamPage() {
           </section>
 
           {/* Role builder */}
-          <section className="rounded-[2px] border border-ink/10 bg-white p-5 shadow-sm dark:border-fog/10 dark:bg-ink">
+          <section className={`${GLASS_PANE} p-5`}>
             <h2 className="text-[15px] font-semibold text-ink dark:text-fog">
               {editingRole ? `Editing ${editingRole.name}` : "Role builder"}
             </h2>

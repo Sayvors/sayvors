@@ -236,3 +236,33 @@ html[lang="ar"] {
 .dark .btn-secondary:hover {
   background: rgba(248, 246, 255, 0.04);
 }
+
+/*
+ * ── Brand palette, scoped ─────────────────────────────────────────────
+ * Sayvors Brand Guidelines V1.0 (page 3). The tokens above are the older
+ * violet-tinted set; these are the published values. Scoped to .team-brand
+ * while the team page is being compared - dropping the scope selector and
+ * moving the values into :root/.dark promotes the whole dashboard.
+ *
+ * Ink and Fog keep their meaning in both modes: Ink is always the dark end
+ * of the ramp, Fog the light end, so every `text-ink` / `dark:text-fog`
+ * utility keeps working unchanged.
+ */
+.team-brand {
+  --color-ink: #14101f;
+  --color-fog: #f4f2f7;
+  --color-deep-violet: #3d1d6e;
+  --color-magenta: #b0338a;
+  --color-coral: #ff4f6e;
+  --background: #f4f2f7;
+  --foreground: #14101f;
+}
+
+.dark .team-brand {
+  --color-fog: #f5f3fa;
+  --color-deep-violet: #6b3fb5;
+  --color-magenta: #d8459f;
+  --color-coral: #ff6e85;
+  --background: #14101f;
+  --foreground: #f5f3fa;
+}
