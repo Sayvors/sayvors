@@ -55,11 +55,23 @@ function Avatar({
   boxCls: string;
   children?: ReactNode;
 }) {
+  // Meta avatar urls are signed CDN links that expire — when one fails to
+  // load, fall back to initials instead of a broken-image icon. Tracking
+  // the failed url (not a boolean) means a refreshed url recovers on its
+  // own without an effect.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const show = url != null && failedUrl !== url;
   return (
     <span className="relative shrink-0" aria-hidden>
-      {url ? (
+      {show ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt="" className={`object-cover ${boxCls}`} />
+        <img
+          key={url}
+          src={url}
+          alt=""
+          onError={() => setFailedUrl(url)}
+          className={`object-cover ${boxCls}`}
+        />
       ) : (
         <span className={`flex items-center justify-center font-bold ${boxCls}`}>
           {initials(name, phone)}
@@ -357,7 +369,11 @@ export default function InboxView() {
         content: text,
       });
       setDraft("");
-      setMessages((prev) => [...prev, result.message]);
+      // The realtime socket usually delivers this same outbound message
+      // while the POST is still in flight — skip it if it already landed.
+      setMessages((prev) =>
+        prev.some((m) => m.id === result.message.id) ? prev : [...prev, result.message],
+      );
       setThreads((prev) =>
         prev.map((t) =>
           `${t.channel_id}:${t.key}` === `${thread.channel_id}:${thread.key}`

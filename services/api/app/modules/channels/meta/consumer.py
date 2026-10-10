@@ -87,9 +87,9 @@ async def _refresh_instagram_profile(
 ) -> str | None:
     """Upsert the Instagram contact cache; Graph read only when stale.
 
-    Avatar URLs are temporary CDN links (they expire), so the profile is
-    re-fetched once a week on inbound traffic. Returns the best display
-    name (name, then username) or None.
+    Avatar URLs are temporary CDN links — observed dead after ~5 days —
+    so the profile is re-fetched once a day on inbound traffic. Returns
+    the best display name (name, then username) or None.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -107,7 +107,7 @@ async def _refresh_instagram_profile(
     fetched_at = row.profile_fetched_at if row else None
     stale = (
         fetched_at is None
-        or fetched_at < datetime.now(timezone.utc) - timedelta(days=7)
+        or fetched_at < datetime.now(timezone.utc) - timedelta(days=1)
     )
     if stale:
         fetched = await adapter.get_contact_profile(page_token, igsid)
