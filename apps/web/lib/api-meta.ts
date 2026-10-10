@@ -305,6 +305,29 @@ export const setInstagramCommentHidden = (
     { method: "POST", body: JSON.stringify({ hidden }) },
   );
 
+export interface InstagramPublishingLimit {
+  quota_total: number;
+  quota_usage: number;
+}
+
+/** Meta's rolling 24h publishing quota; zeros when Meta refused the read. */
+export const fetchInstagramPublishingLimit = (
+  igId: string,
+): Promise<InstagramPublishingLimit> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/publishing-limit`);
+
+/** Post images to the tenant's own feed — one url or a carousel. The urls
+ * must be publicly reachable: Meta's servers fetch them. */
+export const publishToInstagram = (
+  igId: string,
+  imageUrls: string[],
+  caption: string,
+): Promise<{ media_id: string }> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/posts/publish`, {
+    method: "POST",
+    body: JSON.stringify({ image_urls: imageUrls, caption }),
+  });
+
 export const deleteInstagramComment = (
   igId: string,
   commentId: string,

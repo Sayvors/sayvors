@@ -84,10 +84,47 @@ other people's content.
 
 ## Phase 5 — Meta app config (user actions, blocks live traffic)
 
-- [ ] Add `instagram_manage_comments` to the Meta app (App Review package).
-- [ ] Verify the "Comments" webhook field is subscribed on the Instagram
-      object (app-level webhooks are PER OBJECT — memory gotcha).
+- [ ] Add `instagram_manage_comments` + `instagram_business_content_publish`
+      to the Meta app (App Review package).
+- [x] Webhook fields subscribed on the Instagram object (user confirmed
+      2026-10-10): comments, mentions, messages, message_edit,
+      messaging_handover/postbacks/seen ON; live_comments, message_reactions,
+      messaging_referral, standby, story_insights OFF (fine for now —
+      consider `standby` when human handover needs a cleaner signal).
+      Callback https://dev-api.sayvors.com/api/v1/meta/webhooks at v26.0.
 - [ ] Staging: `alembic upgrade head` (new revision rides the 2 pending).
+
+## Phase 7 — Publishing to the feed — DONE 2026-10-10
+
+Images + image carousels from Sayvors to the tenant's OWN feed. Two Graph
+calls: POST /{ig}/media (container from a PUBLIC https url) →
+POST /{ig}/media_publish. Video/Reels are async containers (status
+polling) — deliberately not in this round.
+
+- [x] Adapter: `create_media_container` (caption / is_carousel_item),
+      `create_carousel_container` (caption lives ONLY on the carousel,
+      per Meta), `publish_media_container`, `get_publishing_limit`
+      (read → degrades to {} like every read).
+- [x] Router: `POST /instagram/{ig_id}/posts/publish` (1–10 urls → single
+      or carousel; MetaAPIError → 502, no partial post to store),
+      `GET /instagram/{ig_id}/publishing-limit`. Writes channels.edit,
+      reads channels.view; same `_instagram_asset_or_404` tenant boundary.
+- [x] Media sourcing: Sayvors storage uploads are publicly served
+      (main.py mounts MEDIA_PUBLIC_PATH via StaticFiles) so upload →
+      publish is one flow; non-HTTPS storage urls are refused in the UI
+      with a plain-language error (Meta cannot fetch them).
+- [x] Frontend: `PostComposer.tsx` in the Posts tab — uploads or pasted
+      public urls, caption with 2200-char counter, quota line
+      ("N of 50 posts used in the next 24h", hidden when Meta refuses the
+      read), publish → grid remounts and the new post appears; it is now
+      "our media" so its comments flow into the inbox automatically.
+- [x] Tests `test_instagram_publish.py` (7 passing): two-call single post,
+      carousel (children uncaptioned, carousel captioned, publish rides
+      the carousel id), container-failure 502 without publish, publish
+      failure 502, tenant 404, no-token 403, quota read + degrade.
+- Deferred: video/Reels publishing (needs container status polling —
+  FINISHED_STATUS — so an endpoint can't be synchronous), a publish ledger
+  for exact-once retries, Stories publishing.
 
 ## Phase 6 — Instagram standalone (no Facebook Page) — after Phases 1-3
 
@@ -100,6 +137,10 @@ profile, media, stories, insights, comments AND DMs, no Page involved.
       (separate app id/secret) + App Review for `instagram_business_basic`,
       `instagram_business_manage_messages`, `instagram_business_manage_comments`,
       `instagram_business_content_publish`.
+      UPDATE 2026-10-10: the user's dashboard now shows the "Instagram API
+      with Instagram business login" use case WITH the webhook config done —
+      the app side exists. Remaining: the permissions above in that use
+      case's Permissions panel + the standalone OAuth flow below.
 - [ ] `auth_type` column on MetaConnection (`facebook_page` |
       `instagram_direct`); InstagramAdapter base-URL switches to
       graph.instagram.com for instagram_direct connections.

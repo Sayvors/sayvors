@@ -379,6 +379,71 @@ class InstagramAdapter(MetaProviderAdapter):
         resp = await self._graph("DELETE", f"/{comment_id}", token)
         return bool(resp.json().get("success", True))
 
+    # ── Publishing. The tenant posts to their OWN feed. Like the comment
+    # writes these propagate MetaAPIError — a failed post must surface, not
+    # evaporate. Meta's flow is two-step: create a container from a PUBLIC
+    # media url (their servers fetch it; anything behind a login fails),
+    # then publish the container. Images and image carousels process
+    # synchronously; video/Reels containers are async (status polling) and
+    # belong to a later round.
+
+    IG_CAPTION_MAX_CHARS = 2200  # Meta's caption cap.
+    IG_CAROUSEL_MAX_ITEMS = 10   # Meta's carousel children cap.
+
+    async def create_media_container(
+        self, ig_id: str, token: str, *, image_url: str,
+        caption: str | None = None, is_carousel_item: bool = False,
+    ) -> str:
+        """Step 1: hand Meta a public image url, get a container id back."""
+        body: dict = {"image_url": image_url}
+        if caption is not None:
+            body["caption"] = caption
+        if is_carousel_item:
+            body["is_carousel_item"] = True
+        resp = await self._graph("POST", f"/{ig_id}/media", token, json=body)
+        return str(resp.json().get("id", ""))
+
+    async def create_carousel_container(
+        self, ig_id: str, token: str, *, children: list[str],
+        caption: str | None = None,
+    ) -> str:
+        """Wrap finished child containers in a CAROUSEL_ALBUM container.
+        Per Meta's docs the caption lives ONLY on the carousel container —
+        a caption on a child is ignored."""
+        body: dict = {"media_type": "CAROUSEL_ALBUM", "children": ",".join(children)}
+        if caption is not None:
+            body["caption"] = caption
+        resp = await self._graph("POST", f"/{ig_id}/media", token, json=body)
+        return str(resp.json().get("id", ""))
+
+    async def publish_media_container(self, ig_id: str, token: str, creation_id: str) -> str:
+        """Step 2: make the container live. Returns the published media id
+        (the same id the posts grid will list)."""
+        resp = await self._graph(
+            "POST", f"/{ig_id}/media_publish", token,
+            json={"creation_id": creation_id},
+        )
+        return str(resp.json().get("id", ""))
+
+    async def get_publishing_limit(self, ig_id: str, token: str) -> dict:
+        """Posts used against Meta's rolling 24h publishing window (50/day).
+
+        A read, so — like stories — it degrades to {} when Meta refuses
+        (older app versions lack the scope); the composer just hides the
+        quota line."""
+        try:
+            resp = await self._graph(
+                "GET", f"/{ig_id}/content_publishing_limit", token,
+                params={"fields": "quota_total,quota_usage"},
+            )
+        except MetaAPIError:
+            return {}
+        data = resp.json() or {}
+        return {
+            "quota_total": int(data.get("quota_total") or 0),
+            "quota_usage": int(data.get("quota_usage") or 0),
+        }
+
     # Per-post insights. Metric names differ by media type and Graph rejects
     # the WHOLE call when one metric is wrong for the type, so each type gets
     # its own conservative set. REELS is the only surface that exposes shares.

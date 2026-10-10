@@ -1,7 +1,7 @@
 """Meta integration API schemas."""
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 
 class MetaConnectionOut(BaseModel):
@@ -293,6 +293,31 @@ class InstagramAudienceOut(BaseModel):
     people: list[InstagramPerson] = []
     demographics: InstagramDemographics = InstagramDemographics()
     comments_unavailable: str | None = None
+
+
+class InstagramPublishIn(BaseModel):
+    """Post images to the tenant's own feed. One url is a single post;
+    several become a carousel. Meta fetches these urls itself, so they
+    must be publicly reachable — storage's public media path qualifies."""
+
+    image_urls: list[HttpUrl] = Field(min_length=1, max_length=10)
+    caption: str = Field(default="", max_length=2200)
+
+
+class InstagramPublishOut(BaseModel):
+    """The published post's platform media id — the same id the posts
+    grid lists, so the composer can deep-link to it once the grid
+    refreshes."""
+
+    media_id: str
+
+
+class InstagramPublishingLimitOut(BaseModel):
+    """Meta's rolling 24h publishing quota for this account (50/day cap).
+    quota_total is 0 when Meta refused the read — the UI hides the line."""
+
+    quota_total: int = 0
+    quota_usage: int = 0
 
 
 class WhatsAppUsageOut(BaseModel):

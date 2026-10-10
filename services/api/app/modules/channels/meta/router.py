@@ -28,6 +28,9 @@ from .schemas import (
     InstagramPostOut,
     InstagramPostsOut,
     InstagramProfileOut,
+    InstagramPublishIn,
+    InstagramPublishingLimitOut,
+    InstagramPublishOut,
     InstagramStoriesOut,
     InstagramStoredCommentOut,
     MetaAssetListResponse,
@@ -1482,6 +1485,86 @@ async def delete_instagram_comment(
             "platform": "instagram",
         })
     return InstagramCommentActionOut(ok=True)
+
+
+@router.post("/instagram/{ig_id}/posts/publish", response_model=InstagramPublishOut)
+async def publish_instagram_post(
+    ig_id: str,
+    body: InstagramPublishIn,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish images to the tenant's OWN Instagram feed.
+
+    One url is a single post; several become a carousel (caption lives on
+    the carousel container, per Meta's rule). Two Graph calls — container,
+    then publish — and a failure at either surfaces as a 502 with Meta's
+    message; there is no partial post to store. Media must sit at public
+    urls: Meta's servers fetch them, so anything behind a login 404s.
+    """
+    _asset, token = await _instagram_asset_or_404(db, user, ig_id)
+    if not token:
+        raise HTTPException(
+            status_code=403, detail="Instagram account has no access token stored"
+        )
+
+    adapter = _service.get_adapter("instagram")
+    try:
+        if len(body.image_urls) == 1:
+            creation_id = await adapter.create_media_container(
+                ig_id, token,
+                image_url=str(body.image_urls[0]),
+                caption=body.caption or None,
+            )
+        else:
+            children = [
+                await adapter.create_media_container(
+                    ig_id, token, image_url=str(url), is_carousel_item=True,
+                )
+                for url in body.image_urls
+            ]
+            creation_id = await adapter.create_carousel_container(
+                ig_id, token, children=children, caption=body.caption or None,
+            )
+        if not creation_id:
+            raise HTTPException(
+                status_code=502,
+                detail="Instagram accepted the media but returned no container id.",
+            )
+        media_id = await adapter.publish_media_container(ig_id, token, creation_id)
+    except MetaAPIError as e:
+        raise HTTPException(status_code=502, detail=str(e)[:200])
+
+    if not media_id:
+        raise HTTPException(
+            status_code=502,
+            detail="Instagram published the container but returned no media id.",
+        )
+    return InstagramPublishOut(media_id=media_id)
+
+
+@router.get(
+    "/instagram/{ig_id}/publishing-limit",
+    response_model=InstagramPublishingLimitOut,
+)
+async def instagram_publishing_limit(
+    ig_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Posts left in Meta's rolling 24h publishing window (50/day cap).
+
+    The adapter degrades a refused read to zeros — the composer hides the
+    quota line then, it never blocks composing."""
+    _asset, token = await _instagram_asset_or_404(db, user, ig_id)
+    if not token:
+        raise HTTPException(
+            status_code=403, detail="Instagram account has no access token stored"
+        )
+    data = await _service.get_adapter("instagram").get_publishing_limit(ig_id, token)
+    return InstagramPublishingLimitOut(**data)
 
 
 @router.get(

@@ -11,6 +11,7 @@ import {
 import PlatformMark from "@/components/channels/PlatformMark";
 import AudienceTab from "./AudienceTab";
 import CommentsTab from "./CommentsTab";
+import PostComposer from "./PostComposer";
 import PostsGrid from "./PostsGrid";
 import StoriesStrip from "./StoriesStrip";
 import { MessagesTab } from "./ListsTab";
@@ -268,6 +269,32 @@ function ProfileTab({ asset }: { asset: MetaAsset }) {
   );
 }
 
+/*
+ * The posts tab: the composer on top, the feed below. Publishing bumps a
+ * version counter that remounts the grid — its fetch is mount-owned, so a
+ * fresh post shows up without the tenant hunting for a refresh button.
+ */
+function PostsTab({ igId, accountUsername }: { igId: string; accountUsername?: string | null }) {
+  const [version, setVersion] = useState(0);
+  return (
+    <section className={PANEL}>
+      <h3 className={`text-[15px] font-semibold ${INK}`}>Posts</h3>
+      <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">
+        Laid out like your profile. Tap a post to open it with its
+        comments, likes and reach.
+      </p>
+      <div className="mt-4 space-y-5">
+        <PostComposer igId={igId} onPublished={() => setVersion((v) => v + 1)} />
+        <PostsGrid
+          key={version}
+          igId={igId}
+          accountUsername={accountUsername}
+        />
+      </div>
+    </section>
+  );
+}
+
 export default function InstagramHub() {
   const [tab, setTab] = useState<Tab>("profile");
   const [assets, setAssets] = useState<MetaAsset[] | null>(null);
@@ -380,21 +407,7 @@ export default function InstagramHub() {
               <AudienceTab igId={account.external_asset_id} />
             </div>
           ) : active.key === "posts" ? (
-            <div className="mt-6">
-              <section className={PANEL}>
-                <h3 className={`text-[15px] font-semibold ${INK}`}>Posts</h3>
-                <p className="mt-1 text-[12px] text-[var(--ui-ink-2)]">
-                  Laid out like your profile. Tap a post to open it with its
-                  comments, likes and reach.
-                </p>
-                <div className="mt-4">
-                  <PostsGrid
-                    igId={account.external_asset_id}
-                    accountUsername={account.username}
-                  />
-                </div>
-              </section>
-            </div>
+            <PostsTab igId={account.external_asset_id} accountUsername={account.username} />
           ) : active.key === "comments" ? (
             <div className="mt-6">
               <CommentsTab
