@@ -108,6 +108,7 @@ export default function CropEditor({
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
 
@@ -194,7 +195,7 @@ export default function CropEditor({
           role="application"
           aria-label="Crop frame — drag to reposition"
           style={{ width: BOX, height: boxH, touchAction: "none" }}
-          className="relative cursor-grab overflow-hidden rounded-[8px] bg-black active:cursor-grabbing"
+          className="relative flex cursor-grab items-center justify-center overflow-hidden rounded-[8px] bg-black active:cursor-grabbing"
           onPointerDown={(e) => {
             (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
             dragRef.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
@@ -226,6 +227,11 @@ export default function CropEditor({
               src={imgUrl}
               alt="Crop source"
               draggable={false}
+              onError={() =>
+                setLoadError(
+                  "This image can't be read — Instagram posts need JPG or PNG. Convert the file and add it again.",
+                )
+              }
               className="pointer-events-none absolute left-1/2 top-1/2 max-w-none select-none"
               style={{
                 transform: activeRatio
@@ -235,6 +241,14 @@ export default function CropEditor({
                 maxWidth: activeRatio ? "none" : "100%",
               }}
             />
+          )}
+          {loadError && (
+            <p
+              role="alert"
+              className="absolute inset-x-3 z-10 rounded-[8px] bg-white/95 p-2 text-center text-[12px] font-semibold text-red-600"
+            >
+              {loadError}
+            </p>
           )}
         </div>
       </div>
@@ -270,7 +284,13 @@ export default function CropEditor({
         <button
           type="button"
           onClick={() => {
-            void buildBlob().then(onDone).catch(() => onCancel());
+            void buildBlob()
+              .then(onDone)
+              .catch((e: unknown) => {
+                setLoadError(
+                  e instanceof Error ? e.message : "Could not process this image — try another file.",
+                );
+              });
           }}
           className="rounded-[12px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
         >

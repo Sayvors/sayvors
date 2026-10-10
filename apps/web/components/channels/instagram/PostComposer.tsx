@@ -181,7 +181,7 @@ export default function PostComposer({
 
   const uploadBlob = async (blob: Blob, name: string): Promise<string> => {
     const form = new FormData();
-    form.append("file", new File([blob], name, { type: "image/jpeg" }));
+    form.append("file", new File([blob], name, { type: blob.type || "image/jpeg" }));
     const result = await apiFetch("/api/v1/storage/upload", {
       method: "POST",
       body: form,
@@ -402,7 +402,7 @@ export default function PostComposer({
                 {busy ? "Working…" : "Add images (up to 10 — they become a carousel)"}
                 <input
                   type="file"
-                  accept="image/jpeg,image/png"
+                  accept="image/*"
                   multiple
                   className="sr-only"
                   disabled={busy}
@@ -540,6 +540,12 @@ export default function PostComposer({
                 <p className={`text-[12px] ${INK2}`}>
                   Stories must be 9:16 — upload the image here (not a pasted
                   link) and we crop it automatically.
+                </p>
+              )}
+              {entries.length === 0 && (
+                <p className={`text-[12px] ${INK2}`}>
+                  Add at least one image above — Publish and the story toggle
+                  unlock once an image is in.
                 </p>
               )}
 
