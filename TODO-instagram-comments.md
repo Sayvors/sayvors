@@ -17,54 +17,63 @@ other people's content.
   method. Frontend shows comments only inside the PostModal (read-only,
   from the posts fetch `replies{...}`).
 
-## Phase 1 — Storage + ingestion (backend)
+## Phase 1 — Storage + ingestion (backend) — DONE 2026-10-10
 
-- [ ] `ChannelComment` model in `channels/models.py` (next to ChannelMessage):
+- [x] `ChannelComment` model in `channels/models.py` (next to ChannelMessage):
       id, channel_id FK, platform_comment_id (unique — replay dedupe),
       parent_platform_comment_id (reply threading), media_id, direction
       inbound/outbound, author_id (IGSID), author_name (username), content,
       like_count, hidden, status (received/sent/failed/hidden/deleted),
-      error, created_at/updated_at. Alembic revision.
-- [ ] Consumer `_handle_instagram_comment` + dispatch on `comment.received`.
+      error, **platform_timestamp** (when it was written on Instagram),
+      **deleted_at** (see below), created_at/updated_at. Alembic revision.
+      Deletion lifecycle: Meta sends NO delete webhook — deleted-on-IG is
+      detected lazily (probe the comment id, 404 → deleted_at set);
+      deleted-via-Sayvors sets it immediately.
+- [x] Consumer `_handle_instagram_comment` + dispatch on `comment.received`.
       Mirrors `_handle_instagram_message`: resolve asset (provider=
       "instagram", untrusted-payload rule), dedupe by platform_comment_id —
       but an EXISTING id with different text is Meta's "edited" redelivery:
       update, don't skip. `_channel_for(platform="instagram")`, persist,
       `publish_inbox_event(type="comment")`.
-- [ ] Tests `test_instagram_comments_pipeline.py`: stores a comment, Kafka
-      replay does not twin, edited redelivery updates text, unknown asset
-      dropped, realtime event published.
+- [x] Tests `test_instagram_comments_pipeline.py` (5 passing): stores with
+      platform truth, Kafka replay does not twin, edited redelivery updates
+      text + realtime "comment_updated", unknown asset dropped, timestamp
+      parser tolerates junk/naive.
 
-## Phase 2 — Reply / hide / delete (backend)
+## Phase 2 — Reply / hide / delete (backend) — DONE 2026-10-10
 
-- [ ] `InstagramAdapter`: `reply_to_comment(comment_id, token, message)`
-      (POST `/{comment-id}/replies`), `set_comment_hidden(comment_id, token,
-      hidden)` (POST `/{comment-id}` hide=), `delete_comment(comment_id,
-      token)` (DELETE `/{comment-id}`). Parent Page token — same credential
-      path as DM sends (`get_instagram_page_credentials`).
-- [ ] Meta router endpoints (tenant-scoped via MetaAsset, cache tests'
-      `_seed` pattern):
-      - `GET /instagram/{ig_id}/comments` — stored rows, `?media_id=` filter,
-        newest first, author names enriched from contact_profiles.
-      - `POST /instagram/{ig_id}/comments/{comment_id}/replies` — body
-        `{message}`; send → persist outbound row (parent set, provider id
-        stored) → realtime. Failure → row status "failed" + error, 502.
-      - `POST /instagram/{ig_id}/comments/{comment_id}/hide` body `{hidden: bool}`.
-      - `DELETE /instagram/{ig_id}/comments/{comment_id}`.
-      All idempotent-safe: reply dedupes on provider message id.
-- [ ] Tests: tenant isolation (other tenant's asset 404), reply persists +
-      publishes, hide/delete flip state, no token → clean 4xx not 500.
+- [x] `InstagramAdapter`: `reply_to_comment` / `set_comment_hidden` /
+      `delete_comment` — writes PROPAGATE MetaAPIError (a failed reply
+      must surface, never silently vanish like an unreadable read).
+- [x] Meta router endpoints (shared `_instagram_asset_or_404` — the tenant
+      boundary is the 404):
+      - `GET /instagram/{ig_id}/comments` — stored rows only (never Graph,
+        never rate limit), `?media_id=` + `?limit<=200`, contact_profiles
+        fallback for missing author names.
+      - `POST .../comments/{comment_id}/replies` — send → store → realtime;
+        Meta failure = 502 AND a failed row in the thread (visible,
+        retryable).
+      - `POST .../comments/{comment_id}/hide` (body {hidden}) — Meta's rule:
+        hidden stays visible to its author.
+      - `DELETE .../comments/{comment_id}` — row kept, deleted_at set.
+      Writes require `channels.edit`, reads `channels.view`.
+- [x] Tests `test_instagram_comment_actions.py` (7 passing): rows-not-Graph
+      read, tenant 404, reply stores+publishes, failed reply = failed row +
+      502, hide flips row, delete sets deleted_at, no-token 403 not 500.
 
-## Phase 3 — Comments tab (frontend)
+## Phase 3 — Comments tab (frontend) — DONE 2026-10-10
 
-- [ ] `lib/api-meta.ts`: `InstagramStoredComment` type +
-      fetchInstagramComments / replyToInstagramComment / setCommentHidden /
-      deleteComment.
-- [ ] `components/channels/instagram/CommentsTab.tsx`: list rows (avatar,
-      @username, text, timeAgo, media thumbnail chip), inline reply box,
-      hide/unhide + delete menus, realtime push via the existing inbox WS
-      (type "comment"), unread badge on the hub tab.
-- [ ] Wire into `InstagramHub.tsx` tabs; ESLint + `tsc --noEmit` clean.
+- [x] `lib/api-meta.ts`: `InstagramStoredComment` type +
+      fetchInstagramComments / replyToInstagramComment / setInstagramCommentHidden /
+      deleteInstagramComment; `use-inbox-realtime.ts` event union extended
+      with comment / comment_updated / comment_deleted.
+- [x] `components/channels/instagram/CommentsTab.tsx` (new file): threaded
+      inbox (replies indented), inline reply box (Enter sends), hide/unhide,
+      two-step delete, post thumbnails via the cached posts fetch, realtime
+      refresh over the existing inbox WS. The old read-only placeholder in
+      ListsTab.tsx is removed.
+- [x] Wired into `InstagramHub.tsx` comments tab (with accountUsername);
+      ESLint + `tsc --noEmit` clean. Deferred polish: hub-tab unread badge.
 
 ## Phase 4 — AI-assisted comment replies (own round, after 1-3 ship)
 
@@ -79,6 +88,37 @@ other people's content.
 - [ ] Verify the "Comments" webhook field is subscribed on the Instagram
       object (app-level webhooks are PER OBJECT — memory gotcha).
 - [ ] Staging: `alembic upgrade head` (new revision rides the 2 pending).
+
+## Phase 6 — Instagram standalone (no Facebook Page) — after Phases 1-3
+
+The page-linked flow (FB login → Pages → IG) breaks for businesses with a
+standalone IG business account. Meta's answer: **Instagram API with
+Instagram Login** (graph.instagram.com, own OAuth dialog, own tokens) —
+profile, media, stories, insights, comments AND DMs, no Page involved.
+
+- [ ] Prereq (user): create the Instagram-type app in the Meta dashboard
+      (separate app id/secret) + App Review for `instagram_business_basic`,
+      `instagram_business_manage_messages`, `instagram_business_manage_comments`,
+      `instagram_business_content_publish`.
+- [ ] `auth_type` column on MetaConnection (`facebook_page` |
+      `instagram_direct`); InstagramAdapter base-URL switches to
+      graph.instagram.com for instagram_direct connections.
+- [ ] Instagram Login OAuth: authorize dialog + short→long-lived exchange +
+      refresh endpoint mapping, stored on the same MetaConnection
+      (provider="instagram").
+- [ ] **Token refresh job — must-have**: standalone tokens live 60 days and
+      silently die without refresh (page-linked page tokens mostly don't
+      expire; this job only serves instagram_direct).
+- [ ] `get_instagram_page_credentials()`: instagram_direct → return
+      (ig_id, ig_token). One-function seam — DMs + comment replies +
+      everything downstream works unchanged (verified: every send funnels
+      through it).
+- [ ] Webhook ingress needs nothing new — object=instagram parser handles
+      both shapes; asset resolution keys on the IG user id already.
+- [ ] Frontend: second connect path ("Connect Instagram" without Facebook)
+      on the connect page.
+- [ ] Tests: standalone OAuth exchange, token refresh, DM + comment reply
+      via the direct token, page-linked regression.
 
 ## Deferred (intentionally)
 

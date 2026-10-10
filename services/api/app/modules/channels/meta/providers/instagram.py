@@ -347,6 +347,38 @@ class InstagramAdapter(MetaProviderAdapter):
             for s in (resp.json() or {}).get("data", []) or []
         ]
 
+    # Comment writes. Unlike the reads above these PROPAGATE MetaAPIError —
+    # a failed reply must surface to the tenant as a failed row, never
+    # silently vanish like an unreadable story tray does.
+
+    async def reply_to_comment(self, comment_id: str, token: str, message: str) -> str:
+        """Reply to a comment on the tenant's own media. Returns the new
+        reply's platform comment id (empty string when Meta gives none)."""
+        # Byte-safe truncation, same cap as DMs: comments are capped too.
+        body = message.encode("utf-8")[: self.IG_TEXT_MAX_BYTES].decode(
+            "utf-8", errors="ignore"
+        )
+        resp = await self._graph(
+            "POST", f"/{comment_id}/replies", token,
+            json={"message": body},
+        )
+        return resp.json().get("id", "")
+
+    async def set_comment_hidden(self, comment_id: str, token: str, hidden: bool = True) -> bool:
+        """Hide (or unhide) a comment on the tenant's own media. Hidden
+        comments stay visible to their author — that is Meta's rule, not
+        ours — and the endpoint is the only lever the API offers."""
+        resp = await self._graph(
+            "POST", f"/{comment_id}", token,
+            json={"hide": hidden},
+        )
+        return bool(resp.json().get("success", True))
+
+    async def delete_comment(self, comment_id: str, token: str) -> bool:
+        """Delete a comment on the tenant's own media, permanently."""
+        resp = await self._graph("DELETE", f"/{comment_id}", token)
+        return bool(resp.json().get("success", True))
+
     # Per-post insights. Metric names differ by media type and Graph rejects
     # the WHOLE call when one metric is wrong for the type, so each type gets
     # its own conservative set. REELS is the only surface that exposes shares.

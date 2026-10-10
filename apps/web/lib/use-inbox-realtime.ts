@@ -6,7 +6,13 @@ import { getAccessToken } from "@/lib/auth-context";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export interface InboxRealtimeEvent {
-  type: "message" | "status" | "ping";
+  type:
+    | "message"
+    | "status"
+    | "comment"
+    | "comment_updated"
+    | "comment_deleted"
+    | "ping";
   id?: string;
   message_id?: string;
   channel_id?: string;
@@ -19,6 +25,13 @@ export interface InboxRealtimeEvent {
   contact_phone?: string | null;
   contact_name?: string | null;
   created_at?: string;
+  /* comment events */
+  comment_id?: string | null;
+  parent_comment_id?: string | null;
+  media_id?: string | null;
+  author_id?: string | null;
+  author_name?: string | null;
+  hidden?: boolean;
 }
 
 /** Subscribe to live inbox events; auto-reconnects with backoff. */

@@ -209,6 +209,12 @@ def _parse_instagram(payload: dict) -> list[dict]:
                             if isinstance(value.get("media"), dict)
                             else value.get("media_id"),
                             "from": value.get("from"),
+                            # When it was written on Instagram (our stored
+                            # created_at is only when we processed it) and
+                            # which comment this replies to, so the inbox
+                            # can thread conversations.
+                            "timestamp": value.get("timestamp"),
+                            "parent_id": value.get("parent_id"),
                         },
                     }
                 )

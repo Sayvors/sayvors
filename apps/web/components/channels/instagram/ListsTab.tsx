@@ -2,10 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import {
-  fetchInstagramPosts,
-  type InstagramPost,
-} from "@/lib/api-meta";
 import { apiFetch } from "@/lib/api-rag";
 
 /*
@@ -52,10 +48,6 @@ function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
   return { data, error, loading };
 }
 
-function Notice({ children }: { children: React.ReactNode }) {
-  return <p className={`mt-3 rounded-[8px] bg-[var(--ui-sunken)] p-3 text-[12px] ${INK2}`}>{children}</p>;
-}
-
 function LinkBtn({
   href,
   children,
@@ -81,83 +73,7 @@ function LinkBtn({
   );
 }
 
-/* ── Comments ────────────────────────────────────────────────────────── */
-
-export function CommentsTab({ igId }: { igId: string }) {
-  const { data, error, loading } = useAsync(() => fetchInstagramPosts(igId), [igId]);
-  if (loading) return <p className={`text-[13px] ${INK2}`}>Loading comments…</p>;
-  if (error) {
-    return (
-      <div role="alert" className={`rounded-[8px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-4 text-[13px] font-bold ${INK}`}>
-        {error}
-      </div>
-    );
-  }
-  if (data?.unavailable) return <Notice>{data.unavailable}</Notice>;
-
-  const comments = (data?.posts ?? []).flatMap((p: InstagramPost) =>
-    p.comments.map((c) => ({ ...c, permalink: p.permalink })),
-  );
-
-  if (comments.length === 0) {
-    return (
-      <div className={PANEL}>
-        <h3 className={`text-[15px] font-semibold ${INK}`}>Comments</h3>
-        <p className={`mt-2 text-[13px] ${INK2}`}>
-          No comments on your recent posts yet. This is where people who engage with you will appear, each
-          with a link to their profile.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <section className={PANEL}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className={`text-[15px] font-semibold ${INK}`}>Comments</h3>
-        <span className={`text-[12px] ${INK2}`}>{comments.length} on recent posts</span>
-      </div>
-      <ul className="mt-4">
-        {comments.map((c) => (
-          <li
-            key={`${c.id}-${c.media_id}`}
-            className="flex flex-wrap items-start gap-3 border-b border-[var(--ui-line)] py-3 last:border-0"
-          >
-            <span
-              aria-hidden
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--ui-line)] bg-[var(--ui-sunken)] text-[12px] font-bold text-[var(--ui-ink)]"
-            >
-              {(c.username || "?").charAt(0).toUpperCase()}
-            </span>
-            <div className="min-w-[10rem] flex-1">
-              <p className={`text-[13px] font-semibold ${INK}`}>
-                {c.username ? `@${c.username}` : "Unknown"}
-                {c.like_count > 0 && (
-                  <span className={`ml-2 text-[12px] font-normal ${INK2}`}>
-                    {c.like_count} like{c.like_count === 1 ? "" : "s"}
-                  </span>
-                )}
-              </p>
-              {c.text && <p className={`mt-1 text-[13px] ${INK}`}>{c.text}</p>}
-              {c.timestamp && (
-                <p className={`mt-1 text-[12px] ${INK2}`}>
-                  {new Date(c.timestamp).toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </p>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {c.permalink && <LinkBtn href={c.permalink}>Post</LinkBtn>}
-              {c.profile_url && <LinkBtn href={c.profile_url} primary>Profile</LinkBtn>}
-            </div>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
+/* ── Comments live in CommentsTab.tsx — the stored inbox, with replies. ─ */
 
 /* ── Messages ────────────────────────────────────────────────────────── */
 

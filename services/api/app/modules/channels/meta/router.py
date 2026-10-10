@@ -18,6 +18,10 @@ from . import service as _service
 from .providers.base import MetaAPIError
 from .schemas import (
     InstagramAudienceOut,
+    InstagramCommentActionOut,
+    InstagramCommentHideIn,
+    InstagramCommentReplyIn,
+    InstagramCommentsOut,
     InstagramDemographics,
     InstagramMediaInsightsOut,
     InstagramPerson,
@@ -25,6 +29,7 @@ from .schemas import (
     InstagramPostsOut,
     InstagramProfileOut,
     InstagramStoriesOut,
+    InstagramStoredCommentOut,
     MetaAssetListResponse,
     MetaAssetOut,
     MetaAssetSelect,
@@ -1132,6 +1137,351 @@ async def get_instagram_stories(
     )
     await _cache_set("stories", ig_id, out.model_dump(), LIST_TTL_SECONDS)
     return out
+
+
+async def _instagram_asset_or_404(db: AsyncSession, user: User, ig_id: str):
+    """Tenant-scoped IG asset for the comment endpoints, with its token.
+
+    Comment writes act on the tenant's own media only — the 404 here is the
+    tenant boundary, and the token rides the same encrypted connection as
+    every other IG read."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .credentials import decrypt_connection_token
+    from .models import MetaAsset
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == tenant_id_of(user),
+                MetaAsset.provider == "instagram",
+                MetaAsset.asset_type == "ig_account",
+                MetaAsset.external_asset_id == ig_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(
+            status_code=404, detail="Instagram account not found for this workspace"
+        )
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    return asset, token
+
+
+async def _stored_comment_out(row) -> InstagramStoredCommentOut:
+    return InstagramStoredCommentOut(
+        id=row.id,
+        comment_id=row.platform_comment_id,
+        parent_comment_id=row.parent_platform_comment_id,
+        media_id=row.media_id,
+        direction=row.direction,
+        content=row.content,
+        author_id=row.author_id,
+        author_name=row.author_name,
+        like_count=row.like_count,
+        hidden=row.hidden,
+        status=row.status,
+        error=row.error,
+        platform_timestamp=row.platform_timestamp,
+        deleted_at=row.deleted_at,
+        created_at=row.created_at,
+    )
+
+
+@router.get("/instagram/{ig_id}/comments", response_model=InstagramCommentsOut)
+async def list_instagram_comments(
+    ig_id: str,
+    media_id: str | None = Query(None),
+    limit: int = Query(100, le=200),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The comment inbox: stored comments on this account's own media.
+
+    Served entirely from our DB — the webhook pipeline stores every comment
+    as it arrives, so this read never touches Graph and never burns rate
+    limit. Hidden and deleted state rides on the rows; empty means no
+    comments yet, not a failure."""
+    from sqlalchemy import select
+
+    from ...channels.models import Channel, ChannelComment, ContactProfile
+
+    asset, _token = await _instagram_asset_or_404(db, user, ig_id)
+    tenant_id = tenant_id_of(user)
+
+    channel = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == tenant_id,
+                Channel.platform == "instagram",
+                Channel.platform_user_id == ig_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if channel is None:
+        return InstagramCommentsOut()
+
+    query = (
+        select(ChannelComment)
+        .where(ChannelComment.channel_id == channel.id)
+        .order_by(ChannelComment.created_at.desc())
+        .limit(limit)
+    )
+    if media_id:
+        query = query.where(ChannelComment.media_id == media_id)
+    rows = (await db.execute(query)).scalars().all()
+
+    # The webhook usually carries the commenter's username, but when it
+    # doesn't, fall back to the contact cache the DM pipeline maintains.
+    missing = [
+        r.author_id
+        for r in rows
+        if r.direction == "inbound" and r.author_id and not r.author_name
+    ]
+    names: dict[str, str] = {}
+    if missing:
+        profiles = (
+            await db.execute(
+                select(ContactProfile).where(
+                    ContactProfile.tenant_id == tenant_id,
+                    ContactProfile.platform == "instagram",
+                    ContactProfile.contact_id.in_(missing),
+                )
+            )
+        ).scalars().all()
+        names = {p.contact_id: (p.name or p.username or "") for p in profiles}
+
+    out = []
+    for r in rows:
+        item = await _stored_comment_out(r)
+        if not item.author_name and r.author_id:
+            item.author_name = names.get(r.author_id) or None
+        out.append(item)
+    return InstagramCommentsOut(comments=out)
+
+
+@router.post(
+    "/instagram/{ig_id}/comments/{comment_id}/replies",
+    response_model=InstagramStoredCommentOut,
+)
+async def reply_to_instagram_comment(
+    ig_id: str,
+    comment_id: str,
+    body: InstagramCommentReplyIn,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reply to a comment on the tenant's own media, from Sayvors.
+
+    Send → store → realtime, in that order: the reply is public speech for
+    the tenant's brand, so a Meta failure surfaces BOTH as a 502 and as a
+    failed row in the thread (visible, retryable — never silently lost)."""
+    from datetime import datetime, timezone
+    import uuid
+
+    from sqlalchemy import select
+
+    from ...channels.models import Channel, ChannelComment
+    from ...channels.realtime import publish_inbox_event
+
+    asset, token = await _instagram_asset_or_404(db, user, ig_id)
+    tenant_id = tenant_id_of(user)
+    if not token:
+        raise HTTPException(
+            status_code=403, detail="Instagram account has no access token stored"
+        )
+
+    parent = (
+        await db.execute(
+            select(ChannelComment).where(
+                ChannelComment.platform_comment_id == comment_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    adapter = _service.get_adapter("instagram")
+    try:
+        provider_id = await adapter.reply_to_comment(comment_id, token, body.message)
+    except MetaAPIError as e:
+        if parent is not None:
+            db.add(ChannelComment(
+                id=str(uuid.uuid4()),
+                channel_id=parent.channel_id,
+                parent_platform_comment_id=comment_id,
+                media_id=parent.media_id,
+                direction="outbound",
+                content=body.message,
+                status="failed",
+                error=str(e)[:500],
+            ))
+            await db.commit()
+        raise HTTPException(status_code=502, detail=str(e)[:200])
+
+    channel = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == tenant_id,
+                Channel.platform == "instagram",
+                Channel.platform_user_id == ig_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if channel is None:
+        # Replying to a comment whose thread we never stored (webhook gap):
+        # the channel row is what future comments of this account hang off.
+        channel = Channel(
+            id=str(uuid.uuid4()),
+            user_id=tenant_id,
+            platform="instagram",
+            platform_user_id=ig_id,
+            display_name=asset.username,
+            status="active",
+        )
+        db.add(channel)
+        await db.flush()
+
+    row = ChannelComment(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        platform_comment_id=provider_id[:200] or None,
+        parent_platform_comment_id=comment_id,
+        media_id=parent.media_id if parent else None,
+        direction="outbound",
+        content=body.message,
+        status="sent",
+    )
+    db.add(row)
+    await db.commit()
+    await publish_inbox_event(tenant_id, {
+        "type": "comment",
+        "id": row.id,
+        "channel_id": channel.id,
+        "platform": "instagram",
+        "comment_id": row.platform_comment_id,
+        "parent_comment_id": comment_id,
+        "media_id": row.media_id,
+        "direction": "outbound",
+        "content": row.content,
+        "status": "sent",
+        "created_at": row.created_at,
+    })
+    return await _stored_comment_out(row)
+
+
+@router.post(
+    "/instagram/{ig_id}/comments/{comment_id}/hide",
+    response_model=InstagramCommentActionOut,
+)
+async def hide_instagram_comment(
+    ig_id: str,
+    comment_id: str,
+    body: InstagramCommentHideIn,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Hide or unhide a comment on the tenant's own media.
+
+    Meta's rule, not ours: a hidden comment stays visible to its author and
+    their followers — it just leaves the public feed."""
+    from sqlalchemy import select
+
+    from ...channels.models import Channel, ChannelComment
+    from ...channels.realtime import publish_inbox_event
+
+    _asset, token = await _instagram_asset_or_404(db, user, ig_id)
+    if not token:
+        raise HTTPException(
+            status_code=403, detail="Instagram account has no access token stored"
+        )
+    adapter = _service.get_adapter("instagram")
+    try:
+        await adapter.set_comment_hidden(comment_id, token, body.hidden)
+    except MetaAPIError as e:
+        raise HTTPException(status_code=502, detail=str(e)[:200])
+
+    row = (
+        await db.execute(
+            select(ChannelComment)
+            .join(Channel, ChannelComment.channel_id == Channel.id)
+            .where(
+                ChannelComment.platform_comment_id == comment_id,
+                Channel.user_id == tenant_id_of(user),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        row.hidden = body.hidden
+        db.add(row)
+        await db.commit()
+        await publish_inbox_event(tenant_id_of(user), {
+            "type": "comment_updated",
+            "id": row.id,
+            "channel_id": row.channel_id,
+            "platform": "instagram",
+            "hidden": row.hidden,
+        })
+    return InstagramCommentActionOut(ok=True, hidden=body.hidden)
+
+
+@router.delete(
+    "/instagram/{ig_id}/comments/{comment_id}",
+    response_model=InstagramCommentActionOut,
+)
+async def delete_instagram_comment(
+    ig_id: str,
+    comment_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a comment on the tenant's own media, permanently.
+
+    The row keeps its place in the inbox history with deleted_at set —
+    the tenant sees what was removed and when, not a hole in the thread."""
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+
+    from ...channels.models import Channel, ChannelComment
+    from ...channels.realtime import publish_inbox_event
+
+    _asset, token = await _instagram_asset_or_404(db, user, ig_id)
+    if not token:
+        raise HTTPException(
+            status_code=403, detail="Instagram account has no access token stored"
+        )
+    adapter = _service.get_adapter("instagram")
+    try:
+        await adapter.delete_comment(comment_id, token)
+    except MetaAPIError as e:
+        raise HTTPException(status_code=502, detail=str(e)[:200])
+
+    row = (
+        await db.execute(
+            select(ChannelComment)
+            .join(Channel, ChannelComment.channel_id == Channel.id)
+            .where(
+                ChannelComment.platform_comment_id == comment_id,
+                Channel.user_id == tenant_id_of(user),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        row.deleted_at = datetime.now(timezone.utc)
+        db.add(row)
+        await db.commit()
+        await publish_inbox_event(tenant_id_of(user), {
+            "type": "comment_deleted",
+            "id": row.id,
+            "channel_id": row.channel_id,
+            "platform": "instagram",
+        })
+    return InstagramCommentActionOut(ok=True)
 
 
 @router.get(

@@ -252,6 +252,68 @@ export interface InstagramStories {
 export const fetchInstagramStories = (igId: string): Promise<InstagramStories> =>
   apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/stories`);
 
+export interface InstagramStoredComment {
+  id: string;
+  comment_id: string | null;
+  parent_comment_id: string | null;
+  media_id: string | null;
+  direction: "inbound" | "outbound";
+  content: string;
+  author_id: string | null;
+  author_name: string | null;
+  like_count: number;
+  hidden: boolean;
+  status: "received" | "sent" | "failed";
+  error: string | null;
+  platform_timestamp: string | null;
+  deleted_at: string | null;
+  created_at: string;
+}
+
+export interface InstagramComments {
+  comments: InstagramStoredComment[];
+}
+
+/** The comment inbox — served from stored rows, never a live Graph read. */
+export const fetchInstagramComments = (
+  igId: string,
+  opts?: { mediaId?: string },
+): Promise<InstagramComments> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/comments${
+      opts?.mediaId ? `?media_id=${encodeURIComponent(opts.mediaId)}` : ""
+    }`,
+  );
+
+export const replyToInstagramComment = (
+  igId: string,
+  commentId: string,
+  message: string,
+): Promise<InstagramStoredComment> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/comments/${encodeURIComponent(commentId)}/replies`,
+    { method: "POST", body: JSON.stringify({ message }) },
+  );
+
+export const setInstagramCommentHidden = (
+  igId: string,
+  commentId: string,
+  hidden: boolean,
+): Promise<{ ok: boolean; hidden: boolean | null }> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/comments/${encodeURIComponent(commentId)}/hide`,
+    { method: "POST", body: JSON.stringify({ hidden }) },
+  );
+
+export const deleteInstagramComment = (
+  igId: string,
+  commentId: string,
+): Promise<{ ok: boolean }> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/comments/${encodeURIComponent(commentId)}`,
+    { method: "DELETE" },
+  );
+
 export interface InstagramMediaInsights {
   available: boolean;
   reason: string | null;

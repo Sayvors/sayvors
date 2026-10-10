@@ -1,4 +1,6 @@
 """Meta integration API schemas."""
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -243,6 +245,48 @@ class InstagramMediaInsightsOut(BaseModel):
     saves: int | None = None
     shares: int | None = None
     views: int | None = None
+
+
+class InstagramStoredCommentOut(BaseModel):
+    """A stored comment on the tenant's own media — the inbox row.
+
+    comment_id/parent_comment_id are the PLATFORM ids (threading + Graph
+    addressing); id is our row id. deleted_at set means the comment no
+    longer exists on Instagram (deleted via Sayvors, or a lazy probe 404'd
+    — Meta sends no delete webhook)."""
+
+    id: str
+    comment_id: str | None = None
+    parent_comment_id: str | None = None
+    media_id: str | None = None
+    direction: str
+    content: str
+    author_id: str | None = None
+    author_name: str | None = None
+    like_count: int = 0
+    hidden: bool = False
+    status: str
+    error: str | None = None
+    platform_timestamp: datetime | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime
+
+
+class InstagramCommentsOut(BaseModel):
+    comments: list[InstagramStoredCommentOut] = []
+
+
+class InstagramCommentReplyIn(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2200)
+
+
+class InstagramCommentHideIn(BaseModel):
+    hidden: bool = True
+
+
+class InstagramCommentActionOut(BaseModel):
+    ok: bool = True
+    hidden: bool | None = None
 
 
 class InstagramAudienceOut(BaseModel):

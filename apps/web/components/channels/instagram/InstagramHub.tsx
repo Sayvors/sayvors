@@ -10,9 +10,10 @@ import {
 } from "@/lib/api-meta";
 import PlatformMark from "@/components/channels/PlatformMark";
 import AudienceTab from "./AudienceTab";
+import CommentsTab from "./CommentsTab";
 import PostsGrid from "./PostsGrid";
 import StoriesStrip from "./StoriesStrip";
-import { CommentsTab, MessagesTab } from "./ListsTab";
+import { MessagesTab } from "./ListsTab";
 
 /*
  * Instagram hub.
@@ -396,7 +397,10 @@ export default function InstagramHub() {
             </div>
           ) : active.key === "comments" ? (
             <div className="mt-6">
-              <CommentsTab igId={account.external_asset_id} />
+              <CommentsTab
+                igId={account.external_asset_id}
+                accountUsername={account.username}
+              />
             </div>
           ) : (
             <div className="mt-6">

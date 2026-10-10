@@ -918,6 +918,114 @@ async def _handle_instagram_echo(event: dict, data: dict) -> None:
         await db.commit()
 
 
+def _platform_timestamp(value) -> datetime | None:
+    """Parse Meta's ISO comment timestamp; naive reads as UTC, junk as None."""
+    if not value:
+        return None
+    try:
+        when = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+async def _handle_instagram_comment(event: dict, data: dict) -> None:
+    """Comment on the tenant's own media → stored row + realtime.
+
+    The comment section is an inbox: history accrues in channel_comments
+    and replies go out from the hub — never auto-posted. Public replies
+    are reputation-sensitive and deserve a human or an explicit opt-in,
+    unlike DMs where the AI answers by default.
+
+    A redelivered comment id with NEW text is Meta's "edited" redelivery —
+    unlike messages, comments are editable on Instagram, so the row
+    updates instead of dedupe-skipping.
+    """
+    from ..models import ChannelComment
+
+    ig_account_id = event.get("external_asset_id") or ""
+    comment_id = event.get("external_event_id") or ""
+    if not ig_account_id or not comment_id:
+        return
+    from_ = data.get("from") or {}
+    author_id = from_.get("id") if isinstance(from_, dict) else None
+    author_name = from_.get("username") if isinstance(from_, dict) else None
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, ig_account_id, provider="instagram")
+        if asset is None:
+            logger.warning(
+                "Dropping instagram comment %s for unknown asset %s",
+                comment_id[:32], ig_account_id,
+            )
+            return
+        tenant_id = asset.tenant_id
+
+        existing = (
+            await db.execute(
+                select(ChannelComment).where(
+                    ChannelComment.platform_comment_id == comment_id,
+                )
+            )
+        ).scalar_one_or_none()
+        text = data.get("text") or ""
+        if existing is not None:
+            # Edited redelivery: same id, new text. Any other replay of an
+            # unchanged comment is a Kafka redelivery — nothing to do.
+            if text and existing.content != text:
+                existing.content = text
+                db.add(existing)
+                await db.commit()
+                from ...channels.realtime import publish_inbox_event
+
+                await publish_inbox_event(tenant_id, {
+                    "type": "comment_updated",
+                    "id": existing.id,
+                    "channel_id": existing.channel_id,
+                    "platform": "instagram",
+                    "content": existing.content,
+                })
+            return
+
+        channel = await _channel_for(
+            db, tenant_id, ig_account_id, asset.username,
+            platform="instagram",
+        )
+        row = ChannelComment(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_comment_id=comment_id[:200] or None,
+            parent_platform_comment_id=data.get("parent_id") or None,
+            media_id=data.get("media_id") or None,
+            direction="inbound",
+            content=text or "[non-text comment]",
+            author_id=author_id,
+            author_name=author_name,
+            status="received",
+            platform_timestamp=_platform_timestamp(data.get("timestamp")),
+        )
+        db.add(row)
+        await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "comment",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "instagram",
+            "comment_id": comment_id,
+            "media_id": row.media_id,
+            "direction": "inbound",
+            "content": row.content,
+            "author_id": row.author_id,
+            "author_name": row.author_name,
+            "platform_timestamp": row.platform_timestamp,
+            "created_at": row.created_at,
+        })
+
+
 async def _handle_instagram_message(event: dict, data: dict) -> None:
     """Instagram DM in → persist, then AI-reply + send via the parent Page.
 
@@ -1184,6 +1292,8 @@ async def _process_message(value: bytes | None) -> None:
                     await _handle_instagram_echo(event, payload)
                 else:
                     await _handle_instagram_message(event, payload)
+            elif event_type == "comment.received":
+                await _handle_instagram_comment(event, payload)
             else:
                 logger.debug(
                     "Ignoring instagram event type %r on %s", event_type, TOPIC
