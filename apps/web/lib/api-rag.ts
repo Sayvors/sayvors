@@ -41,11 +41,24 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
   try {
     const res = await doFetch(headers);
 
+    // A proxy error page (Cloudflare tunnel down, nginx, etc.) arrives as
+    // HTML with any status — never dump its markup into a UI error box.
+    if ((res.headers.get("content-type") || "").includes("text/html")) {
+      throw new Error(
+        `The server is unreachable right now (gateway error ${res.status}) — try again in a minute.`,
+      );
+    }
+
     if (res.status === 401 && path !== "/api/v1/auth/refresh") {
       const refreshed = await refreshSession();
       if (refreshed) {
         const retryHeaders = { ...buildHeaders(isForm), ...(options.headers as Record<string, string>) };
         const retryRes = await doFetch(retryHeaders);
+        if ((retryRes.headers.get("content-type") || "").includes("text/html")) {
+          throw new Error(
+            `The server is unreachable right now (gateway error ${retryRes.status}) — try again in a minute.`,
+          );
+        }
         if (!retryRes.ok) throw new Error(await retryRes.text());
         if (retryRes.status === 204) return undefined;
         return retryRes.json();

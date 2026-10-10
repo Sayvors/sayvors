@@ -1,4 +1,5 @@
 """Meta connections API: connect, callback, assets, validate, disconnect."""
+import asyncio
 import logging
 import re
 import time
@@ -1491,6 +1492,54 @@ async def delete_instagram_comment(
     return InstagramCommentActionOut(ok=True)
 
 
+async def _assert_media_fetchable(url: str) -> None:
+    """Meta's servers download the image themselves, seconds after the
+    container call — the url must answer publicly right now. Probing it
+    here turns a dead tunnel or a wrong host into an actionable 502
+    instead of Meta's cryptic 9004 "Media download has failed". The dev
+    tunnel blips for a few seconds at a time, so one retry after a short
+    wait rides out the common case before failing the publish."""
+    last_status = 0
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                resp = await client.get(url, headers={"Range": "bytes=0-0"})
+        except httpx.HTTPError:
+            last_status = 0
+        else:
+            ctype = resp.headers.get("content-type", "")
+            if resp.status_code in (200, 206) and not ctype.startswith("text/html"):
+                return
+            last_status = resp.status_code
+        if attempt == 0:
+            await asyncio.sleep(2)
+    if last_status == 0:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Instagram downloads the image itself, and it could not reach "
+                f"{url} — the server's public connection failed twice. If the "
+                "dev tunnel is down, bring it back up, then publish again."
+            ),
+        )
+    if last_status == 502 or last_status == 503 or last_status == 530:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"{url} answered HTTP {last_status} twice — the public tunnel "
+                "blipped. Publish again in a moment; the tunnel now retries "
+                "its connection automatically."
+            ),
+        )
+    raise HTTPException(
+        status_code=502,
+        detail=(
+            f"{url} answered HTTP {last_status} instead of 200 — Instagram "
+            "refuses it. Check the link points at the image file itself."
+        ),
+    )
+
+
 def _publish_error_detail(e: MetaAPIError) -> str:
     """Meta's message, plus the one hint that actually fixes the most
     common publishing failure: scopes are minted at OAuth time, so adding
@@ -1531,6 +1580,11 @@ async def publish_instagram_post(
         raise HTTPException(
             status_code=403, detail="Instagram account has no access token stored"
         )
+    # Preflight only outside tests: the suite's graph captures stub the
+    # adapter, and the urls in test bodies are fakes that answer nothing.
+    if not settings.TESTING:
+        for _url in [*body.image_urls, *(body.story_image_urls or [])]:
+            await _assert_media_fetchable(str(_url))
 
     adapter = _service.get_adapter("instagram")
     location_id = body.location_id or None

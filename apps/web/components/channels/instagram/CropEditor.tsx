@@ -111,6 +111,7 @@ export default function CropEditor({
   onRatio,
   index,
   total,
+  working = false,
   onCancel,
   onDone,
 }: {
@@ -119,6 +120,9 @@ export default function CropEditor({
   onRatio: (r: CropRatio) => void;
   index: number;
   total: number;
+  /** true while the cropped blob uploads — Done is disabled so a double
+   * click can't queue the same image twice */
+  working?: boolean;
   onCancel: () => void;
   onDone: (blob: Blob) => void;
 }) {
@@ -299,6 +303,7 @@ export default function CropEditor({
         </button>
         <button
           type="button"
+          disabled={working}
           onClick={() => {
             void buildBlob()
               .then(onDone)
@@ -308,9 +313,9 @@ export default function CropEditor({
                 );
               });
           }}
-          className="rounded-[12px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
+          className="rounded-[12px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)] disabled:opacity-50"
         >
-          Done
+          {working ? "Uploading…" : "Done"}
         </button>
       </div>
     </div>

@@ -160,6 +160,7 @@ export default function PostComposer({
   const [publishedNote, setPublishedNote] = useState<string | null>(null);
   const [quota, setQuota] = useState<{ total: number; used: number } | null>(null);
   const nextKey = useRef(0);
+  const cropBusyRef = useRef(false);
 
   // The quota line is informational — a refused read (older scope set)
   // degrades to zeros server-side and we simply don't render it.
@@ -179,13 +180,43 @@ export default function PostComposer({
     });
   };
 
-  const uploadBlob = async (blob: Blob, name: string): Promise<string> => {
+  const uploadBlob = async (blob: Blob, baseName: string): Promise<string> => {
+    // The API checks content against the filename (polyglot guard), so the
+    // extension must describe the ACTUAL bytes — "Original" passes the file
+    // through untouched (a PNG stays PNG), while crops re-encode to JPEG.
+    const ext =
+      blob.type === "image/png" ? ".png"
+      : blob.type === "image/webp" ? ".webp"
+      : blob.type === "image/gif" ? ".gif"
+      : ".jpg";
+    const name = baseName.replace(/\.[^.]+$/, "") + ext;
     const form = new FormData();
     form.append("file", new File([blob], name, { type: blob.type || "image/jpeg" }));
-    const result = await apiFetch("/api/v1/storage/upload", {
-      method: "POST",
-      body: form,
-    });
+    let result: Awaited<ReturnType<typeof apiFetch>>;
+    try {
+      result = await apiFetch("/api/v1/storage/upload", {
+        method: "POST",
+        body: form,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      // A dead tunnel surfaces as "Failed to fetch" or a raw Cloudflare
+      // HTML error page — neither tells the person publishing what to do.
+      const unreachable =
+        /failed to fetch|networkerror|load failed/i.test(msg) || /^\s*</.test(msg);
+      let friendly = msg;
+      try {
+        const parsed = JSON.parse(msg) as { detail?: unknown };
+        if (typeof parsed?.detail === "string") friendly = parsed.detail;
+      } catch {
+        /* not JSON — show the message as-is */
+      }
+      throw new Error(
+        unreachable
+          ? "The server was unreachable for a moment — your image is still here, press Done to try again."
+          : friendly || "Upload failed.",
+      );
+    }
     if (typeof result?.url !== "string" || !result.url.startsWith("https://")) {
       throw new Error(
         "Instagram fetches images from a public HTTPS url, and this server's storage is not public. Host the image somewhere public and paste its link below.",
@@ -208,20 +239,22 @@ export default function PostComposer({
 
   const finishCrop = async (blob: Blob) => {
     const file = pending[0];
-    if (!file) return;
+    if (!file || cropBusyRef.current) return;
+    cropBusyRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      const url = await uploadBlob(blob, file.name.replace(/\.[^.]+$/, "") + "-ig.jpg");
+      const url = await uploadBlob(blob, file.name);
       nextKey.current += 1;
       setEntries((prev) =>
         [...prev, { key: `e${nextKey.current}`, url, file }].slice(0, MAX_IMAGES),
       );
       setPending((prev) => prev.slice(1));
     } catch (e) {
+      // Keep the file queued — the crop editor stays open so Done retries.
       setError(e instanceof Error ? e.message : "Upload failed.");
-      setPending((prev) => prev.slice(1));
     } finally {
+      cropBusyRef.current = false;
       setBusy(false);
     }
   };
@@ -305,7 +338,7 @@ export default function PostComposer({
           throw new Error("Stories need an uploaded image we can crop to 9:16 — pasted links can't be cropped here.");
         }
         const storyBlob = await centerCropBlob(firstFile, STORY_RATIO);
-        body.story_image_urls = [await uploadBlob(storyBlob, "story-916.jpg")];
+        body.story_image_urls = [await uploadBlob(storyBlob, "story-916")];
       }
 
       const out = await publishToInstagram(igId, body);
@@ -374,6 +407,7 @@ export default function PostComposer({
             onRatio={setRatio}
             index={0}
             total={pending.length}
+            working={busy}
             onCancel={() => setPending((prev) => prev.slice(1))}
             onDone={(blob) => void finishCrop(blob)}
           />
