@@ -393,28 +393,75 @@ class InstagramAdapter(MetaProviderAdapter):
     async def create_media_container(
         self, ig_id: str, token: str, *, image_url: str,
         caption: str | None = None, is_carousel_item: bool = False,
+        location_id: str | None = None, share_to_facebook: bool | None = None,
+        alt_text: str | None = None,
     ) -> str:
-        """Step 1: hand Meta a public image url, get a container id back."""
+        """Step 1: hand Meta a public image url, get a container id back.
+
+        share_to_facebook cross-posts to the linked Page (page-linked
+        accounts only); alt_text is Meta's accessibility layer (image
+        posts only, per their March 2025 addition)."""
         body: dict = {"image_url": image_url}
         if caption is not None:
             body["caption"] = caption
         if is_carousel_item:
             body["is_carousel_item"] = True
+        if location_id:
+            body["location_id"] = location_id
+        if share_to_facebook is not None:
+            body["share_to_facebook"] = share_to_facebook
+        if alt_text:
+            body["alt_text"] = alt_text
         resp = await self._graph("POST", f"/{ig_id}/media", token, json=body)
         return str(resp.json().get("id", ""))
 
     async def create_carousel_container(
         self, ig_id: str, token: str, *, children: list[str],
         caption: str | None = None,
+        location_id: str | None = None, share_to_facebook: bool | None = None,
     ) -> str:
         """Wrap finished child containers in a CAROUSEL_ALBUM container.
         Per Meta's docs the caption lives ONLY on the carousel container —
-        a caption on a child is ignored."""
+        a caption on a child is ignored. Location and the Facebook
+        cross-post likewise ride the carousel container."""
         body: dict = {"media_type": "CAROUSEL_ALBUM", "children": ",".join(children)}
         if caption is not None:
             body["caption"] = caption
+        if location_id:
+            body["location_id"] = location_id
+        if share_to_facebook is not None:
+            body["share_to_facebook"] = share_to_facebook
         resp = await self._graph("POST", f"/{ig_id}/media", token, json=body)
         return str(resp.json().get("id", ""))
+
+    async def create_story_container(
+        self, ig_id: str, token: str, *, image_url: str,
+    ) -> str:
+        """A story container — the image must already be 9:16; Meta
+        rejects anything else. The caller crops, we publish."""
+        resp = await self._graph(
+            "POST", f"/{ig_id}/media", token,
+            json={"image_url": image_url, "media_type": "STORIES"},
+        )
+        return str(resp.json().get("id", ""))
+
+    async def search_locations(self, token: str, query: str) -> list[dict]:
+        """Facebook place search for location tags ({id, name}), best
+        matches for `query`. A read — like stories it degrades to []
+        when the account's token can't search (standalone IG login has
+        no search surface at all), and the composer hides the field."""
+        try:
+            resp = await self._graph(
+                "GET", "/search", token,
+                params={"type": "place", "q": query, "fields": "id,name", "limit": 8},
+            )
+        except MetaAPIError:
+            return []
+        return [
+            {"id": str(p.get("id", "")), "name": str(p.get("name", ""))}
+            for p in (resp.json() or {}).get("data", []) or []
+            if p.get("id")
+        ]
 
     async def publish_media_container(self, ig_id: str, token: str, creation_id: str) -> str:
         """Step 2: make the container live. Returns the published media id

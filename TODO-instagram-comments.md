@@ -124,7 +124,42 @@ polling) — deliberately not in this round.
       failure 502, tenant 404, no-token 403, quota read + degrade.
 - Deferred: video/Reels publishing (needs container status polling —
   FINISHED_STATUS — so an endpoint can't be synchronous), a publish ledger
-  for exact-once retries, Stories publishing.
+  for exact-once retries.
+
+### Composer round 2 — Instagram-style editor (same day, 2026-10-10)
+
+- [x] Crop editor (`CropEditor.tsx`): square 1:1 / portrait 4:5 /
+      landscape 1.91:1 / original chips, drag-to-pan + zoom, canvas crop
+      at Instagram's own resolutions (1080×1080 / 1080×1350 / 1080×566).
+      Meta crops carousel children to the FIRST image — cropping here
+      makes the result deterministic. Each queued photo crops in turn.
+- [x] Live post preview (feed card with account header, shape-matched
+      media, caption, 📍 location line).
+- [x] AI caption: `POST /instagram/{ig_id}/caption/suggest` — one-shot
+      with the tenant's own enabled LLM (`resolve_tenant_model`, no
+      fallbacks), voice-steered by the asset's username/name; nothing
+      stored, lands in the textarea. Button carries `Sayvors_Icon.png`.
+- [x] Story toggle: when on, the FIRST uploaded image is auto
+      center-cropped to 9:16 client-side, re-uploaded, published as
+      media_type=STORIES after the feed post; a refused story degrades to
+      a note in the success line (the feed post is already live — never
+      502 the whole request). Pasted links can't be cropped → toggle off.
+- [x] Location: `GET /instagram/{ig_id}/locations?q=` place search →
+      `location_id` on the container; degrades to [] (standalone IG has
+      no search surface) and the UI shows "needs a Facebook-linked
+      account". Debounced picker, selected-place chip.
+- [x] Share to Facebook: `share_to_facebook` container param (page-linked
+      accounts). Alt text: `alt_text` param (Meta's Mar 2025 image-posts
+      field), passed per child in carousels.
+- [x] Honest footnote instead of dead toggles: comments-off, people/collab
+      tags (need unresolvable IG user ids), and hide-like-counts
+      (Reels-only) are NOT in the publishing API.
+- [x] Scroll fix: hub root `min-h-full overflow-y-auto` → `h-full
+      overflow-y-auto` — the dashboard shell's `<main>` is
+      overflow-hidden, so every hub must scroll itself.
+- [x] Tests: 13 in test_instagram_publish.py (params on containers, story
+      ordering + failure degradation, location search + degrade, caption
+      happy + no-model-400).
 
 ## Phase 6 — Instagram standalone (no Facebook Page) — after Phases 1-3
 

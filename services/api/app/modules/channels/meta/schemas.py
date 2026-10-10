@@ -298,18 +298,30 @@ class InstagramAudienceOut(BaseModel):
 class InstagramPublishIn(BaseModel):
     """Post images to the tenant's own feed. One url is a single post;
     several become a carousel. Meta fetches these urls itself, so they
-    must be publicly reachable — storage's public media path qualifies."""
+    must be publicly reachable — storage's public media path qualifies.
+
+    location_id is a Facebook Page-format place id (from the locations
+    search); share_to_facebook cross-posts to the linked Page; alt_text
+    is Meta's accessibility layer for image posts. story_image_urls are
+    9:16 images published as stories AFTER the feed post — the client
+    crops them; Meta rejects anything not 9:16."""
 
     image_urls: list[HttpUrl] = Field(min_length=1, max_length=10)
     caption: str = Field(default="", max_length=2200)
+    location_id: str | None = Field(None, max_length=64)
+    share_to_facebook: bool = False
+    alt_text: str | None = Field(None, max_length=1000)
+    story_image_urls: list[HttpUrl] | None = Field(None, max_length=10)
 
 
 class InstagramPublishOut(BaseModel):
     """The published post's platform media id — the same id the posts
     grid lists, so the composer can deep-link to it once the grid
-    refreshes."""
+    refreshes. story_media_ids lists the story posts published alongside
+    (empty when none were requested)."""
 
     media_id: str
+    story_media_ids: list[str] = []
 
 
 class InstagramPublishingLimitOut(BaseModel):
@@ -318,6 +330,31 @@ class InstagramPublishingLimitOut(BaseModel):
 
     quota_total: int = 0
     quota_usage: int = 0
+
+
+class InstagramLocationOut(BaseModel):
+    id: str
+    name: str
+
+
+class InstagramLocationsOut(BaseModel):
+    """Place search results for the location picker; empty when the
+    account's token can't search (the UI then hides the field)."""
+
+    locations: list[InstagramLocationOut] = []
+
+
+class InstagramCaptionSuggestIn(BaseModel):
+    """What the image shows and anything to steer the caption — the
+    current draft rides along so the model continues the tenant's
+    voice rather than overwriting it blindly."""
+
+    hint: str = Field(default="", max_length=500)
+    current_caption: str = Field(default="", max_length=2200)
+
+
+class InstagramCaptionOut(BaseModel):
+    caption: str
 
 
 class WhatsAppUsageOut(BaseModel):

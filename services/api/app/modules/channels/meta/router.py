@@ -22,7 +22,11 @@ from .schemas import (
     InstagramCommentHideIn,
     InstagramCommentReplyIn,
     InstagramCommentsOut,
+    InstagramCaptionOut,
+    InstagramCaptionSuggestIn,
     InstagramDemographics,
+    InstagramLocationOut,
+    InstagramLocationsOut,
     InstagramMediaInsightsOut,
     InstagramPerson,
     InstagramPostOut,
@@ -1498,10 +1502,13 @@ async def publish_instagram_post(
     """Publish images to the tenant's OWN Instagram feed.
 
     One url is a single post; several become a carousel (caption lives on
-    the carousel container, per Meta's rule). Two Graph calls — container,
-    then publish — and a failure at either surfaces as a 502 with Meta's
-    message; there is no partial post to store. Media must sit at public
-    urls: Meta's servers fetch them, so anything behind a login 404s.
+    the carousel container, per Meta's rule, as do location and the
+    Facebook cross-post; alt text rides each child). Two Graph calls —
+    container, then publish — and a failure at either surfaces as a 502
+    with Meta's message; there is no partial post to store. Media must
+    sit at public urls: Meta's servers fetch them, so anything behind a
+    login 404s. Story images (pre-cropped to 9:16 by the client) are
+    published as stories after the feed post succeeds.
     """
     _asset, token = await _instagram_asset_or_404(db, user, ig_id)
     if not token:
@@ -1510,22 +1517,30 @@ async def publish_instagram_post(
         )
 
     adapter = _service.get_adapter("instagram")
+    location_id = body.location_id or None
+    alt_text = (body.alt_text or "").strip() or None
+    share = body.share_to_facebook or None
     try:
         if len(body.image_urls) == 1:
             creation_id = await adapter.create_media_container(
                 ig_id, token,
                 image_url=str(body.image_urls[0]),
                 caption=body.caption or None,
+                location_id=location_id,
+                share_to_facebook=share,
+                alt_text=alt_text,
             )
         else:
             children = [
                 await adapter.create_media_container(
                     ig_id, token, image_url=str(url), is_carousel_item=True,
+                    alt_text=alt_text,
                 )
                 for url in body.image_urls
             ]
             creation_id = await adapter.create_carousel_container(
                 ig_id, token, children=children, caption=body.caption or None,
+                location_id=location_id, share_to_facebook=share,
             )
         if not creation_id:
             raise HTTPException(
@@ -1541,7 +1556,28 @@ async def publish_instagram_post(
             status_code=502,
             detail="Instagram published the container but returned no media id.",
         )
-    return InstagramPublishOut(media_id=media_id)
+
+    story_media_ids: list[str] = []
+    if body.story_image_urls:
+        for story_url in body.story_image_urls:
+            try:
+                story_container = await adapter.create_story_container(
+                    ig_id, token, image_url=str(story_url),
+                )
+                if not story_container:
+                    continue
+                story_id = await adapter.publish_media_container(
+                    ig_id, token, story_container,
+                )
+            except MetaAPIError as e:
+                # The feed post is already live — a refused story must not
+                # 502 the whole request, but the tenant must hear about it.
+                story_media_ids.append(f"failed: {str(e)[:150]}")
+                continue
+            if story_id:
+                story_media_ids.append(story_id)
+
+    return InstagramPublishOut(media_id=media_id, story_media_ids=story_media_ids)
 
 
 @router.get(
@@ -1565,6 +1601,100 @@ async def instagram_publishing_limit(
         )
     data = await _service.get_adapter("instagram").get_publishing_limit(ig_id, token)
     return InstagramPublishingLimitOut(**data)
+
+
+@router.get(
+    "/instagram/{ig_id}/locations",
+    response_model=InstagramLocationsOut,
+)
+async def search_instagram_locations(
+    ig_id: str,
+    q: str = Query(min_length=2, max_length=120),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Place search for the composer's location picker.
+
+    Meta tags locations by Facebook Page id, and only Facebook-linked
+    accounts can search them — the adapter degrades a refused search to
+    [], and the composer hides the field when it stays empty."""
+    _asset, token = await _instagram_asset_or_404(db, user, ig_id)
+    if not token:
+        raise HTTPException(
+            status_code=403, detail="Instagram account has no access token stored"
+        )
+    found = await _service.get_adapter("instagram").search_locations(token, q)
+    return InstagramLocationsOut(
+        locations=[InstagramLocationOut(**p) for p in found]
+    )
+
+
+@router.post(
+    "/instagram/{ig_id}/caption/suggest",
+    response_model=InstagramCaptionOut,
+)
+async def suggest_instagram_caption(
+    ig_id: str,
+    body: InstagramCaptionSuggestIn,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Draft an Instagram caption with the tenant's own enabled AI model.
+
+    One-shot generation, nothing stored, nothing posted — the caption
+    lands in the composer's textarea where the tenant edits and chooses.
+    Uses the tenant's Instagram profile name/username for voice when the
+    asset carries it."""
+    _asset, _token = await _instagram_asset_or_404(db, user, ig_id)
+    from ...llm.providers.base import LLMMessage, LLMRequest
+    from ...llm.providers.registry import get_provider_for_model
+    from ...llm.service import _resolve_model, resolve_tenant_model
+
+    try:
+        model_id = await resolve_tenant_model(db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    account = _asset.username or _asset.name or "a business"
+    steering = [
+        f"The image shows: {body.hint.strip()}" if body.hint.strip() else "",
+        (
+            "Continue/rewrite this draft in the same voice:\n"
+            f"{body.current_caption.strip()}"
+        ) if body.current_caption.strip() else "",
+    ]
+    req = LLMRequest(
+        model=_resolve_model(model_id)[0],
+        messages=[
+            LLMMessage(role="user", content="\n\n".join(s for s in steering if s).strip() or "Write a caption for the business's next Instagram post."),
+        ],
+        system_prompt=(
+            "You write Instagram captions for businesses. You are writing "
+            f"for {account}. Match the business's voice; stay concrete and "
+            "human — no corporate filler. Up to 3 short paragraphs, emojis "
+            "welcome but sparse, at most 5 hashtags at the very end. "
+            "Reply with ONLY the caption text, nothing else. "
+            f"Maximum {2200} characters."
+        ),
+        temperature=0.8,
+        max_tokens=400,
+        stream=False,
+        tenant_id=tenant_id_of(user),
+        model_id=model_id,
+        purpose="instagram.caption_suggest",
+    )
+    try:
+        resp = await get_provider_for_model(model_id).complete(req)
+    except Exception as e:  # ProviderError and transport failures alike
+        raise HTTPException(
+            status_code=502, detail=f"Caption generation failed: {str(e)[:150]}"
+        )
+    caption = (resp.content or "").strip()
+    if not caption:
+        raise HTTPException(status_code=502, detail="The model returned an empty caption.")
+    return InstagramCaptionOut(caption=caption[:2200])
 
 
 @router.get(

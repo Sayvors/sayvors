@@ -284,7 +284,11 @@ function PostsTab({ igId, accountUsername }: { igId: string; accountUsername?: s
         comments, likes and reach.
       </p>
       <div className="mt-4 space-y-5">
-        <PostComposer igId={igId} onPublished={() => setVersion((v) => v + 1)} />
+        <PostComposer
+          igId={igId}
+          accountUsername={accountUsername}
+          onPublished={() => setVersion((v) => v + 1)}
+        />
         <PostsGrid
           key={version}
           igId={igId}
@@ -324,7 +328,7 @@ export default function InstagramHub() {
   const account = assets && assets.length > 0 ? assets[Math.min(selected, assets.length - 1)] : null;
 
   return (
-    <div className="team-ui min-h-full overflow-y-auto p-4 pb-24 sm:p-6">
+    <div className="team-ui h-full overflow-y-auto p-4 pb-24 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="flex items-center gap-2 text-[20px] font-bold text-[var(--ui-ink)]">

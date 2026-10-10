@@ -317,15 +317,49 @@ export const fetchInstagramPublishingLimit = (
   apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/publishing-limit`);
 
 /** Post images to the tenant's own feed — one url or a carousel. The urls
- * must be publicly reachable: Meta's servers fetch them. */
+ * must be publicly reachable: Meta's servers fetch them. Story urls are
+ * 9:16 crops the client prepared, published as stories after the post. */
 export const publishToInstagram = (
   igId: string,
-  imageUrls: string[],
-  caption: string,
-): Promise<{ media_id: string }> =>
+  body: {
+    image_urls: string[];
+    caption: string;
+    location_id?: string;
+    share_to_facebook?: boolean;
+    alt_text?: string;
+    story_image_urls?: string[];
+  },
+): Promise<{ media_id: string; story_media_ids: string[] }> =>
   apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/posts/publish`, {
     method: "POST",
-    body: JSON.stringify({ image_urls: imageUrls, caption }),
+    body: JSON.stringify(body),
+  });
+
+export interface InstagramLocation {
+  id: string;
+  name: string;
+}
+
+/** Place search for the location picker; empty when the account can't
+ * search (Meta tags places by Facebook Page id — standalone IG can't). */
+export const fetchInstagramLocations = (
+  igId: string,
+  q: string,
+): Promise<{ locations: InstagramLocation[] }> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/locations?q=${encodeURIComponent(q)}`,
+  );
+
+/** One-shot AI caption draft — nothing is stored or posted; the result
+ * lands in the composer's textarea for the tenant to edit and send. */
+export const suggestInstagramCaption = (
+  igId: string,
+  hint: string,
+  currentCaption: string,
+): Promise<{ caption: string }> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/caption/suggest`, {
+    method: "POST",
+    body: JSON.stringify({ hint, current_caption: currentCaption }),
   });
 
 export const deleteInstagramComment = (
