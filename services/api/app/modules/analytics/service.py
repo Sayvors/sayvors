@@ -5,13 +5,14 @@ All figures are computed from persisted rows (`review_insights`,
 path, so dashboards stay fast and deterministic.
 """
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import ReviewReply
-from .models import LocationDailyMetric, ReviewInsight
+from .models import ChannelDailyMetric, LocationDailyMetric, ReviewInsight
 
 logger = logging.getLogger(__name__)
 
@@ -327,3 +328,178 @@ async def _attach_latest_replies(db: AsyncSession, rows: list[ReviewInsight]) ->
         insight.reply_id = rep.id if rep else None  # type: ignore[attr-defined]
         insight.reply_text = rep.reply_text if rep else None  # type: ignore[attr-defined]
         insight.reply_status = rep.status if rep else None  # type: ignore[attr-defined]
+
+
+# ── Messaging overview (read path over channel_daily_metrics) ─────────
+#
+# Meta grades a Page "Very responsive to messages" at a 90% response rate
+# with a median reply under 15 minutes. Those two numbers are the goal line
+# here too — Meta gives owners the badge pressure, Sayvors gives them the
+# tooling to actually see and move the numbers.
+
+MESSAGING_GOAL = {"response_rate": 90.0, "median_seconds": 900}
+
+
+def _delta_pct(cur: float | int | None, prev: float | int | None) -> float | None:
+    if cur is None or prev is None or prev == 0:
+        return None
+    return round((cur - prev) / prev * 100, 1)
+
+
+async def get_messaging_overview(
+    db: AsyncSession,
+    user_id: str,
+    channel_id: str | None,
+    days: int,
+) -> dict:
+    """Window aggregates for the messaging section, served from stored
+    `channel_daily_metrics` rows only. The window median/p90 come from the
+    days' real FRT samples (never an average of daily medians); `unanswered`
+    is the sum of each channel's latest snapshot."""
+    from statistics import median as _median
+
+    from ..channels.models import Channel
+
+    today = datetime.now(timezone.utc).date()
+    cur_start = today - timedelta(days=days - 1)
+    prev_start = today - timedelta(days=2 * days - 1)
+    prev_end = cur_start  # exclusive
+
+    def _scope():
+        f = [ChannelDailyMetric.user_id == user_id]
+        if channel_id:
+            f.append(ChannelDailyMetric.channel_id == channel_id)
+        return f
+
+    cur_rows = (
+        await db.execute(
+            select(ChannelDailyMetric).where(
+                *_scope(), ChannelDailyMetric.date >= cur_start
+            )
+        )
+    ).scalars().all()
+    prev_rows = (
+        await db.execute(
+            select(ChannelDailyMetric).where(
+                *_scope(),
+                ChannelDailyMetric.date >= prev_start,
+                ChannelDailyMetric.date < prev_end,
+            )
+        )
+    ).scalars().all()
+
+    cur_by_channel: dict[str, list] = {}
+    for r in cur_rows:
+        cur_by_channel.setdefault(r.channel_id, []).append(r)
+    prev_by_channel: dict[str, list] = {}
+    for r in prev_rows:
+        prev_by_channel.setdefault(r.channel_id, []).append(r)
+
+    # Label + platform for every channel that appears in either window.
+    channel_ids = sorted(set(cur_by_channel) | set(prev_by_channel))
+    meta: dict[str, Channel] = {}
+    if channel_ids:
+        rows = await db.execute(
+            select(Channel).where(Channel.id.in_(channel_ids))
+        )
+        meta = {c.id: c for c in rows.scalars().all()}
+
+    def _sum(rs: list, attr: str) -> int:
+        return sum(getattr(r, attr) or 0 for r in rs)
+
+    def _rate(rs: list) -> float | None:
+        convs = _sum(rs, "conversations_in")
+        if convs == 0:
+            return None
+        return round(_sum(rs, "conversations_replied") / convs * 100, 1)
+
+    def _samples(rs: list) -> list[int]:
+        all_: list[int] = []
+        for r in rs:
+            all_.extend(r.frt_samples or [])
+        return sorted(all_)
+
+    def _channel_row(cid: str) -> dict:
+        cur = cur_by_channel.get(cid, [])
+        prev = prev_by_channel.get(cid, [])
+        # Snapshot numbers come from the row with the highest date — that is
+        # today's partial row whenever the worker has run recently.
+        latest = max(cur, key=lambda r: r.date, default=None)
+        samples = _samples(cur)
+        return {
+            "channel_id": cid,
+            "platform": meta[cid].platform if cid in meta else "unknown",
+            "label": meta[cid].display_name or meta[cid].platform if cid in meta else "Channel",
+            "messages_in": _sum(cur, "messages_in"),
+            "messages_out": _sum(cur, "messages_out"),
+            "messages_in_prev": _sum(prev, "messages_in"),
+            "conversations": _sum(cur, "conversations_in"),
+            "conversations_prev": _sum(prev, "conversations_in"),
+            "response_rate": _rate(cur),
+            "median_first_response_seconds": (
+                int(round(_median(samples))) if samples else None
+            ),
+            "unanswered_now": latest.unanswered_open if latest else None,
+            "comments_in": _sum(cur, "comments_in"),
+            "comments_replied": _sum(cur, "comments_replied"),
+        }
+
+    channel_rows = []
+    for cid in channel_ids:
+        row = _channel_row(cid)
+        # A channel with zero traffic in BOTH windows is dead weight in the
+        # scorecard — skip it rather than show a row of zeros.
+        if row["messages_in"] or row["messages_out"] or row["messages_in_prev"]:
+            channel_rows.append(row)
+    channel_rows.sort(key=lambda r: -r["messages_in"])
+
+    all_cur = cur_rows
+    all_prev = prev_rows
+    cur_samples = _samples(all_cur)
+    prev_samples = _samples(all_prev)
+
+    # Unanswered NOW = today's snapshots across channels; the oldest one
+    # sets the worst age. NULL only when the worker has not run yet.
+    latest_per_channel = [
+        max(rs, key=lambda r: r.date) for rs in cur_by_channel.values()
+    ]
+    unanswered_now = sum(
+        (r.unanswered_open or 0) for r in latest_per_channel
+    )
+    oldest = [
+        r.oldest_unanswered_seconds for r in latest_per_channel
+        if r.oldest_unanswered_seconds is not None
+    ]
+    as_of = max(
+        (r.computed_at for r in latest_per_channel if r.computed_at is not None),
+        default=None,
+    )
+
+    return {
+        "days": days,
+        "goal": MESSAGING_GOAL,
+        "totals": {
+            "messages_in": _sum(all_cur, "messages_in"),
+            "messages_out": _sum(all_cur, "messages_out"),
+            "messages_in_prev": _sum(all_prev, "messages_in"),
+            "messages_out_prev": _sum(all_prev, "messages_out"),
+            "conversations": _sum(all_cur, "conversations_in"),
+            "conversations_prev": _sum(all_prev, "conversations_in"),
+            "response_rate": _rate(all_cur),
+            "response_rate_prev": _rate(all_prev),
+            "median_first_response_seconds": (
+                int(round(_median(cur_samples))) if cur_samples else None
+            ),
+            "median_first_response_seconds_prev": (
+                int(round(_median(prev_samples))) if prev_samples else None
+            ),
+            "p90_first_response_seconds": (
+                cur_samples[min(len(cur_samples) - 1, max(0, math.ceil(0.9 * len(cur_samples)) - 1))]
+                if cur_samples else None
+            ),
+            "unanswered_now": unanswered_now if latest_per_channel else None,
+            "oldest_unanswered_seconds": max(oldest) if oldest else None,
+            "as_of": as_of,
+        },
+        "channels": channel_rows,
+    }

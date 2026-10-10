@@ -80,6 +80,7 @@ async def _amain() -> None:
     await _warmup()
 
     from ..modules.analytics.consumer import run_analytics_consumer
+    from ..modules.analytics.messaging_rollup import run_messaging_rollup_worker
     from ..modules.analytics.performance import run_performance_sync_worker
     from ..modules.channels.meta.consumer import run_meta_events_consumer
     from ..modules.channels.meta.followup_worker import run_followup_worker
@@ -93,6 +94,7 @@ async def _amain() -> None:
         "post-publisher": run_post_publish_worker,
         "analytics-consumer": run_analytics_consumer,
         "performance-sync": run_performance_sync_worker,
+        "messaging-rollup": run_messaging_rollup_worker,
         "meta-events-ai-replies": run_meta_events_consumer,
         "whatsapp-followups": run_followup_worker,
     }

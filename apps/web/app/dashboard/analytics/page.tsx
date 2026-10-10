@@ -13,6 +13,7 @@ import {
   type ChannelOption,
 } from "@/lib/api-analytics";
 import { StatCard } from "@/components/analytics/StatCard";
+import MessagingSection from "@/components/analytics/MessagingSection";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
 import BenchmarkPage from "../benchmark/page";
 import PresenceChart from "@/components/analytics/PresenceChart";
@@ -169,6 +170,10 @@ function OverviewPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
+  // Messaging section reports back once its fetch settles, so the empty
+  // state below waits for it — a WhatsApp-only tenant has no reviews but
+  // plenty to show. null = still unknown.
+  const [messagingHasData, setMessagingHasData] = useState<boolean | null>(null);
   const hasLoadedOnce = useRef(false);
 
   useEffect(() => {
@@ -316,6 +321,12 @@ function OverviewPanel() {
           </div>
       </div>
 
+      {/* Messages & response speed — WhatsApp / IG / FB, from the rollup table.
+          Independent of the Google data below; hides itself when empty. */}
+      {!error && (
+        <MessagingSection days={days} refreshToken={refreshToken} onHasData={setMessagingHasData} />
+      )}
+
       {error && !loading ? (
         <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
           <p className="text-[13px] font-semibold text-ink/60">Couldn&apos;t load your analytics.</p>
@@ -331,7 +342,7 @@ function OverviewPanel() {
             Retry
           </button>
         </div>
-      ) : !hasData && !hasPresence && !loading ? (
+      ) : !hasData && !hasPresence && messagingHasData === false && !loading ? (
         /* Empty state â€” no reviews and no connected listing */
         <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">

@@ -150,6 +150,7 @@ async def lifespan(app: FastAPI):
         from .modules.localith.worker import run_localith_sync_worker
         from .modules.posts.worker import run_post_publish_worker
         from .modules.analytics.consumer import run_analytics_consumer
+        from .modules.analytics.messaging_rollup import run_messaging_rollup_worker
         from .modules.analytics.performance import run_performance_sync_worker
         from .modules.channels.meta.consumer import run_meta_events_consumer
         from .modules.outbox.worker import OutboxWorker
@@ -159,6 +160,7 @@ async def lifespan(app: FastAPI):
         bg_tasks.append(asyncio.create_task(run_post_publish_worker()))
         bg_tasks.append(asyncio.create_task(run_analytics_consumer()))
         bg_tasks.append(asyncio.create_task(run_performance_sync_worker()))
+        bg_tasks.append(asyncio.create_task(run_messaging_rollup_worker()))
         bg_tasks.append(asyncio.create_task(run_meta_events_consumer()))
 
         outbox_worker = OutboxWorker()
