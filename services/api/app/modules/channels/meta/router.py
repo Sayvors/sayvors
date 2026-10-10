@@ -18,6 +18,18 @@ from . import oauth as _oauth
 from . import service as _service
 from .providers.base import MetaAPIError
 from .schemas import (
+    FacebookCommentActionOut,
+    FacebookCommentHideIn,
+    FacebookCommentReplyIn,
+    FacebookCommentsOut,
+    FacebookPostOut,
+    FacebookPostsOut,
+    FacebookProfileOut,
+    FacebookPublishIn,
+    FacebookPublishOut,
+    FacebookScheduledOut,
+    FacebookScheduledPostOut,
+    FacebookStoredCommentOut,
     InstagramAudienceOut,
     InstagramCommentActionOut,
     InstagramCommentHideIn,
@@ -1492,13 +1504,14 @@ async def delete_instagram_comment(
     return InstagramCommentActionOut(ok=True)
 
 
-async def _assert_media_fetchable(url: str) -> None:
+async def _assert_media_fetchable(url: str, *, what: str = "Instagram") -> None:
     """Meta's servers download the image themselves, seconds after the
     container call — the url must answer publicly right now. Probing it
     here turns a dead tunnel or a wrong host into an actionable 502
     instead of Meta's cryptic 9004 "Media download has failed". The dev
     tunnel blips for a few seconds at a time, so one retry after a short
-    wait rides out the common case before failing the publish."""
+    wait rides out the common case before failing the publish. `what`
+    names the surface in the error (Instagram vs Facebook)."""
     last_status = 0
     for attempt in range(2):
         try:
@@ -1517,7 +1530,7 @@ async def _assert_media_fetchable(url: str) -> None:
         raise HTTPException(
             status_code=502,
             detail=(
-                "Instagram downloads the image itself, and it could not reach "
+                f"{what} downloads the image itself, and it could not reach "
                 f"{url} — the server's public connection failed twice. If the "
                 "dev tunnel is down, bring it back up, then publish again."
             ),
@@ -1534,7 +1547,7 @@ async def _assert_media_fetchable(url: str) -> None:
     raise HTTPException(
         status_code=502,
         detail=(
-            f"{url} answered HTTP {last_status} instead of 200 — Instagram "
+            f"{url} answered HTTP {last_status} instead of 200 — {what} "
             "refuses it. Check the link points at the image file itself."
         ),
     )
@@ -1849,6 +1862,653 @@ async def get_instagram_media_insights(
         await _cache_set(cache_kind, media_id, out.model_dump(), LIST_TTL_SECONDS)
         return out
     return InstagramMediaInsightsOut(**cached)
+
+
+# ---------------------------------------------------------------------------
+# Facebook Page hub. Same shape as the Instagram block above, with one big
+# difference: the PAGE token lives on the asset row
+# (asset_metadata["page_access_token"]) — never the connection, which holds
+# the user/business token from OAuth.
+
+
+async def _facebook_asset_or_404(db: AsyncSession, user: User, page_id: str):
+    """Tenant-scoped Page asset for the FB endpoints, with its page token.
+
+    The 404 is the tenant boundary. The token comes from the asset's
+    metadata, where /me/accounts discovery stored it at connect time —
+    an asset without one needs a reconnect (scopes mint at OAuth time)."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from .models import MetaAsset
+
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .options(selectinload(MetaAsset.connection))
+            .where(
+                MetaAsset.tenant_id == tenant_id_of(user),
+                MetaAsset.provider == "facebook",
+                MetaAsset.asset_type == "page",
+                MetaAsset.external_asset_id == page_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(
+            status_code=404, detail="Facebook Page not found for this workspace"
+        )
+    token = (asset.asset_metadata or {}).get("page_access_token") or None
+    return asset, token
+
+
+def _fb_error_detail(e: MetaAPIError) -> str:
+    """Meta's message, plus the hint that fixes the most common Page
+    publishing failure: scopes are minted at OAuth time, so adding
+    pages_manage_posts to the app configuration does nothing until the
+    Page is reconnected."""
+    detail = str(e)[:200]
+    low = detail.lower()
+    if any(k in low for k in ("permission", "scope", "authorize", "oauth", "capability")):
+        detail += (
+            " — the app needs the pages_manage_posts permission, and the "
+            "Page must be reconnected in Sayvors so the new scope lands in "
+            "its token."
+        )
+    return detail
+
+
+def _fb_post_out(p: dict) -> FacebookPostOut:
+    """One feed row -> the posts-grid shape. Carousel photos hide in
+    attachments/subattachments{media}; a photo's url sits under
+    media.image.src, a video's under media.source."""
+
+    def _img(m: dict) -> str | None:
+        return ((m.get("image") or {}).get("src")) or m.get("source")
+
+    images: list[str] = []
+    for a in ((p.get("attachments") or {}).get("data") or []):
+        src = _img(a.get("media") or {})
+        if src:
+            images.append(src)
+        for s in ((a.get("subattachments") or {}).get("data") or []):
+            sub = _img(s.get("media") or {})
+            if sub:
+                images.append(sub)
+    return FacebookPostOut(
+        id=p.get("id", ""),
+        message=p.get("message"),
+        permalink_url=p.get("permalink_url"),
+        full_picture=p.get("full_picture"),
+        from_name=((p.get("from") or {}).get("name")),
+        like_count=int(((p.get("likes") or {}).get("summary") or {}).get("total_count") or 0),
+        comments_count=int(((p.get("comments") or {}).get("summary") or {}).get("total_count") or 0),
+        created_time=p.get("created_time"),
+        images=images,
+    )
+
+
+@router.get("/facebook/{page_id}/profile", response_model=FacebookProfileOut)
+async def get_facebook_profile(
+    page_id: str,
+    refresh: bool = Query(False),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The tenant's OWN Page — name, link, follower counts, picture.
+
+    Read-only: Meta exposes no profile-write API for Pages, so unlike
+    WhatsApp there is no sibling PATCH. A short redis cache absorbs tab
+    clicks; `refresh=1` bypasses it."""
+    from .igcache import PROFILE_TTL_SECONDS, get as _cache_get, set as _cache_set
+    from .providers.base import MetaAPIError as _MetaAPIError
+
+    asset, token = await _facebook_asset_or_404(db, user, page_id)
+    if not token:
+        raise HTTPException(
+            status_code=403,
+            detail="Facebook Page has no access token stored — reconnect Facebook.",
+        )
+
+    def _out(data: dict) -> FacebookProfileOut:
+        return FacebookProfileOut(
+            id=data.get("id") or asset.external_asset_id,
+            name=data.get("name"),
+            link=data.get("link"),
+            profile_picture_url=((data.get("picture") or {}).get("data") or {}).get("url"),
+            fan_count=int(data.get("fan_count") or 0),
+            followers_count=int(data.get("followers_count") or 0),
+        )
+
+    if not refresh:
+        cached = await _cache_get("fb_profile", page_id)
+        if cached:
+            return _out(cached)
+
+    adapter = _service.get_adapter("facebook")
+    try:
+        data = await adapter.get_page_profile(page_id, token)
+    except _MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    await _cache_set("fb_profile", page_id, data, PROFILE_TTL_SECONDS)
+    return _out(data)
+
+
+@router.get("/facebook/{page_id}/posts", response_model=FacebookPostsOut)
+async def get_facebook_posts(
+    page_id: str,
+    refresh: bool = Query(False),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The Page's own recent posts for the grid. A Page with no posts is
+    an empty list, not an error; `unavailable` is set only when the read
+    itself could not be made (missing token, revoked scope). `refresh=1`
+    bypasses the short redis cache."""
+    from .igcache import LIST_TTL_SECONDS, get as _cache_get, set as _cache_set
+    from .providers.base import MetaAPIError as _MetaAPIError
+
+    _asset, token = await _facebook_asset_or_404(db, user, page_id)
+    if not token:
+        return FacebookPostsOut(unavailable="Reconnect Facebook to see your Page posts.")
+
+    if not refresh:
+        cached = await _cache_get("fb_posts", page_id)
+        if cached is not None:
+            return FacebookPostsOut(**cached)
+
+    adapter = _service.get_adapter("facebook")
+    try:
+        rows = await adapter.get_page_feed(page_id, token)
+    except _MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    out = FacebookPostsOut(posts=[_fb_post_out(p) for p in rows])
+    await _cache_set("fb_posts", page_id, out.model_dump(), LIST_TTL_SECONDS)
+    return out
+
+
+@router.get("/facebook/{page_id}/scheduled", response_model=FacebookScheduledOut)
+async def get_facebook_scheduled(
+    page_id: str,
+    refresh: bool = Query(False),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Posts the Page has queued for later. Empty means nothing is
+    scheduled, not a failure; `refresh=1` bypasses the cache."""
+    from .igcache import LIST_TTL_SECONDS, get as _cache_get, set as _cache_set
+    from .providers.base import MetaAPIError as _MetaAPIError
+
+    _asset, token = await _facebook_asset_or_404(db, user, page_id)
+    if not token:
+        return FacebookScheduledOut()
+
+    if not refresh:
+        cached = await _cache_get("fb_scheduled", page_id)
+        if cached is not None:
+            return FacebookScheduledOut(**cached)
+
+    adapter = _service.get_adapter("facebook")
+    try:
+        rows = await adapter.get_scheduled_posts(page_id, token)
+    except _MetaAPIError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    out = FacebookScheduledOut(
+        posts=[
+            FacebookScheduledPostOut(
+                id=r.get("id", ""),
+                scheduled_publish_time=r.get("scheduled_publish_time"),
+            )
+            for r in rows
+        ]
+    )
+    await _cache_set("fb_scheduled", page_id, out.model_dump(), LIST_TTL_SECONDS)
+    return out
+
+
+@router.post("/facebook/{page_id}/posts/publish", response_model=FacebookPublishOut)
+async def publish_facebook_post(
+    page_id: str,
+    body: FacebookPublishIn,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish to the tenant's OWN Page feed: a text post, a link post,
+    or 1-10 photos (multi-photo becomes unpublished children + one feed
+    post with attached_media). `schedule_at` turns any of these into a
+    scheduled post — Meta requires 10 minutes to ~6 months ahead, and a
+    scheduled photo ALWAYS schedules via /feed (unpublished children),
+    never via /photos, so the response always carries a post id. A
+    failure at any step surfaces as a 502 with Meta's message; there is
+    no partial post."""
+    from datetime import datetime, timezone
+
+    _asset, token = await _facebook_asset_or_404(db, user, page_id)
+    if not token:
+        raise HTTPException(
+            status_code=403,
+            detail="Facebook Page has no access token stored — reconnect Facebook.",
+        )
+
+    message = (body.message or "").strip()
+    urls = [str(u) for u in (body.image_urls or [])]
+    if body.link and urls:
+        raise HTTPException(
+            status_code=422,
+            detail="Attach either a link or photos — Facebook takes one or the other per post.",
+        )
+    if not message and not body.link and not urls:
+        raise HTTPException(
+            status_code=422,
+            detail="Write a message first — an empty post has nothing to publish.",
+        )
+
+    schedule_ts: int | None = None
+    if body.schedule_at is not None:
+        when = body.schedule_at
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        delta = (when - datetime.now(timezone.utc)).total_seconds()
+        if delta < 600 or delta > 183 * 86400:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Scheduled time must be between 10 minutes and about "
+                    "6 months from now."
+                ),
+            )
+        schedule_ts = int(when.timestamp())
+
+    # Preflight only outside tests: the suite's graph captures stub the
+    # adapter, and the urls in test bodies are fakes that answer nothing.
+    if not settings.TESTING:
+        for _url in urls:
+            await _assert_media_fetchable(_url, what="Facebook")
+
+    adapter = _service.get_adapter("facebook")
+    photo_ids: list[str] = []
+    try:
+        if urls:
+            if len(urls) == 1:
+                photo = await adapter.publish_photo(
+                    page_id, token, url=urls[0],
+                    caption=message or None, published=schedule_ts is None,
+                )
+                if not photo.get("id"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Facebook accepted the photo but returned no id — nothing was published.",
+                    )
+                photo_ids = [photo["id"]]
+                if schedule_ts is not None:
+                    # Unpublished child: only /feed carries the schedule —
+                    # and its response is the one with the post id.
+                    resp = await adapter.publish_post(
+                        page_id, token, message=message or None,
+                        attached_media=photo_ids, scheduled_at=schedule_ts,
+                    )
+                    post_id = resp.get("id") or resp.get("post_id")
+                else:
+                    resp = photo
+                    post_id = resp.get("post_id") or resp.get("id")
+            else:
+                children: list[str] = []
+                for u in urls:
+                    r = await adapter.publish_photo(
+                        page_id, token, url=u, published=False,
+                    )
+                    if not r.get("id"):
+                        raise HTTPException(
+                            status_code=502,
+                            detail="Facebook refused one of the photos — nothing was published.",
+                        )
+                    children.append(r["id"])
+                photo_ids = children
+                resp = await adapter.publish_post(
+                    page_id, token, message=message or None,
+                    attached_media=children, scheduled_at=schedule_ts,
+                )
+                post_id = resp.get("id") or resp.get("post_id")
+        else:
+            resp = await adapter.publish_post(
+                page_id, token,
+                message=message or None,
+                link=str(body.link) if body.link else None,
+                scheduled_at=schedule_ts,
+            )
+            post_id = resp.get("id") or resp.get("post_id")
+    except MetaAPIError as e:
+        logger.warning("Facebook publish failed for %s: %s", page_id, e)
+        raise HTTPException(status_code=502, detail=_fb_error_detail(e))
+
+    if not post_id:
+        raise HTTPException(
+            status_code=502,
+            detail="Facebook accepted the post but returned no post id.",
+        )
+    return FacebookPublishOut(
+        post_id=post_id, photo_ids=photo_ids, scheduled=schedule_ts is not None
+    )
+
+
+async def _fb_stored_comment_out(row) -> FacebookStoredCommentOut:
+    return FacebookStoredCommentOut(
+        id=row.id,
+        comment_id=row.platform_comment_id,
+        parent_comment_id=row.parent_platform_comment_id,
+        media_id=row.media_id,
+        direction=row.direction,
+        content=row.content,
+        author_id=row.author_id,
+        author_name=row.author_name,
+        like_count=row.like_count,
+        hidden=row.hidden,
+        status=row.status,
+        error=row.error,
+        platform_timestamp=row.platform_timestamp,
+        deleted_at=row.deleted_at,
+        created_at=row.created_at,
+    )
+
+
+@router.get("/facebook/{page_id}/comments", response_model=FacebookCommentsOut)
+async def list_facebook_comments(
+    page_id: str,
+    media_id: str | None = Query(None),
+    limit: int = Query(100, le=200),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The comment inbox for this Page: stored comments on the Page's own
+    posts (media_id holds the FB post id). Served entirely from our DB —
+    the webhook pipeline stores every comment as it arrives, so this read
+    never touches Graph; empty means no comments yet, not a failure."""
+    from sqlalchemy import select
+
+    from ...channels.models import Channel, ChannelComment, ContactProfile
+
+    _asset, _token = await _facebook_asset_or_404(db, user, page_id)
+    tenant_id = tenant_id_of(user)
+
+    channel = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == tenant_id,
+                Channel.platform == "facebook",
+                Channel.platform_user_id == page_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if channel is None:
+        return FacebookCommentsOut()
+
+    query = (
+        select(ChannelComment)
+        .where(ChannelComment.channel_id == channel.id)
+        .order_by(ChannelComment.created_at.desc())
+        .limit(limit)
+    )
+    if media_id:
+        query = query.where(ChannelComment.media_id == media_id)
+    rows = (await db.execute(query)).scalars().all()
+
+    # The webhook usually carries the commenter's name, but when it
+    # doesn't, fall back to the contact cache the DM pipeline maintains.
+    missing = [
+        r.author_id
+        for r in rows
+        if r.direction == "inbound" and r.author_id and not r.author_name
+    ]
+    names: dict[str, str] = {}
+    if missing:
+        profiles = (
+            await db.execute(
+                select(ContactProfile).where(
+                    ContactProfile.tenant_id == tenant_id,
+                    ContactProfile.platform == "facebook",
+                    ContactProfile.contact_id.in_(missing),
+                )
+            )
+        ).scalars().all()
+        names = {p.contact_id: (p.name or p.username or "") for p in profiles}
+
+    out = []
+    for r in rows:
+        item = await _fb_stored_comment_out(r)
+        if not item.author_name and r.author_id:
+            item.author_name = names.get(r.author_id) or None
+        out.append(item)
+    return FacebookCommentsOut(comments=out)
+
+
+@router.post(
+    "/facebook/{page_id}/comments/{comment_id}/replies",
+    response_model=FacebookStoredCommentOut,
+)
+async def reply_to_facebook_comment(
+    page_id: str,
+    comment_id: str,
+    body: FacebookCommentReplyIn,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reply to a comment on the Page's own post, from the Page.
+
+    Send → store → realtime, in that order: the reply is public speech for
+    the tenant's brand, so a Meta failure surfaces BOTH as a 502 and as a
+    failed row in the thread (visible, retryable — never silently lost)."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from ...channels.models import Channel, ChannelComment
+    from ...channels.realtime import publish_inbox_event
+
+    asset, token = await _facebook_asset_or_404(db, user, page_id)
+    tenant_id = tenant_id_of(user)
+    if not token:
+        raise HTTPException(
+            status_code=403,
+            detail="Facebook Page has no access token stored — reconnect Facebook.",
+        )
+
+    parent = (
+        await db.execute(
+            select(ChannelComment).where(
+                ChannelComment.platform_comment_id == comment_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    adapter = _service.get_adapter("facebook")
+    try:
+        provider_id = await adapter.reply_to_comment(comment_id, token, body.message)
+    except MetaAPIError as e:
+        if parent is not None:
+            db.add(ChannelComment(
+                id=str(uuid.uuid4()),
+                channel_id=parent.channel_id,
+                parent_platform_comment_id=comment_id,
+                media_id=parent.media_id,
+                direction="outbound",
+                content=body.message,
+                status="failed",
+                error=str(e)[:500],
+            ))
+            await db.commit()
+        raise HTTPException(status_code=502, detail=str(e)[:200])
+
+    channel = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == tenant_id,
+                Channel.platform == "facebook",
+                Channel.platform_user_id == page_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if channel is None:
+        # Replying to a comment whose thread we never stored (webhook gap):
+        # the channel row is what future comments of this Page hang off.
+        channel = Channel(
+            id=str(uuid.uuid4()),
+            user_id=tenant_id,
+            platform="facebook",
+            platform_user_id=page_id,
+            display_name=asset.name,
+            status="active",
+        )
+        db.add(channel)
+        await db.flush()
+
+    row = ChannelComment(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        platform_comment_id=provider_id[:200] or None,
+        parent_platform_comment_id=comment_id,
+        media_id=parent.media_id if parent else None,
+        direction="outbound",
+        content=body.message,
+        status="sent",
+    )
+    db.add(row)
+    await db.commit()
+    await publish_inbox_event(tenant_id, {
+        "type": "comment",
+        "id": row.id,
+        "channel_id": channel.id,
+        "platform": "facebook",
+        "comment_id": row.platform_comment_id,
+        "parent_comment_id": comment_id,
+        "media_id": row.media_id,
+        "direction": "outbound",
+        "content": row.content,
+        "status": "sent",
+        "created_at": row.created_at,
+    })
+    return await _fb_stored_comment_out(row)
+
+
+@router.post(
+    "/facebook/{page_id}/comments/{comment_id}/hide",
+    response_model=FacebookCommentActionOut,
+)
+async def hide_facebook_comment(
+    page_id: str,
+    comment_id: str,
+    body: FacebookCommentHideIn,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Hide or unhide a comment on the Page's own post.
+
+    Meta's rule, not ours: a hidden comment stays visible to its author
+    and their friends — it just leaves the public feed."""
+    from sqlalchemy import select
+
+    from ...channels.models import Channel, ChannelComment
+    from ...channels.realtime import publish_inbox_event
+
+    _asset, token = await _facebook_asset_or_404(db, user, page_id)
+    if not token:
+        raise HTTPException(
+            status_code=403,
+            detail="Facebook Page has no access token stored — reconnect Facebook.",
+        )
+    adapter = _service.get_adapter("facebook")
+    try:
+        await adapter.set_comment_hidden(comment_id, token, body.hidden)
+    except MetaAPIError as e:
+        raise HTTPException(status_code=502, detail=str(e)[:200])
+
+    row = (
+        await db.execute(
+            select(ChannelComment)
+            .join(Channel, ChannelComment.channel_id == Channel.id)
+            .where(
+                ChannelComment.platform_comment_id == comment_id,
+                Channel.user_id == tenant_id_of(user),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        row.hidden = body.hidden
+        db.add(row)
+        await db.commit()
+        await publish_inbox_event(tenant_id_of(user), {
+            "type": "comment_updated",
+            "id": row.id,
+            "channel_id": row.channel_id,
+            "platform": "facebook",
+            "hidden": row.hidden,
+        })
+    return FacebookCommentActionOut(ok=True, hidden=body.hidden)
+
+
+@router.delete(
+    "/facebook/{page_id}/comments/{comment_id}",
+    response_model=FacebookCommentActionOut,
+)
+async def delete_facebook_comment(
+    page_id: str,
+    comment_id: str,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a comment on the Page's own post, permanently.
+
+    The row keeps its place in the inbox history with deleted_at set —
+    the tenant sees what was removed and when, not a hole in the thread."""
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+
+    from ...channels.models import Channel, ChannelComment
+    from ...channels.realtime import publish_inbox_event
+
+    _asset, token = await _facebook_asset_or_404(db, user, page_id)
+    if not token:
+        raise HTTPException(
+            status_code=403,
+            detail="Facebook Page has no access token stored — reconnect Facebook.",
+        )
+    adapter = _service.get_adapter("facebook")
+    try:
+        await adapter.delete_comment(comment_id, token)
+    except MetaAPIError as e:
+        raise HTTPException(status_code=502, detail=str(e)[:200])
+
+    row = (
+        await db.execute(
+            select(ChannelComment)
+            .join(Channel, ChannelComment.channel_id == Channel.id)
+            .where(
+                ChannelComment.platform_comment_id == comment_id,
+                Channel.user_id == tenant_id_of(user),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        row.deleted_at = datetime.now(timezone.utc)
+        db.add(row)
+        await db.commit()
+        await publish_inbox_event(tenant_id_of(user), {
+            "type": "comment_deleted",
+            "id": row.id,
+            "channel_id": row.channel_id,
+            "platform": "facebook",
+        })
+    return FacebookCommentActionOut(ok=True)
 
 
 @router.post("/whatsapp/{phone_number_id}/profile-photo")

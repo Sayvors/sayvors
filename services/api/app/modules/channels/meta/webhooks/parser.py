@@ -155,6 +155,9 @@ def _parse_page(payload: dict) -> list[dict]:
                                 "post_id": value.get("post_id"),
                                 "message": value.get("message"),
                                 "from": value.get("from"),
+                                # Which comment this replies to, so the
+                                # inbox threads Page conversations.
+                                "parent_id": value.get("parent_id"),
                             },
                         }
                     )

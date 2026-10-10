@@ -155,6 +155,26 @@ def test_parse_page_comment():
     assert events[0]["external_asset_id"] == "page-9"
 
 
+def test_parse_page_comment_reply_carries_parent_id():
+    payload = {
+        "object": "page",
+        "entry": [{
+            "id": "page-9",
+            "changes": [{
+                "field": "feed",
+                "value": {"item": "comment", "verb": "add",
+                          "comment_id": "c-2", "post_id": "p-1",
+                          "parent_id": "c-1",
+                          "message": "replying!", "from": {"id": "u-2"}},
+            }],
+        }],
+    }
+    provider, events = _parser.parse(payload)
+    assert provider == "facebook"
+    assert events[0]["event_type"] == "comment.received"
+    assert events[0]["data"]["parent_id"] == "c-1"
+
+
 def test_parse_instagram_comment():
     payload = {
         "object": "instagram",

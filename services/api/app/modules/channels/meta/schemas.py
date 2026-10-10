@@ -357,6 +357,105 @@ class InstagramCaptionOut(BaseModel):
     caption: str
 
 
+class FacebookProfileOut(BaseModel):
+    """The tenant's OWN Page — read-only; Meta has no profile-write API."""
+
+    id: str
+    name: str | None = None
+    link: str | None = None
+    profile_picture_url: str | None = None
+    fan_count: int = 0
+    followers_count: int = 0
+
+
+class FacebookPostOut(BaseModel):
+    id: str
+    message: str | None = None
+    permalink_url: str | None = None
+    full_picture: str | None = None
+    from_name: str | None = None
+    like_count: int = 0
+    comments_count: int = 0
+    created_time: str | None = None
+    images: list[str] = []
+
+
+class FacebookPostsOut(BaseModel):
+    posts: list[FacebookPostOut] = []
+    unavailable: str | None = None
+
+
+class FacebookScheduledPostOut(BaseModel):
+    id: str
+    scheduled_publish_time: int | None = None  # unix seconds
+
+
+class FacebookScheduledOut(BaseModel):
+    posts: list[FacebookScheduledPostOut] = []
+
+
+class FacebookPublishIn(BaseModel):
+    """Publish to the tenant's own Page feed. Exactly one of link /
+    image_urls per post (a bare message is a text post); schedule_at
+    turns it into a scheduled post — Meta requires 10 minutes to ~6
+    months ahead. Meta fetches image urls itself, so they must be
+    publicly reachable — storage's public media path qualifies."""
+
+    message: str = Field(default="", max_length=5000)
+    link: HttpUrl | None = None
+    image_urls: list[HttpUrl] | None = Field(None, max_length=10)
+    schedule_at: datetime | None = None
+
+
+class FacebookPublishOut(BaseModel):
+    """post_id is the feed post id (pageid_postid) — the same id the
+    posts grid lists. Photo ids ride photo_ids when single-photo
+    publishing returned them. scheduled=True means Meta accepted a
+    scheduled post: nothing is live yet."""
+
+    post_id: str | None = None
+    photo_ids: list[str] = []
+    scheduled: bool = False
+
+
+class FacebookStoredCommentOut(BaseModel):
+    """A stored comment on the tenant's own Page posts — the inbox row.
+    media_id holds the FB post id (pageid_postid)."""
+
+    id: str
+    comment_id: str | None = None
+    parent_comment_id: str | None = None
+    media_id: str | None = None
+    direction: str
+    content: str
+    author_id: str | None = None
+    author_name: str | None = None
+    like_count: int = 0
+    hidden: bool = False
+    status: str
+    error: str | None = None
+    platform_timestamp: datetime | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime
+
+
+class FacebookCommentsOut(BaseModel):
+    comments: list[FacebookStoredCommentOut] = []
+
+
+class FacebookCommentReplyIn(BaseModel):
+    message: str = Field(..., min_length=1, max_length=5000)
+
+
+class FacebookCommentHideIn(BaseModel):
+    hidden: bool = True
+
+
+class FacebookCommentActionOut(BaseModel):
+    ok: bool = True
+    hidden: bool | None = None
+
+
 class WhatsAppUsageOut(BaseModel):
     """Sayvors tenant messaging quota — never Meta's messaging tier."""
 

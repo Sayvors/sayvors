@@ -1026,6 +1026,99 @@ async def _handle_instagram_comment(event: dict, data: dict) -> None:
         })
 
 
+async def _handle_facebook_comment(event: dict, data: dict) -> None:
+    """Comment on the Page's own post → stored row + realtime.
+
+    Same inbox contract as Instagram: history accrues in channel_comments,
+    replies go out from the hub, nothing is ever auto-posted. FB shape
+    differs from IG in three fields — the post rides post_id (IG:
+    media_id), the author's display name rides from.name (IG: username),
+    and the platform time rides the envelope's occurred_at. Replies carry
+    parent_id, which threads the conversation.
+    """
+    from ..models import ChannelComment
+
+    page_id = event.get("external_asset_id") or ""
+    comment_id = event.get("external_event_id") or ""
+    if not page_id or not comment_id:
+        return
+    from_ = data.get("from") or {}
+    author_id = from_.get("id") if isinstance(from_, dict) else None
+    author_name = from_.get("name") if isinstance(from_, dict) else None
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, page_id, provider="facebook")
+        if asset is None:
+            logger.warning(
+                "Dropping facebook comment %s for unknown asset %s",
+                comment_id[:32], page_id,
+            )
+            return
+        tenant_id = asset.tenant_id
+
+        existing = (
+            await db.execute(
+                select(ChannelComment).where(
+                    ChannelComment.platform_comment_id == comment_id,
+                )
+            )
+        ).scalar_one_or_none()
+        text = data.get("message") or ""
+        if existing is not None:
+            # Edited redelivery: same id, new text. Any other replay of an
+            # unchanged comment is a Kafka redelivery — nothing to do.
+            if text and existing.content != text:
+                existing.content = text
+                db.add(existing)
+                await db.commit()
+                from ...channels.realtime import publish_inbox_event
+
+                await publish_inbox_event(tenant_id, {
+                    "type": "comment_updated",
+                    "id": existing.id,
+                    "channel_id": existing.channel_id,
+                    "platform": "facebook",
+                    "content": existing.content,
+                })
+            return
+
+        channel = await _channel_for(
+            db, tenant_id, page_id, asset.name,
+            platform="facebook",
+        )
+        row = ChannelComment(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_comment_id=comment_id[:200] or None,
+            parent_platform_comment_id=data.get("parent_id") or None,
+            media_id=data.get("post_id") or None,
+            direction="inbound",
+            content=text or "[non-text comment]",
+            author_id=author_id,
+            author_name=author_name,
+            status="received",
+            platform_timestamp=_platform_timestamp(event.get("occurred_at")),
+        )
+        db.add(row)
+        await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "comment",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "facebook",
+            "comment_id": comment_id,
+            "media_id": row.media_id,
+            "direction": "inbound",
+            "content": row.content,
+            "author_id": row.author_id,
+            "author_name": row.author_name,
+            "platform_timestamp": row.platform_timestamp,
+            "created_at": row.created_at,
+        })
+
+
 async def _handle_instagram_message(event: dict, data: dict) -> None:
     """Instagram DM in → persist, then AI-reply + send via the parent Page.
 
@@ -1297,6 +1390,15 @@ async def _process_message(value: bytes | None) -> None:
             else:
                 logger.debug(
                     "Ignoring instagram event type %r on %s", event_type, TOPIC
+                )
+        elif provider == "facebook":
+            if event_type == "comment.received":
+                await _handle_facebook_comment(event, payload)
+            else:
+                # post.published stays unhandled on purpose — nothing
+                # auto-posts, and a new Page post needs no inbox row.
+                logger.debug(
+                    "Ignoring facebook event type %r on %s", event_type, TOPIC
                 )
         else:
             # Messenger (object=page) stays parsed + ledgered, unanswered —

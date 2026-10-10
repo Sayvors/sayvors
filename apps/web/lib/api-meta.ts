@@ -393,6 +393,132 @@ export const fetchInstagramMediaInsights = (
     )}/insights${mediaType ? `?media_type=${encodeURIComponent(mediaType)}` : ""}`
   );
 
+// ── Facebook Page hub ────────────────────────────────────────────
+
+export interface FacebookProfile {
+  id: string;
+  name: string | null;
+  link: string | null;
+  profile_picture_url: string | null;
+  fan_count: number;
+  followers_count: number;
+}
+
+/** The tenant's own Page. `refresh` bypasses the short server cache. */
+export const fetchFacebookProfile = (
+  pageId: string,
+  opts?: { refresh?: boolean },
+): Promise<FacebookProfile> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/profile${
+      opts?.refresh ? "?refresh=true" : ""
+    }`,
+  );
+
+export interface FacebookPost {
+  id: string;
+  message: string | null;
+  permalink_url: string | null;
+  full_picture: string | null;
+  from_name: string | null;
+  like_count: number;
+  comments_count: number;
+  created_time: string | null;
+  images: string[];
+}
+
+export interface FacebookPosts {
+  posts: FacebookPost[];
+  unavailable: string | null;
+}
+
+export const fetchFacebookPosts = (
+  pageId: string,
+  opts?: { refresh?: boolean },
+): Promise<FacebookPosts> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/posts${
+      opts?.refresh ? "?refresh=true" : ""
+    }`,
+  );
+
+export interface FacebookScheduledPost {
+  id: string;
+  scheduled_publish_time: number | null;
+}
+
+export interface FacebookScheduledPosts {
+  posts: FacebookScheduledPost[];
+}
+
+export const fetchFacebookScheduledPosts = (
+  pageId: string,
+  opts?: { refresh?: boolean },
+): Promise<FacebookScheduledPosts> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/scheduled${
+      opts?.refresh ? "?refresh=true" : ""
+    }`,
+  );
+
+/** Publish to the Page feed — a bare message is a text post; exactly one
+ * of link / image_urls per post. `schedule_at` (ISO) schedules instead of
+ * publishing. Image urls must be publicly reachable: Meta fetches them. */
+export const publishToFacebook = (
+  pageId: string,
+  body: {
+    message?: string;
+    link?: string;
+    image_urls?: string[];
+    schedule_at?: string;
+  },
+): Promise<{ post_id: string | null; photo_ids: string[]; scheduled: boolean }> =>
+  apiFetch(`/api/v1/meta/facebook/${encodeURIComponent(pageId)}/posts/publish`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export type FacebookStoredComment = InstagramStoredComment;
+
+export const fetchFacebookComments = (
+  pageId: string,
+  opts?: { mediaId?: string },
+): Promise<InstagramComments> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/comments${
+      opts?.mediaId ? `?media_id=${encodeURIComponent(opts.mediaId)}` : ""
+    }`,
+  );
+
+export const replyToFacebookComment = (
+  pageId: string,
+  commentId: string,
+  message: string,
+): Promise<FacebookStoredComment> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}/replies`,
+    { method: "POST", body: JSON.stringify({ message }) },
+  );
+
+export const setFacebookCommentHidden = (
+  pageId: string,
+  commentId: string,
+  hidden: boolean,
+): Promise<{ ok: boolean; hidden: boolean | null }> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}/hide`,
+    { method: "POST", body: JSON.stringify({ hidden }) },
+  );
+
+export const deleteFacebookComment = (
+  pageId: string,
+  commentId: string,
+): Promise<{ ok: boolean }> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}`,
+    { method: "DELETE" },
+  );
+
 export const disconnectMeta = (provider: MetaProvider, opts?: { deleteData?: boolean }) =>
   apiFetch(
     `/api/v1/meta/${provider}/disconnect${opts?.deleteData ? "?delete_data=true" : ""}`,
