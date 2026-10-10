@@ -1,14 +1,15 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, editReply, fetchBenchmark, fetchInsights, fetchOverview, fetchTimeseries, generateReply, regenerateReply, retryReply, type BenchmarkResponse, type Overview, type ReviewReplyDTO, type TimeseriesPoint } from "@/lib/api-analytics";
+import { approveReply, editReply, fetchInsights, fetchOverview, generateReply, regenerateReply, retryReply, type ReviewReplyDTO } from "@/lib/api-analytics";
 import { dedupeBusinesses } from "@/lib/channel-identity";
+import GlanceStrip from "@/components/dashboard/GlanceStrip";
+import GlanceCharts from "@/components/dashboard/GlanceCharts";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
-import { MetricChart, RatingDistribution, Sparkline } from "@/components/analytics/Charts";
 
 const checklistDefs = [
   { id: "channel", labelKey: "stepConnect", href: "/dashboard/channels" },
@@ -25,27 +26,6 @@ const CHECKLIST_KEY = "sayvors.onboarding.checklist";
 type DashboardChannel = { id: string; platform: string; display_name: string | null; listing_id?: string | null; source?: string | null };
 type DashboardService = { is_offered: boolean };
 
-interface IntelSnapshot {
-  source: string;
-  summary: string;
-  stats: { positive: number; neutral: number; negative: number; total: number };
-  themes: { name: string; mentions: number; avg_rating: number; positive_pct: number }[];
-  /** Business Health Scorecard — only dimensions with mentions > 0 arrive. */
-  dimensions?: {
-    key: string;
-    label: string;
-    mentions: number;
-    positive: number;
-    negative: number;
-    avg_rating: number;
-    signal: "strong" | "mixed" | "weak";
-  }[];
-  actions?: { title: string; detail: string }[];
-  /** Where this business leads / trails the anonymised cohort. */
-  competitive?: { wins: string[]; gaps: string[]; scope: string | null };
-  stale?: boolean;
-}
-
 interface AttentionItem {
   severity: "high" | "medium";
   title: string;
@@ -53,7 +33,7 @@ interface AttentionItem {
   href: string;
 }
 
-/** One row per review — newest draft wins (the backend may hold older duplicates). */
+/** One row per review â€” newest draft wins (the backend may hold older duplicates). */
 function dedupeDraftsByReview(list: ReviewReplyDTO[]): ReviewReplyDTO[] {
   const seen = new Map<string, ReviewReplyDTO>();
   for (const d of list) {
@@ -64,14 +44,14 @@ function dedupeDraftsByReview(list: ReviewReplyDTO[]): ReviewReplyDTO[] {
 }
 
 function detailFromError(e: unknown, fallback: string): string {
-  // apiFetch throws the raw response body — extract the server's detail
+  // apiFetch throws the raw response body â€” extract the server's detail
   // (e.g. "Failed to post reply to Google: No refresh token available").
   if (e instanceof Error) {
     try {
       const parsed = JSON.parse(e.message) as { detail?: unknown };
       if (typeof parsed.detail === "string") return parsed.detail;
     } catch {
-      /* not JSON — keep the fallback */
+      /* not JSON â€” keep the fallback */
     }
   }
   return fallback;
@@ -223,7 +203,7 @@ function AttentionQueue() {
            const data = await apiFetch("/api/v1/analytics/reviews/insights?edited=true&limit=50");
            if (!cancelled) {
              // A backend older than the edit-detection feature ignores the
-             // edited param — filter locally so this card only ever lists
+             // edited param â€” filter locally so this card only ever lists
              // genuinely-edited reviews.
              const flagged = ((data.items ?? []) as { id: string; review_id: string; channel_id: string; rating: number; review_text: string | null; reviewer_name: string | null; previous_rating: number | null; edited?: boolean }[])
                .filter((it) => it.edited === true);
@@ -239,7 +219,7 @@ function AttentionQueue() {
              setEditedTotal(flagged.length);
              setEdited(topEdited);
              // The AI pipeline queues a follow-up draft (pending_approval)
-             // for every edited review — pull it in so the merchant can
+             // for every edited review â€” pull it in so the merchant can
              // approve & publish right from this card.
              const channelSet = new Set(topEdited.map((it) => it.channel_id));
              const editedReviewIds = new Set(topEdited.map((it) => it.review_id));
@@ -254,7 +234,7 @@ function AttentionQueue() {
                      if (!prev || (d.created_at ?? "") > (prev.created_at ?? "")) draftMap[d.review_id] = d;
                    }
                  } catch {
-                   /* queue unavailable — card falls back to the no-draft hint */
+                   /* queue unavailable â€” card falls back to the no-draft hint */
                  }
                })
              );
@@ -265,7 +245,7 @@ function AttentionQueue() {
           }
           try {
             // Scheduled posts + photos across branches (nearest first).
-            // Any failure hides the row — never an error state.
+            // Any failure hides the row â€” never an error state.
             const rawConns = (Array.isArray(connsData) ? connsData : []) as {
               listing_id?: string; listing_name?: string;
             }[];
@@ -309,7 +289,7 @@ function AttentionQueue() {
                 if (m.status === "scheduled" && typeof m.scheduled_on === "string") {
                   const caption = typeof m.caption === "string" && m.caption.trim()
                     ? m.caption.trim()
-                    : `Photo · ${String(m.category ?? "gallery").replace(/_/g, " ")}`;
+                    : `Photo Â· ${String(m.category ?? "gallery").replace(/_/g, " ")}`;
                   sched.push({
                     kind: "photo", id: String(m.id ?? ""),
                     title: caption, location: locNames[lid] ?? "Location",
@@ -323,6 +303,7 @@ function AttentionQueue() {
               setScheduledTotal(sched.length);
               setScheduled(sched.slice(0, 5));
             }
+
           } catch {
             /* scheduled row hidden on error */
           }
@@ -330,7 +311,7 @@ function AttentionQueue() {
         if (typeof delta === "number" && delta < 0) {
           found.push({
             severity: "high",
-            title: `Rating dipped ${Math.abs(delta)}★ this month`,
+            title: `Rating dipped ${Math.abs(delta)}â˜… this month`,
             detail: "Check what changed and respond fast",
             href: "/dashboard/reviews",
           });
@@ -358,7 +339,7 @@ function AttentionQueue() {
           });
         }
       } catch {
-        /* offline — card stays hidden */
+        /* offline â€” card stays hidden */
       }
       if (!cancelled) setItems(found.slice(0, 3));
     })();
@@ -374,7 +355,7 @@ function AttentionQueue() {
       setDrafts((prev) => prev.filter((d) => d.id !== replyId));
       setDraftTotal((t) => Math.max(0, t - 1));
     } catch (e) {
-      // apiFetch throws the raw response body — extract the server's detail
+      // apiFetch throws the raw response body â€” extract the server's detail
       // (e.g. "Failed to post reply to Google: No refresh token available").
       let msg = "Could not publish that reply. Try again.";
       if (e instanceof Error) {
@@ -382,7 +363,7 @@ function AttentionQueue() {
           const parsed = JSON.parse(e.message) as { detail?: unknown };
           if (typeof parsed.detail === "string") msg = parsed.detail;
         } catch {
-          /* not JSON — keep the generic message */
+          /* not JSON â€” keep the generic message */
         }
       }
       setDraftError(msg);
@@ -413,7 +394,7 @@ function AttentionQueue() {
     try {
       await approveReply(d.channel_id, d.id);
       // Publishing the updated reply clears the edited flag server-side
-      // (review.replied → posted) — drop the card locally right away.
+      // (review.replied â†’ posted) â€” drop the card locally right away.
       setEdited((prev) => prev.filter((x) => x.review_id !== reviewId));
       setEditedTotal((t) => Math.max(0, t - 1));
       setEditedDrafts((prev) => {
@@ -476,7 +457,7 @@ function AttentionQueue() {
       const fresh = await regenerateReply(d.channel_id, d.id, true);
       setDrafts((prev) => prev.map((x) => (x.id === d.id ? { ...x, reply_text: fresh.reply_text, generation_attempt: fresh.generation_attempt ?? (x.generation_attempt ?? 1) + 1 } : x)));
     } catch (e) {
-      // apiFetch throws the raw response body — extract the server's detail
+      // apiFetch throws the raw response body â€” extract the server's detail
       // (e.g. "Engine generation failed: 403 Access denied").
       let msg = "Engine rewrite failed. Try again.";
       if (e instanceof Error) {
@@ -484,7 +465,7 @@ function AttentionQueue() {
           const parsed = JSON.parse(e.message) as { detail?: unknown };
           if (typeof parsed.detail === "string") msg = parsed.detail;
         } catch {
-          /* not JSON — keep the generic message */
+          /* not JSON â€” keep the generic message */
         }
       }
       setDraftError(msg);
@@ -524,7 +505,7 @@ function AttentionQueue() {
       setDrafts((prev) => prev.filter((d) => failed.includes(d.id)));
       setDraftTotal((t) => Math.max(0, t - ok));
       if (failed.length > 0) {
-        setDraftError(`Published ${ok} of ${all.length}. ${failed.length} failed — try again.`);
+        setDraftError(`Published ${ok} of ${all.length}. ${failed.length} failed â€” try again.`);
       }
     } catch {
       setDraftError("Could not publish. Try again.");
@@ -536,7 +517,7 @@ function AttentionQueue() {
 
   async function remakeDraft(d: ReviewReplyDTO) {
     if (generatingId !== null || remakingAll) return;
-    // A live draft already covers this review — drop the stale failed row.
+    // A live draft already covers this review â€” drop the stale failed row.
     if (drafts.some((x) => x.review_id === d.review_id)) {
       setFailed((prev) => prev.filter((x) => x.id !== d.id));
       setFailedTotal((t) => Math.max(0, t - 1));
@@ -593,7 +574,7 @@ function AttentionQueue() {
         setDrafts((prev) => dedupeDraftsByReview([...prev, ...freshOnes]).slice(0, 5));
         setDraftTotal((t) => t + freshOnes.length);
       }
-      // Refresh the failed list fresh — rows covered by live drafts stay hidden.
+      // Refresh the failed list fresh â€” rows covered by live drafts stay hidden.
       const covered = new Set(freshOnes.map((f) => f.review_id));
       const remaining = dedupeDraftsByReview(stillFailed).filter((d) => !covered.has(d.review_id));
       setFailed(remaining.slice(0, 5));
@@ -632,10 +613,10 @@ function AttentionQueue() {
    const editedTitle =
      editedTotal === 1 ? "1 review was edited by its author" : `${editedTotal} reviews were edited by their authors`;
    return (
-    <section
+      <section
       aria-label="Needs attention"
       data-tour="attention"
-      className={`rounded-2xl border-2 bg-white/80 p-4 backdrop-blur-sm ${allClear ? "border-emerald-200/60" : "border-white"}`}
+      className={`rounded-[2px] border-2 bg-white/80 p-4 backdrop-blur-sm ${allClear ? "border-emerald-200/60" : "border-white"}`}
     >
       <div className="mb-2 flex items-center gap-2">
         <span className={`h-2 w-2 rounded-full ${allClear ? "bg-emerald-500" : "bg-coral"}`} aria-hidden />
@@ -650,7 +631,7 @@ function AttentionQueue() {
                 onClick={() => setDraftsOpen((o) => !o)}
                 aria-expanded={draftsOpen}
                 aria-controls="attention-drafts-body"
-                className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                className="group flex w-full items-center gap-3 rounded-[2px] px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
               >
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
                 <span className="min-w-0 flex-1">
@@ -664,24 +645,24 @@ function AttentionQueue() {
               {draftsOpen && (
                 <div id="attention-drafts-body" className="space-y-2 px-2 pb-3 pt-1">
                   {draftError && (
-                    <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{draftError}</p>
+                    <p className="rounded-[2px] bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{draftError}</p>
                   )}
                    {drafts.map((d) => {
                      const busy = approvingId === d.id;
                      const locName = channelNames[d.channel_id] ?? "Location";
                      return (
-                       <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                       <div key={d.id} className="rounded-[2px] border border-ink/[0.06] bg-white p-3">
                          <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
-                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"â˜…".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
                            <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
-                           <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
+                           <span className="rounded-[2px] bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
                          </div>
                         {d.review_text && (
-                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
+                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">â€œ{d.review_text}â€</p>
                         )}
-                        <div className="mt-2 rounded-lg bg-deep-violet/[0.05] p-2.5">
+                        <div className="mt-2 rounded-[2px] bg-deep-violet/[0.05] p-2.5">
                           <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60">
-                            AI draft{(d.generation_attempt ?? 1) > 1 ? ` · try #${d.generation_attempt}` : ""}
+                            AI draft{(d.generation_attempt ?? 1) > 1 ? ` Â· try #${d.generation_attempt}` : ""}
                           </p>
                           {editingDraftId === d.id ? (
                             <>
@@ -691,22 +672,22 @@ function AttentionQueue() {
                                 rows={4}
                                 maxLength={1000}
                                 autoFocus
-                                className="mt-1.5 min-h-[80px] w-full resize-y rounded-lg border border-deep-violet/25 bg-white px-2.5 py-2 text-[12px] leading-relaxed text-ink outline-none focus:border-deep-violet/50"
+                                className="mt-1.5 min-h-[80px] w-full resize-y rounded-[2px] border border-deep-violet/25 bg-white px-2.5 py-2 text-[12px] leading-relaxed text-ink outline-none focus:border-deep-violet/50"
                               />
                               <div className="mt-1.5 flex items-center justify-end gap-2">
                                 <button
                                   onClick={() => setEditingDraftId(null)}
                                   disabled={savingDraftId !== null}
-                                  className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-ink/50 hover:bg-ink/[0.04] disabled:opacity-40"
+                                  className="rounded-[2px] px-2.5 py-1 text-[11px] font-semibold text-ink/50 hover:bg-ink/[0.04] disabled:opacity-40"
                                 >
                                   Cancel
                                 </button>
                                 <button
                                   onClick={() => void saveDraftText(d)}
                                   disabled={!editingDraftText.trim() || savingDraftId !== null}
-                                  className="rounded-lg bg-deep-violet px-3 py-1 text-[11px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
+                                  className="rounded-[2px] bg-deep-violet px-3 py-1 text-[11px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
                                 >
-                                  {savingDraftId === d.id ? "Saving…" : "Save"}
+                                  {savingDraftId === d.id ? "Savingâ€¦" : "Save"}
                                 </button>
                               </div>
                             </>
@@ -719,7 +700,7 @@ function AttentionQueue() {
                             <button
                               onClick={() => { setEditingDraftId(d.id); setEditingDraftText(d.reply_text ?? ""); setDraftError(null); }}
                               disabled={enginingId !== null || approvingId !== null || approvingAll}
-                              className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                              className="rounded-[2px] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
                             >
                               Edit
                             </button>
@@ -728,10 +709,10 @@ function AttentionQueue() {
                             onClick={() => void engineRedraft(d)}
                             disabled={enginingId !== null || approvingId !== null || approvingAll || editingDraftId !== null}
                             title="Re-run the full AI pipeline: analysis, strategies, databank tools, validation"
-                            className="inline-flex items-center gap-1 rounded-lg bg-deep-violet/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                            className="inline-flex items-center gap-1 rounded-[2px] bg-deep-violet/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
                           >
                             {enginingId === d.id ? (
-                              <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet" /> Engine…</>
+                              <><span className="h-3 w-3 animate-spin rounded-full border-2 border-deep-violet/30 border-t-deep-violet" /> Engineâ€¦</>
                             ) : (
                               <>
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
@@ -744,9 +725,9 @@ function AttentionQueue() {
                           <button
                             onClick={() => void approveDraft(d.channel_id, d.id)}
                             disabled={approvingId !== null || approvingAll || enginingId !== null || editingDraftId !== null}
-                            className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
+                            className="rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
                           >
-                            {busy ? "Publishing…" : "Approve & publish"}
+                            {busy ? "Publishingâ€¦" : "Approve & publish"}
                           </button>
                         </div>
                       </div>
@@ -755,28 +736,28 @@ function AttentionQueue() {
                   {draftTotal > drafts.length && (
                     <Link
                       href="/dashboard/analytics"
-                      className="flex items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                      className="flex items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                     >
                       See all {draftTotal} and approve
-                      <span aria-hidden> →</span>
+                      <span aria-hidden> â†’</span>
                     </Link>
                   )}
                   <div className="flex gap-2">
                     <button
                       onClick={() => void approveAll()}
                       disabled={approvingAll || approvingId !== null || enginingId !== null || draftTotal === 0 || editingDraftId !== null}
-                      className="flex-1 rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
+                      className="flex-1 rounded-[2px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
                     >
                        {approvingAll
-                         ? `Publishing ${approveProgress.done} of ${approveProgress.total} across all locations…`
+                         ? `Publishing ${approveProgress.done} of ${approveProgress.total} across all locationsâ€¦`
                          : `Approve & publish all across all locations (${draftTotal})`}
                      </button>
 <Link
                        href="/dashboard/reviews?tab=need_approval"
-                       className="relative flex items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                       className="relative flex items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                      >
                        Visit all reviews
-                       <span aria-hidden> →</span>
+                       <span aria-hidden> â†’</span>
                        {draftTotal > 0 && (
                          <span aria-hidden className="absolute -right-1 -top-1 flex h-3 w-3">
                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-coral opacity-60" />
@@ -795,14 +776,14 @@ function AttentionQueue() {
                 onClick={() => setScheduledOpen((o) => !o)}
                 aria-expanded={scheduledOpen}
                 aria-controls="attention-scheduled-body"
-                className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                className="group flex w-full items-center gap-3 rounded-[2px] px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
               >
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold text-ink">{scheduledTitle}</span>
                   <span className="block truncate text-[11px] text-ink/45">
                     {scheduled[0]
-                      ? `Next: ${scheduled[0].title} · ${fmtWhen(scheduled[0].at)}`
+                      ? `Next: ${scheduled[0].title} Â· ${fmtWhen(scheduled[0].at)}`
                       : "Queued to publish to Google"}
                   </span>
                 </span>
@@ -813,12 +794,12 @@ function AttentionQueue() {
               {scheduledOpen && (
                 <div id="attention-scheduled-body" className="space-y-2 px-2 pb-3 pt-1">
                   {scheduled.map((s) => (
-                    <div key={`${s.kind}-${s.id}`} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                    <div key={`${s.kind}-${s.id}`} className="rounded-[2px] border border-ink/[0.06] bg-white p-3">
                       <div className="flex items-center gap-2">
-                        <span aria-hidden className="text-[13px]">{s.kind === "post" ? "📝" : "📸"}</span>
+                        <span aria-hidden className="text-[13px]">{s.kind === "post" ? "ðŸ“" : "ðŸ“¸"}</span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[12px] font-semibold text-ink">{s.title}</span>
-                          <span className="block truncate text-[11px] text-ink/45">{s.location} · goes live {fmtWhen(s.at)}</span>
+                          <span className="block truncate text-[11px] text-ink/45">{s.location} Â· goes live {fmtWhen(s.at)}</span>
                         </span>
                       </div>
                     </div>
@@ -827,17 +808,17 @@ function AttentionQueue() {
                     {scheduled.some((s) => s.kind === "post") && (
                       <Link
                         href="/dashboard/posts-media"
-                        className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                        className="flex flex-1 items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                       >
-                        Manage posts <span aria-hidden> →</span>
+                        Manage posts <span aria-hidden> â†’</span>
                       </Link>
                     )}
                     {scheduled.some((s) => s.kind === "photo") && (
                       <Link
                         href="/dashboard/posts-media"
-                        className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                        className="flex flex-1 items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                       >
-                        Manage media <span aria-hidden> →</span>
+                        Manage media <span aria-hidden> â†’</span>
                       </Link>
                     )}
                   </div>
@@ -851,15 +832,15 @@ function AttentionQueue() {
                 onClick={() => setFailedOpen((o) => !o)}
                 aria-expanded={failedOpen}
                 aria-controls="attention-failed-body"
-                className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                className="group flex w-full items-center gap-3 rounded-[2px] px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
               >
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold text-ink">{failedTitle}</span>
                   <span className="block truncate text-[11px] text-ink/45">
                     {needsReconnect
-                      ? "Google access expired — reconnect, then make new drafts"
-                      : "Publishing failed — make new drafts and try again"}
+                      ? "Google access expired â€” reconnect, then make new drafts"
+                      : "Publishing failed â€” make new drafts and try again"}
                   </span>
                 </span>
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 transition group-hover:text-deep-violet ${failedOpen ? "rotate-180" : ""}`}>
@@ -869,29 +850,29 @@ function AttentionQueue() {
               {failedOpen && (
                 <div id="attention-failed-body" className="space-y-2 px-2 pb-3 pt-1">
                   {failedError && (
-                    <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{failedError}</p>
+                    <p className="rounded-[2px] bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{failedError}</p>
                   )}
                    {failed.map((d) => {
                      const busy = generatingId === d.id;
                      const locName = channelNames[d.channel_id] ?? "Location";
                      return (
-                       <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                       <div key={d.id} className="rounded-[2px] border border-ink/[0.06] bg-white p-3">
                          <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
-                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"â˜…".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
                            <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
-                           <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
+                           <span className="rounded-[2px] bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
                          </div>
                         {d.review_text && (
-                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
+                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">â€œ{d.review_text}â€</p>
                         )}
-                        <div className="mt-2 rounded-lg bg-ink/[0.03] p-2.5">
+                        <div className="mt-2 rounded-[2px] bg-ink/[0.03] p-2.5">
                           <p className="text-[9px] font-bold uppercase tracking-wide text-ink/40">
-                            Failed draft{(d.generation_attempt ?? 1) > 1 ? ` · try #${d.generation_attempt}` : ""}
+                            Failed draft{(d.generation_attempt ?? 1) > 1 ? ` Â· try #${d.generation_attempt}` : ""}
                           </p>
-                          <p className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-ink/60">{d.reply_text || "—"}</p>
+                          <p className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-ink/60">{d.reply_text || "â€”"}</p>
                         </div>
                         {d.error && (
-                          <p className="mt-1.5 rounded-lg bg-coral/10 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-coral">
+                          <p className="mt-1.5 rounded-[2px] bg-coral/10 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-coral">
                             {d.error}
                           </p>
                         )}
@@ -899,9 +880,9 @@ function AttentionQueue() {
                           <button
                             onClick={() => void remakeDraft(d)}
                             disabled={generatingId !== null || remakingAll}
-                            className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
+                            className="rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
                           >
-                            {busy ? "Retrying…" : d.reply_text ? "Retry publishing" : "Retry AI drafting"}
+                            {busy ? "Retryingâ€¦" : d.reply_text ? "Retry publishing" : "Retry AI drafting"}
                           </button>
                         </div>
                       </div>
@@ -910,26 +891,26 @@ function AttentionQueue() {
                   <div className="flex gap-2">
                     <Link
                       href="/dashboard/outbox"
-                      className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-[2px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                     >
                       Open outbox
-                      <span aria-hidden> →</span>
+                      <span aria-hidden> â†’</span>
                     </Link>
                     <Link
                       href="/dashboard/channels"
-                      className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-ink/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-[2px] bg-ink/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                     >
                       {needsReconnect ? "Reconnect Google" : "Manage connection"}
-                      <span aria-hidden> →</span>
+                      <span aria-hidden> â†’</span>
                     </Link>
                   </div>
                   <button
                     onClick={() => void remakeAll()}
                     disabled={remakingAll || generatingId !== null || failedTotal === 0}
-                    className="w-full rounded-xl bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
+                    className="w-full rounded-[2px] bg-deep-violet px-3 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.99] disabled:opacity-50"
                   >
                     {remakingAll
-                      ? `Retrying ${remakeProgress.done} of ${remakeProgress.total}…`
+                      ? `Retrying ${remakeProgress.done} of ${remakeProgress.total}â€¦`
                       : `Retry all (${failedTotal})`}
                   </button>
                 </div>
@@ -942,7 +923,7 @@ function AttentionQueue() {
                  onClick={() => setEditedOpen((o) => !o)}
                  aria-expanded={editedOpen}
                  aria-controls="attention-edited-body"
-                 className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                 className="group flex w-full items-center gap-3 rounded-[2px] px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                >
                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-deep-violet" aria-hidden />
                  <span className="min-w-0 flex-1">
@@ -956,29 +937,29 @@ function AttentionQueue() {
                {editedOpen && (
                  <div id="attention-edited-body" className="space-y-2 px-2 pb-3 pt-1">
                    {editedError && (
-                     <p className="rounded-lg bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{editedError}</p>
+                     <p className="rounded-[2px] bg-coral/10 px-3 py-2 text-[11px] font-medium text-coral">{editedError}</p>
                    )}
                    {edited.map((d) => {
                      const locName = channelNames[d.channel_id] ?? "Location";
                      const draft = editedDrafts[d.review_id];
                      const busy = draft != null && editedApprovingId === draft.id;
                      return (
-                       <div key={d.id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                       <div key={d.id} className="rounded-[2px] border border-ink/[0.06] bg-white p-3">
                          <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
-                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"â˜…".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
                            {d.previous_rating != null && d.previous_rating !== d.rating && (
-                             <span aria-label={`was ${d.previous_rating} stars`} className="text-[10px] font-medium text-ink/40 line-through">{d.previous_rating}★</span>
+                             <span aria-label={`was ${d.previous_rating} stars`} className="text-[10px] font-medium text-ink/40 line-through">{d.previous_rating}â˜…</span>
                            )}
                            <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
-                           <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
+                           <span className="rounded-[2px] bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
                          </div>
                          {d.review_text && (
-                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">“{d.review_text}”</p>
+                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">â€œ{d.review_text}â€</p>
                          )}
                          {draft ? (
-                           <div className="mt-2 rounded-lg bg-deep-violet/[0.05] p-2.5">
+                           <div className="mt-2 rounded-[2px] bg-deep-violet/[0.05] p-2.5">
                              <p className="text-[9px] font-bold uppercase tracking-wide text-deep-violet/60">
-                               AI draft — refreshed for the edited review{(draft.generation_attempt ?? 1) > 1 ? ` · try #${draft.generation_attempt}` : ""}
+                               AI draft â€” refreshed for the edited review{(draft.generation_attempt ?? 1) > 1 ? ` Â· try #${draft.generation_attempt}` : ""}
                              </p>
                              <p className="mt-0.5 line-clamp-3 text-[12px] leading-relaxed text-ink/80">{draft.reply_text}</p>
                              <div className="mt-2 flex items-center justify-end gap-2">
@@ -986,29 +967,29 @@ function AttentionQueue() {
                                  onClick={() => void rewriteEditedDraft(draft)}
                                  disabled={editedRewritingId !== null || busy}
                                  title="Re-run the full AI pipeline on the new review text"
-                                 className="inline-flex items-center gap-1 rounded-lg bg-deep-violet/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+                                 className="inline-flex items-center gap-1 rounded-[2px] bg-deep-violet/[0.08] px-3 py-1.5 text-[11px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.15] focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
                                >
-                                 {editedRewritingId === draft.id ? "Rewriting…" : "Rewrite"}
+                                 {editedRewritingId === draft.id ? "Rewritingâ€¦" : "Rewrite"}
                                </button>
                                <button
                                  onClick={() => void approveEditedDraft(draft, d.review_id)}
                                  disabled={busy || editedApprovingId !== null}
-                                 className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
+                                 className="rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
                                >
-                                 {busy ? "Publishing…" : "Approve & publish"}
+                                 {busy ? "Publishingâ€¦" : "Approve & publish"}
                                </button>
                              </div>
                            </div>
                          ) : (
-                           <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-ink/[0.03] px-3 py-2.5">
+                           <div className="mt-2 flex items-center justify-between gap-2 rounded-[2px] bg-ink/[0.03] px-3 py-2.5">
                              <p className="text-[11px] leading-4 text-ink/45">No AI draft for the new text yet.</p>
                              <button
                                onClick={() => void generateEditedDraft(d)}
                                disabled={editedGeneratingId === d.id}
-                               className="shrink-0 rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
+                               className="shrink-0 rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-deep-violet/25 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] disabled:opacity-50"
                              >
                                {editedGeneratingId === d.id ? (
-                                 <><span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white align-[-2px]" /> Drafting…</>
+                                 <><span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white align-[-2px]" /> Draftingâ€¦</>
                                ) : (
                                  "Generate draft now"
                                )}
@@ -1017,13 +998,13 @@ function AttentionQueue() {
                          )}
                          <div className="mt-2 flex items-center justify-between">
                            <span className="text-[10px] font-bold uppercase tracking-wide text-deep-violet/60">Edited after sync</span>
-                           <Link href="/dashboard/reviews?tab=edited" className="text-[11px] font-bold text-deep-violet underline underline-offset-2 hover:text-deep-violet/80">See what changed →</Link>
+                           <Link href="/dashboard/reviews?tab=edited" className="text-[11px] font-bold text-deep-violet underline underline-offset-2 hover:text-deep-violet/80">See what changed â†’</Link>
                          </div>
                        </div>
                      );
                    })}
-                   <Link href="/dashboard/reviews?tab=edited" className="flex items-center justify-center gap-1 rounded-xl bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-                     Review &amp; respond to all {editedTotal} <span aria-hidden> →</span>
+                   <Link href="/dashboard/reviews?tab=edited" className="flex items-center justify-center gap-1 rounded-[2px] bg-deep-violet/[0.06] px-3 py-2.5 text-[12px] font-bold text-deep-violet outline-none transition hover:bg-deep-violet/[0.1] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+                     Review &amp; respond to all {editedTotal} <span aria-hidden> â†’</span>
                    </Link>
                  </div>
                )}
@@ -1035,12 +1016,12 @@ function AttentionQueue() {
                  onClick={() => setFlaggedOpen((o) => !o)}
                  aria-expanded={flaggedOpen}
                  aria-controls="attention-flagged-body"
-                 className="group flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                 className="group flex w-full items-center gap-3 rounded-[2px] px-2 py-2.5 text-left outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                >
                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
                  <span className="min-w-0 flex-1">
                    <span className="block truncate text-[13px] font-semibold text-ink">{flaggedTitle}</span>
-                   <span className="block truncate text-[11px] text-ink/45">Marked unavailable — no AI draft needed</span>
+                   <span className="block truncate text-[11px] text-ink/45">Marked unavailable â€” no AI draft needed</span>
                  </span>
                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className={`h-3.5 w-3.5 shrink-0 text-ink/25 transition group-hover:text-deep-violet ${flaggedOpen ? "rotate-180" : ""}`}>
                    <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -1051,24 +1032,24 @@ function AttentionQueue() {
                    {flagged.map((d) => {
                      const locName = channelNames[d.channel_id] ?? "Location";
                      return (
-                       <div key={d.review_id} className="rounded-xl border border-ink/[0.06] bg-white p-3">
+                       <div key={d.review_id} className="rounded-[2px] border border-ink/[0.06] bg-white p-3">
                          <div className="flex items-center gap-1.5 text-[11px] text-ink/50">
-                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"â˜…".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
                            <span className="truncate font-semibold text-ink">{d.reviewer_name ?? "Anonymous"}</span>
-                           <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
+                           <span className="rounded-[2px] bg-ink/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50">{locName}</span>
                          </div>
                          {d.review_text && (
                            <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60">"{d.review_text}"</p>
                          )}
                          <div className="mt-2 flex items-center justify-between">
                            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-600/60">Unavailable on Google</span>
-                           <Link href="/dashboard/reviews?tab=flagged" className="text-[11px] font-bold text-deep-violet underline underline-offset-2 hover:text-deep-violet/80">View all flagged →</Link>
+                           <Link href="/dashboard/reviews?tab=flagged" className="text-[11px] font-bold text-deep-violet underline underline-offset-2 hover:text-deep-violet/80">View all flagged â†’</Link>
                          </div>
                        </div>
                      );
                    })}
-                   <Link href="/dashboard/reviews?tab=flagged" className="flex items-center justify-center gap-1 rounded-xl bg-ink/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-                     See all {flaggedTotal} flagged reviews <span aria-hidden> →</span>
+                   <Link href="/dashboard/reviews?tab=flagged" className="flex items-center justify-center gap-1 rounded-[2px] bg-ink/[0.04] px-3 py-2.5 text-[12px] font-bold text-ink/60 outline-none transition hover:bg-ink/[0.07] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+                     See all {flaggedTotal} flagged reviews <span aria-hidden> â†’</span>
                    </Link>
                  </div>
                )}
@@ -1076,7 +1057,7 @@ function AttentionQueue() {
            )}
            {items.map((item) => (
             <li key={item.title}>
-              <Link href={item.href} className="group flex items-center gap-3 rounded-xl px-2 py-2.5 outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
+              <Link href={item.href} className="group flex items-center gap-3 rounded-[2px] px-2 py-2.5 outline-none transition hover:bg-ink/[0.02] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.severity === "high" ? "bg-coral" : "bg-amber-500"}`} aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold text-ink">{item.title}</span>
@@ -1089,398 +1070,6 @@ function AttentionQueue() {
             </li>
           ))}
         </ul>
-      )}
-    </section>
-  );
-}
-
-function BusinessPulse() {
-  const { t, locale } = useI18n();
-  const copy = t.dashboard.pulse;
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [points, setPoints] = useState<TimeseriesPoint[]>([]);
-  const [channels, setChannels] = useState<DashboardChannel[]>([]);
-  const [channelId, setChannelId] = useState("");
-  // Cohort comparison is already fetched — it feeds the "Where you stand" tile
-  // instead of a "Connected businesses" counter nobody could act on.
-  const [bench, setBench] = useState<BenchmarkResponse | null>(null);
-  const [intel, setIntel] = useState<IntelSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadPulse() {
-      try {
-        const channelData = await apiFetch("/api/v1/channels?limit=100");
-        const rawChannels: DashboardChannel[] = (channelData.channels ?? []).filter(
-          (channel: DashboardChannel) => channel.platform === "google_reviews"
-        );
-        const googleChannels = dedupeBusinesses(rawChannels);
-        const [nextOverview, nextPoints, bench, nextIntel] = await Promise.all([
-          fetchOverview(30, channelId || null),
-          fetchTimeseries(30, channelId || null),
-          fetchBenchmark(30, null).catch(() => null),
-          apiFetch(`/api/v1/analytics/review-intelligence?days=90${channelId ? `&channel_id=${encodeURIComponent(channelId)}` : ""}`).catch(() => null),
-        ]);
-        if (cancelled) return;
-        setChannels(googleChannels);
-        setOverview(nextOverview);
-        setPoints(nextPoints);
-        setIntel(nextIntel);
-        setBench(bench);
-      } catch {
-        if (!cancelled) {
-          setOverview(null);
-          setPoints([]);
-          setChannels([]);
-          setIntel(null);
-          setBench(null);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    void loadPulse();
-    return () => {
-      cancelled = true;
-    };
-  }, [channelId]);
-
-  const totalReviews = overview?.total_reviews ?? 0;
-  const ratingDistribution = overview?.rating_distribution ?? {};
-
-  return (
-    <section aria-label={copy.title} className="space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h2 className="text-[16px] font-bold text-ink">{copy.title}</h2>
-          <p className="mt-0.5 text-[12px] text-ink/50">{copy.subtitle}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {channels.length > 0 && <select value={channelId} onChange={(event) => { setLoading(true); setChannelId(event.target.value); }} aria-label={copy.businessScope} className="rounded-lg border border-ink/[0.08] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 outline-none focus:border-deep-violet/30"><option value="">{copy.allBusinesses}</option>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.display_name || copy.unnamedBusiness}</option>)}</select>}
-          <span className="text-[11px] font-semibold text-ink/40">{copy.last30Days}</span>
-        </div>
-      </div>
-
-      {/* PULSE ROW — one honest number instead of four tiles of setup status.
-          Services / hours moved to the launch checklist; market position gets
-          its own panel below; the rating split lives in Customer voice. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <PulseStat
-          label={copy.totalReviews}
-          value={totalReviews}
-          detail={overview ? copy.averageRating.replace("{rating}", overview.avg_rating.toFixed(1)) : copy.noReviewData}
-          color="text-amber-600"
-          href="/dashboard/reviews"
-          delta={overview?.period.reviews_delta_pct}
-          deltaSuffix="%"
-          spark={points.map((p) => p.reviews_count)}
-          sparkColor="#d97706"
-        />
-        <MarketPosition bench={bench} copy={copy} />
-        <ThisWeekActions intel={intel} bench={bench} overview={overview} copy={copy} />
-      </div>
-
-      <CustomerVoice intel={intel} loading={loading} copy={copy} />
-
-      <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr]">
-        <Link href="/dashboard/analytics" aria-label={copy.openAnalytics} className="group block rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-          {loading ? <div className="h-72 animate-pulse rounded-2xl border-2 border-white bg-white/60" /> : <span className="block rounded-2xl transition duration-200 group-hover:-translate-y-0.5 group-hover:shadow-lg group-hover:shadow-deep-violet/[0.08]"><MetricChart points={points} labels={copy.chart} locale={locale} /></span>}
-        </Link>
-        <div className="space-y-3">
-          <StarsCostingYou intel={intel} copy={copy} />
-          <Link href="/dashboard/reviews" aria-label="Open reviews" className="group block rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-            <h3 className="mb-4 text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">{copy.reviewRatings}</h3>
-            <RatingDistribution distribution={ratingDistribution} total={totalReviews} labels={{ ariaLabel: copy.ratingDistribution, reviewsTooltip: copy.reviewsTooltip }} />
-            <div className="mt-5 border-t border-ink/[0.06] pt-4">
-              <div className="flex items-center justify-between text-[11px] text-ink/45">
-                <span>{copy.responseRate}</span>
-                <strong className="text-ink">
-                  {totalReviews < MIN_REVIEWS_FOR_RATE
-                    ? copy.needsMore.replace("{count}", String(MIN_REVIEWS_FOR_RATE - totalReviews))
-                    : overview
-                      ? `${Math.round(overview.response_rate)}%`
-                      : "--"}
-                </strong>
-              </div>
-              {totalReviews < MIN_REVIEWS_FOR_RATE ? (
-                <p className="mt-1.5 text-[10px] text-ink/40">
-                  {copy.tooFewReviews.replace("{minimum}", String(MIN_REVIEWS_FOR_RATE))}
-                </p>
-              ) : (
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink/[0.06]">
-                  <div className="h-full rounded-full bg-emerald" style={{ width: `${Math.min(100, overview?.response_rate ?? 0)}%` }} />
-                </div>
-              )}
-            </div>
-          </Link>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/** Response rate on a handful of reviews is noise, not a metric. */
-const MIN_REVIEWS_FOR_RATE = 30;
-
-function PulseStat({ label, value, detail, color, href, delta, deltaSuffix = "", spark, sparkColor }: { label: string; value: number | string; detail: string; color: string; href?: string; delta?: number | null; deltaSuffix?: string; spark?: number[]; sparkColor?: string }) {
-  const cls = "group block rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40";
-  const deltaChip = typeof delta === "number" ? (
-    <span className={`ml-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-px align-middle text-[10px] font-bold tabular-nums ${delta > 0 ? "bg-emerald/10 text-emerald" : delta < 0 ? "bg-coral/10 text-coral" : "bg-ink/[0.05] text-ink/50"}`}>
-      {delta !== 0 && (
-        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" className={`h-2 w-2 ${delta < 0 ? "rotate-180" : ""}`} aria-hidden>
-          <path d="M6 10V2M2.5 5.5L6 2l3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      )}
-      {delta > 0 ? "+" : ""}{delta}{deltaSuffix}
-    </span>
-  ) : null;
-  const inner = (
-    <>
-      <p className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-ink/50">
-        <span>{label}</span>
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="h-3 w-3 text-ink/25 transition group-hover:translate-x-0.5 group-hover:text-deep-violet"><path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      </p>
-      <p className={`mt-1 flex items-center justify-between gap-2 text-[22px] font-bold ${color}`}>
-        <span>{value}{deltaChip}</span>
-        {spark && spark.length > 1 && <Sparkline values={spark} color={sparkColor} />}
-      </p>
-      <p className="truncate text-[10px] text-ink/40">{detail}</p>
-    </>
-  );
-  return href ? <Link href={href} aria-label={label} className={cls}>{inner}</Link> : <div className={cls}>{inner}</div>;
-}
-
-/** A "2 of 2" ranking is noise. Below this, stay quiet rather than lie. */
-const MIN_COHORT_FOR_RANK = 5;
-
-/**
- * Where you stand against comparable businesses.
- *
- * An absolute 4.8★ is not a decision input — a position is. The cohort
- * (same city + category, other businesses on Sayvors) is already computed by
- * the benchmark endpoint, so this needs no extra request.
- */
-function MarketPosition({ bench, copy }: { bench: BenchmarkResponse | null; copy: ReturnType<typeof useI18n>["t"]["dashboard"]["pulse"] }) {
-  const cohort = bench?.cohort;
-  const market = bench?.market ?? [];
-  const count = cohort?.count ?? market.length;
-  const rank = bench?.my_rank ?? null;
-  const me = market.find((m) => m.is_you);
-  const ahead = market.filter((m) => !m.is_you && me && m.reputation_score > me.reputation_score);
-  const behind = market.filter((m) => !m.is_you && me && m.reputation_score < me.reputation_score).slice(0, 2);
-
-  if (!bench || count < MIN_COHORT_FOR_RANK) {
-    return (
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">{copy.whereYouStand}</p>
-        <p className="mt-1 text-[22px] font-bold text-ink/25">—</p>
-        <p className="text-[10px] text-ink/40">
-          {copy.needComparableBusinesses.replace("{minimum}", String(MIN_COHORT_FOR_RANK))}
-          {count > 0 ? ` — ${copy.businessesSoFar.replace("{count}", String(count))}` : ""}.
-        </p>
-      </div>
-    );
-  }
-
-  const percentile = rank && count ? Math.round(((count - rank + 1) / count) * 100) : null;
-  return (
-    <Link href="/dashboard/benchmark" aria-label={copy.whereYouStand} className="group block rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-      <p className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-ink/50">
-        <span>{copy.whereYouStand}</span>
-        <span className="text-ink/25 transition group-hover:translate-x-0.5 group-hover:text-deep-violet" aria-hidden>→</span>
-      </p>
-      <p className="mt-1 text-[22px] font-bold text-deep-violet">
-        {copy.rankAmong.replace("{rank}", rank ? `#${rank}` : "—").replace("{count}", String(count)).replace("{label}", cohort?.label ?? copy.cohortSimilar)}
-      </p>
-      {percentile !== null && (
-        <p className="mt-0.5 text-[11px] text-ink/55">
-          {copy.topPercent.replace("{percent}", String(100 - percentile + 1))} · {copy.reputation.replace("{score}", String(me ? Math.round(me.reputation_score) : "—"))}
-        </p>
-      )}
-      {(cohort?.median_rating != null || cohort?.median_response_rate != null) && (
-        <p className="mt-1 text-[10px] text-ink/40">
-          {copy.medianNearby.replace("{rating}", cohort?.median_rating?.toFixed(1) ?? "—")}
-          {cohort?.median_response_rate != null ? ` · ${copy.replyRate.replace("{rate}", String(Math.round(cohort.median_response_rate)))}` : ""}
-        </p>
-      )}
-      {(ahead.length > 0 || behind.length > 0) && (
-        <p className="mt-1.5 truncate text-[10px] text-ink/45">
-          {ahead.length > 0 && <span className="text-emerald">{copy.ahead.replace("{count}", String(ahead.length))}</span>}
-          {ahead.length > 0 && behind.length > 0 && " · "}
-          {behind.length > 0 && <span className="text-coral">{copy.behind.replace("{names}", behind.map((b) => b.name).join("، "))}</span>}
-        </p>
-      )}
-    </Link>
-  );
-}
-
-/**
- * One action, not a dashboard. Prefers the LLM's own recommended action, falls
- * back to the competitive gap that is actually measurable today.
- */
-function ThisWeekActions({ intel, bench, overview, copy }: {
-  intel: IntelSnapshot | null;
-  bench: BenchmarkResponse | null;
-  overview: Overview | null;
-  copy: ReturnType<typeof useI18n>["t"]["dashboard"]["pulse"];
-}) {
-  const total = overview?.total_reviews ?? 0;
-  const first = intel?.actions?.[0];
-  const gap = intel?.competitive?.gaps?.[0];
-  const wins = intel?.competitive?.wins?.[0];
-  const rate = overview?.response_rate ?? null;
-  const cohortRate = bench?.cohort?.median_response_rate ?? null;
-
-  const lines: { title: string; detail: string }[] = [];
-  if (first) lines.push({ title: first.title, detail: first.detail });
-  if (gap) lines.push({ title: gap, detail: copy.competitorGapDetail });
-  if (
-    !first && !gap && total < MIN_REVIEWS_FOR_RATE && total > 0
-  ) {
-    lines.push({
-      title: copy.collectMoreReviews.replace("{total}", String(total)).replace("{minimum}", String(MIN_REVIEWS_FOR_RATE)),
-      detail: copy.responseRateHidden,
-    });
-  }
-  if (!lines.length && wins) {
-    lines.push({ title: wins, detail: copy.keepThisGoing });
-  }
-  if (!lines.length && rate != null && cohortRate != null && rate < cohortRate) {
-    lines.push({
-      title: copy.replyFaster.replace("{rate}", String(Math.round(rate))).replace("{nearby}", String(Math.round(cohortRate))),
-      detail: copy.competitorsReplyMore,
-    });
-  }
-
-  return (
-    <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/50">{copy.whatToDoThisWeek}</p>
-      {lines.length === 0 ? (
-        <>
-          <p className="mt-1 text-[22px] font-bold text-emerald">{copy.allClear}</p>
-          <p className="text-[10px] text-ink/40">{copy.nothingUrgent}</p>
-        </>
-      ) : (
-        <ul className="mt-1.5 space-y-1.5">
-          {lines.slice(0, 2).map((l) => (
-            <li key={l.title}>
-              <p className="text-[12.5px] font-semibold leading-snug text-ink">{l.title}</p>
-              <p className="text-[10px] leading-snug text-ink/50">{l.detail}</p>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/**
- * The weakest dimension from the scorecard — the thing actually costing stars.
- * Stays hidden when there is no negative signal, so it never nags an owner
- * whose business is in good shape.
- *
- * "Fix this" now lands on Issues rather than the review list. The two used to
- * be the same destination, which is why the link felt broken: the card named a
- * problem and the page offered no way to act on it.
- *
- * No subject pre-filter on the URL. The card reports a *dimension* (the six
- * fixed business dimensions) while issues are keyed by *subject* (the meaning
- * layer's vocabulary), and "Cleanliness & Environment" spans two subjects. A
- * deep link would need that mapping, and guessing it would drop the merchant
- * into an empty list more often than not.
- */
-function StarsCostingYou({ intel, copy }: { intel: IntelSnapshot | null; copy: ReturnType<typeof useI18n>["t"]["dashboard"]["pulse"] }) {
-  const dims = intel?.dimensions ?? [];
-  const worst = dims
-    .filter((d) => d.negative > 0)
-    .sort((a, b) => b.negative - a.negative || a.avg_rating - b.avg_rating)[0];
-  if (!worst) return null;
-  return (
-    <div className="rounded-2xl border-2 border-coral/30 bg-coral/[0.04] p-5 backdrop-blur-sm">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-coral">{copy.whatCostsStars}</p>
-      <p className="mt-1.5 text-[15px] font-bold text-ink">{worst.label}</p>
-      <p className="mt-0.5 text-[12px] text-ink/60">
-        {copy.reviewCount.replace("{count}", String(worst.negative))} · {copy.averageShort.replace("{rating}", worst.avg_rating.toFixed(1))}
-      </p>
-      <Link href="/dashboard/issues" className="mt-2 inline-block text-[11px] font-semibold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-        {copy.fixThis} →
-      </Link>
-    </div>
-  );
-}
-
-function CustomerVoice({ intel, loading, copy }: { intel: IntelSnapshot | null; loading: boolean; copy: ReturnType<typeof useI18n>["t"]["dashboard"]["pulse"] }) {
-  if (loading) {
-    return <div className="h-36 animate-pulse rounded-2xl border-2 border-white bg-white/60" aria-hidden />;
-  }
-  if (!intel || (intel.stats.total === 0 && (intel.themes ?? []).length === 0)) {
-    return (
-      <Link href="/dashboard/reviews" aria-label={copy.openReviews} className="group block rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm outline-none transition duration-200 hover:-translate-y-0.5 hover:border-deep-violet/20 hover:shadow-lg hover:shadow-deep-violet/[0.08] focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-        <h3 className="text-[14px] font-bold text-ink transition-colors group-hover:text-deep-violet">{copy.customerVoice}</h3>
-        <p className="mt-1 text-[12px] text-ink/50">{copy.noAnalysisYet}</p>
-      </Link>
-    );
-  }
-  const themes = intel.themes ?? [];
-  const loves = themes.filter((t) => t.positive_pct >= 60).sort((a, b) => b.mentions - a.mentions).slice(0, 3);
-  const hurts = themes.filter((t) => t.positive_pct < 60).sort((a, b) => a.positive_pct - b.positive_pct).slice(0, 2);
-  const pos = intel.stats.positive;
-  const neu = intel.stats.neutral;
-  const neg = intel.stats.negative;
-  const total = Math.max(1, pos + neu + neg);
-  return (
-    <section aria-label={copy.customerVoice} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="text-[14px] font-bold text-ink">{copy.customerVoice}</h3>
-          <p className="text-[11px] text-ink/45">{copy.customerVoiceSubtitle}</p>
-        </div>
-        <Link href="/dashboard/reviews" className="text-[11px] font-semibold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40">
-          {copy.fullIntelligence} →
-        </Link>
-      </div>
-      {intel.summary ? <p className="mt-2 line-clamp-2 text-[12.5px] leading-snug text-ink/70">{intel.summary}</p> : null}
-      <div className="mt-3 flex h-2.5 overflow-hidden rounded-full" role="img" aria-label={copy.sentimentAria.replace("{positive}", String(pos)).replace("{neutral}", String(neu)).replace("{negative}", String(neg))}>
-        <div className="bg-emerald-500" style={{ width: `${(pos / total) * 100}%` }} />
-        <div className="bg-amber-400" style={{ width: `${(neu / total) * 100}%` }} />
-        <div className="bg-coral" style={{ width: `${(neg / total) * 100}%` }} />
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink/55">
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {copy.positive} {pos}</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-400" /> {copy.neutral} {neu}</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-coral" /> {copy.negative} {neg}</span>
-        {intel.stale ? <span className="text-amber-600">{copy.staleAnalysis}</span> : null}
-      </div>
-      {(loves.length > 0 || hurts.length > 0) && (
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {loves.length > 0 && (
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">{copy.loved}</p>
-              <ul className="mt-1.5 space-y-1">
-                {loves.map((t) => (
-                  <li key={t.name} className="flex items-center justify-between gap-2 text-[12.5px]">
-                    <span className="truncate font-medium text-ink">{t.name}</span>
-                    <span className="shrink-0 tabular-nums text-ink/45">{t.mentions}× · {t.avg_rating.toFixed(1)}★</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {hurts.length > 0 && (
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-coral">{copy.hurting}</p>
-              <ul className="mt-1.5 space-y-1">
-                {hurts.map((t) => (
-                  <li key={t.name} className="flex items-center justify-between gap-2 text-[12.5px]">
-                    <span className="truncate font-medium text-ink">{t.name}</span>
-                    <span className="shrink-0 tabular-nums text-ink/45">{t.mentions}× · {t.avg_rating.toFixed(1)}★</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
       )}
     </section>
   );
@@ -1526,7 +1115,7 @@ function writeChecklist(next: Record<string, boolean>) {
   try {
     window.localStorage.setItem(CHECKLIST_KEY, JSON.stringify(next));
   } catch {
-    // storage unavailable — updates still broadcast for this session
+    // storage unavailable â€” updates still broadcast for this session
   }
   checklistListeners.forEach((listener) => listener());
 }
@@ -1586,15 +1175,15 @@ export default function DashboardPage() {
 
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-5 bg-[#f3f0ff]">
-      {/* Getting Started checklist — first thing a new user must see */}
+      {/* Getting Started checklist â€” first thing a new user must see */}
       {showChecklist && (
         <section
           aria-label={t.dashboard.start.title}
-          className="relative overflow-hidden rounded-2xl bg-white p-5 shadow-md shadow-deep-violet/[0.08] ring-2 ring-deep-violet/30"
+          className="relative overflow-hidden rounded-[2px] bg-white p-5 shadow-md shadow-deep-violet/[0.08] ring-2 ring-deep-violet/30"
         >
           <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-deep-violet via-magenta to-coral" />
           <div className="flex items-center gap-2">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
                 <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z" />
                 <path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z" />
@@ -1606,12 +1195,12 @@ export default function DashboardPage() {
               onClick={toggleChecklist}
               aria-expanded={checklistOpen}
               aria-controls="onboarding-checklist-body"
-              className="flex min-w-0 flex-1 items-center gap-2 rounded-lg text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-[2px] text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40"
             >
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="text-[15px] font-bold text-ink">{t.dashboard.start.title}</span>
-                  <span className="rounded-full bg-deep-violet/[0.08] px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-deep-violet">
+                  <span className="rounded-[2px] bg-deep-violet/[0.08] px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-deep-violet">
                     {allDone ? t.dashboard.start.allSet : t.dashboard.start.doneOf.replace("{done}", String(completed)).replace("{total}", String(total))}
                   </span>
                 </span>
@@ -1628,7 +1217,7 @@ export default function DashboardPage() {
             {allDone && (
               <button
                 onClick={dismissChecklist}
-                className="shrink-0 rounded-lg px-2 py-1 text-[12px] font-semibold text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink"
+                className="shrink-0 rounded-[2px] px-2 py-1 text-[12px] font-semibold text-ink/40 transition hover:bg-ink/[0.04] hover:text-ink"
               >
                 {t.dashboard.start.dismiss}
               </button>
@@ -1638,9 +1227,9 @@ export default function DashboardPage() {
           {checklistOpen && (
           <div id="onboarding-checklist-body" className="mt-3">
           {/* Progress bar */}
-          <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-deep-violet/[0.08]" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label={t.dashboard.start.title}>
+          <div className="mb-4 h-2 w-full overflow-hidden rounded-[2px] bg-deep-violet/[0.08]" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label={t.dashboard.start.title}>
             <div
-              className="h-full rounded-full bg-gradient-to-r from-deep-violet via-magenta to-coral transition-all duration-500"
+              className="h-full rounded-[2px] bg-gradient-to-r from-deep-violet via-magenta to-coral transition-all duration-500"
               style={{ width: `${progress}%` }}
             />
           </div>
@@ -1652,7 +1241,7 @@ export default function DashboardPage() {
               return (
                 <li
                   key={item.id}
-                  className={`flex items-center gap-3 rounded-xl border p-3 transition ${
+                  className={`flex items-center gap-3 rounded-[2px] border p-3 transition ${
                     isDone
                       ? "border-transparent bg-ink/[0.02]"
                       : isNext
@@ -1662,7 +1251,7 @@ export default function DashboardPage() {
                 >
                   <span
                     aria-hidden
-                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold tabular-nums ${
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[2px] text-[11px] font-bold tabular-nums ${
                       isDone
                         ? "bg-deep-violet text-white"
                         : isNext
@@ -1682,7 +1271,7 @@ export default function DashboardPage() {
                     <p className={`text-[13px] font-semibold ${isDone ? "text-ink/40 line-through" : "text-ink"}`}>
                       {item.label}
                       {isNext && !isDone && (
-                        <span className="ml-2 rounded-full bg-deep-violet px-2 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-white">
+                        <span className="ml-2 rounded-[2px] bg-deep-violet px-2 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-white">
                           {t.dashboard.start.upNext}
                         </span>
                       )}
@@ -1691,10 +1280,10 @@ export default function DashboardPage() {
                   {isNext && !isDone ? (
                     <Link
                       href={item.href}
-                      className="shrink-0 rounded-lg bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/30 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98]"
+                      className="shrink-0 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/30 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98]"
                     >
                       {t.dashboard.start.start}
-                      <span aria-hidden> {dir === "rtl" ? "←" : "→"}</span>
+                      <span aria-hidden> {dir === "rtl" ? "â†" : "â†’"}</span>
                     </Link>
                   ) : (
                     <div className="flex shrink-0 items-center gap-1">
@@ -1702,7 +1291,7 @@ export default function DashboardPage() {
                         onClick={() => toggleItem(item.id)}
                         aria-label={isDone ? t.dashboard.start.reopenStep.replace("{label}", item.label) : t.dashboard.start.markDone.replace("{label}", item.label)}
                         title={isDone ? t.dashboard.start.reopen : t.dashboard.start.skip}
-                        className={`rounded-lg px-2 py-1 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                        className={`rounded-[2px] px-2 py-1 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
                           isDone ? "text-ink/35 hover:text-ink/60" : "text-deep-violet/70 hover:bg-deep-violet/[0.06] hover:text-deep-violet"
                         }`}
                       >
@@ -1711,7 +1300,7 @@ export default function DashboardPage() {
                       <Link
                         href={item.href}
                         aria-label={t.dashboard.start.openStep.replace("{label}", item.label)}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-ink/30 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/40"
+                        className="flex h-8 w-8 items-center justify-center rounded-[2px] text-ink/30 outline-none transition hover:bg-deep-violet/[0.06] hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/40"
                       >
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden className="h-3.5 w-3.5">
                           <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
@@ -1736,10 +1325,12 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Needs attention — the daily driver */}
+      {/* Needs attention â€” the daily driver */}
       <AttentionQueue />
 
-      <BusinessPulse />
+      <GlanceStrip />
+
+      <GlanceCharts />
 
     </div>
   );

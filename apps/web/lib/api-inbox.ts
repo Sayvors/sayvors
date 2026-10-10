@@ -13,6 +13,8 @@ export interface InboxThread {
   key: string;
   contact_phone: string | null;
   display_name: string | null;
+  username: string | null;
+  avatar_url: string | null;
   channel_id: string;
   channel_name: string | null;
   platform: string | null;

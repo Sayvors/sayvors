@@ -7,6 +7,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { LOCALES } from "@/lib/i18n/locales";
 import { useAuth } from "@/lib/auth-context";
+import { apiFetch } from "@/lib/api-rag";
 import AutoPilotDialog from "@/components/dashboard/AutoPilotDialog";
 import NotificationsBell from "@/components/dashboard/NotificationsBell";
 import SearchPalette from "@/components/dashboard/SearchPalette";
@@ -48,6 +49,21 @@ export default function Header() {
   const [pilotOpen, setPilotOpen] = useState(false);
   const [pilotSaving, setPilotSaving] = useState(false);
   const [pilotError, setPilotError] = useState<string | null>(null);
+  // Same gate as the sidebar: owners and roles carrying team.view/manage.
+  const [teamPermitted, setTeamPermitted] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const ctx = await apiFetch("/api/v1/team/context");
+        setTeamPermitted(
+          !!(ctx.is_owner || (ctx.permissions || []).some((p: string) => ["team.manage", "team.view"].includes(p))),
+        );
+      } catch {
+        /* not permitted / not signed in — button stays hidden */
+      }
+    })();
+  }, []);
 
   const refreshPilot = useCallback(async () => {
     try {
@@ -113,14 +129,14 @@ export default function Header() {
         onClick={() => setSearchOpen(true)}
         aria-label={t.header.searchLabel}
         title={`${t.header.searchLabel} (⌘K)`}
-        className="flex h-8 items-center gap-2 rounded-lg border border-deep-violet/[0.08] bg-deep-violet/[0.03] px-2.5 text-[12px] text-ink/40 outline-none transition hover:border-deep-violet/25 hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 ms-12 md:ms-0 sm:w-56 dark:text-fog/40 dark:hover:text-fog/60"
+        className="flex h-8 items-center gap-2 rounded-[2px] border border-deep-violet/[0.08] bg-deep-violet/[0.03] px-2.5 text-[12px] text-ink/40 outline-none transition hover:border-deep-violet/25 hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 ms-12 md:ms-0 sm:w-56 dark:text-fog/40 dark:hover:text-fog/60"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0" aria-hidden>
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
         <span className="hidden flex-1 truncate text-start sm:block">{t.header.search}</span>
-        <kbd className="hidden shrink-0 rounded border border-deep-violet/[0.1] bg-white px-1 py-0.5 text-[9px] font-medium text-deep-violet/40 sm:block dark:bg-ink dark:text-deep-violet/50">
+        <kbd className="hidden shrink-0 rounded-[2px] border border-deep-violet/[0.1] bg-white px-1 py-0.5 text-[9px] font-medium text-deep-violet/40 sm:block dark:bg-ink dark:text-deep-violet/50">
           ⌘K
         </kbd>
       </button>
@@ -134,12 +150,12 @@ export default function Header() {
           aria-label="Help"
           aria-expanded={helpOpen}
           title="Help — take the guided tour"
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-deep-violet/[0.08] text-[13px] font-bold text-ink/50 outline-none transition hover:border-deep-violet/25 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:border-fog/[0.1] dark:text-fog/50 dark:hover:text-deep-violet"
+          className="flex h-8 w-8 items-center justify-center rounded-[2px] border border-deep-violet/[0.08] text-[13px] font-bold text-ink/50 outline-none transition hover:border-deep-violet/25 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:border-fog/[0.1] dark:text-fog/50 dark:hover:text-deep-violet"
         >
           ?
         </button>
         {helpOpen && (
-          <div className={`absolute ${dir === "rtl" ? "left-0" : "right-0"} top-full z-50 mt-1 w-52 overflow-hidden rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink`}>
+          <div className={`absolute ${dir === "rtl" ? "left-0" : "right-0"} top-full z-50 mt-1 w-52 overflow-hidden rounded-[2px] border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink`}>
             <button
               onClick={() => {
                 setHelpOpen(false);
@@ -163,7 +179,7 @@ export default function Header() {
         aria-expanded={chatOpen}
         aria-label="Chat with Sayvors"
         title="Ask Sayvors — answers from your live business data"
-        className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] ${
+        className={`flex h-8 shrink-0 items-center gap-1.5 rounded-[2px] px-2.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] ${
           chatOpen
             ? "bg-deep-violet text-white shadow-sm shadow-deep-violet/25"
             : "border border-deep-violet/[0.12] text-deep-violet hover:bg-deep-violet/[0.06]"
@@ -176,10 +192,27 @@ export default function Header() {
         <span className="hidden lg:inline">{t.header.ask}</span>
       </button>
 
+      {/* Team — visible to owners and team.view/manage roles (same as sidebar) */}
+      {teamPermitted && (
+        <Link
+          href="/dashboard/team"
+          aria-label="Team"
+          title="Team — members, roles and per-channel access"
+          className="hidden h-8 shrink-0 items-center gap-1.5 rounded-[2px] border border-deep-violet/[0.12] px-2.5 text-[12px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] sm:flex"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+          </svg>
+          <span className="hidden lg:inline">Team</span>
+        </Link>
+      )}
+
       {/* Connect channel */}
       <Link
         href="/dashboard/channels"
-        className="flex h-8 items-center gap-1.5 rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-md active:scale-[0.98]"
+        className="flex h-8 items-center gap-1.5 rounded-[2px] bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-md active:scale-[0.98]"
       >
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
           <path d="M8 3v10M3 8h10" strokeLinecap="round" />
@@ -194,9 +227,9 @@ export default function Header() {
           aria-label={t.account.menu}
           aria-expanded={profileOpen}
           title={t.account.menu}
-          className="flex h-8 items-center gap-1.5 rounded-lg ps-1.5 pe-2 outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:hover:bg-deep-violet/[0.1]"
+          className="flex h-8 items-center gap-1.5 rounded-[2px] ps-1.5 pe-2 outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:hover:bg-deep-violet/[0.1]"
         >
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-violet-light to-magenta text-[10px] font-semibold text-white">
+          <span className="flex h-7 w-7 items-center justify-center rounded-[2px] bg-gradient-to-br from-violet-light to-magenta text-[10px] font-semibold text-white">
             {initials}
           </span>
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={`h-3 w-3 text-ink/40 transition-transform dark:text-fog/40 ${profileOpen ? "rotate-180" : ""}`} aria-hidden>
@@ -204,7 +237,7 @@ export default function Header() {
           </svg>
         </button>
         {profileOpen && (
-          <div className={`absolute ${dir === "rtl" ? "left-0" : "right-0"} top-full z-50 mt-1 max-h-[80vh] w-60 overflow-y-auto rounded-lg border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink`}>
+          <div className={`absolute ${dir === "rtl" ? "left-0" : "right-0"} top-full z-50 mt-1 max-h-[80vh] w-60 overflow-y-auto rounded-[2px] border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink`}>
             <div className="border-b border-deep-violet/[0.06] px-3 py-2.5">
               <p className="truncate text-[13px] font-medium text-ink dark:text-fog">{displayName}</p>
               <p className="truncate text-[11px] text-ink/40 dark:text-fog/40">{user?.email ?? ""}</p>
@@ -229,7 +262,7 @@ export default function Header() {
                 />
                 <span className="flex-1 text-ink/60 dark:text-fog/60">{t.pilot.label}</span>
                 <span
-                  className={`rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
+                  className={`rounded-[2px] px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
                     pilot === "on"
                       ? "bg-emerald/10 text-emerald-600"
                       : pilot === "none"
@@ -303,7 +336,7 @@ export default function Header() {
                 >
                   <span className="text-[14px] opacity-50" aria-hidden>{l.flag}</span>
                   <span className="flex-1">{l.label}</span>
-                  <span className="rounded-full bg-ink/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40">
+                  <span className="rounded-[2px] bg-ink/[0.06] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ink/40 dark:bg-fog/[0.06] dark:text-fog/40">
                     Soon
                   </span>
                 </div>

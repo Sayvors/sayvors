@@ -18,7 +18,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.modules.channels import service as channels
-from app.modules.channels.models import Channel, ChannelMessage
+from app.modules.channels.models import Channel, ChannelMessage, ContactProfile
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
 
 
@@ -71,6 +71,58 @@ async def test_threads_group_by_contact(db, user_id):
     assert [t["contact_phone"] for t in threads] == ["966500000001", "966500000002"]
     assert by_phone["966500000001"]["message_count"] == 2
     assert by_phone["966500000001"]["last_message"] == "second"
+
+
+@pytest.mark.asyncio
+async def test_threads_carry_cached_profile_name_and_avatar(db, user_id):
+    """The contact_profiles cache feeds the thread list: profile name wins
+    over the per-message name, avatar/username ride along for the UI."""
+    ch, _ = _channel(db, user_id)
+    await _msg(db, ch.id, phone="966500000001", content="hello", minutes_ago=5, name="966500000001")
+    db.add(ContactProfile(
+        id="cp-1", tenant_id=user_id, platform="whatsapp",
+        contact_id="966500000001", name="Ahmed Khan", username=None,
+        avatar_url="https://cdn.example/ahmed.jpg",
+        profile_fetched_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
+
+    threads = await channels.list_inbox_threads(db=db, user=_user(user_id))
+    assert len(threads) == 1
+    t = threads[0]
+    assert t["display_name"] == "Ahmed Khan"
+    assert t["avatar_url"] == "https://cdn.example/ahmed.jpg"
+
+    # A different tenant's identical contact never leaks across.
+    db.add(ContactProfile(
+        id="cp-2", tenant_id="other-tenant", platform="whatsapp",
+        contact_id="966500000001", name="Someone Else",
+        avatar_url="https://cdn.example/else.jpg",
+        profile_fetched_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
+    threads = await channels.list_inbox_threads(db=db, user=_user(user_id))
+    assert threads[0]["display_name"] == "Ahmed Khan"
+    assert threads[0]["avatar_url"] == "https://cdn.example/ahmed.jpg"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_profile_name_upsert(db, user_id):
+    """The webhook name is cached once per contact and updated in place —
+    never duplicated, and a nameless payload never wipes what we know."""
+    from sqlalchemy import select
+
+    from app.modules.channels.meta.consumer import _upsert_whatsapp_profile_name
+
+    await _upsert_whatsapp_profile_name(db, user_id, "966546211818", "Syed Syab")
+    await _upsert_whatsapp_profile_name(db, user_id, "966546211818", "Syed S. Ahmed")
+    # Nameless payload (the old parser bug made EVERY payload nameless).
+    await _upsert_whatsapp_profile_name(db, user_id, "966546211818", None)
+
+    rows = (await db.execute(select(ContactProfile))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].name == "Syed S. Ahmed"
+    assert rows[0].platform == "whatsapp"
 
 
 @pytest.mark.asyncio

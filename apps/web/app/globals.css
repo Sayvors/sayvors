@@ -173,7 +173,7 @@ html[lang="ar"] {
 /* ── Reusable form classes ─────────────────────────── */
 .input-field {
   width: 100%;
-  border-radius: 0.75rem;
+  border-radius: 2px;
   border: 1px solid rgba(26, 18, 48, 0.08);
   background: white;
   padding: 0.5rem 0.75rem;
@@ -200,7 +200,7 @@ html[lang="ar"] {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  border-radius: 0.75rem;
+  border-radius: 2px;
   background: #5b2d8e;
   padding: 0.5rem 1rem;
   font-size: 13px;
@@ -216,7 +216,7 @@ html[lang="ar"] {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  border-radius: 0.75rem;
+  border-radius: 2px;
   border: 1px solid rgba(26, 18, 48, 0.1);
   background: white;
   padding: 0.5rem 1rem;
@@ -235,4 +235,133 @@ html[lang="ar"] {
 }
 .dark .btn-secondary:hover {
   background: rgba(248, 246, 255, 0.04);
+}
+
+/*
+ * ── Team page: the locked palette ──────────────────────────────────────
+ * Three colours, no fourth:
+ *   #000000  ink - all text, and the primary button fill
+ *   #FFFFFF  surfaces - panels, cards, inputs, secondary buttons
+ *   #F5F5F5  the page itself, one step off white so panels read as raised
+ * Hairlines and secondary text are black at low alpha, which keeps the
+ * palette at three values while still separating surfaces.
+ *
+ * Depth comes from hairlines and spacing. There are no gradients, no blur
+ * and no tinted shadow stacks - an earlier clay pass was rejected.
+ */
+.team-ui {
+  --ui-ink: #000000;
+  --ui-on-ink: #ffffff; /* text on an ink-filled surface */
+  --ui-ink-2: rgba(0, 0, 0, 0.6); /* 5.7:1 on white, 5.5:1 on #F5F5F5 */
+  --ui-line: rgba(0, 0, 0, 0.12);
+  --ui-line-strong: rgba(0, 0, 0, 0.22);
+  --ui-surface: #ffffff;
+  --ui-sunken: #f5f5f5;
+  --ui-page: #f5f5f5;
+
+  background: var(--ui-page);
+  color: var(--ui-ink);
+}
+
+/* Dark mode is the same three colours inverted: white ink on a black page,
+ * white surfaces at low alpha so the hue never shifts. */
+.dark .team-ui {
+  --ui-ink: #ffffff;
+  --ui-on-ink: #000000;
+  --ui-ink-2: rgba(255, 255, 255, 0.66);
+  --ui-line: rgba(255, 255, 255, 0.14);
+  --ui-line-strong: rgba(255, 255, 255, 0.26);
+  --ui-surface: rgba(255, 255, 255, 0.06);
+  --ui-sunken: rgba(255, 255, 255, 0.03);
+  --ui-page: #000000;
+
+  background: var(--ui-page);
+}
+
+/* Non-clickable containers: a hairline and nothing else. */
+.ui-panel {
+  border: 1px solid var(--ui-line);
+  border-radius: 12px;
+  background: var(--ui-surface);
+}
+
+.ui-card {
+  border: 1px solid var(--ui-line);
+  border-radius: 10px;
+  background: var(--ui-surface);
+}
+
+/* Interactive clay is gone: a press is a border and an invert, never a
+ * shadow animation, so the motion stays cheap. Background and text colour are
+ * deliberately NOT set here — the page supplies them per variant, and an
+ * unlayered rule would beat a Tailwind utility of the same specificity. */
+.ui-btn {
+  border: 1px solid var(--ui-line-strong);
+  border-radius: 8px;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.ui-btn:hover {
+  background: var(--ui-ink);
+  color: var(--ui-on-ink);
+  border-color: var(--ui-ink);
+}
+.ui-btn:active {
+  transform: translateY(1px);
+}
+.ui-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* A destructive action is marked by its confirmation, not by colour - the
+ * palette has no red. It keeps a visible border so it never melts into a
+ * neighbouring button. */
+.ui-btn-danger {
+  border: 1px solid var(--ui-ink);
+  border-radius: 8px;
+  font-weight: 700;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.ui-btn-danger:hover {
+  background: var(--ui-ink);
+  color: var(--ui-on-ink);
+}
+.ui-btn-danger:active {
+  transform: translateY(1px);
+}
+
+/* Background and colour are deliberately absent: an unlayered rule beats a
+ * Tailwind utility of equal specificity, so setting them here silently
+ * overrode per-state colours passed in JSX. */
+.ui-input {
+  border: 1px solid var(--ui-line-strong);
+  border-radius: 8px;
+}
+
+/* Read-only badge: a data chip, not a field. Lighter hairline than an input,
+ * sunken fill, no border heavy enough to read as editable. */
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  background: var(--ui-sunken);
+}
+
+/* The soft shadows are gone, so the focus ring is the only affordance left:
+ * it must always be visible. */
+.team-ui :focus-visible {
+  outline: 2px solid var(--ui-ink);
+  outline-offset: 2px;
+}
+.team-ui :focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* The team page spinner was not covered by the reduced-motion block, so it
+ * rotated indefinitely for users who asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .team-ui .animate-spin {
+    animation: none;
+  }
 }

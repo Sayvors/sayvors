@@ -26,7 +26,7 @@ interface AuthContextType {
   login: (data: LoginData) => Promise<User>;
   googleLogin: (idToken: string) => Promise<User>;
   facebookLogin: (accessToken: string) => Promise<User>;
-  logout: (allDevices?: boolean) => Promise<void>;
+  logout: (allDevices?: boolean, next?: string) => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   resetPassword: (token: string, password: string) => Promise<void>;
   verifyEmail: (token: string) => Promise<void>;
@@ -88,18 +88,34 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
   });
 
   if (response.status === 401 && path !== "/api/v1/auth/refresh") {
-    const refreshed = await tryRefresh();
+    const refreshed = await refreshSession();
     if (refreshed) {
       return fetch(`${API_URL}${path}`, { ...options, headers: buildHeaders(isForm), credentials: "include" });
     }
     setAccessToken(null);
-    // Don't redirect if already on an auth page — prevents infinite reload loop
-    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp")) {
+    // Public pages must not bounce: auth pages would reload-loop, and /invite
+    // visitors are anonymous by definition (they have no session yet).
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp") && !window.location.pathname.startsWith("/invite")) {
       window.location.href = "/login";
     }
   }
 
   return response;
+}
+
+// Refresh tokens rotate and are single-use — a second use of an already
+// rotated token is treated as theft and revokes EVERY session for the user.
+// Concurrent 401s (sidebar + page + polling) must therefore share one refresh
+// round-trip instead of racing each other with the same cookie.
+let _refreshPromise: Promise<boolean> | null = null;
+
+export function refreshSession(): Promise<boolean> {
+  if (!_refreshPromise) {
+    _refreshPromise = tryRefresh().finally(() => {
+      _refreshPromise = null;
+    });
+  }
+  return _refreshPromise;
 }
 
 async function tryRefresh(): Promise<boolean> {
@@ -219,14 +235,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return result.user as User;
   };
 
-  const logout = async (allDevices = false) => {
+  const logout = async (allDevices = false, next?: string) => {
     await apiFetch("/api/v1/auth/logout", {
       method: "POST",
       body: JSON.stringify({ all_devices: allDevices }),
     });
     setAccessToken(null);
     setUser(null);
-    window.location.href = "/login";
+    // Invite acceptance passes its own path so sign-in returns there.
+    window.location.href = next ? `/login?next=${encodeURIComponent(next)}` : "/login";
   };
 
   const forgotPassword = async (email: string) => {

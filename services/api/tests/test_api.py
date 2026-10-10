@@ -260,6 +260,22 @@ async def test_autoreply_config_update(client, channel_id):
 
 
 @pytest.mark.asyncio
+async def test_autoreply_edited_review_autopost_roundtrip(client, channel_id):
+    """Default is off (edit follow-ups wait for approval); the PUT flips it."""
+    host = {"host": "localhost"}
+    r = client.get(f"/api/v1/channels/{channel_id}/autoreply")
+    assert r.status_code == 200
+    assert r.json()["edited_review_autopost"] is False
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/autoreply",
+        json={"edited_review_autopost": True},
+        headers=host,
+    )
+    assert r.status_code == 200
+    assert r.json()["edited_review_autopost"] is True
+
+
+@pytest.mark.asyncio
 async def test_autoreply_config_invalid_approval_mode(client, channel_id):
     r = client.put(
         f"/api/v1/channels/{channel_id}/autoreply",

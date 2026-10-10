@@ -29,6 +29,14 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
             value = change.get("value", {})
             metadata = value.get("metadata", {})
             phone_number_id = metadata.get("phone_number_id", "")
+            # contacts rides beside messages on the value, never inside a
+            # message — profile_name here is what the inbox names threads by.
+            value_contacts = value.get("contacts") or []
+            profile_name = (
+                (value_contacts[0].get("profile") or {}).get("name")
+                if value_contacts
+                else None
+            )
             for msg in value.get("messages", []):
                 events.append(
                     {
@@ -41,14 +49,9 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             "msg_type": msg.get("type"),
                             "text": ((msg.get("text") or {}).get("body")),
                             "context": msg.get("context"),
-                            # WhatsApp sends the sender's saved contact name on
-                            # some payloads only. Carried through so the inbox can
-                            # show "Ahmed Khan" instead of a bare number.
-                            "profile_name": (
-                                (msg["contacts"][0].get("profile") or {}).get("name")
-                                if msg.get("contacts")
-                                else None
-                            ),
+                            # The sender's WhatsApp profile name, so the inbox
+                            # shows "Ahmed Khan" instead of a bare number.
+                            "profile_name": profile_name,
                             # Reactions carry their emoji here, not in text.
                             "reaction": msg.get("reaction"),
                         },
@@ -97,11 +100,7 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             "msg_type": msg.get("type"),
                             "text": ((msg.get("text") or {}).get("body")),
                             "context": msg.get("context"),
-                            "profile_name": (
-                                (msg["contacts"][0].get("profile") or {}).get("name")
-                                if msg.get("contacts")
-                                else None
-                            ),
+                            "profile_name": profile_name,
                             "reaction": msg.get("reaction"),
                         },
                     })
@@ -156,6 +155,9 @@ def _parse_page(payload: dict) -> list[dict]:
                                 "post_id": value.get("post_id"),
                                 "message": value.get("message"),
                                 "from": value.get("from"),
+                                # Which comment this replies to, so the
+                                # inbox threads Page conversations.
+                                "parent_id": value.get("parent_id"),
                             },
                         }
                     )
@@ -174,7 +176,13 @@ def _parse_page(payload: dict) -> list[dict]:
                 events.append(
                     {
                         "external_asset_id": page_id,
-                        "external_event_id": value.get("mid", f"msg-{entry.get('time', '')}"),
+                        # The mid lives inside value.message, not on value —
+                        # a stable id is what makes replay dedupe work.
+                        "external_event_id": (
+                            (value.get("message") or {}).get("mid")
+                            or value.get("mid")
+                            or f"msg-{entry.get('time', '')}"
+                        ),
                         "event_type": "message.received",
                         "occurred_at": _now_iso(),
                         "data": {"raw": value},
@@ -204,6 +212,12 @@ def _parse_instagram(payload: dict) -> list[dict]:
                             if isinstance(value.get("media"), dict)
                             else value.get("media_id"),
                             "from": value.get("from"),
+                            # When it was written on Instagram (our stored
+                            # created_at is only when we processed it) and
+                            # which comment this replies to, so the inbox
+                            # can thread conversations.
+                            "timestamp": value.get("timestamp"),
+                            "parent_id": value.get("parent_id"),
                         },
                     }
                 )
@@ -211,7 +225,13 @@ def _parse_instagram(payload: dict) -> list[dict]:
                 events.append(
                     {
                         "external_asset_id": ig_id,
-                        "external_event_id": value.get("mid", f"{field}-{entry.get('time', '')}"),
+                        # The mid lives inside value.message, not on value —
+                        # a stable id is what makes replay dedupe work.
+                        "external_event_id": (
+                            (value.get("message") or {}).get("mid")
+                            or value.get("mid")
+                            or f"{field}-{entry.get('time', '')}"
+                        ),
                         "event_type": "message.received",
                         "occurred_at": _now_iso(),
                         "data": {"field": field, "raw": value},
@@ -227,6 +247,32 @@ def _parse_instagram(payload: dict) -> list[dict]:
                         "data": {"raw": value},
                     }
                 )
+        # Page-linked IG accounts deliver DMs on a top-level `messaging`
+        # array (no changes/field wrapper) — this is what Meta actually
+        # sends: {"entry": [{"id": ig-id, "messaging": [{"sender": ...,
+        # "recipient": ..., "message": {"mid", "text"}}]}]}.
+        for msg in entry.get("messaging", []):
+            message = msg.get("message")
+            if not message:
+                continue  # read receipts / deliveries — history only
+            events.append(
+                {
+                    "external_asset_id": ig_id,
+                    "external_event_id": message.get("mid")
+                    or f"messaging-{entry.get('time', '')}",
+                    "event_type": "message.received",
+                    "occurred_at": _now_iso(),
+                    "data": {
+                        "field": "messages",
+                        "raw": {
+                            "sender": msg.get("sender"),
+                            "recipient": msg.get("recipient"),
+                            "timestamp": msg.get("timestamp"),
+                            "message": message,
+                        },
+                    },
+                }
+            )
     return [e for e in events if e["external_event_id"]]
 
 

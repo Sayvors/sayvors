@@ -108,6 +108,101 @@ class ChannelMessage(Base):
     channel = relationship("Channel", back_populates="messages")
 
 
+class ChannelComment(Base):
+    """A comment on the tenant's OWN media (Instagram today, FB Pages later).
+
+    The comment section as an inbox: webhook events land here so the tenant
+    sees and replies to them from Sayvors with full history. Rows are keyed
+    by the platform comment id for replay dedupe; an existing id with new
+    text is Meta's "edited" redelivery and updates the row.
+
+    platform_timestamp is when the comment was written on Instagram —
+    created_at is only when we stored it. Meta sends no delete webhook, so
+    deleted-on-Instagram is discovered lazily (a probe 404s) and recorded
+    in deleted_at; a delete via Sayvors sets it immediately.
+    """
+
+    __tablename__ = "channel_comments"
+    __table_args__ = (
+        # Dedupe lookups by platform id, thread lookups (replies of a
+        # comment) and per-media feeds all scan — give each a real index.
+        Index("ix_channel_comments_platform_id", "platform_comment_id"),
+        Index("ix_channel_comments_parent", "parent_platform_comment_id"),
+        Index("ix_channel_comments_media", "channel_id", "media_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id"), index=True
+    )
+    platform_comment_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    parent_platform_comment_id: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )
+    media_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    direction: Mapped[str] = mapped_column(Enum("inbound", "outbound", name="comment_direction"))
+    content: Mapped[str] = mapped_column(Text)
+    # Who wrote it, in the platform's own addressing (IGSID + username).
+    # Outbound rows carry the tenant as author — the fields stay NULL there
+    # and the UI renders the account instead.
+    author_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    author_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    like_count: Mapped[int] = mapped_column(Integer, default=0)
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(
+        Enum("received", "sent", "failed", name="comment_status"),
+        default="received",
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    platform_timestamp: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class ContactProfile(Base):
+    """Cached profile for one customer on one platform.
+
+    WhatsApp ships the profile name free on every webhook; Instagram and
+    Messenger expose name/username/avatar through a Graph read on the
+    conversation participant (IGSID/PSID). Avatar URLs are temporary CDN
+    links — `profile_fetched_at` drives a weekly refresh on inbound
+    traffic so the inbox keeps showing a current picture.
+    """
+
+    __tablename__ = "contact_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    # Phone number (whatsapp), IGSID (instagram) or PSID (facebook)
+    contact_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Temporary CDN URL — never guaranteed long-lived; refresh when stale
+    avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    profile_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "platform", "contact_id",
+            name="uq_contact_profiles_identity",
+        ),
+    )
+
+
 class AutoReplyConfig(Base):
     """Per-channel auto-reply settings (Phase 1: Google Reviews)."""
 
@@ -128,6 +223,13 @@ class AutoReplyConfig(Base):
     # "approval" = every reply waits for human approval.
     approval_mode: Mapped[str] = mapped_column(
         Enum("auto", "approval", name="reply_approval_mode"), default="auto"
+    )
+    # When a reviewer edits a review we already answered, the follow-up
+    # reply waits for human approval by default. True = the follow-up may
+    # auto-post, through the same gates as a fresh reply (approval_mode
+    # "auto" + rating at/above min_rating_auto).
+    edited_review_autopost: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
     )
     # Free-text brand voice / house rules injected into every reply prompt
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)

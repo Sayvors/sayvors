@@ -190,7 +190,7 @@ export default function NotificationsBell() {
         aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
         aria-expanded={open}
         title="Notifications"
-        className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-deep-violet/[0.08] text-ink/50 outline-none transition hover:border-deep-violet/25 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:border-fog/[0.1] dark:text-fog/50 dark:hover:text-deep-violet"
+        className="relative flex h-8 w-8 items-center justify-center rounded-[2px] border border-deep-violet/[0.08] text-ink/50 outline-none transition hover:border-deep-violet/25 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:border-fog/[0.1] dark:text-fog/50 dark:hover:text-deep-violet"
       >
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4" aria-hidden>
           <path d="M10 2.5a5 5 0 00-5 5v2.6L3.6 12a.6.6 0 00.5.9h11.8a.6.6 0 00.5-.9L15 10.1V7.5a5 5 0 00-5-5Z" strokeLinejoin="round" />

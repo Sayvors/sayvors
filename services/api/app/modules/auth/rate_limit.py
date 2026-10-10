@@ -10,7 +10,13 @@ logger = logging.getLogger(__name__)
 # Set AUTH_RATE_LIMIT_FAIL_CLOSED=false only for local dev without Redis.
 
 
-async def rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
+async def rate_limit(
+    key: str,
+    max_requests: int,
+    window_seconds: int,
+    *,
+    fail_closed: bool | None = None,
+) -> bool:
     """Returns True if allowed, False if rate limited.
 
     Uses a Redis sliding window (ZSET). When Redis is unavailable:
@@ -18,6 +24,8 @@ async def rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
       auth-critical endpoints, so brute-force protection cannot be bypassed
       by simply knocking Redis over.
     - fail-open mode (dev only): allow the request.
+    - `fail_closed` overrides the global setting per call site: brute-force
+      surfaces (PIN entry) keep the default, convenience endpoints opt out.
     """
     try:
         from ..redis.client import get_redis
@@ -38,7 +46,11 @@ async def rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
         request_count = results[2]
         return request_count <= max_requests
     except Exception as e:
-        if settings.AUTH_RATE_LIMIT_FAIL_CLOSED:
+        _fail_closed = (
+            fail_closed if fail_closed is not None
+            else settings.AUTH_RATE_LIMIT_FAIL_CLOSED
+        )
+        if _fail_closed:
             logger.error("RATE LIMIT FAIL-CLOSED (Redis unavailable): key=%s err=%s", key, e)
             return False
         logger.warning("Rate limit fail-open (dev mode, Redis unavailable): %s", e)

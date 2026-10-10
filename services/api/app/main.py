@@ -33,6 +33,7 @@ from .modules.review_engine.csv_router import router as csv_router
 from .modules.assistant.router import router as assistant_router
 from .modules.notifications.router import router as notifications_router
 from .modules.billing.router import router as billing_router
+from .modules.team.router import router as team_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
 
@@ -57,6 +58,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             "/api/v1/email/otp/",
             "/api/v1/channels/webhook/",
             "/api/v1/meta/webhooks",
+            "/api/v1/team/invites/accept",  # token-in-body is the proof; works pre-auth
             "/health",
         )
         if any(path.startswith(p) for p in skip_prefixes):
@@ -234,6 +236,7 @@ app.include_router(csv_router)
 app.include_router(assistant_router)
 app.include_router(notifications_router)
 app.include_router(billing_router)
+app.include_router(team_router)
 
 # Public media files: owner uploads that go to Google by URL. Served here
 # (Caddy proxies the whole API host, so this path is public) from a

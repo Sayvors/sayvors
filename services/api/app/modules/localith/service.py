@@ -31,6 +31,7 @@ from ..channels.reviews_worker import _resume_failed_row, _save_reply_row
 from ..notifications.service import MAX_PER_SYNC, notify
 from ..outbox.service import enqueue_event
 from ..users.models import User
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 logger = logging.getLogger(__name__)
 
@@ -638,7 +639,7 @@ async def _sync_connection_inner(
     from .models import LocalithConnection  # noqa: F401 (re-export for callers)
 
     if listing_id is None:
-        connections = await list_connections(db, user.id)
+        connections = await list_connections(db, tenant_id_of(user))
         if not connections:
             raise ValueError("Connect a Localith listing before syncing.")
         # Resolve every branch's identity into plain values up front. A failed
@@ -651,7 +652,7 @@ async def _sync_connection_inner(
         totals: dict[str, int | str] = {
             "fetched": 0, "new_reviews": 0, "branches": 0, "errors": 0,
         }
-        owner_id = user.id
+        owner_id = tenant_id_of(user)
         for branch_listing_id, branch_listing_name in plan:
             try:
                 connection = await get_connection(db, owner_id, branch_listing_id)
@@ -685,10 +686,10 @@ async def _sync_connection_inner(
                     pass
         return totals
 
-    connection = await get_connection(db, user.id, listing_id)
+    connection = await get_connection(db, tenant_id_of(user), listing_id)
     if connection is None:
         raise ValueError("Connect a Localith listing before syncing.")
-    return await _sync_single_connection(user.id, db, connection, metrics_days_back)
+    return await _sync_single_connection(tenant_id_of(user), db, connection, metrics_days_back)
 
 
 async def _sync_single_connection(
@@ -1025,8 +1026,9 @@ async def _sync_single_connection(
         # on file answers content that no longer exists. Keep the response
         # in step with the review: regenerate a still-queued draft from the
         # fresh text, or queue a follow-up draft behind an already-posted
-        # reply. An edit follow-up never auto-posts — it always waits for
-        # the merchant's approval.
+        # reply. An edit follow-up waits for approval by default; the
+        # edited_review_autopost opt-in posts it through the same gates as
+        # a fresh reply.
         if insight is not None and insight.edited and latest_reply is not None:
             # Missing stored text gives no baseline to compare — leave alone.
             content_matches = (
@@ -1059,7 +1061,10 @@ async def _sync_single_connection(
                 latest_reply.error = None
                 drafted += 1
                 continue
-            # posted/approved: queue a follow-up draft for the new content.
+            # posted/approved: a fresh follow-up draft cycle for the new
+            # content. It waits for approval by default; with the merchant's
+            # opt-in it may auto-post through the same gates as a fresh
+            # reply — the normal publish path below (never in mock mode).
             failed_row = await _resume_failed_row(db, channel.id, full_review_id)
             try:
                 reply_text = await generate_auto_reply(
@@ -1085,10 +1090,58 @@ async def _sync_single_connection(
                 )
                 await db.commit()
                 continue
+            auto_post = (
+                bool(getattr(config, "edited_review_autopost", False))
+                and config.approval_mode == "auto"
+                and review.rating >= config.min_rating_auto
+                and not settings.GOOGLE_REVIEWS_MOCK
+            )
+            if not auto_post:
+                _save_reply_row(
+                    db, failed_row, channel.id, full_review_id,
+                    review.rating, review.text, review.reviewer,
+                    reply_text, "pending_approval",
+                )
+                drafted += 1
+                continue
+            try:
+                await post_reply(review_id, reply_text, api_key=api_key)
+            except Exception as e:
+                logger.warning("Localith edit follow-up auto-post failed review=%s item=%s: %s", review_id, review_id, e)
+                _save_reply_row(
+                    db, failed_row, channel.id, full_review_id,
+                    review.rating, review.text, review.reviewer,
+                    reply_text, "failed", str(e)[:2000],
+                )
+                await notify(
+                    db, user_id, "reply_failed",
+                    f"Auto-reply failed for ★{review.rating} review",
+                    str(e)[:160],
+                    data={"review_id": full_review_id, "channel_id": channel.id,
+                          "listing": connection.listing_name},
+                    href="/dashboard/outbox",
+                )
+                await db.commit()
+                continue
             _save_reply_row(
                 db, failed_row, channel.id, full_review_id,
                 review.rating, review.text, review.reviewer,
-                reply_text, "pending_approval",
+                reply_text, "posted",
+            )
+            # The reply was generated from the fresh (post-edit) content —
+            # the edit has been addressed, so clear the flag.
+            if insight is not None and insight.edited:
+                insight.edited = False
+                insight.edited_at = None
+                insight.previous_rating = None
+                insight.previous_review_text = None
+            await notify(
+                db, user_id, "reply_posted",
+                f"Auto-replied to ★{review.rating} review from {review.reviewer or 'a customer'}",
+                (reply_text or "")[:160],
+                data={"review_id": full_review_id, "channel_id": channel.id,
+                      "listing": connection.listing_name},
+                href="/dashboard/reviews",
             )
             drafted += 1
             continue

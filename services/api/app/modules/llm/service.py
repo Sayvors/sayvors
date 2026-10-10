@@ -11,6 +11,7 @@ from .providers.catalog import get_model_by_id, get_provider_from_model
 from .providers.registry import get_provider_for_model
 from .schemas import ChatRequest, ConversationCreate, MessageCreate
 from ...database import async_session as _async_session
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 # Max messages to include in LLM context (token-aware windowing)
 MAX_HISTORY_MESSAGES = 40
@@ -160,7 +161,7 @@ async def send_message(
         temperature=0.7,
         max_tokens=1000,
         stream=False,
-        tenant_id=user.id,
+        tenant_id=tenant_id_of(user),
         model_id=conv.model,
         purpose="chat.message",
     )
@@ -224,7 +225,7 @@ async def stream_message(
     from ..billing.budget import BudgetExhausted, reserve
 
     try:
-        await reserve(user.id)
+        await reserve(tenant_id_of(user))
     except BudgetExhausted as e:
         raise ProviderError("budget", str(e), 402) from e
 
@@ -235,7 +236,7 @@ async def stream_message(
         temperature=0.7,
         max_tokens=1000,
         stream=True,
-        tenant_id=user.id,
+        tenant_id=tenant_id_of(user),
         model_id=conv.model,
         purpose="assistant.chat",
     )

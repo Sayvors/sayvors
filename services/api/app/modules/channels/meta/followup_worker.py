@@ -212,8 +212,7 @@ async def _send_followup(db, state: WhatsAppThreadState, channel: Channel) -> in
                 state.contact_phone[-6:], type(e).__name__, str(e)[:150],
             )
             break
-        db.add(
-            ChannelMessage(
+        row = ChannelMessage(
                 id=str(uuid.uuid4()),
                 channel_id=channel.id,
                 direction="outbound",
@@ -221,8 +220,25 @@ async def _send_followup(db, state: WhatsAppThreadState, channel: Channel) -> in
                 status="sent",
                 contact_phone=state.contact_phone,
             )
-        )
+        db.add(row)
         await db.commit()
+        try:
+            from ...channels.realtime import publish_inbox_event
+
+            await publish_inbox_event(channel.user_id, {
+                "type": "message",
+                "id": row.id,
+                "channel_id": channel.id,
+                "platform": "whatsapp",
+                "direction": "outbound",
+                "content": row.content,
+                "content_type": "text",
+                "status": "sent",
+                "contact_phone": row.contact_phone,
+                "created_at": row.created_at,
+            })
+        except Exception:
+            pass
         sent_any = True
         if index < len(parts) - 1:
             await asyncio.sleep(0.8)

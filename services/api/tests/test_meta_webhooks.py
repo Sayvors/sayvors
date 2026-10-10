@@ -87,6 +87,35 @@ def test_parse_whatsapp_message():
     assert events[0]["data"]["text"] == "hello"
 
 
+def test_parse_whatsapp_profile_name_from_value_contacts():
+    """Meta puts `contacts` (with the sender's profile name) BESIDE `messages`
+    on the value — never inside a message. Reading it off the message object
+    returned None for every payload, so threads showed bare numbers."""
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "waba-1",
+            "changes": [{
+                "field": "messages",
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {"phone_number_id": "pn-1"},
+                    "contacts": [{
+                        "profile": {"name": "Syed Syab"},
+                        "wa_id": "966546211818",
+                    }],
+                    "messages": [{
+                        "id": "wamid.1", "from": "966546211818", "type": "text",
+                        "text": {"body": "hello"}, "timestamp": "1757721600",
+                    }],
+                },
+            }],
+        }],
+    }
+    _, events = _parser.parse(payload)
+    assert events[0]["data"]["profile_name"] == "Syed Syab"
+
+
 def test_parse_whatsapp_status():
     payload = {
         "object": "whatsapp_business_account",
@@ -124,6 +153,26 @@ def test_parse_page_comment():
     assert provider == "facebook"
     assert events[0]["event_type"] == "comment.received"
     assert events[0]["external_asset_id"] == "page-9"
+
+
+def test_parse_page_comment_reply_carries_parent_id():
+    payload = {
+        "object": "page",
+        "entry": [{
+            "id": "page-9",
+            "changes": [{
+                "field": "feed",
+                "value": {"item": "comment", "verb": "add",
+                          "comment_id": "c-2", "post_id": "p-1",
+                          "parent_id": "c-1",
+                          "message": "replying!", "from": {"id": "u-2"}},
+            }],
+        }],
+    }
+    provider, events = _parser.parse(payload)
+    assert provider == "facebook"
+    assert events[0]["event_type"] == "comment.received"
+    assert events[0]["data"]["parent_id"] == "c-1"
 
 
 def test_parse_instagram_comment():

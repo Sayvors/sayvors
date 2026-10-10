@@ -107,6 +107,418 @@ export const discoverInstagram = (): Promise<{ assets: MetaAsset[] }> =>
 export const validateMeta = (provider: MetaProvider) =>
   apiFetch(`/api/v1/meta/${provider}/validate`, { method: "POST" });
 
+/**
+ * Instagram business profile — READ ONLY.
+ *
+ * Meta's IG User reference states updating a profile is not supported, so
+ * there is deliberately no update call here. Everything on this page is
+ * rendered as a value, never as an editable field.
+ */
+export interface InstagramProfile {
+  username: string | null;
+  name: string | null;
+  biography: string | null;
+  website: string | null;
+  profile_picture_url: string | null;
+  followers_count: number;
+  follows_count: number;
+  media_count: number;
+  // Meta does not expose account_type on the IG User node, so Sayvors reports
+  // what it stores at connect time instead.
+  status: string | null;
+  eligibility: string | null;
+  parent_page_id: string | null;
+  parent_page_name: string | null;
+  synced_at: string | null;
+  stale: boolean;
+}
+
+export const fetchInstagramProfile = (
+  igId: string,
+  opts?: { refresh?: boolean }
+): Promise<InstagramProfile> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/profile${
+      opts?.refresh ? "?refresh=true" : ""
+    }`
+  );
+
+/**
+ * Instagram audience.
+ *
+ * There is no follower list here and there cannot be: Meta does not expose
+ * follower/following lists. What this returns is who actually engaged - people
+ * who commented (live from Graph) and people who DMed you (from your inbox) -
+ * each with a real instagram.com link, plus aggregate follower demographics.
+ */
+export interface InstagramPerson {
+  source: "comment" | "dm";
+  ig_id: string | null;
+  username: string | null;
+  name: string | null;
+  text: string | null;
+  like_count: number;
+  occurred_at: string | null;
+  media_id: string | null;
+  permalink: string | null;
+  profile_url: string | null;
+}
+
+export interface InstagramDemographics {
+  available: boolean;
+  reason: string | null;
+  age: { label: string | null; value: number }[];
+  gender: { label: string | null; value: number }[];
+  cities: { label: string | null; value: number }[];
+  countries: { label: string | null; value: number }[];
+}
+
+export interface InstagramAudience {
+  people: InstagramPerson[];
+  demographics: InstagramDemographics;
+  comments_unavailable: string | null;
+}
+
+export const fetchInstagramAudience = (igId: string): Promise<InstagramAudience> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/audience`);
+
+export interface InstagramReply {
+  id: string | null;
+  text: string | null;
+  username: string | null;
+  timestamp: string | null;
+  like_count: number;
+  hidden: boolean;
+}
+
+export interface InstagramComment {
+  id: string | null;
+  text: string | null;
+  username: string | null;
+  name: string | null;
+  ig_id: string | null;
+  like_count: number;
+  timestamp: string | null;
+  hidden: boolean;
+  media_id: string | null;
+  profile_url: string | null;
+  replies: InstagramReply[];
+}
+
+export interface InstagramChildMedia {
+  id: string | null;
+  media_type: string | null;
+  media_url: string | null;
+  thumbnail_url: string | null;
+}
+
+export interface InstagramPost {
+  id: string | null;
+  caption: string | null;
+  media_type: string | null;
+  /** FEED / REELS / STORY. */
+  media_product_type: string | null;
+  media_url: string | null;
+  /** Static poster frame for videos/carousels (media_url of a video is the file). */
+  thumbnail_url: string | null;
+  permalink: string | null;
+  timestamp: string | null;
+  like_count: number;
+  comments_count: number;
+  children: InstagramChildMedia[];
+  comments: InstagramComment[];
+}
+
+export interface InstagramPosts {
+  posts: InstagramPost[];
+  unavailable: string | null;
+}
+
+export const fetchInstagramPosts = (igId: string): Promise<InstagramPosts> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/posts`);
+
+export interface InstagramStory {
+  id: string | null;
+  media_type: string | null;
+  media_url: string | null;
+  timestamp: string | null;
+}
+
+export interface InstagramStories {
+  stories: InstagramStory[];
+}
+
+/** The account's own live stories — the only stories edge the API has. */
+export const fetchInstagramStories = (igId: string): Promise<InstagramStories> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/stories`);
+
+export interface InstagramStoredComment {
+  id: string;
+  comment_id: string | null;
+  parent_comment_id: string | null;
+  media_id: string | null;
+  direction: "inbound" | "outbound";
+  content: string;
+  author_id: string | null;
+  author_name: string | null;
+  like_count: number;
+  hidden: boolean;
+  status: "received" | "sent" | "failed";
+  error: string | null;
+  platform_timestamp: string | null;
+  deleted_at: string | null;
+  created_at: string;
+}
+
+export interface InstagramComments {
+  comments: InstagramStoredComment[];
+}
+
+/** The comment inbox — served from stored rows, never a live Graph read. */
+export const fetchInstagramComments = (
+  igId: string,
+  opts?: { mediaId?: string },
+): Promise<InstagramComments> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/comments${
+      opts?.mediaId ? `?media_id=${encodeURIComponent(opts.mediaId)}` : ""
+    }`,
+  );
+
+export const replyToInstagramComment = (
+  igId: string,
+  commentId: string,
+  message: string,
+): Promise<InstagramStoredComment> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/comments/${encodeURIComponent(commentId)}/replies`,
+    { method: "POST", body: JSON.stringify({ message }) },
+  );
+
+export const setInstagramCommentHidden = (
+  igId: string,
+  commentId: string,
+  hidden: boolean,
+): Promise<{ ok: boolean; hidden: boolean | null }> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/comments/${encodeURIComponent(commentId)}/hide`,
+    { method: "POST", body: JSON.stringify({ hidden }) },
+  );
+
+export interface InstagramPublishingLimit {
+  quota_total: number;
+  quota_usage: number;
+}
+
+/** Meta's rolling 24h publishing quota; zeros when Meta refused the read. */
+export const fetchInstagramPublishingLimit = (
+  igId: string,
+): Promise<InstagramPublishingLimit> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/publishing-limit`);
+
+/** Post images to the tenant's own feed — one url or a carousel. The urls
+ * must be publicly reachable: Meta's servers fetch them. Story urls are
+ * 9:16 crops the client prepared, published as stories after the post. */
+export const publishToInstagram = (
+  igId: string,
+  body: {
+    image_urls: string[];
+    caption: string;
+    location_id?: string;
+    share_to_facebook?: boolean;
+    alt_text?: string;
+    story_image_urls?: string[];
+  },
+): Promise<{ media_id: string; story_media_ids: string[] }> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/posts/publish`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export interface InstagramLocation {
+  id: string;
+  name: string;
+}
+
+/** Place search for the location picker; empty when the account can't
+ * search (Meta tags places by Facebook Page id — standalone IG can't). */
+export const fetchInstagramLocations = (
+  igId: string,
+  q: string,
+): Promise<{ locations: InstagramLocation[] }> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/locations?q=${encodeURIComponent(q)}`,
+  );
+
+/** One-shot AI caption draft — nothing is stored or posted; the result
+ * lands in the composer's textarea for the tenant to edit and send. */
+export const suggestInstagramCaption = (
+  igId: string,
+  hint: string,
+  currentCaption: string,
+): Promise<{ caption: string }> =>
+  apiFetch(`/api/v1/meta/instagram/${encodeURIComponent(igId)}/caption/suggest`, {
+    method: "POST",
+    body: JSON.stringify({ hint, current_caption: currentCaption }),
+  });
+
+export const deleteInstagramComment = (
+  igId: string,
+  commentId: string,
+): Promise<{ ok: boolean }> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/comments/${encodeURIComponent(commentId)}`,
+    { method: "DELETE" },
+  );
+
+export interface InstagramMediaInsights {
+  available: boolean;
+  reason: string | null;
+  impressions: number | null;
+  reach: number | null;
+  saves: number | null;
+  shares: number | null;
+  views: number | null;
+}
+
+/** Owner-only per-post insights, fetched lazily when a post is opened. */
+export const fetchInstagramMediaInsights = (
+  igId: string,
+  mediaId: string,
+  mediaType?: string | null
+): Promise<InstagramMediaInsights> =>
+  apiFetch(
+    `/api/v1/meta/instagram/${encodeURIComponent(igId)}/media/${encodeURIComponent(
+      mediaId
+    )}/insights${mediaType ? `?media_type=${encodeURIComponent(mediaType)}` : ""}`
+  );
+
+// ── Facebook Page hub ────────────────────────────────────────────
+
+export interface FacebookProfile {
+  id: string;
+  name: string | null;
+  link: string | null;
+  profile_picture_url: string | null;
+  fan_count: number;
+  followers_count: number;
+}
+
+/** The tenant's own Page. `refresh` bypasses the short server cache. */
+export const fetchFacebookProfile = (
+  pageId: string,
+  opts?: { refresh?: boolean },
+): Promise<FacebookProfile> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/profile${
+      opts?.refresh ? "?refresh=true" : ""
+    }`,
+  );
+
+export interface FacebookPost {
+  id: string;
+  message: string | null;
+  permalink_url: string | null;
+  full_picture: string | null;
+  from_name: string | null;
+  like_count: number;
+  comments_count: number;
+  created_time: string | null;
+  images: string[];
+}
+
+export interface FacebookPosts {
+  posts: FacebookPost[];
+  unavailable: string | null;
+}
+
+export const fetchFacebookPosts = (
+  pageId: string,
+  opts?: { refresh?: boolean },
+): Promise<FacebookPosts> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/posts${
+      opts?.refresh ? "?refresh=true" : ""
+    }`,
+  );
+
+export interface FacebookScheduledPost {
+  id: string;
+  scheduled_publish_time: number | null;
+}
+
+export interface FacebookScheduledPosts {
+  posts: FacebookScheduledPost[];
+}
+
+export const fetchFacebookScheduledPosts = (
+  pageId: string,
+  opts?: { refresh?: boolean },
+): Promise<FacebookScheduledPosts> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/scheduled${
+      opts?.refresh ? "?refresh=true" : ""
+    }`,
+  );
+
+/** Publish to the Page feed — a bare message is a text post; exactly one
+ * of link / image_urls per post. `schedule_at` (ISO) schedules instead of
+ * publishing. Image urls must be publicly reachable: Meta fetches them. */
+export const publishToFacebook = (
+  pageId: string,
+  body: {
+    message?: string;
+    link?: string;
+    image_urls?: string[];
+    schedule_at?: string;
+  },
+): Promise<{ post_id: string | null; photo_ids: string[]; scheduled: boolean }> =>
+  apiFetch(`/api/v1/meta/facebook/${encodeURIComponent(pageId)}/posts/publish`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export type FacebookStoredComment = InstagramStoredComment;
+
+export const fetchFacebookComments = (
+  pageId: string,
+  opts?: { mediaId?: string },
+): Promise<InstagramComments> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/comments${
+      opts?.mediaId ? `?media_id=${encodeURIComponent(opts.mediaId)}` : ""
+    }`,
+  );
+
+export const replyToFacebookComment = (
+  pageId: string,
+  commentId: string,
+  message: string,
+): Promise<FacebookStoredComment> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}/replies`,
+    { method: "POST", body: JSON.stringify({ message }) },
+  );
+
+export const setFacebookCommentHidden = (
+  pageId: string,
+  commentId: string,
+  hidden: boolean,
+): Promise<{ ok: boolean; hidden: boolean | null }> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}/hide`,
+    { method: "POST", body: JSON.stringify({ hidden }) },
+  );
+
+export const deleteFacebookComment = (
+  pageId: string,
+  commentId: string,
+): Promise<{ ok: boolean }> =>
+  apiFetch(
+    `/api/v1/meta/facebook/${encodeURIComponent(pageId)}/comments/${encodeURIComponent(commentId)}`,
+    { method: "DELETE" },
+  );
+
 export const disconnectMeta = (provider: MetaProvider, opts?: { deleteData?: boolean }) =>
   apiFetch(
     `/api/v1/meta/${provider}/disconnect${opts?.deleteData ? "?delete_data=true" : ""}`,

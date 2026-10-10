@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
 from .models import Notification
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/api/v1/notifications", tags=["notifications"])
 
 
 def _uid(user: User) -> str:
-    return user.id
+    return tenant_id_of(user)
 
 
 class NotificationItem(BaseModel):
@@ -69,6 +70,7 @@ CATEGORIES: dict[str, list[str]] = {
 
 @router.get("/categories")
 async def category_summary(
+    ctx: TenantContext = Depends(require_perm("notifications.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -102,6 +104,7 @@ async def list_notifications(
     category: str | None = Query(None, pattern="^(syncs|reviews|replies)$"),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    ctx: TenantContext = Depends(require_perm("notifications.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -138,6 +141,7 @@ async def list_notifications(
 
 @router.get("/unread-count")
 async def unread_count(
+    ctx: TenantContext = Depends(require_perm("notifications.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -156,6 +160,7 @@ async def unread_count(
 @router.post("/{notification_id}/read", response_model=NotificationItem)
 async def mark_read(
     notification_id: str,
+    ctx: TenantContext = Depends(require_perm("notifications.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -180,6 +185,7 @@ async def mark_read(
 
 @router.post("/read-all")
 async def mark_all_read(
+    ctx: TenantContext = Depends(require_perm("notifications.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

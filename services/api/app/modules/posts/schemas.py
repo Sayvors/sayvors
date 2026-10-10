@@ -72,6 +72,10 @@ class PostOut(BaseModel):
     coupon_code: str | None = None
     terms_conditions: str | None = None
     google_post_id: str | None = None
+    # Per-post Google performance (reportInsights). None = never synced.
+    views: int | None = None
+    cta_clicks: int | None = None
+    metrics_synced_at: str | None = None
     error: str | None = None
     created_at: str
 
@@ -91,6 +95,21 @@ class SyncResult(BaseModel):
     skipped: int = 0
     retried: int = 0
     deleted: int = 0
+
+
+class SyncMetricsRequest(BaseModel):
+    listing_id: str | None = Field(None, max_length=64)  # None = all listings
+
+
+class SyncMetricsResult(BaseModel):
+    checked: int = 0  # published rows considered
+    matched: int = 0  # rows matched to a live Google post
+    synced: int = 0  # rows whose stored numbers changed
+    # The matched rows with fresh numbers, so the UI can update in place.
+    posts: list[PostOut] = []
+    # Why nothing was synced (no native Google connection, no Google-side
+    # location id, …) — shown/ignored by the UI, never an error.
+    note: str | None = None
 
 
 class AiDraftRequest(BaseModel):

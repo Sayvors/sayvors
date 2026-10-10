@@ -1,6 +1,6 @@
 "use client";
 
-import { getAccessToken, setAccessToken } from "./auth-context";
+import { getAccessToken, refreshSession } from "./auth-context";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -8,29 +8,6 @@ function getCsrfToken(): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.split("; ").find((c) => c.startsWith("csrf_token="));
   return match ? match.split("=")[1] : null;
-}
-
-async function tryRefresh(): Promise<boolean> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-  try {
-    const res = await fetch(`${API}/api/v1/auth/refresh`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.access_token) setAccessToken(data.access_token);
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function buildHeaders(isForm = false): Record<string, string> {
@@ -64,17 +41,31 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
   try {
     const res = await doFetch(headers);
 
+    // A proxy error page (Cloudflare tunnel down, nginx, etc.) arrives as
+    // HTML with any status — never dump its markup into a UI error box.
+    if ((res.headers.get("content-type") || "").includes("text/html")) {
+      throw new Error(
+        `The server is unreachable right now (gateway error ${res.status}) — try again in a minute.`,
+      );
+    }
+
     if (res.status === 401 && path !== "/api/v1/auth/refresh") {
-      const refreshed = await tryRefresh();
+      const refreshed = await refreshSession();
       if (refreshed) {
         const retryHeaders = { ...buildHeaders(isForm), ...(options.headers as Record<string, string>) };
         const retryRes = await doFetch(retryHeaders);
+        if ((retryRes.headers.get("content-type") || "").includes("text/html")) {
+          throw new Error(
+            `The server is unreachable right now (gateway error ${retryRes.status}) — try again in a minute.`,
+          );
+        }
         if (!retryRes.ok) throw new Error(await retryRes.text());
         if (retryRes.status === 204) return undefined;
         return retryRes.json();
       }
-      // Don't redirect if already on an auth page — prevents infinite reload loop
-      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp")) {
+      // Public pages must not bounce: auth pages would reload-loop, and /invite
+      // visitors are anonymous by definition (they have no session yet).
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp") && !window.location.pathname.startsWith("/invite")) {
         window.location.href = "/login";
       }
       throw new Error("Unauthorized");

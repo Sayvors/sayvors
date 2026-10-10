@@ -29,6 +29,7 @@ from ..auth.rate_limit import rate_limit
 from ..analytics.models import ReviewInsight
 from ..channels.models import AutoReplyConfig, Channel, ReviewReply
 from ..users.models import User
+from ..team.context import tenant_id_of, require_perm, TenantContext, require_perm
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ async def _business_snapshot(db: AsyncSession, user: User, limit: int = DETAIL_L
 
     conns = (
         await db.execute(
-            select(LocalithConnection).where(LocalithConnection.user_id == user.id)
+            select(LocalithConnection).where(LocalithConnection.user_id == tenant_id_of(user))
         )
     ).scalars().all()
     locations = [
@@ -131,7 +132,7 @@ async def _business_snapshot(db: AsyncSession, user: User, limit: int = DETAIL_L
 
     channels = (
         await db.execute(
-            select(Channel).where(Channel.user_id == user.id)
+            select(Channel).where(Channel.user_id == tenant_id_of(user))
         )
     ).scalars().all()
     channel_ids = [c.id for c in channels]
@@ -300,13 +301,13 @@ _SNAPSHOT_CACHE_MAX = 512
 
 async def _snapshot_for_user(db: AsyncSession, user: User) -> dict:
     now = time.monotonic()
-    hit = _snapshot_cache.get(user.id)
+    hit = _snapshot_cache.get(tenant_id_of(user))
     if hit is not None and (now - hit[0]) < SNAPSHOT_TTL_SECONDS:
         return hit[1]
     snapshot = await _business_snapshot(db, user)
     if len(_snapshot_cache) >= _SNAPSHOT_CACHE_MAX:
         _snapshot_cache.clear()
-    _snapshot_cache[user.id] = (now, snapshot)
+    _snapshot_cache[tenant_id_of(user)] = (now, snapshot)
     return snapshot
 
 
@@ -381,7 +382,7 @@ async def _rag_answer(
         from ..rag.agent import ask_question
 
         bank_id = (
-            await db.execute(select(Databank.id).where(Databank.user_id == user.id).limit(1))
+            await db.execute(select(Databank.id).where(Databank.user_id == tenant_id_of(user)).limit(1))
         ).scalar_one_or_none()
         if not bank_id:
             return "", [], False, "no_databank"
@@ -536,7 +537,7 @@ async def _llm_reply(
         temperature=0.4,
         max_tokens=500,
         stream=False,
-        tenant_id=user.id,
+        tenant_id=tenant_id_of(user),
         model_id=model,
         purpose="assistant.chat",
     ))
@@ -546,6 +547,7 @@ async def _llm_reply(
 @router.post("/chat", response_model=AssistantChatResponse)
 async def chat(
     body: AssistantChatRequest,
+    ctx: TenantContext = Depends(require_perm("ai.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -553,13 +555,13 @@ async def chat(
         raise HTTPException(status_code=429, detail="Too many messages — wait a moment.")
 
     snapshot = await _snapshot_for_user(db, user)
-    model = await _resolve_model(db, user.id)
+    model = await _resolve_model(db, tenant_id_of(user))
     rag_answer, citations, grounded, rag_status = await _rag_answer(db, user, body.message, model)
     prompt_snapshot, detail_omitted = _prune_snapshot(snapshot, body.message)
     system_prompt = _system_prompt(
         prompt_snapshot, rag_answer, citations, detail_omitted, rag_status
     )
-    model = await _resolve_model(db, user.id)
+    model = await _resolve_model(db, tenant_id_of(user))
 
     try:
         reply = await _llm_reply(model, system_prompt, body.history, body.message, user)
@@ -593,6 +595,7 @@ def _plural(n: int, word: str) -> str:
 @router.post("/chat/stream")
 async def chat_stream(
     body: AssistantChatRequest,
+    ctx: TenantContext = Depends(require_perm("ai.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -634,10 +637,10 @@ async def chat_stream(
             #    provider the tenant actually has.
             from ..rag.models import Databank
 
-            model = await _resolve_model(db, user.id)
+            model = await _resolve_model(db, tenant_id_of(user))
             bank_id = (
                 await db.execute(
-                    select(Databank.id).where(Databank.user_id == user.id).limit(1)
+                    select(Databank.id).where(Databank.user_id == tenant_id_of(user)).limit(1)
                 )
             ).scalar_one_or_none()
             skip_reason: str | None = None
@@ -758,7 +761,7 @@ async def chat_stream(
                 temperature=0.4,
                 max_tokens=500,
                 stream=True,
-                tenant_id=user.id,
+                tenant_id=tenant_id_of(user),
                 model_id=model,
                 purpose="assistant.chat",
             )):

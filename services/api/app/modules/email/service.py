@@ -289,6 +289,33 @@ async def send_activation_email(email: str, name: str, activation_url: str) -> s
     )
 
 
+async def send_team_invite_email(
+    email: str, inviter_name: str, business_name: str, role_name: str, invite_url: str
+) -> str:
+    """Invite a person to a workspace's team. Link carries a single-use
+    token; accepting either creates their account or attaches the existing
+    one (never exposes a password-reset path — see team/service.accept)."""
+    display = inviter_name or "Your team"
+    brand = business_name or "a Sayvors workspace"
+    body = (
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">Hi,</p>"
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">"
+        f"{display} invited you to join <strong style=\"color:#1a1230;\">{brand}</strong> on Sayvors as "
+        f"<strong style=\"color:#1a1230;\">{role_name}</strong>.</p>"
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:24px;color:#52525B;\">"
+        f"Accept the invite to set up your access (link expires in <strong style=\"color:#52525B;\">7 days</strong>):</p>"
+        f"{_cta_button('Join the team', invite_url)}"
+        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#71717A;word-break:break-all;\">If the button doesn't work, paste this link: {invite_url}</p>"
+        f"<p style=\"margin:16px 0 0;font-size:14px;line-height:22px;color:#71717A;\">If you weren't expecting this, you can safely ignore this email.</p>"
+    )
+    return await send_email(
+        email,
+        f"{display} invited you to {brand} on Sayvors",
+        _shell("Team invitation", body, _logo_url()),
+        text=f"{display} invited you to {brand} on Sayvors as {role_name}: {invite_url}",
+    )
+
+
 async def send_password_reset_email(email: str, name: str, reset_url: str) -> str:
     """Send a password reset email containing a secure recovery URL."""
     display = name or "there"

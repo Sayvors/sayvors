@@ -94,8 +94,8 @@ export default function LocationMultiSelect({
             }}
             aria-hidden
           />
-          <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-ink/[0.08] bg-white p-1 shadow-xl dark:border-fog/[0.12] dark:bg-ink">
-            <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
+          <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-[2px] border border-ink/[0.08] bg-white p-1 shadow-xl dark:border-fog/[0.12] dark:bg-ink">
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-[2px] px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
               <input
                 type="checkbox"
                 checked={all}
@@ -117,7 +117,7 @@ export default function LocationMultiSelect({
                   if (members.length === 0) return null;
                   const on = members.every((id) => selectedIds.includes(id));
                   return (
-                    <label key={g.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
+                    <label key={g.id} className="flex cursor-pointer items-center gap-2.5 rounded-[2px] px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
                       <input
                         type="checkbox"
                         checked={on}
@@ -134,7 +134,7 @@ export default function LocationMultiSelect({
               </>
             )}
             {locations.map((l) => (
-              <label key={l.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
+              <label key={l.id} className="flex cursor-pointer items-center gap-2.5 rounded-[2px] px-2.5 py-2 transition hover:bg-ink/[0.03] dark:hover:bg-fog/[0.05]">
                 <input
                   type="checkbox"
                   checked={selectedIds.includes(l.id)}

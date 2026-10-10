@@ -311,6 +311,130 @@ async def test_edited_review_after_posted_reply_queues_followup(db, channel_id, 
 
 
 @pytest.mark.asyncio
+async def test_edited_review_followup_autoposts_when_opted_in(db, channel_id, config_id, monkeypatch):
+    """edited_review_autopost on: the follow-up for an edited review
+    auto-posts live — through the same gates as a fresh reply."""
+    await _active_channel(db, channel_id)
+    db.add(
+        ReviewReply(
+            channel_id=channel_id, review_id="ggreview-1", rating=2,
+            review_text="Old complaint text", reviewer_name="Angry Customer",
+            reply_text="live reply", status="posted",
+        )
+    )
+    config = await db.get(AutoReplyConfig, config_id)
+    config.edited_review_autopost = True
+    await db.commit()
+
+    _install_fakes(monkeypatch, [_review(rating=5)])
+    stats = await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    assert stats["skipped"] == 1
+    # The follow-up went live: rating 5 clears the min_rating_auto gate.
+    assert FakeGoogleClient.posted == [("ggreview-1", "fresh AI draft (try 1)")]
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    assert len(rows) == 2
+    assert all(r.status == "posted" for r in rows)
+    followup = next(r for r in rows if r.reply_text != "live reply")
+    assert followup.rating == 5
+
+
+@pytest.mark.asyncio
+async def test_edited_review_followup_autopost_blocked_below_threshold(db, channel_id, config_id, monkeypatch):
+    """edited_review_autopost on, but the edited rating sits below
+    min_rating_auto: the follow-up queues for approval like the default."""
+    await _active_channel(db, channel_id)
+    db.add(
+        ReviewReply(
+            channel_id=channel_id, review_id="ggreview-1", rating=2,
+            review_text="Old complaint text", reviewer_name="Angry Customer",
+            reply_text="live reply", status="posted",
+        )
+    )
+    config = await db.get(AutoReplyConfig, config_id)
+    config.edited_review_autopost = True
+    await db.commit()
+
+    _install_fakes(monkeypatch, [_review(rating=1)])
+    await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    assert FakeGoogleClient.posted == []
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    pending = [r for r in rows if r.status == "pending_approval"]
+    assert len(pending) == 1 and pending[0].rating == 1
+
+
+@pytest.mark.asyncio
+async def test_edited_review_followup_autopost_blocked_in_approval_mode(db, channel_id, config_id, monkeypatch):
+    """approval_mode "approval" overrides the autopost opt-in: every reply
+    — edit follow-ups included — waits for the human."""
+    await _active_channel(db, channel_id)
+    db.add(
+        ReviewReply(
+            channel_id=channel_id, review_id="ggreview-1", rating=2,
+            review_text="Old complaint text", reviewer_name="Angry Customer",
+            reply_text="live reply", status="posted",
+        )
+    )
+    config = await db.get(AutoReplyConfig, config_id)
+    config.edited_review_autopost = True
+    config.approval_mode = "approval"
+    await db.commit()
+
+    _install_fakes(monkeypatch, [_review(rating=5)])
+    await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    assert FakeGoogleClient.posted == []
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    assert any(r.status == "pending_approval" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_edited_review_followup_autopost_failure_saves_failed_row(db, channel_id, config_id, monkeypatch):
+    """When the live post fails, the follow-up lands in the failed queue
+    (resumable) instead of vanishing — the merchant is notified."""
+    from app.modules.channels.google_reviews import GoogleReviewsError
+
+    await _active_channel(db, channel_id)
+    db.add(
+        ReviewReply(
+            channel_id=channel_id, review_id="ggreview-1", rating=2,
+            review_text="Old complaint text", reviewer_name="Angry Customer",
+            reply_text="live reply", status="posted",
+        )
+    )
+    config = await db.get(AutoReplyConfig, config_id)
+    config.edited_review_autopost = True
+    await db.commit()
+
+    _install_fakes(monkeypatch, [_review(rating=5)])
+
+    async def _boom(self, review_id, text):
+        raise GoogleReviewsError("Google said 503")
+
+    monkeypatch.setattr(FakeGoogleClient, "reply_to_review", _boom)
+    await reviews_worker.process_channel(
+        db, await db.get(Channel, channel_id),
+        await db.get(AutoReplyConfig, config_id),
+    )
+
+    rows = await _reply_rows(db, channel_id, "ggreview-1")
+    failed = [r for r in rows if r.status == "failed"]
+    assert len(failed) == 1
+    assert failed[0].reply_text == "fresh AI draft (try 1)"
+    assert "503" in (failed[0].error or "")
+
+
+@pytest.mark.asyncio
 async def test_dismissed_review_not_redrafted(db, channel_id, config_id, monkeypatch):
     """A rejected draft stays rejected: the poll must not draft again for
     a dismissed review (the merchant answered elsewhere or wants silence)."""

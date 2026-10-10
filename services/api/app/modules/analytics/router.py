@@ -1,6 +1,6 @@
 """Analytics API: business overview, timeseries, enriched-review list."""
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +31,7 @@ from .schemas import (
     TopicsResponse,
     VisibilityResponse,
 )
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 logger = logging.getLogger(__name__)
 
@@ -114,24 +115,25 @@ async def list_issues(
         None, description="open | in_progress | done | dismissed"
     ),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Tracked issues for this tenant, most-negative first."""
     from . import issues as issues_service
 
     try:
-        rows = await issues_service.list_issues(db, user.id, channel_id, status)
+        rows = await issues_service.list_issues(db, tenant_id_of(user), channel_id, status)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    all_rows = await issues_service.list_issues(db, user.id, channel_id)
+    all_rows = await issues_service.list_issues(db, tenant_id_of(user), channel_id)
     counts: dict[str, int] = {s: 0 for s in issues_service.ALL_STATUSES}
     for r in all_rows:
         counts[r.status] = counts.get(r.status, 0) + 1
 
     return {
         "items": await _issue_payload(db, user, rows),
-        "held_out": await _held_out_counts(db, user.id, channel_id),
+        "held_out": await _held_out_counts(db, tenant_id_of(user), channel_id),
         "counts": counts,
     }
 
@@ -141,6 +143,7 @@ async def refresh_issues(
     channel_id: str | None = Query(None),
     days: int = Query(90, ge=1, le=3650),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Recompute issues from current review meaning.
@@ -150,8 +153,8 @@ async def refresh_issues(
     """
     from . import intelligence_ai, issues as issues_service
 
-    rows = await intelligence_ai._load_reviews(db, user.id, channel_id, days)
-    return await issues_service.refresh_issues(db, user.id, rows)
+    rows = await intelligence_ai._load_reviews(db, tenant_id_of(user), channel_id, days)
+    return await issues_service.refresh_issues(db, tenant_id_of(user), rows)
 
 
 @router.patch("/issues/{issue_id}", response_model=LocationIssueOut)
@@ -159,6 +162,7 @@ async def update_issue(
     issue_id: str,
     body: IssueUpdateBody,
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Move an issue along, or add a note about what was done."""
@@ -167,7 +171,7 @@ async def update_issue(
 
     try:
         issue = await issues_service.update_issue(
-            db, user.id, issue_id,
+            db, tenant_id_of(user), issue_id,
             status=body.status,
             resolution_note=body.resolution_note,
         )
@@ -186,10 +190,11 @@ async def get_overview(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """KPI block: ratings, sentiment, response metrics, scores, Google performance."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await service.get_overview(db, uid, channel_id, days)
 
 
@@ -198,10 +203,11 @@ async def get_timeseries(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Daily rollup series for charts (reviews, sentiment, impressions, actions)."""
-    uid = user.id
+    uid = tenant_id_of(user)
     rows = await service.get_timeseries(db, uid, channel_id, days)
 
     def _extra_int(row, key: str) -> int:
@@ -215,28 +221,101 @@ async def get_timeseries(
         except (TypeError, ValueError):
             return 0
 
-    return TimeseriesResponse(
-        points=[
-            TimeseriesPoint(
-                date=row.date.isoformat(),
-                channel_id=row.channel_id,
-                reviews_count=row.reviews_count,
-                avg_rating=row.avg_rating,
-                positive_count=row.positive_count,
-                neutral_count=row.neutral_count,
-                negative_count=row.negative_count,
-                replies_count=row.replies_count,
-                impressions_maps=row.impressions_maps_desktop + row.impressions_maps_mobile,
-                impressions_search=_extra_int(row, "impressions_search"),
-                website_clicks=row.website_clicks,
-                call_clicks=row.call_clicks,
-                direction_requests=row.direction_requests,
-                messages=_extra_int(row, "messages"),
-                bookings=_extra_int(row, "bookings"),
+    points = [
+        TimeseriesPoint(
+            date=row.date.isoformat(),
+            channel_id=row.channel_id,
+            reviews_count=row.reviews_count,
+            avg_rating=row.avg_rating,
+            positive_count=row.positive_count,
+            neutral_count=row.neutral_count,
+            negative_count=row.negative_count,
+            replies_count=row.replies_count,
+            impressions_maps=row.impressions_maps_desktop + row.impressions_maps_mobile,
+            impressions_search=_extra_int(row, "impressions_search"),
+            website_clicks=row.website_clicks,
+            call_clicks=row.call_clicks,
+            direction_requests=row.direction_requests,
+            messages=0,  # filled from channel_messages below (WhatsApp/IG/FB)
+            bookings=_extra_int(row, "bookings"),
+        )
+        for row in rows
+    ]
+
+    # Real inbox message volume per day from ChannelMessage (the `messages`
+    # extra on analytics rows only carries Embedsocial's reporting, which is
+    # normally empty). Merge so the Messages chart shows actual traffic.
+    from ..channels.models import Channel, ChannelMessage
+
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    chan_rows = (
+        await db.execute(
+            select(Channel).where(
+                Channel.user_id == uid,
+                Channel.platform.in_(("whatsapp", "instagram", "facebook")),
             )
-            for row in rows
-        ]
+        )
+    ).scalars().all()
+    # Deselected/disconnected Meta assets must not keep feeding the Messages
+    # chart — same rule as the inbox thread list: the channel status flag,
+    # plus the inactive-asset lookup that catches disconnects from before the
+    # flag existed.
+    from ..channels.meta.models import MetaAsset
+
+    inactive_assets = {
+        (provider, external)
+        for provider, external in (
+            await db.execute(
+                select(MetaAsset.provider, MetaAsset.external_asset_id).where(
+                    MetaAsset.tenant_id == uid,
+                    MetaAsset.active.is_(False),
+                )
+            )
+        ).all()
+    }
+    chan_ids = [
+        c.id
+        for c in chan_rows
+        if c.status != "disconnected"
+        and (c.platform, c.platform_user_id) not in inactive_assets
+    ]
+    msg_stmt = (
+        select(func.date(ChannelMessage.created_at), func.count(ChannelMessage.id))
+        .where(ChannelMessage.channel_id.in_(chan_ids))
+        .where(ChannelMessage.created_at >= cutoff_dt)
+        .group_by(func.date(ChannelMessage.created_at))
     )
+    if channel_id:
+        msg_stmt = msg_stmt.where(ChannelMessage.channel_id == channel_id)
+    per_day: dict[str, int] = {}
+    for d, n in (await db.execute(msg_stmt)).all():
+        per_day[str(d)] = int(n)
+    seen: set[str] = set()
+    for p in points:
+        seen.add(p.date)
+        p.messages = per_day.get(p.date, 0)
+    for d, n in per_day.items():
+        if d not in seen:
+            points.append(
+                TimeseriesPoint(
+                    date=d,
+                    channel_id=channel_id or "all",
+                    reviews_count=0,
+                    avg_rating=0.0,
+                    positive_count=0,
+                    neutral_count=0,
+                    negative_count=0,
+                    replies_count=0,
+                    impressions_maps=0,
+                    website_clicks=0,
+                    call_clicks=0,
+                    direction_requests=0,
+                    messages=n,
+                    bookings=0,
+                )
+            )
+    points.sort(key=lambda p: p.date)
+    return TimeseriesResponse(points=points)
 
 
 @router.get("/reviews/insights", response_model=ReviewInsightListResponse)
@@ -255,12 +334,13 @@ async def list_review_insights(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Enriched reviews for the AI Review Inbox (filter/sort/paginate)."""
     items, total = await service.list_insights(
         db,
-        user.id,
+        tenant_id_of(user),
         channel_id=channel_id,
         sentiment=sentiment,
         rating=rating,
@@ -282,6 +362,7 @@ async def list_review_insights(
 async def skip_review(
     insight_id: str,
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Mark a review as skipped — reviewer deleted it or Google removed it.
@@ -293,7 +374,7 @@ async def skip_review(
     insight = row.scalar_one_or_none()
     if insight is None:
         raise HTTPException(status_code=404, detail="Review insight not found")
-    if insight.user_id != user.id:
+    if insight.user_id != tenant_id_of(user):
         raise HTTPException(status_code=403, detail="Not your review")
     insight.skipped = True
     db.add(insight)
@@ -306,6 +387,7 @@ async def skip_review(
 async def dismiss_review_edit(
     insight_id: str,
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Clear the 'review edited' flag once the merchant has seen the change.
@@ -317,7 +399,7 @@ async def dismiss_review_edit(
     insight = row.scalar_one_or_none()
     if insight is None:
         raise HTTPException(status_code=404, detail="Review insight not found")
-    if insight.user_id != user.id:
+    if insight.user_id != tenant_id_of(user):
         raise HTTPException(status_code=403, detail="Not your review")
     insight.edited = False
     insight.edited_at = None
@@ -362,6 +444,7 @@ async def get_review_intelligence(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Stored intelligence report for an interval (no re-analysis).
@@ -372,7 +455,7 @@ async def get_review_intelligence(
     from .intelligence_ai import get_stored_report
 
     start, end, window = _parse_interval(date_from, date_to, days)
-    stored = await get_stored_report(db, user.id, channel_id, window, start, end)
+    stored = await get_stored_report(db, tenant_id_of(user), channel_id, window, start, end)
     if stored is None:
         return None
     stored["stats"]["distribution"] = {
@@ -385,6 +468,7 @@ async def get_review_intelligence(
 async def analyze_review_intelligence(
     body: AnalyzeIntelligenceRequest,
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Run the AI analysis now for the requested interval and store it.
@@ -411,10 +495,11 @@ async def get_topics(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """What customers talk about: frequency, sentiment, trend, emerging topics."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await intelligence.get_topics(db, uid, channel_id, days)
 
 
@@ -423,10 +508,11 @@ async def get_problems(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Most common problems, AI-prioritized by impact (volume x severity x growth)."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await intelligence.get_problems(db, uid, channel_id, days)
 
 
@@ -435,10 +521,11 @@ async def get_products(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Product/service intelligence: mentions, sentiment, loved vs criticized."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await intelligence.get_products(db, uid, channel_id, days)
 
 
@@ -449,10 +536,11 @@ async def get_visibility(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Google visibility: impressions and conversion into customer actions."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await growth.get_visibility(db, uid, channel_id, days)
 
 
@@ -461,10 +549,11 @@ async def get_acquisition(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Google-generated customer actions: clicks, calls, directions."""
-    return await growth.get_acquisition(db, user.id, channel_id, days)
+    return await growth.get_acquisition(db, tenant_id_of(user), channel_id, days)
 
 
 @router.get("/opportunities", response_model=OpportunitiesResponse)
@@ -472,10 +561,11 @@ async def get_opportunities(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Prioritized growth actions derived from live business data."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await growth.get_opportunities(db, uid, channel_id, days)
 
 
@@ -484,10 +574,11 @@ async def get_keywords(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Search keywords tenants were found by (native Google only)."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await growth.get_keywords(db, uid, channel_id, days)
 
 
@@ -496,10 +587,11 @@ async def get_benchmark_comparison(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Benchmark the tenant against the second demo business profile (stand-in for comparable businesses)."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await benchmark.get_benchmark(db, uid, channel_id, days)
 
 
@@ -508,8 +600,9 @@ async def get_executive_summary(
     channel_id: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
     user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """AI-composed business briefing pinned to the top of the dashboard."""
-    uid = user.id
+    uid = tenant_id_of(user)
     return await summary.get_executive_summary(db, uid, channel_id, days)

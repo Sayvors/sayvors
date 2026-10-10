@@ -528,7 +528,7 @@ function ConnectHub() {
       if (metaConnected === "facebook" && metaNext === "instagram_select") {
         return {
           kind: "ok" as const,
-          text: "Instagram connected! Open the Instagram card below and click Discover from my Pages.",
+          text: "Instagram connected — looking for accounts linked to your Pages…",
         };
       }
       return {

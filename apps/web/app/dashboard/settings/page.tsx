@@ -5,6 +5,7 @@ import Breadcrumbs from "@/components/Breadcrumbs";
 import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
 import { getProfile, updateProfile } from "@/lib/api-profile";
+import { disconnectMeta, fetchMetaConnections, type MetaConnection } from "@/lib/api-meta";
 
 interface ChannelCfg {
   channel_id: string;
@@ -14,6 +15,7 @@ interface ChannelCfg {
   min_rating_auto: number;
   model: string;
   approval_mode?: string;
+  edited_review_autopost: boolean;
   custom_instructions?: string | null;
   dialect: string;
   reply_language: string;
@@ -80,6 +82,12 @@ const COUNTRIES: { code: string; name: string }[] = [
   { code: "PK", name: "Pakistan" },
   { code: "TR", name: "Türkiye" },
 ];
+
+const PROVIDER_LABELS: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  facebook: "Facebook",
+  instagram: "Instagram",
+};
 
 function Section({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
@@ -193,6 +201,13 @@ export default function SettingsPage() {
   const [promoLinks, setPromoLinks] = useState(false);
   const [promoRelevant, setPromoRelevant] = useState(true);
   const [promoMax, setPromoMax] = useState(1);
+  const [editedAutopost, setEditedAutopost] = useState(false);
+  // Danger zone — the destructive end of the disconnect flow. The channels
+  // page disconnects without wiping; only here does "delete everything" live.
+  const [metaConnections, setMetaConnections] = useState<MetaConnection[]>([]);
+  const [dangerBusy, setDangerBusy] = useState<string | null>(null);
+  const [dangerTarget, setDangerTarget] = useState<MetaConnection | null>(null);
+  const [dangerPhrase, setDangerPhrase] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -254,6 +269,42 @@ export default function SettingsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchMetaConnections()
+      .then((d) => {
+        if (!cancelled) setMetaConnections(d.connections ?? []);
+      })
+      .catch(() => {
+        /* backend down — empty danger zone renders */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const deleteMetaConnection = async (c: MetaConnection) => {
+    setDangerBusy(c.id);
+    try {
+      await disconnectMeta(c.provider, { deleteData: true });
+      const d = await fetchMetaConnections();
+      setMetaConnections(d.connections ?? []);
+      setBanner({
+        kind: "ok",
+        text: `${PROVIDER_LABELS[c.provider] ?? c.provider} disconnected — all its data was deleted.`,
+      });
+    } catch {
+      setBanner({
+        kind: "err",
+        text: `Could not delete ${PROVIDER_LABELS[c.provider] ?? c.provider} data. Try again.`,
+      });
+    } finally {
+      setDangerBusy(null);
+      setDangerTarget(null);
+      setDangerPhrase("");
+    }
+  };
+
   const cfg = selectedId ? configs[selectedId] : undefined;
 
   useEffect(() => {
@@ -266,6 +317,7 @@ export default function SettingsPage() {
         setPromoLinks(false);
         setPromoRelevant(true);
         setPromoMax(1);
+        setEditedAutopost(false);
       }
       return;
     }
@@ -276,6 +328,7 @@ export default function SettingsPage() {
     setPromoLinks(!!cfg.promo_links);
     setPromoRelevant(cfg.promo_only_relevant ?? true);
     setPromoMax(Number.isFinite(cfg.promo_max_ctas) ? cfg.promo_max_ctas : 1);
+    setEditedAutopost(!!cfg.edited_review_autopost);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, isBulk, cfg?.tone, cfg?.reply_language, cfg?.dialect]);
 
@@ -295,6 +348,7 @@ export default function SettingsPage() {
     if (differs((id) => !!configs[id]?.promo_links)) set.add("promoLinks");
     if (differs((id) => configs[id]?.promo_only_relevant ?? true)) set.add("promoRelevant");
     if (differs((id) => configs[id]?.promo_max_ctas ?? 1)) set.add("promoMax");
+    if (differs((id) => !!configs[id]?.edited_review_autopost)) set.add("editedAutopost");
     return set;
   }, [isBulk, channels, configs]);
 
@@ -882,6 +936,50 @@ export default function SettingsPage() {
                 </button>
               </Section>
 
+              <Section
+                title="Edited reviews"
+                subtitle="When a customer edits a review you already answered, a fresh reply is drafted for the new content."
+              >
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={editedAutopost}
+                    onChange={(e) => setEditedAutopost(e.target.checked)}
+                    disabled={busy !== null}
+                    className="mt-0.5 h-4 w-4 rounded text-deep-violet focus:ring-deep-violet/40"
+                  />
+                  <span>
+                    <span className="block text-[13px] font-semibold text-ink dark:text-fog">
+                      Auto-post the updated reply
+                      {bulk?.varies.has("editedAutopost") ? <VariesBadge /> : null}
+                    </span>
+                    <span className="block text-[11px] text-ink/45 dark:text-fog/45">
+                      Off = the updated reply waits for your approval (default). On = it posts automatically, still respecting your approval mode and minimum rating.
+                    </span>
+                  </span>
+                </label>
+                <button
+                  onClick={() => {
+                    const patch = { edited_review_autopost: editedAutopost };
+                    if (!isBulk) {
+                      void saveCfg(patch, "Edited-review preference saved.", "editedReview");
+                      return;
+                    }
+                    requestBulkSave(
+                      "Apply edited-review preference to all branches?",
+                      [`Edited-review replies → ${editedAutopost ? "auto-post" : "wait for approval"}`],
+                      () => runBulkCfg("Edited reviews", patch),
+                      "editedReview",
+                      (ids) => runBulkCfg("Edited reviews", patch, ids),
+                    );
+                  }}
+                  disabled={busy !== null}
+                  className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                >
+                  {busy === "editedReview" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save"}
+                </button>
+              </Section>
+
               <p className="rounded-xl border border-ink/[0.06] bg-white/60 px-4 py-3 text-[12px] text-ink/55 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/55">
                 Replies in: <strong>{langName}</strong>
                 {langName !== "English" && <> ({dialectName(dialect)})</>} · Tone: <strong className="capitalize">{tone}</strong> · Country:{" "}
@@ -898,6 +996,109 @@ export default function SettingsPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* Danger zone — the only place a disconnect also deletes data. The
+          channels-page dialog intentionally disconnects without wiping. */}
+      <div className="rounded-2xl border border-red-500/30 bg-red-500/[0.04] p-5">
+        <h2 className="text-[15px] font-bold text-red-600 dark:text-red-400">Danger zone</h2>
+        <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">
+          Permanently disconnect a channel and delete everything it stores — conversations,
+          messages, channels and assets. This cannot be undone.
+        </p>
+        <div className="mt-4 space-y-2">
+          {metaConnections.length === 0 ? (
+            <p className="text-[12px] text-ink/40 dark:text-fog/40">No connected channels.</p>
+          ) : (
+            metaConnections.map((c) => (
+              <div
+                key={c.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ink/[0.06] bg-white px-3 py-2.5 dark:border-fog/[0.08] dark:bg-ink"
+              >
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-ink dark:text-fog">
+                    {PROVIDER_LABELS[c.provider] ?? c.provider}
+                    <span className="ml-2 rounded bg-ink/[0.06] px-1.5 py-0.5 text-[10px] font-bold uppercase text-ink/45 dark:bg-fog/[0.08] dark:text-fog/45">
+                      {c.status}
+                    </span>
+                  </p>
+                  <p className="text-[11px] text-ink/40 dark:text-fog/40">
+                    Connected {new Date(c.created_at).toLocaleDateString()}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setDangerPhrase("");
+                    setDangerTarget(c);
+                  }}
+                  disabled={dangerBusy !== null}
+                  className="rounded-lg border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+                >
+                  Disconnect &amp; delete all data
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Type-to-confirm modal — one wrong glance should not delete a
+          tenant's whole history, so the button stays dead until the exact
+          phrase is typed. */}
+      {dangerTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && dangerBusy === null) {
+              setDangerTarget(null);
+              setDangerPhrase("");
+            }
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
+            <p className="text-[15px] font-bold text-red-600 dark:text-red-400">
+              Delete all {PROVIDER_LABELS[dangerTarget.provider] ?? dangerTarget.provider} data?
+            </p>
+            <p className="mt-2 text-[12px] leading-relaxed text-ink/70 dark:text-fog/70">
+              This disconnects the channel and permanently deletes every conversation,
+              message, channel and asset connected to it.{" "}
+              <strong>It cannot be undone.</strong>
+            </p>
+            <label className="mt-3 block text-[11px] font-semibold text-ink/55 dark:text-fog/55">
+              Type <span className="font-mono text-red-600 dark:text-red-400">DELETE MY DATA</span> to
+              confirm
+              <input
+                autoFocus
+                value={dangerPhrase}
+                onChange={(e) => setDangerPhrase(e.target.value)}
+                placeholder="DELETE MY DATA"
+                disabled={dangerBusy !== null}
+                className="mt-1.5 w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-red-500/50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setDangerTarget(null);
+                  setDangerPhrase("");
+                }}
+                disabled={dangerBusy !== null}
+                className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void deleteMetaConnection(dangerTarget)}
+                disabled={dangerPhrase !== "DELETE MY DATA" || dangerBusy !== null}
+                className="rounded-lg bg-red-600 px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700 disabled:opacity-40"
+              >
+                {dangerBusy === dangerTarget.id ? "Deleting…" : "Delete everything"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

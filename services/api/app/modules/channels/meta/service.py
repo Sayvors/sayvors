@@ -57,7 +57,26 @@ async def list_connections(db: AsyncSession, tenant_id: str) -> list[MetaConnect
             .order_by(MetaConnection.created_at)
         )
     ).scalars().all()
-    return list(rows)
+    rows = list(rows)
+    providers = {r.provider for r in rows}
+    # Instagram never gets its own Login dialog — it rides the Facebook one,
+    # and only the callback/discovery creates its marker row. Tenants who
+    # connected before that marker existed (or mid-flow) would otherwise see
+    # the IG card offering Connect forever. Synthesize; never persist here.
+    # A real row in ANY state (even revoked) suppresses this.
+    fb = next((r for r in rows if r.provider == "facebook"), None)
+    if fb is not None and "instagram" not in providers:
+        marker = MetaConnection(
+            id=f"synthetic-{fb.id}",
+            tenant_id=tenant_id,
+            provider="instagram",
+            connection_type="via_facebook",
+            status=fb.status,
+            scopes=list(fb.scopes or []),
+            created_at=fb.created_at,
+        )
+        rows.append(marker)
+    return rows
 
 
 async def get_connection(
@@ -208,7 +227,12 @@ async def save_discovered_assets(
 async def select_assets(
     db: AsyncSession, tenant_id: str, provider: str, asset_ids: list[str]
 ) -> list[MetaAsset]:
-    """Activate tenant-chosen assets; create Channel rows for messaging ones."""
+    """Replace the tenant's active asset set for one provider.
+
+    The frontend always sends the full checked list, so assets left out of
+    asset_ids were deliberately unchecked — they are deactivated here (their
+    inbox threads and dashboard charts go quiet until re-selected).
+    """
     from ..models import Channel
 
     rows = (
@@ -259,12 +283,133 @@ async def select_assets(
                 existing_channel.status = "active"
                 db.add(existing_channel)
         activated.append(asset)
+
+    # Deselection: same-provider active assets the tenant left unchecked go
+    # inactive, and their messaging channel is marked disconnected — the same
+    # semantics as a soft disconnect, so the inbox and dashboard hide the
+    # asset's data while the history is kept for a re-selection.
+    deselected_filter = [
+        MetaAsset.tenant_id == tenant_id,
+        MetaAsset.provider == provider,
+        MetaAsset.active.is_(True),
+    ]
+    if asset_ids:
+        deselected_filter.append(MetaAsset.id.not_in(asset_ids))
+    deselected = (
+        await db.execute(select(MetaAsset).where(*deselected_filter))
+    ).scalars().all()
+
+    # An Instagram account sends through its parent Page's token, so a
+    # deselected page takes its still-active IG children with it — otherwise
+    # they would stay "active" while silently unable to send.
+    page_ids = {a.id for a in deselected if a.asset_type == "page"}
+    cascaded_igs: list[MetaAsset] = []
+    if page_ids:
+        cascaded_igs = list(
+            (
+                await db.execute(
+                    select(MetaAsset).where(
+                        MetaAsset.tenant_id == tenant_id,
+                        MetaAsset.asset_type == "ig_account",
+                        MetaAsset.active.is_(True),
+                        MetaAsset.parent_asset_id.in_(page_ids),
+                    )
+                )
+            ).scalars().all()
+        )
+
+    for asset in [*deselected, *cascaded_igs]:
+        asset.active = False
+        asset.status = "disconnected"
+        db.add(asset)
+        platform = MESSAGING_ASSETS.get(asset.asset_type)
+        if platform:
+            existing_channel = (
+                await db.execute(
+                    select(Channel).where(
+                        Channel.user_id == tenant_id,
+                        Channel.platform == platform,
+                        Channel.platform_user_id == asset.external_asset_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_channel is not None and existing_channel.status == "active":
+                existing_channel.status = "disconnected"
+                db.add(existing_channel)
+    if deselected or cascaded_igs:
+        logger.info(
+            "Meta assets deselected provider=%s tenant=%s count=%d",
+            provider, tenant_id, len(deselected) + len(cascaded_igs),
+        )
+
     await db.commit()
     logger.info(
         "Meta assets selected provider=%s tenant=%s count=%d",
         provider, tenant_id, len(activated),
     )
+    # Already committed: a Graph hiccup here must never roll back the
+    # tenant's selection — the next select retries the subscription.
+    await _subscribe_messaging_webhooks(db, activated)
     return activated
+
+
+async def get_instagram_page_credentials(
+    db: AsyncSession, asset: MetaAsset
+) -> tuple[str, str]:
+    """(page_id, page_token) for an ig_account asset's parent Page.
+
+    IG messaging rides the parent Page's token — the IG connection only
+    holds a user token. `parent_asset_id` is the only link (SET NULL when
+    the Page row is deleted), hence the empty pair as the failure value.
+    """
+    if not asset.parent_asset_id:
+        return "", ""
+    page = (
+        await db.execute(
+            select(MetaAsset).where(MetaAsset.id == asset.parent_asset_id)
+        )
+    ).scalar_one_or_none()
+    if page is None:
+        return "", ""
+    return page.external_asset_id, (page.asset_metadata or {}).get(
+        "page_access_token", ""
+    )
+
+
+async def _subscribe_messaging_webhooks(
+    db: AsyncSession, assets: list[MetaAsset]
+) -> None:
+    """Best-effort: point Meta's webhooks at us for messaging on the Pages
+    behind the selected assets — directly (facebook select) or as an IG
+    account's parent (instagram select).
+
+    subscribed_apps REPLACES the whole subscribed-field list, so always pass
+    the complete set: feed/mention keep the review and post features working
+    alongside messages. Failures only warn — the selection is committed and
+    a resubscribe happens on the next select.
+    """
+    pages: dict[str, str] = {}
+    for asset in assets:
+        if asset.asset_type == "page":
+            token = (asset.asset_metadata or {}).get("page_access_token", "")
+            if token:
+                pages[asset.external_asset_id] = token
+        elif asset.asset_type == "ig_account":
+            page_id, token = await get_instagram_page_credentials(db, asset)
+            if page_id and token:
+                pages[page_id] = token
+    if not pages:
+        return
+    adapter = get_adapter("facebook")
+    for page_id, token in pages.items():
+        try:
+            await adapter.subscribe_page(
+                page_id, token, fields=["messages", "feed", "mention"]
+            )
+        except Exception as e:  # noqa: BLE001 — webhook setup must not block selection
+            logger.warning(
+                "Page webhook subscription failed page=%s: %s", page_id, e
+            )
 
 
 # ── Instagram discovery (via selected Facebook Pages) ───

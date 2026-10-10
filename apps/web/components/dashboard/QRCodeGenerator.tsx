@@ -7,6 +7,7 @@ import { QRCodeSVG } from "qrcode.react";
 interface BusinessProfile {
   listing_id: string;
   listing_name: string;
+  listing_google_id?: string | null;
   address?: string | null;
   phone_number?: string | null;
   website_url?: string | null;
@@ -48,6 +49,12 @@ export default function QRCodeGenerator() {
   const selected = profiles.find((p) => p.listing_id === selectedId);
 
   const getReviewUrl = (profile: BusinessProfile): string => {
+    if (profile.listing_google_id) {
+      // The place_id link opens Google's rate-and-review composer directly.
+      // The maps/profile URLs land the customer on the listing, where they'd
+      // have to find and tap "Write a review" themselves.
+      return `https://search.google.com/local/writereview?placeid=${profile.listing_google_id}`;
+    }
     if (profile.maps_url) return profile.maps_url;
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(profile.listing_name)}`;
   };

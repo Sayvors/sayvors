@@ -92,9 +92,65 @@ async def test_callback_resolves_instagram_state_on_facebook_url(
     assert "meta_connected=facebook" in location
 
     rows = (await db.execute(select(MetaConnection))).scalars().all()
-    assert len(rows) == 1
-    assert rows[0].tenant_id == tenant
-    assert rows[0].provider == "facebook"
+    assert len(rows) == 2
+    assert {r.provider for r in rows} == {"facebook", "instagram"}
+    assert all(r.tenant_id == tenant for r in rows)
+    # The instagram row is a marker riding the Facebook credential — the
+    # channels page reads it, or the IG card offers Connect forever.
+    ig_row = next(r for r in rows if r.provider == "instagram")
+    assert ig_row.connection_type == "via_facebook"
+
+
+async def test_callback_returns_to_the_origin_that_started_connect(
+    client, engine, db, monkeypatch
+):
+    """Connect started from a tunnel/domain records that origin on the
+    transaction, and the OAuth return redirects THERE — not to
+    FRONTEND_URL, which would drop a tunnel-browsing tenant on localhost."""
+    tenant = "test-user-0000-0000-0000-000000000001"
+
+    class _FakeAdapter:
+        def build_auth_entry(self, state):
+            seen_states.append(state)
+            return {"auth_url": f"https://facebook.com/dialog?state={state}"}
+
+        async def exchange_code(self, code, redirect_uri=None):
+            return {"access_token": "fake-fb-token", "token_type": "bearer"}
+
+        async def discover_assets(self, credentials):
+            return []
+
+    seen_states: list[str] = []
+    monkeypatch.setattr(_service, "get_adapter", lambda _p: _FakeAdapter())
+
+    resp = client.post(
+        "/api/v1/meta/facebook/connect",
+        headers={"host": "any.api.example", "origin": "https://my-tunnel.example"},
+    )
+    assert resp.status_code == 200
+    row = (await db.execute(
+        select(MetaOAuthTransaction).where(
+            MetaOAuthTransaction.tenant_id == tenant,
+            MetaOAuthTransaction.provider == "facebook",
+        )
+    )).scalar_one()
+    assert row.transaction_metadata.get("frontend_origin") == "https://my-tunnel.example"
+
+    resp = client.get(
+        "/api/v1/meta/facebook/callback",
+        params={"code": "fake-code", "state": seen_states[0]},
+        headers={"host": "callback.example"},
+        follow_redirects=False,
+    )
+    assert resp.status_code in (302, 307)
+    location = resp.headers.get("location", "")
+    # The tenant lands on the origin their connect came from…
+    assert location.startswith("https://my-tunnel.example/dashboard/channels")
+    assert "meta_connected=facebook" in location
+    # …never on FRONTEND_URL (the localhost trap), and never on the
+    # callback request's own host.
+    assert "localhost" not in location
+    assert "callback.example" not in location
 
 
 async def test_sdk_proxy_serves_and_caches(client, engine, monkeypatch):

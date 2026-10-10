@@ -107,3 +107,97 @@ class FacebookAdapter(MetaProviderAdapter):
         except MetaAPIError as e:
             logger.warning("Facebook validate failed: graph error %s", e.status_code)
             return False, f"graph error {e.status_code}"
+
+    # ------------------------------------------------------------------
+    # Page hub reads + writes. All calls take the PAGE token from the
+    # asset row. Reads pass params=; writes pass data= — Graph's canonical
+    # encoding for bracket keys like attached_media[0][media_fbid] is
+    # form data, and JSON bodies with bracket keys are unreliable.
+    # MetaAPIError propagates from every method: a failed write must
+    # surface, never silently vanish.
+
+    async def get_page_profile(self, page_id: str, token: str) -> dict:
+        resp = await self._graph(
+            "GET", f"/{page_id}", token,
+            params={"fields": "name,fan_count,followers_count,link,picture.type(large)"},
+        )
+        return resp.json()
+
+    async def get_page_feed(self, page_id: str, token: str, limit: int = 25) -> list[dict]:
+        resp = await self._graph(
+            "GET", f"/{page_id}/feed", token,
+            params={
+                "fields": (
+                    "id,message,created_time,permalink_url,full_picture,"
+                    "from{id,name},"
+                    "likes.summary(true).limit(0),comments.summary(true).limit(0),"
+                    "attachments{title,unshimmed_url,media_type,subattachments{media}}"
+                ),
+                "limit": limit,
+            },
+        )
+        return resp.json().get("data", [])
+
+    async def get_scheduled_posts(self, page_id: str, token: str) -> list[dict]:
+        resp = await self._graph(
+            "GET", f"/{page_id}/scheduled_posts", token,
+            params={"fields": "id,scheduled_publish_time"},
+        )
+        return resp.json().get("data", [])
+
+    async def publish_post(
+        self,
+        page_id: str,
+        token: str,
+        *,
+        message: str | None = None,
+        link: str | None = None,
+        attached_media: list[str] | None = None,
+        scheduled_at: int | None = None,
+    ) -> dict:
+        """POST /{page}/feed. attached_media is an ordered list of
+        media_fbids from unpublished /photos children. scheduled_at is
+        unix SECONDS and implies published=false."""
+        data: dict[str, str] = {}
+        if message:
+            data["message"] = message
+        if link:
+            data["link"] = link
+        for i, fbid in enumerate(attached_media or []):
+            data[f"attached_media[{i}][media_fbid]"] = fbid
+        if scheduled_at is not None:
+            data["published"] = "false"
+            data["scheduled_publish_time"] = str(scheduled_at)
+        resp = await self._graph("POST", f"/{page_id}/feed", token, data=data)
+        return resp.json()
+
+    async def publish_photo(
+        self,
+        page_id: str,
+        token: str,
+        *,
+        url: str,
+        caption: str | None = None,
+        published: bool = True,
+    ) -> dict:
+        """POST /{page}/photos. A published photo returns {id, post_id};
+        an unpublished (carousel child) returns {id} only."""
+        data = {"url": url, "published": "true" if published else "false"}
+        if caption:
+            data["caption"] = caption
+        resp = await self._graph("POST", f"/{page_id}/photos", token, data=data)
+        return resp.json()
+
+    async def reply_to_comment(self, comment_id: str, token: str, message: str) -> str:
+        resp = await self._graph(
+            "POST", f"/{comment_id}/comments", token, data={"message": message},
+        )
+        return resp.json().get("id", "")
+
+    async def set_comment_hidden(self, comment_id: str, token: str, hidden: bool) -> None:
+        await self._graph(
+            "POST", f"/{comment_id}", token, data={"hidden": "true" if hidden else "false"},
+        )
+
+    async def delete_comment(self, comment_id: str, token: str) -> None:
+        await self._graph("DELETE", f"/{comment_id}", token)

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -14,97 +14,25 @@ import {
 } from "@/lib/api-analytics";
 import { StatCard } from "@/components/analytics/StatCard";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
+import BenchmarkPage from "../benchmark/page";
 import PresenceChart from "@/components/analytics/PresenceChart";
 import { ReviewInbox } from "@/components/analytics/ReviewInbox";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import InsightsPage from "../insights/page";
 import GrowthPage from "../growth/page";
-import BenchmarkPage from "../benchmark/page";
 
 const RANGES = [7, 30, 90] as const;
 
 function fmtDuration(seconds: number | null, locale: string, labels: { minutes: string; hours: string; days: string }) {
-  if (seconds === null) return "—";
+  if (seconds === null) return "â€”";
   const number = (value: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
   if (seconds < 3600) return labels.minutes.replace("{value}", number(Math.round(seconds / 60)));
   if (seconds < 86_400) return labels.hours.replace("{value}", number(Number((seconds / 3600).toFixed(1))));
   return labels.days.replace("{value}", number(Number((seconds / 86_400).toFixed(1))));
 }
 
-/* ── AI summary strip (rule-based composition from live KPIs) ────── */
 
-function SummaryStrip({ overview }: { overview: Overview }) {
-  const { t, locale } = useI18n();
-  const copy = t.analytics.kpis;
-  const p = overview.period;
-  const g = overview.google_performance;
-  const items: { tone: "good" | "bad" | "info"; text: string }[] = [];
-
-  if (p.rating_delta !== null && p.rating_delta !== 0) {
-    items.push({
-      tone: p.rating_delta > 0 ? "good" : "bad",
-      text: (p.rating_delta > 0 ? copy.ratingImproved : copy.ratingDropped)
-        .replace("{value}", new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(Math.abs(p.rating_delta)))
-        .replace("{days}", new Intl.NumberFormat(locale).format(p.days)),
-    });
-  }
-  if (p.reviews_delta_pct !== null && p.reviews_delta_pct !== 0) {
-    items.push({
-      tone: p.reviews_delta_pct > 0 ? "info" : "bad",
-      text: (p.reviews_delta_pct > 0 ? copy.reviewVolumeUp : copy.reviewVolumeDown)
-        .replace("{value}", new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(Math.abs(p.reviews_delta_pct))),
-    });
-  }
-  items.push({
-    tone: overview.sentiment.positive_pct >= 70 ? "good" : overview.sentiment.negative_pct > 30 ? "bad" : "info",
-    text: copy.positiveSentiment.replace("{value}", new Intl.NumberFormat(locale).format(overview.sentiment.positive_pct)),
-  });
-  if (overview.unanswered > 0) {
-    items.push({
-      tone: "bad",
-      text: overview.unanswered === 1
-        ? copy.oneReviewNeedsReply
-        : copy.reviewsNeedReply.replace("{count}", new Intl.NumberFormat(locale).format(overview.unanswered)),
-    });
-  }
-  if (g.customer_actions > 0) {
-    items.push({ tone: "good", text: copy.googleCustomerActions.replace("{count}", new Intl.NumberFormat(locale).format(g.customer_actions)) });
-  }
-
-  const toneDot = { good: "bg-emerald", bad: "bg-coral", info: "bg-sky" };
-
-  return (
-    <section
-      aria-label={copy.businessSummary}
-      className="relative overflow-hidden rounded-2xl border-2 border-white bg-gradient-to-r from-deep-violet to-magenta p-5 text-white shadow-md shadow-deep-violet/20"
-    >
-      <div className="mb-2.5 flex items-center gap-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/15">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden>
-            <path d="M12 2a7 7 0 014 12.7V17a1 1 0 01-1 1H9a1 1 0 01-1-1v-2.3A7 7 0 0112 2z" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M9 21h6" strokeLinecap="round" />
-          </svg>
-        </span>
-        <h2 className="text-[13px] font-bold tracking-wide">{t.dashboard.briefing.title}</h2>
-        <span className="ml-auto flex items-center gap-3 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold">
-          <span title={copy.reputationScore}>{t.dashboard.briefing.reputation} {new Intl.NumberFormat(locale).format(overview.reputation_score)}</span>
-          <span className="h-3 w-px bg-white/25" aria-hidden />
-          <span title={copy.healthScore}>{t.dashboard.briefing.health} {new Intl.NumberFormat(locale).format(overview.health_score)}</span>
-        </span>
-      </div>
-      <ul className="grid gap-1.5 sm:grid-cols-2">
-        {items.slice(0, 4).map((item, i) => (
-          <li key={i} className="flex items-center gap-2 text-[12px] text-white/90">
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toneDot[item.tone]}`} aria-hidden />
-            {item.text}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-/* ── Google presence (Localith snapshot — live even with 0 reviews) ── */
+/* â”€â”€ Google presence (Localith snapshot â€” live even with 0 reviews) â”€â”€ */
 
 interface PresenceData {
   listingName: string;
@@ -114,10 +42,6 @@ interface PresenceData {
   websiteClicks: number;
   directionRequests: number;
   phoneCalls: number;
-  publishedPosts: number;
-  avgPostingTime: number;
-  avgResponseTimeH: number;
-  responsePct: number;
   totalReviews: number;
   averageRating: number;
 }
@@ -138,16 +62,12 @@ function presenceFromProfile(prof: {
   const conn = prof?.connection ?? {};
   return {
     listingName: conn.listing_name ?? "",
-    windowLabel: conn.metrics_start && conn.metrics_end ? `${conn.metrics_start} → ${conn.metrics_end}` : null,
+    windowLabel: conn.metrics_start && conn.metrics_end ? `${conn.metrics_start} â†’ ${conn.metrics_end}` : null,
     searchViews: num(perf?.googleSearchDesktop) + num(perf?.googleSearchMobile),
     mapViews: num(perf?.googleMapsDesktop) + num(perf?.googleMapsMobile),
     websiteClicks: num(perf?.websiteClicks),
     directionRequests: num(perf?.directions),
     phoneCalls: num(perf?.callClicks),
-    publishedPosts: num(perf?.numPublishedPosts),
-    avgPostingTime: num(perf?.avgPostingTime),
-    avgResponseTimeH: num(perf?.avgReviewResponseTime),
-    responsePct: num(perf?.reviewResponsePercentage),
     totalReviews: num(rev?.numberOfReviews ?? conn.total_reviews),
     averageRating: num(rev?.averageRating ?? conn.average_rating),
   };
@@ -196,16 +116,6 @@ function PresenceSection({
     noMetricHint: copy.noMetricHint,
   };
 
-  // The daily series carries the countable metrics. These four are window
-  // aggregates from Localith with no per-day breakdown, so they stay as
-  // tiles under the chart rather than pretending to be a trend.
-  const windowCells: { label: string; value: string }[] = [
-    { label: copy.publishedPosts, value: String(p.publishedPosts) },
-    { label: copy.avgPostingTime, value: String(p.avgPostingTime) },
-    { label: copy.avgResponseTime, value: `${p.avgResponseTimeH}h` },
-    { label: copy.responseRate, value: `${p.responsePct}%` },
-  ];
-
   return (
     <div className="space-y-2.5">
       <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
@@ -232,27 +142,18 @@ function PresenceSection({
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="text-[13px] font-bold text-ink">
             {copy.title}
-            {p.listingName ? ` — ${p.listingName}` : ""}
+            {p.listingName ? ` â€” ${p.listingName}` : ""}
           </h3>
           <p className="text-[10px] text-ink/40">
-            {p.windowLabel ?? copy.last30Days} · {copy.viaLocalith}
+            {p.windowLabel ?? copy.last30Days} Â· {copy.viaLocalith}
           </p>
-        </div>
-        <p className="mt-0.5 text-[9px] text-ink/35">{copy.periodTotals}</p>
-        <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {windowCells.map((c) => (
-            <div key={c.label} className="rounded-lg bg-ink/[0.03] px-2 py-2 text-center">
-              <p className="text-[14px] font-bold text-ink sm:text-[15px]">{c.value}</p>
-              <p className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-ink/45">{c.label}</p>
-            </div>
-          ))}
         </div>
       </div>
     </div>
   );
 }
 
-/* ── Overview tab ─────────────────────────────────────────────────── */
+/* â”€â”€ Overview tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 function OverviewPanel() {
   const { t, locale } = useI18n();
@@ -294,7 +195,7 @@ function OverviewPanel() {
     };
   }, [days, channelId, refreshToken]);
 
-  // Google presence follows the business selector — each channel maps to its
+  // Google presence follows the business selector â€” each channel maps to its
   // Localith listing_id, so the snapshot refetches per branch. "All locations"
   // shows cumulative totals across every branch (additive metrics summed,
   // rates review-weighted by the backend).
@@ -303,7 +204,7 @@ function OverviewPanel() {
     if (channelId) {
       const listingId = channelListingIds[channelId] ?? null;
       if (!listingId) {
-        // Native Google channel with no Localith listing — no snapshot to show.
+        // Native Google channel with no Localith listing â€” no snapshot to show.
         setPresence(null);
         return;
       }
@@ -334,10 +235,6 @@ function OverviewPanel() {
             websiteClicks: n("website_clicks"),
             directionRequests: n("direction_requests"),
             phoneCalls: n("phone_calls"),
-            publishedPosts: n("published_posts"),
-            avgPostingTime: n("avg_posting_time"),
-            avgResponseTimeH: n("avg_response_time_h"),
-            responsePct: n("response_pct"),
             totalReviews: n("total_reviews"),
             averageRating: n("average_rating"),
           });
@@ -435,7 +332,7 @@ function OverviewPanel() {
           </button>
         </div>
       ) : !hasData && !hasPresence && !loading ? (
-        /* Empty state — no reviews and no connected listing */
+        /* Empty state â€” no reviews and no connected listing */
         <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-deep-violet to-magenta text-white shadow-sm">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-6 w-6" aria-hidden>
@@ -445,7 +342,7 @@ function OverviewPanel() {
           </div>
           <p className="text-[14px] font-bold text-ink">No review data yet</p>
           <p className="max-w-sm text-[12px] text-ink/50">
-            Connect your Google Business Profile and enable auto-reply — insights will appear here as reviews come in.
+            Connect your Google Business Profile and enable auto-reply â€” insights will appear here as reviews come in.
           </p>
           <Link
             href="/dashboard/channels"
@@ -456,7 +353,7 @@ function OverviewPanel() {
         </div>
       ) : (
         <div className="space-y-5">
-          {/* Google presence — daily trends charted, window totals as tiles */}
+          {/* Google presence â€” daily trends charted, window totals as tiles */}
           {presence && (
             <PresenceSection
               presence={presence}
@@ -466,20 +363,6 @@ function OverviewPanel() {
               locale={locale}
               loading={loading}
             />
-          )}
-          {!hasData && !loading && (
-            <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-white bg-white/80 py-10 text-center backdrop-blur-sm">
-              <p className="text-[14px] font-bold text-ink">No review data yet</p>
-              <p className="max-w-sm text-[12px] text-ink/50">
-                Review insights, sentiment and charts will appear here as reviews come in.
-              </p>
-              <Link
-                href="/dashboard/channels"
-                className="mt-1 rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
-              >
-                Check connection
-              </Link>
-            </div>
           )}
           {hasData && (
           <>
@@ -543,9 +426,6 @@ function OverviewPanel() {
             />
           </div>
 
-          {/* AI summary */}
-          {overview && !loading && <SummaryStrip overview={overview} />}
-
           {/* Charts row */}
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             <div className="lg:col-span-2">
@@ -595,7 +475,7 @@ function OverviewPanel() {
   );
 }
 
-/* ── Tab shell (Overview / Insights / Growth / Benchmark) ───────────── */
+
 
 const TABS = ["overview", "insights", "growth", "benchmark"] as const;
 
@@ -624,8 +504,6 @@ function AnalyticsShell() {
             const active = tab === tabId;
             const label = tabId === "overview"
               ? t.analytics.overview
-              : tabId === "benchmark"
-                ? t.analytics.benchmark
                 : t.nav[tabId];
             return (
               <Link

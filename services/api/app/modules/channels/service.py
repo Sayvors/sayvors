@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...config import settings
+from ..team.context import tenant_id_of
 from ..users.models import User
 from .models import Channel, ChannelMessage
 from .schemas import ChannelCreate, ChannelMessageSend
@@ -126,7 +127,7 @@ async def create_channel(body: ChannelCreate, user: User, db: AsyncSession) -> C
     key = channel_listing_key(body.platform, metadata)
     channel = Channel(
         id=str(uuid.uuid4()),
-        user_id=user.id,
+        user_id=tenant_id_of(user),
         platform=body.platform,
         platform_user_id=body.platform_user_id or "",
         display_name=body.display_name,
@@ -191,12 +192,12 @@ async def list_channels(
     user: User, db: AsyncSession, limit: int = 20, offset: int = 0
 ) -> tuple[list[Channel], int]:
     count_result = await db.execute(
-        select(func.count()).where(Channel.user_id == user.id)
+        select(func.count()).where(Channel.user_id == tenant_id_of(user))
     )
     total = count_result.scalar() or 0
     result = await db.execute(
         select(Channel)
-        .where(Channel.user_id == user.id)
+        .where(Channel.user_id == tenant_id_of(user))
         .order_by(Channel.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -208,7 +209,7 @@ async def get_channel(
     channel_id: str, user: User, db: AsyncSession
 ) -> Channel | None:
     result = await db.execute(
-        select(Channel).where(Channel.id == channel_id, Channel.user_id == user.id)
+        select(Channel).where(Channel.id == channel_id, Channel.user_id == tenant_id_of(user))
     )
     return result.scalar_one_or_none()
 
@@ -227,8 +228,8 @@ async def send_message(
 ) -> ChannelMessage:
     """Send a message to a contact and record the result.
 
-    The row is written with the outcome, never optimistically: a message that
-    WhatsApp rejected must not read as "sent" in the inbox. Meta's 24-hour
+    The row is written with the outcome, never optimistically: a message the
+    provider rejected must not read as "sent" in the inbox. Meta's 24-hour
     customer-service window is enforced by Meta, not here, so an out-of-window
     send comes back as a failed row carrying Meta's own error text.
     """
@@ -252,9 +253,14 @@ async def send_message(
     )
 
     try:
-        provider_msg_id, error = await _dispatch_whatsapp(
-            db, user, channel, contact_phone, body.content
-        )
+        if channel.platform == "instagram":
+            provider_msg_id, error = await _dispatch_instagram(
+                db, user, channel, contact_phone, body.content
+            )
+        else:
+            provider_msg_id, error = await _dispatch_whatsapp(
+                db, user, channel, contact_phone, body.content
+            )
     except Exception as exc:  # noqa: BLE001 - recorded on the row, not raised
         provider_msg_id, error = "", str(exc)[:500]
 
@@ -296,7 +302,7 @@ async def _dispatch_whatsapp(
     result = await db.execute(
         select(MetaAsset)
         .where(
-            MetaAsset.tenant_id == user.id,
+            MetaAsset.tenant_id == tenant_id_of(user),
             MetaAsset.provider == "whatsapp",
             MetaAsset.external_asset_id == phone_number_id,
         )
@@ -321,6 +327,62 @@ async def _dispatch_whatsapp(
         return "", detail[:500]
     if not provider_msg_id:
         return "", "WhatsApp accepted the request but returned no message id."
+    return provider_msg_id, ""
+
+
+async def _dispatch_instagram(
+    db: AsyncSession,
+    user: User,
+    channel: Channel,
+    to: str,
+    text: str,
+) -> tuple[str, str]:
+    """(provider_message_id, error) for Instagram DMs. `to` is the
+    customer's IGSID.
+
+    Sends ride the parent Facebook Page's token — the IG connection holds a
+    user token, useless for messaging — so unlike the WhatsApp path there is
+    no connection-token decryption here, just the parent asset lookup.
+    """
+    from .meta.models import MetaAsset
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.instagram import InstagramAdapter
+    from .meta.service import get_instagram_page_credentials
+
+    ig_account_id = channel.platform_user_id
+    if not ig_account_id:
+        return "", "This channel has no Instagram account attached."
+
+    result = await db.execute(
+        select(MetaAsset).where(
+            MetaAsset.tenant_id == tenant_id_of(user),
+            MetaAsset.provider == "instagram",
+            MetaAsset.external_asset_id == ig_account_id,
+        )
+    )
+    asset = result.scalar_one_or_none()
+    if asset is None:
+        return "", "No Instagram account is connected for this channel."
+    if not asset.active:
+        return "", "This Instagram account is not active."
+
+    page_id, page_token = await get_instagram_page_credentials(db, asset)
+    if not page_id or not page_token:
+        return (
+            "",
+            "The Facebook Page linked to this Instagram account has no page "
+            "token. Reconnect Instagram.",
+        )
+
+    try:
+        provider_msg_id = await InstagramAdapter().send_text_message(
+            page_id, page_token, to, text
+        )
+    except MetaAPIError as exc:
+        detail = f"{exc.status_code}: {exc}" if exc.status_code else str(exc)
+        return "", detail[:500]
+    if not provider_msg_id:
+        return "", "Instagram accepted the request but returned no message id."
     return provider_msg_id, ""
 
 
@@ -388,7 +450,7 @@ async def list_inbox_threads(
     # every disconnect path deactivates the asset too.
     channels = (
         (
-            await db.execute(select(Channel).where(Channel.user_id == user.id))
+            await db.execute(select(Channel).where(Channel.user_id == tenant_id_of(user)))
         )
         .scalars()
         .all()
@@ -402,7 +464,7 @@ async def list_inbox_threads(
         for provider, external in (
             await db.execute(
                 select(MetaAsset.provider, MetaAsset.external_asset_id).where(
-                    MetaAsset.tenant_id == user.id,
+                    MetaAsset.tenant_id == tenant_id_of(user),
                     MetaAsset.active.is_(False),
                 )
             )
@@ -448,6 +510,29 @@ async def list_inbox_threads(
     if not summaries:
         return []
 
+    # Cached contact profiles (names/usernames/avatars) in one read — the
+    # map lookup stays exact per (platform, contact) even though the IN
+    # filters can over-fetch.
+    from .models import ContactProfile
+
+    profile_keys = {
+        (by_id[cid].platform, phone)
+        for phone, cid, _la, _t in summaries
+        if phone is not None
+    }
+    profiles: dict = {}
+    if profile_keys:
+        rows = (
+            await db.execute(
+                select(ContactProfile).where(
+                    ContactProfile.tenant_id == tenant_id_of(user),
+                    ContactProfile.platform.in_({p for p, _ in profile_keys}),
+                    ContactProfile.contact_id.in_({c for _, c in profile_keys}),
+                )
+            )
+        ).scalars().all()
+        profiles = {(r.platform, r.contact_id): r for r in rows}
+
     # The preview line and unread count need per-thread detail the grouped
     # aggregate cannot carry, so fetch those rows only.
     out: list[dict] = []
@@ -491,11 +576,20 @@ async def list_inbox_threads(
             unread = total if phone is not None else 0
 
         name = last_row.contact_name
+        profile = (
+            profiles.get((by_id[channel_id].platform, phone))
+            if phone is not None
+            else None
+        )
+        if profile is not None and profile.name:
+            name = profile.name
         out.append(
             {
                 "key": thread_key(phone),
                 "contact_phone": phone,
                 "display_name": name or phone,
+                "username": profile.username if profile else None,
+                "avatar_url": profile.avatar_url if profile else None,
                 "channel_id": channel_id,
                 "channel_name": by_id[channel_id].display_name,
                 "platform": by_id[channel_id].platform,

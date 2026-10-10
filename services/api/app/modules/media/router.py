@@ -18,6 +18,7 @@ from ...core.deps import get_current_user, get_db, require_admin
 from ..users.models import User
 from . import service
 from .schemas import MediaCreate, MediaOut, MediaPublishResult, MediaSyncResult, MediaUpdate
+from ..team.context import tenant_id_of, require_perm, TenantContext
 
 router = APIRouter(prefix="/api/v1/media", tags=["media"])
 
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/api/v1/media", tags=["media"])
 async def upload_media_file(
     request: Request,
     file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -39,7 +41,7 @@ async def upload_media_file(
     try:
         data = await file.read()
         return await service.save_upload(
-            user.id,
+            tenant_id_of(user),
             file.filename or "upload",
             file.content_type,
             data,
@@ -56,21 +58,23 @@ def _out(result: dict) -> MediaOut:
 @router.get("", response_model=list[MediaOut])
 async def list_media(
     listing_id: str | None = Query(None, max_length=64),
+    ctx: TenantContext = Depends(require_perm("media.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = await service.list_media(db, user.id, listing_id)
+    rows = await service.list_media(db, tenant_id_of(user), listing_id)
     return [MediaOut(**r) for r in rows]
 
 
 @router.post("/", response_model=MediaPublishResult, status_code=201)
 async def create_media(
     body: MediaCreate,
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        result = await service.create_media(db, user.id, body.model_dump())
+        result = await service.create_media(db, tenant_id_of(user), body.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
@@ -84,10 +88,11 @@ async def create_media(
 @router.get("/{media_id}", response_model=MediaOut)
 async def get_media(
     media_id: str,
+    ctx: TenantContext = Depends(require_perm("media.view")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    item = await service._owned_media(db, user.id, media_id)
+    item = await service._owned_media(db, tenant_id_of(user), media_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Media not found.")
     return MediaOut(**service._serialize(item))
@@ -97,12 +102,13 @@ async def get_media(
 async def update_media(
     media_id: str,
     body: MediaUpdate,
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
         result = await service.update_media(
-            db, user.id, media_id,
+            db, tenant_id_of(user), media_id,
             # exclude_unset: explicit null cancels (delete_at), absent
             # keys stay untouched.
             {k: v for k, v in body.model_dump(exclude_unset=True).items()},
@@ -120,11 +126,12 @@ async def update_media(
 @router.delete("/{media_id}", status_code=204)
 async def delete_media(
     media_id: str,
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await service.delete_media(db, user.id, media_id)
+        await service.delete_media(db, tenant_id_of(user), media_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -132,11 +139,12 @@ async def delete_media(
 @router.post("/{media_id}/publish", response_model=MediaPublishResult)
 async def publish_media_now(
     media_id: str,
+    ctx: TenantContext = Depends(require_perm("media.manage")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        result = await service.publish_media(db, user.id, media_id)
+        result = await service.publish_media(db, tenant_id_of(user), media_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:

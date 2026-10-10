@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { apiFetch } from "@/lib/api-rag";
 
 type ReviewChannel = "whatsapp" | "contacts" | "email";
 type PlatformTab = "all" | "whatsapp" | "instagram" | "facebook";
 
-interface DummyContact {
+interface PlatformContact {
   id: string;
   platform: string;
   name: string;
   number: string;
+  avatarUrl: string | null;
 }
 
 interface BusinessProfile {
@@ -18,49 +20,166 @@ interface BusinessProfile {
   reviewUrl: string;
 }
 
-const DUMMY_CONTACTS: DummyContact[] = [
-  { id: "wa-1", platform: "whatsapp", name: "Ahmed Khan", number: "923001234567" },
-  { id: "wa-2", platform: "whatsapp", name: "Sara Ali", number: "923011234567" },
-  { id: "wa-3", platform: "whatsapp", name: "Usman Malik", number: "923021234567" },
-  { id: "ig-1", platform: "instagram", name: "Fatima Noor", number: "923031234567" },
-  { id: "ig-2", platform: "instagram", name: "Hassan Raza", number: "923041234567" },
-  { id: "fb-1", platform: "facebook", name: "Ayesha Siddiqui", number: "923051234567" },
-  { id: "fb-2", platform: "facebook", name: "Bilal Ahmed", number: "923061234567" },
-];
+interface ContactGroup {
+  id: string;
+  name: string;
+  contactIds: string[];
+}
 
-const DUMMY_BUSINESSES: BusinessProfile[] = [
-  { id: "biz-1", name: "Sayvors Company Main Branch - Al Malqa", reviewUrl: "https://www.google.com/maps/search/?api=1&query=Sayvors+Al+Malqa" },
-  { id: "biz-2", name: "Sayvors Company - Olaya Branch", reviewUrl: "https://www.google.com/maps/search/?api=1&query=Sayvors+Olaya" },
-  { id: "biz-3", name: "Sayvors Company - Diplomatic Quarter", reviewUrl: "https://www.google.com/maps/search/?api=1&query=Sayvors+Diplomatic+Quarter" },
-];
+// Real contacts come from the inbox: every customer with a conversation on
+// WhatsApp, Instagram or Messenger shows up here.
+const CONTACT_PLATFORMS = ["whatsapp", "instagram", "facebook"];
 
 const REVIEW_MESSAGE = "Hi! We hope you enjoyed your experience with us. Would you mind leaving us a quick review? It really helps our business grow. Thank you!";
 
 const PLATFORM_META: Record<string, { label: string; color: string; bg: string }> = {
   whatsapp: { label: "WhatsApp", color: "text-emerald-600", bg: "bg-emerald/10" },
   instagram: { label: "Instagram", color: "text-pink-600", bg: "bg-pink/10" },
-  facebook: { label: "Facebook", color: "text-blue-600", bg: "bg-blue/10" },
+  facebook: { label: "Messenger", color: "text-blue-600", bg: "bg-blue/10" },
 };
 
 export default function AskForReview() {
+  const [businesses, setBusinesses] = useState<BusinessProfile[]>([]);
+  const [groups, setGroups] = useState<ContactGroup[]>(() => {
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem("sayvors.contactGroups") : null;
+      return raw ? (JSON.parse(raw) as ContactGroup[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [newGroupName, setNewGroupName] = useState("");
   const [activeChannel, setActiveChannel] = useState<ReviewChannel | null>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
   const [selectedBusinessIds, setSelectedBusinessIds] = useState<Set<string>>(new Set());
   const [platformTab, setPlatformTab] = useState<PlatformTab>("all");
+  const [contacts, setContacts] = useState<PlatformContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(true);
+  const [contactSearch, setContactSearch] = useState("");
+  const [whatsappSearch, setWhatsappSearch] = useState("");
 
-  const filteredContacts = platformTab === "all"
-    ? DUMMY_CONTACTS
-    : DUMMY_CONTACTS.filter((c) => c.platform === platformTab);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiFetch("/api/v1/integrations/localith/connections");
+        if (cancelled) return;
+        const conns = (Array.isArray(data) ? data : (data.connections ?? [])) as {
+          id?: string; listing_id?: string | null; listing_name?: string | null;
+          listing_google_id?: string | null; maps_url?: string | null; website_url?: string | null;
+        }[];
+        setBusinesses(
+          conns
+            .filter((c) => c.listing_id || c.id)
+            .map((c) => ({
+              id: c.listing_id ?? c.id!,
+              name: c.listing_name ?? "Location",
+              // place_id link opens the review composer; profile/maps links
+              // leave the customer to find "Write a review" themselves.
+              reviewUrl:
+                (c.listing_google_id && `https://search.google.com/local/writereview?placeid=${c.listing_google_id}`) ||
+                c.maps_url ||
+                c.website_url ||
+                `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.listing_name ?? "")}`,
+            }))
+        );
+      } catch {
+        if (!cancelled) setBusinesses([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiFetch("/api/v1/inbox/threads?limit=500");
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const list: PlatformContact[] = [];
+        for (const t of (data.threads ?? []) as {
+          key: string;
+          platform: string | null;
+          contact_phone: string | null;
+          display_name: string | null;
+          avatar_url: string | null;
+        }[]) {
+          const platform = t.platform ?? "";
+          if (!CONTACT_PLATFORMS.includes(platform)) continue;
+          // The catch-all "unknown" thread has no recoverable sender.
+          if (!t.key || t.key === "unknown" || seen.has(t.key)) continue;
+          seen.add(t.key);
+          list.push({
+            id: `${platform}:${t.key}`,
+            platform,
+            name: t.display_name || t.contact_phone || "Unknown",
+            number: t.contact_phone ?? "",
+            avatarUrl: t.avatar_url ?? null,
+          });
+        }
+        setContacts(list);
+      } catch {
+        /* backend down — empty list renders */
+      } finally {
+        if (!cancelled) setContactsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const searchableContacts = useMemo(() => {
+    const q = contactSearch.trim().toLowerCase();
+    if (!q) return contacts;
+    return contacts.filter(
+      (c) => c.name.toLowerCase().includes(q) || c.number.toLowerCase().includes(q)
+    );
+  }, [contacts, contactSearch]);
+
+  const filteredContacts = useMemo(
+    () =>
+      platformTab === "all"
+        ? searchableContacts
+        : searchableContacts.filter((c) => c.platform === platformTab),
+    [searchableContacts, platformTab]
+  );
+
+  const whatsappContacts = useMemo(
+    () => contacts.filter((c) => c.platform === "whatsapp"),
+    [contacts]
+  );
+
+  const visibleWhatsappContacts = useMemo(() => {
+    const q = whatsappSearch.trim().toLowerCase();
+    if (!q) return whatsappContacts;
+    return whatsappContacts.filter(
+      (c) => c.name.toLowerCase().includes(q) || c.number.toLowerCase().includes(q)
+    );
+  }, [whatsappContacts, whatsappSearch]);
+
+  // Contacts panel groups the full list by platform instead of one flat list.
+  const groupedContacts = useMemo(() => {
+    if (platformTab !== "all") return null;
+    const groups: Record<string, PlatformContact[]> = { whatsapp: [], instagram: [], facebook: [] };
+    for (const c of searchableContacts) {
+      (groups[c.platform] ??= []).push(c);
+    }
+    return groups;
+  }, [searchableContacts, platformTab]);
 
   const allContactsSelected = filteredContacts.length > 0 && filteredContacts.every((c) => selectedContactIds.has(c.id));
-  const allBusinessesSelected = DUMMY_BUSINESSES.length > 0 && DUMMY_BUSINESSES.every((b) => selectedBusinessIds.has(b.id));
+  const allWhatsAppSelected = visibleWhatsappContacts.length > 0 && visibleWhatsappContacts.every((c) => selectedContactIds.has(c.id));
+  const allBusinessesSelected = businesses.length > 0 && businesses.every((b) => selectedBusinessIds.has(b.id));
 
-  const toggleAllContacts = () => {
-    if (allContactsSelected) {
+  const toggleAllContacts = (list: PlatformContact[] = filteredContacts) => {
+    const every = list.length > 0 && list.every((c) => selectedContactIds.has(c.id));
+    if (every) {
       setSelectedContactIds(new Set());
     } else {
-      setSelectedContactIds(new Set(filteredContacts.map((c) => c.id)));
+      setSelectedContactIds(new Set(list.map((c) => c.id)));
     }
   };
 
@@ -68,7 +187,7 @@ export default function AskForReview() {
     if (allBusinessesSelected) {
       setSelectedBusinessIds(new Set());
     } else {
-      setSelectedBusinessIds(new Set(DUMMY_BUSINESSES.map((b) => b.id)));
+      setSelectedBusinessIds(new Set(businesses.map((b) => b.id)));
     }
   };
 
@@ -104,12 +223,93 @@ export default function AskForReview() {
   };
 
   const handleSendSelected = () => {
-    const selected = DUMMY_CONTACTS.filter((c) => selectedContactIds.has(c.id));
+    const selected = contacts.filter((c) => selectedContactIds.has(c.id));
     for (const c of selected) {
       if (c.platform === "whatsapp") {
         handleWhatsAppSend(c.number);
       }
     }
+  };
+
+  const saveGroups = (next: ContactGroup[]) => {
+    setGroups(next);
+    try {
+      localStorage.setItem("sayvors.contactGroups", JSON.stringify(next));
+    } catch {}
+  };
+
+  const createGroup = () => {
+    const name = newGroupName.trim();
+    if (!name || selectedContactIds.size === 0) return;
+    saveGroups([...groups, { id: crypto.randomUUID(), name, contactIds: [...selectedContactIds] }]);
+    setNewGroupName("");
+  };
+
+  const deleteGroup = (id: string) => saveGroups(groups.filter((g) => g.id !== id));
+
+  const selectGroup = (g: ContactGroup) => setSelectedContactIds(new Set(g.contactIds));
+
+  const sendGroup = (g: ContactGroup) => {
+    for (const id of g.contactIds) {
+      const c = contacts.find((c) => c.id === id);
+      if (c && c.platform === "whatsapp") handleWhatsAppSend(c.number);
+    }
+  };
+
+  const contactList = (
+    list: PlatformContact[],
+    accentCls: string,
+    showPlatform: boolean
+  ) => {
+    if (contactsLoading) {
+      return <p className="px-3 py-2 text-[11px] text-ink/45">Loading contacts…</p>;
+    }
+    if (list.length === 0) {
+      return (
+        <p className="px-3 py-2 text-[11px] text-ink/45">
+          No contacts yet — customers you chat with on WhatsApp, Instagram or Messenger appear here.
+        </p>
+      );
+    }
+    return (
+      <div className="max-h-40 space-y-1.5 overflow-y-auto">
+        {list.map((contact) => {
+          const meta = PLATFORM_META[contact.platform];
+          return (
+            <label
+              key={contact.id}
+              className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg bg-white px-3 py-2 transition hover:bg-ink/[0.02]"
+            >
+              <input
+                type="checkbox"
+                checked={selectedContactIds.has(contact.id)}
+                onChange={() => toggleContact(contact.id)}
+                className="h-3.5 w-3.5 rounded border-ink/20 text-deep-violet-600 accent-deep-violet-600"
+              />
+              <span className={`flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg ${meta?.bg ?? "bg-ink/[0.06]"} ${meta?.color ?? "text-ink/50"}`}>
+                {contact.avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={contact.avatarUrl} alt="" className="h-7 w-7 object-cover" />
+                ) : (
+                  <span className="text-[10px] font-bold">
+                    {contact.name[0]?.toUpperCase() ?? "?"}
+                  </span>
+                )}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12px] font-medium text-ink">{contact.name}</span>
+                <span className="block truncate text-[10px] text-ink/40">{contact.number}</span>
+              </span>
+              {showPlatform && (
+                <span className={`shrink-0 text-[10px] font-bold ${meta?.color ?? "text-ink/40"}`}>
+                  {meta?.label ?? contact.platform}
+                </span>
+              )}
+            </label>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
@@ -134,7 +334,7 @@ export default function AskForReview() {
           Select business for review
         </p>
         <div className="space-y-1.5">
-          {DUMMY_BUSINESSES.map((biz) => (
+          {businesses.map((biz) => (
             <label
               key={biz.id}
               className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg bg-white px-3 py-2 transition hover:bg-ink/[0.02]"
@@ -191,7 +391,9 @@ export default function AskForReview() {
           </span>
           <div>
             <p className="text-[12px] font-bold text-ink">Contacts</p>
-            <p className="text-[10px] text-ink/45">{DUMMY_CONTACTS.length} saved</p>
+            <p className="text-[10px] text-ink/45">
+              {contactsLoading ? "Loading…" : `${contacts.length} connected`}
+            </p>
           </div>
         </button>
 
@@ -229,36 +431,20 @@ export default function AskForReview() {
                 WhatsApp contacts
               </p>
               <button
-                onClick={toggleAllContacts}
+                onClick={() => toggleAllContacts(visibleWhatsappContacts)}
                 className="text-[10px] font-bold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40"
               >
-                {allContactsSelected ? "Deselect all" : "Select all"}
+                {allWhatsAppSelected ? "Deselect all" : "Select all"}
               </button>
             </div>
-            <div className="max-h-40 space-y-1.5 overflow-y-auto">
-              {DUMMY_CONTACTS.filter((c) => c.platform === "whatsapp").map((contact) => (
-                <label
-                  key={contact.id}
-                  className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg bg-white px-3 py-2 transition hover:bg-emerald/5"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedContactIds.has(contact.id)}
-                    onChange={() => toggleContact(contact.id)}
-                    className="h-3.5 w-3.5 rounded border-ink/20 text-emerald-600 accent-emerald-600"
-                  />
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald/10 text-emerald-600">
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5" aria-hidden>
-                      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
-                    </svg>
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[12px] font-medium text-ink">{contact.name}</span>
-                    <span className="block truncate text-[10px] text-ink/40">{contact.number}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
+            <input
+              type="search"
+              placeholder="Search WhatsApp contacts…"
+              value={whatsappSearch}
+              onChange={(e) => setWhatsappSearch(e.target.value)}
+              className="input-field mb-2 w-full"
+            />
+            {contactList(visibleWhatsappContacts, "text-emerald-600", false)}
             {selectedContactIds.size > 0 && (
               <button
                 onClick={handleSendSelected}
@@ -295,10 +481,18 @@ export default function AskForReview() {
 
       {activeChannel === "contacts" && (
         <div className="mt-4 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4">
-          <p className="text-[12px] font-semibold text-ink">Contacts saved in Sayvors</p>
+          <p className="text-[12px] font-semibold text-ink">Contacts connected on Sayvors</p>
           <p className="mt-1 text-[11px] text-ink/50">
-            These are customers you&apos;ve connected with through integrated channels.
+            Everyone you&apos;ve chatted with on WhatsApp, Instagram and Messenger.
           </p>
+
+          <input
+            type="search"
+            placeholder="Search by name or number…"
+            value={contactSearch}
+            onChange={(e) => setContactSearch(e.target.value)}
+            className="input-field mt-3"
+          />
 
           <div className="mt-3 flex flex-wrap gap-1.5">
             {(["all", "whatsapp", "instagram", "facebook"] as PlatformTab[]).map((tab) => (
@@ -316,48 +510,69 @@ export default function AskForReview() {
             ))}
           </div>
 
+          <div className="mt-4 rounded-lg border border-ink/[0.06] bg-white p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Contact groups</p>
+            <div className="mt-2 flex gap-2">
+              <input
+                type="text"
+                placeholder="Group name"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                className="input-field flex-1"
+              />
+              <button
+                onClick={createGroup}
+                disabled={!newGroupName.trim() || selectedContactIds.size === 0}
+                className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-40"
+              >
+                Save group
+              </button>
+            </div>
+            <p className="mt-1 text-[10px] text-ink/40">Select contacts above, then save them as a group.</p>
+            {groups.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {groups.map((g) => (
+                  <li key={g.id} className="flex items-center justify-between rounded-lg bg-ink/[0.02] px-3 py-2">
+                    <span className="text-[12px] font-semibold text-ink">{g.name} · {g.contactIds.length}</span>
+                    <span className="flex gap-2 text-[10px] font-bold">
+                      <button onClick={() => selectGroup(g)} className="text-deep-violet hover:underline">Load</button>
+                      <button onClick={() => sendGroup(g)} className="text-emerald-600 hover:underline">Send</button>
+                      <button onClick={() => deleteGroup(g.id)} className="text-red-500 hover:underline">Delete</button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="mt-3">
             <div className="mb-1.5 flex items-center justify-between">
               <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">
                 {platformTab === "all" ? "All contacts" : PLATFORM_META[platformTab]?.label}
               </p>
               <button
-                onClick={toggleAllContacts}
+                onClick={() => toggleAllContacts()}
                 className="text-[10px] font-bold text-deep-violet outline-none hover:underline focus-visible:ring-2 focus-visible:ring-deep-violet/40"
               >
                 {allContactsSelected ? "Deselect all" : "Select all"}
               </button>
             </div>
-            <div className="max-h-40 space-y-1.5 overflow-y-auto">
-              {filteredContacts.map((contact) => {
-                const meta = PLATFORM_META[contact.platform];
-                return (
-                  <label
-                    key={contact.id}
-                    className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg bg-white px-3 py-2 transition hover:bg-ink/[0.02]"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedContactIds.has(contact.id)}
-                      onChange={() => toggleContact(contact.id)}
-                      className="h-3.5 w-3.5 rounded border-ink/20 text-deep-violet-600 accent-deep-violet-600"
-                    />
-                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${meta?.bg ?? "bg-ink/[0.06]"} ${meta?.color ?? "text-ink/50"}`}>
-                      <span className="text-[10px] font-bold">
-                        {contact.name[0]?.toUpperCase() ?? "?"}
-                      </span>
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12px] font-medium text-ink">{contact.name}</span>
-                      <span className="block truncate text-[10px] text-ink/40">{contact.number}</span>
-                    </span>
-                    <span className={`shrink-0 text-[10px] font-bold ${meta?.color ?? "text-ink/40"}`}>
-                      {meta?.label ?? contact.platform}
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
+            {platformTab === "all" && groupedContacts ? (
+              <div className="space-y-3">
+                {(["whatsapp", "instagram", "facebook"] as const).map((p) =>
+                  groupedContacts[p].length > 0 ? (
+                    <div key={p}>
+                      <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-ink/40">
+                        {PLATFORM_META[p]?.label ?? p} · {groupedContacts[p].length}
+                      </p>
+                      {contactList(groupedContacts[p], "text-deep-violet", false)}
+                    </div>
+                  ) : null
+                )}
+              </div>
+            ) : (
+              contactList(filteredContacts, "text-deep-violet", true)
+            )}
             {selectedContactIds.size > 0 && (
               <button
                 onClick={handleSendSelected}

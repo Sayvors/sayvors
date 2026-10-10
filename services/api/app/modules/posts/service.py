@@ -94,6 +94,9 @@ def _serialize(p: LocationPost) -> dict:
         "coupon_code": p.coupon_code,
         "terms_conditions": p.terms_conditions,
         "google_post_id": p.google_post_id,
+        "views": p.views,
+        "cta_clicks": p.cta_clicks,
+        "metrics_synced_at": p.metrics_synced_at.isoformat() if p.metrics_synced_at else None,
         "error": p.error,
         "created_at": p.created_at.isoformat() if p.created_at else None,
     }
@@ -692,3 +695,233 @@ async def draft_post_content(
     if not content:
         raise RuntimeError("AI drafting returned nothing.")
     return _parse_ai_draft(content)
+
+
+# ── Per-post Google metrics (localPosts:reportInsights) ──────────────
+#
+# Localith publishes our posts but exposes no post-level metrics, so the
+# numbers come from Google's own API — which needs a native OAuth channel
+# (the same `business.manage` grant the reviews client uses). Rows are
+# matched to Google's copies by normalized caption prefix (the provider
+# publishes our caption verbatim); publish-time proximity (±30 min) is
+# the fallback for shapes where Google stores no caption.
+
+_CAPTION_KEY_LEN = 120
+_PUBLISH_MATCH_WINDOW = timedelta(minutes=30)
+
+
+def _caption_key(text: str | None) -> str:
+    return " ".join((text or "").split()).lower()[:_CAPTION_KEY_LEN]
+
+
+def match_google_posts(
+    rows: list[LocationPost], google_posts: list[dict]
+) -> dict[str, dict]:
+    """Sayvors row id → Google LocalPost for the posts we can identify.
+
+    Each Google post matches at most one row; caption match wins, nearest
+    publish time breaks ties.
+    """
+    used: set[str] = set()
+    out: dict[str, dict] = {}
+
+    by_caption: dict[str, dict] = {}
+    for gp in google_posts:
+        key = _caption_key(gp.get("summary"))
+        if key and key not in by_caption:
+            by_caption[key] = gp
+
+    for row in rows:
+        gp = by_caption.get(
+            _caption_key(_google_caption(row.description, row.terms_conditions))
+        )
+        name = gp.get("name") if isinstance(gp, dict) else None
+        if gp and name and name not in used:
+            out[row.id] = gp
+            used.add(name)
+
+    def _create_time(gp: dict) -> datetime | None:
+        raw = gp.get("createTime")
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    for row in rows:
+        if row.id in out or not row.published_at:
+            continue
+        published = (
+            row.published_at
+            if row.published_at.tzinfo
+            else row.published_at.replace(tzinfo=timezone.utc)
+        )
+        candidates: list[tuple[float, str, dict]] = []
+        for gp in google_posts:
+            name = gp.get("name")
+            if not name or name in used:
+                continue
+            created = _create_time(gp)
+            if created is None:
+                continue
+            gap = abs((created - published).total_seconds())
+            if gap <= _PUBLISH_MATCH_WINDOW.total_seconds():
+                candidates.append((gap, name, gp))
+        if candidates:
+            candidates.sort(key=lambda c: c[0])
+            out[row.id] = candidates[0][2]
+            used.add(candidates[0][1])
+    return out
+
+
+def _insight_totals(resp: dict) -> dict[str, dict[str, int]]:
+    """ReportLocalPostInsightsResponse → {localPostName: {METRIC: int}}.
+
+    Google omits ``totalValue`` when a metric has no data yet — that reads
+    as 0, which is what a just-published post's numbers are.
+    """
+    out: dict[str, dict[str, int]] = {}
+    for entry in resp.get("localPostMetrics", []) or []:
+        name = str(entry.get("localPostName") or "")
+        if not name:
+            continue
+        vals: dict[str, int] = {}
+        for mv in entry.get("metricValues", []) or []:
+            metric = str(mv.get("metric") or "")
+            total = mv.get("totalValue") or {}
+            try:
+                vals[metric] = int(total.get("value") or 0)
+            except (TypeError, ValueError):
+                vals[metric] = 0
+        out[name] = vals
+    return out
+
+
+async def sync_post_metrics(
+    db: AsyncSession, user_id: str, listing_id: str | None = None
+) -> dict:
+    """Pull per-post views + call-to-action clicks from Google.
+
+    Requires a native OAuth Google channel — Localith's API has no
+    post-level metrics. Returns {checked, matched, synced, posts, note};
+    ``posts`` carries the matched rows serialized with fresh numbers so
+    the UI can update in place. Google errors raise RuntimeError (502).
+    """
+    from ..channels.google_reviews import GoogleReviewsClient, GoogleReviewsError
+    from ..channels.models import Channel
+    from ..channels.service import decrypt_token, encrypt_token
+
+    filters = [LocationPost.user_id == user_id, LocationPost.status == "published"]
+    if listing_id:
+        filters.append(LocationPost.listing_id == listing_id)
+    rows = list((await db.execute(select(LocationPost).where(*filters))).scalars())
+    if not rows:
+        return {"checked": 0, "matched": 0, "synced": 0, "posts": [], "note": None}
+
+    def _result(matched: int = 0, synced: int = 0, note: str | None = None) -> dict:
+        return {"checked": len(rows), "matched": matched, "synced": synced,
+                "posts": [_serialize(r) for r in matched_rows], "note": note}
+
+    matched_rows: list[LocationPost] = []
+
+    channel = (
+        await db.execute(
+            select(Channel).where(
+                Channel.platform == "google_reviews",
+                Channel.status == "active",
+                Channel.user_id == user_id,
+            )
+        )
+    ).scalars().all()
+    oauth_channel = next((c for c in channel if c.access_token or c.refresh_token), None)
+    if oauth_channel is None:
+        return _result(note=(
+            "Views and clicks need a native Google connection — "
+            "connect your Google Business Profile in Channels."
+        ))
+
+    conns = (
+        await db.execute(
+            select(LocalithConnection).where(LocalithConnection.user_id == user_id)
+        )
+    ).scalars().all()
+    google_ids = {
+        c.listing_id: (c.listing_google_id or "").strip()
+        for c in conns
+    }
+    listings: dict[str, list[LocationPost]] = {}
+    for row in rows:
+        listings.setdefault(row.listing_id, []).append(row)
+    targets = {
+        lid: gid
+        for lid, gid in google_ids.items()
+        if lid in listings and gid
+    }
+    if not targets:
+        return _result(note=(
+            "No Google-side location id for this listing yet — "
+            "re-sync the branch connection to enable metrics."
+        ))
+
+    access_token = (
+        decrypt_token(oauth_channel.access_token) if oauth_channel.access_token else None
+    )
+    refresh_token = (
+        decrypt_token(oauth_channel.refresh_token) if oauth_channel.refresh_token else None
+    )
+    client = GoogleReviewsClient(access_token or "", refresh_token)
+
+    async def _persist(new_access_token: str, new_expires_at) -> None:
+        oauth_channel.access_token = encrypt_token(new_access_token)
+        oauth_channel.token_expires_at = new_expires_at
+        await db.commit()
+
+    client.set_token_persister(_persist)
+    client.set_known_expiry(oauth_channel.token_expires_at)
+
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=540)  # Google caps insight ranges at 18 months
+    matched = 0
+    synced = 0
+    try:
+        account_id = (oauth_channel.platform_user_id or "").strip()
+        if not account_id:
+            accounts = await client.list_accounts()
+            if not accounts:
+                return _result(note="No Google Business Profile account on this connection.")
+            account_id = str(accounts[0].get("name") or "").split("/")[-1]
+        for lid, gid in targets.items():
+            google_posts = await client.list_local_posts(account_id, gid)
+            listing_rows = listings[lid]
+            pairs = match_google_posts(listing_rows, google_posts)
+            by_id = {r.id: r for r in listing_rows}
+            names = [gp["name"] for gp in pairs.values() if gp.get("name")]
+            totals: dict[str, dict[str, int]] = {}
+            for i in range(0, len(names), 100):  # Google: ≤100 posts per call
+                resp = await client.report_local_post_insights(
+                    account_id, gid, names[i:i + 100], start, end)
+                totals.update(_insight_totals(resp))
+            for row_id, gp in pairs.items():
+                row = by_id[row_id]
+                vals = totals.get(gp.get("name") or "")
+                if vals is None:
+                    continue
+                matched += 1
+                if row not in matched_rows:
+                    matched_rows.append(row)
+                views = vals.get("LOCAL_POST_VIEWS_SEARCH", 0)
+                clicks = vals.get("LOCAL_POST_ACTIONS_CALL_TO_ACTION", 0)
+                if row.views != views or row.cta_clicks != clicks:
+                    row.views = views
+                    row.cta_clicks = clicks
+                    synced += 1
+                row.metrics_synced_at = end
+        await db.commit()
+    except GoogleReviewsError as e:
+        await db.rollback()
+        raise RuntimeError(f"Google metrics sync failed: {e}") from e
+    finally:
+        await client.close()
+
+    return _result(matched=matched, synced=synced)

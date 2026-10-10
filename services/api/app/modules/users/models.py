@@ -56,6 +56,11 @@ class User(Base):
     # Access-token generation: bumped on password change / logout-all so
     # previously issued access tokens are rejected (G1 revocation).
     token_version: Mapped[int] = mapped_column(Integer, default=0)
+    # Workspace attachment (team phase 1): NULL or own id = the owner of
+    # their own workspace; someone else's user id = an employee working in
+    # that workspace. Tenant-scoped queries must use this, not `id` —
+    # resolve it via core.deps.get_context.
+    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

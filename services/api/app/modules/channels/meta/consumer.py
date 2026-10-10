@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -28,6 +29,106 @@ from ...kafka.client import create_consumer
 from .models import MetaAsset
 
 logger = logging.getLogger(__name__)
+
+# Webhooks can land long after the message was sent: Meta redelivers, and our
+# transactional outbox drains a backlog once the API is back up. Answering a
+# message from hours ago lands on a conversation that has already moved on —
+# the inbox still records it (history is useful), the AI just stays quiet.
+_STALE_REPLY_MAX_AGE = timedelta(minutes=15)
+
+
+def _message_age(occurred_at: str | None) -> timedelta | None:
+    """Age of the inbound message per Meta's own timestamp (None if unusable)."""
+    if not occurred_at:
+        return None
+    try:
+        when = datetime.fromisoformat(occurred_at)
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - when
+
+
+async def _upsert_whatsapp_profile_name(
+    db, tenant_id: str, phone: str, name: str | None
+) -> None:
+    """Cache the free profile name every WhatsApp webhook carries."""
+    from datetime import datetime, timezone
+
+    from ..models import ContactProfile
+
+    if not phone or not name:
+        return
+    row = (
+        await db.execute(
+            select(ContactProfile).where(
+                ContactProfile.tenant_id == tenant_id,
+                ContactProfile.platform == "whatsapp",
+                ContactProfile.contact_id == phone,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        db.add(ContactProfile(
+            tenant_id=tenant_id,
+            platform="whatsapp",
+            contact_id=phone,
+            name=name[:120],
+            profile_fetched_at=datetime.now(timezone.utc),
+        ))
+    elif row.name != name[:120]:
+        row.name = name[:120]
+        db.add(row)
+
+
+async def _refresh_instagram_profile(
+    db, tenant_id: str, adapter, page_token: str, igsid: str
+) -> str | None:
+    """Upsert the Instagram contact cache; Graph read only when stale.
+
+    Avatar URLs are temporary CDN links — observed dead after ~5 days —
+    so the profile is re-fetched once a day on inbound traffic. Returns
+    the best display name (name, then username) or None.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from ..models import ContactProfile
+
+    row = (
+        await db.execute(
+            select(ContactProfile).where(
+                ContactProfile.tenant_id == tenant_id,
+                ContactProfile.platform == "instagram",
+                ContactProfile.contact_id == igsid,
+            )
+        )
+    ).scalar_one_or_none()
+    fetched_at = row.profile_fetched_at if row else None
+    stale = (
+        fetched_at is None
+        or fetched_at < datetime.now(timezone.utc) - timedelta(days=1)
+    )
+    if stale:
+        fetched = await adapter.get_contact_profile(page_token, igsid)
+        if row is None:
+            row = ContactProfile(
+                tenant_id=tenant_id,
+                platform="instagram",
+                contact_id=igsid,
+            )
+            db.add(row)
+        if fetched.get("name"):
+            row.name = fetched["name"][:120]
+        if fetched.get("username"):
+            row.username = fetched["username"][:120]
+        if fetched.get("profile_pic"):
+            row.avatar_url = fetched["profile_pic"][:1024]
+        row.profile_fetched_at = datetime.now(timezone.utc)
+        db.add(row)
+    if row is None:
+        return None
+    return row.name or row.username
 
 TOPIC = "meta-events"
 GROUP_ID = "meta-events-replier"
@@ -41,7 +142,9 @@ _HISTORY_MESSAGES = 10
 _MESSAGE_GAP_SECONDS = 0.8
 
 
-async def _resolve_asset(db, external_asset_id: str) -> MetaAsset | None:
+async def _resolve_asset(
+    db, external_asset_id: str, provider: str = "whatsapp"
+) -> MetaAsset | None:
     """Authoritative asset for an event. Kafka payloads are untrusted —
     anyone with topic access can forge tenant_id, so consumers re-resolve
     ownership from the DB and ignore the payload claim."""
@@ -50,18 +153,18 @@ async def _resolve_asset(db, external_asset_id: str) -> MetaAsset | None:
             select(MetaAsset)
             .options(selectinload(MetaAsset.connection))
             .where(
-                MetaAsset.provider == "whatsapp",
+                MetaAsset.provider == provider,
                 MetaAsset.external_asset_id == (external_asset_id or ""),
             )
         )
     ).scalar_one_or_none()
 
 
-def _system_prompt(user) -> str:
-    """WhatsApp assistant prompt grounded in the tenant's business profile."""
+def _system_prompt(user, platform: str = "WhatsApp") -> str:
+    """Assistant prompt grounded in the tenant's business profile."""
     name = (user.business_name or f"{user.first_name} {user.last_name}").strip()
     lines = [
-        f"You are the AI customer assistant for {name}, replying on WhatsApp.",
+        f"You are the AI customer assistant for {name}, replying on {platform}.",
     ]
     if user.business_description:
         lines.append(f"About the business: {user.business_description}")
@@ -96,7 +199,9 @@ def _system_prompt(user) -> str:
     return "\n".join(lines)
 
 
-async def _generate_reply(db, channel, tenant_id: str, text: str) -> str:
+async def _generate_reply(
+    db, channel, tenant_id: str, text: str, platform: str = "WhatsApp"
+) -> str:
     """Generate an AI reply from recent conversation history + business profile.
 
     Raises ValueError (no model enabled) / ProviderError — callers decide how
@@ -143,29 +248,33 @@ async def _generate_reply(db, channel, tenant_id: str, text: str) -> str:
     req = LLMRequest(
         model=api_model,
         messages=history,
-        system_prompt=_system_prompt(user)
+        system_prompt=_system_prompt(user, platform=platform)
         + (f"\n\n{business_card}" if business_card else ""),
         temperature=_REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
         stream=False,
         tenant_id=tenant_id,
         model_id=model_id,
-        purpose="whatsapp.auto_reply",
+        purpose=f"{platform.lower()}.auto_reply",
         channel_id=channel.id,
     )
     resp = await provider.complete(req)
     return (resp.content or "").strip()
 
 
-async def _channel_for(db, tenant_id: str, phone_number_id: str, display_name):
-    """Get-or-create the channels row for this WhatsApp number."""
+async def _channel_for(
+    db, tenant_id: str, phone_number_id: str, display_name,
+    platform: str = "whatsapp",
+):
+    """Get-or-create the channels row for this Meta asset (WhatsApp number
+    or Instagram business account)."""
     from ..models import Channel
 
     channel = (
         await db.execute(
             select(Channel).where(
                 Channel.user_id == tenant_id,
-                Channel.platform == "whatsapp",
+                Channel.platform == platform,
                 Channel.platform_user_id == phone_number_id,
             )
         )
@@ -174,7 +283,7 @@ async def _channel_for(db, tenant_id: str, phone_number_id: str, display_name):
         channel = Channel(
             id=str(uuid.uuid4()),
             user_id=tenant_id,
-            platform="whatsapp",
+            platform=platform,
             platform_user_id=phone_number_id,
             display_name=display_name,
             status="active",
@@ -226,8 +335,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         channel = await _channel_for(
             db, tenant_id, phone_number_id, asset.phone
         )
-        db.add(
-            ChannelMessage(
+        row = ChannelMessage(
                 id=str(uuid.uuid4()),
                 channel_id=channel.id,
                 platform_message_id=wamid[:200] or None,
@@ -238,6 +346,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 contact_phone=from_wa or None,
                 contact_name=data.get("profile_name") or None,
             )
+        db.add(row)
+        # Cache the free profile name for the inbox/contacts lists.
+        await _upsert_whatsapp_profile_name(
+            db, tenant_id, from_wa, data.get("profile_name")
         )
         # The customer wrote again: any pending one-shot follow-up closes —
         # nothing is owed anymore.
@@ -246,6 +358,22 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         await clear_awaiting(db, channel.id, from_wa)
         await db.commit()
 
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "whatsapp",
+            "direction": "inbound",
+            "content": row.content,
+            "content_type": row.content_type,
+            "status": row.status,
+            "contact_phone": row.contact_phone,
+            "contact_name": row.contact_name,
+            "created_at": row.created_at,
+        })
+
         token = decrypt_connection_token(asset.connection) if asset.connection else None
         if not token:
             logger.info(
@@ -253,10 +381,31 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 "wamid=%s from=+%s", connection_id, wamid[:32], from_wa[-6:],
             )
             return
+        # Deselected asset: the message is kept (history returns when the
+        # tenant re-selects the asset) but the AI must not speak for a page
+        # or number the tenant turned off.
+        if not asset.active:
+            logger.info(
+                "WhatsApp AI reply skipped (asset deselected) wamid=%s",
+                wamid[:32],
+            )
+            return
         if not text or msg_type != "text":
             logger.info(
                 "WhatsApp AI reply skipped for non-text message type=%s wamid=%s",
                 msg_type, wamid[:32],
+            )
+            return
+
+        # Stale event (redelivery / drained backlog): keep it in the inbox,
+        # never reply to it. Meta's timestamp is the source of truth, not
+        # when we happened to process it.
+        age = _message_age(event.get("occurred_at"))
+        if age is not None and age > _STALE_REPLY_MAX_AGE:
+            logger.info(
+                "WhatsApp AI reply skipped (stale event %d min old) "
+                "wamid=%s from=+%s",
+                int(age.total_seconds() // 60), wamid[:32], from_wa[-6:],
             )
             return
 
@@ -369,8 +518,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         from_wa[-6:], type(e).__name__, str(e)[:200],
                     )
                 else:
-                    db.add(
-                        ChannelMessage(
+                    row = ChannelMessage(
                             id=str(uuid.uuid4()),
                             channel_id=channel.id,
                             platform_message_id=provider_msg_id[:200] or None,
@@ -380,7 +528,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             status="sent",
                             contact_phone=from_wa or None,
                         )
-                    )
+                    db.add(row)
                     # The voice note is the remedy for the confusion that
                     # triggered it — once delivered, the AI goes back to
                     # text mode. Fresh confusion (after this note) starts
@@ -388,6 +536,20 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     # older than this note for the same reason.
                     await clear_confusion(db, channel.id, from_wa)
                     await db.commit()
+                    from ...channels.realtime import publish_inbox_event as _pub
+
+                    await _pub(tenant_id, {
+                        "type": "message",
+                        "id": row.id,
+                        "channel_id": channel.id,
+                        "platform": "whatsapp",
+                        "direction": "outbound",
+                        "content": row.content,
+                        "content_type": row.content_type,
+                        "status": "sent",
+                        "contact_phone": row.contact_phone,
+                        "created_at": row.created_at,
+                    })
                     logger.info(
                         "WhatsApp AI voice note sent to=+%s wamid=%s "
                         "language=%s provider_msg=%s",
@@ -440,8 +602,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     await db.commit()
                     # Later parts would land without their context — stop.
                     return
-                db.add(
-                    ChannelMessage(
+                row = ChannelMessage(
                         id=str(uuid.uuid4()),
                         channel_id=channel.id,
                         platform_message_id=provider_msg_id[:200] or None,
@@ -450,8 +611,22 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         status="sent",
                         contact_phone=from_wa or None,
                     )
-                )
+                db.add(row)
                 await db.commit()
+                from ...channels.realtime import publish_inbox_event as _pub2
+
+                await _pub2(tenant_id, {
+                    "type": "message",
+                    "id": row.id,
+                    "channel_id": channel.id,
+                    "platform": "whatsapp",
+                    "direction": "outbound",
+                    "content": row.content,
+                    "content_type": "text",
+                    "status": "sent",
+                    "contact_phone": row.contact_phone,
+                    "created_at": row.created_at,
+                })
                 if index < len(messages) - 1:
                     await asyncio.sleep(_MESSAGE_GAP_SECONDS)
 
@@ -505,7 +680,7 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             return
 
         channel = await _channel_for(db, tenant_id, phone_number_id, asset.phone)
-        db.add(ChannelMessage(
+        row = ChannelMessage(
             id=str(uuid.uuid4()),
             channel_id=channel.id,
             platform_message_id=wamid[:200] or None,
@@ -515,8 +690,28 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             status="delivered",
             contact_phone=from_wa or None,
             contact_name=data.get("profile_name") or None,
-        ))
+        )
+        db.add(row)
+        # History-synced contacts feed the inbox lists like live ones do.
+        await _upsert_whatsapp_profile_name(
+            db, tenant_id, from_wa, data.get("profile_name")
+        )
         await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "whatsapp",
+            "direction": "inbound",
+            "content": row.content,
+            "content_type": row.content_type,
+            "status": "delivered",
+            "contact_phone": row.contact_phone,
+            "contact_name": row.contact_name,
+            "created_at": row.created_at,
+        })
 
 
 async def _handle_message_echo(event: dict, data: dict) -> None:
@@ -550,7 +745,7 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
             return
 
         channel = await _channel_for(db, tenant_id, phone_number_id, asset.phone)
-        db.add(ChannelMessage(
+        row = ChannelMessage(
             id=str(uuid.uuid4()),
             channel_id=channel.id,
             platform_message_id=wamid[:200] or None,
@@ -561,8 +756,23 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
             # An echo is a message the business sent from the WhatsApp app, so
             # `to` is the customer — the same contact the thread is keyed on.
             contact_phone=to_wa or None,
-        ))
+        )
+        db.add(row)
         await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "whatsapp",
+            "direction": "outbound",
+            "content": row.content,
+            "content_type": row.content_type,
+            "status": row.status,
+            "contact_phone": row.contact_phone,
+            "created_at": row.created_at,
+        })
 
 
 async def _handle_smb_contacts(event: dict, data: dict) -> None:
@@ -646,6 +856,492 @@ async def _handle_message_status(event: dict, data: dict) -> None:
             row.error = json.dumps(errors)[:500]
         db.add(row)
         await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        from ..models import Channel as _Ch
+
+        ch = await db.get(_Ch, row.channel_id)
+        if ch is not None:
+            await publish_inbox_event(ch.user_id, {
+                "type": "status",
+                "message_id": row.id,
+                "channel_id": row.channel_id,
+                "contact_phone": row.contact_phone,
+                "status": row.status,
+                "error": row.error,
+            })
+
+
+async def _handle_instagram_echo(event: dict, data: dict) -> None:
+    """Merchant-sent DM (Meta inbox / IG app) → outbound row, no AI reply.
+
+    Meta never echoes an app's own API sends back to it, so is_echo means
+    a human replied on another surface — history, not a trigger.
+    """
+    from ..models import ChannelMessage
+
+    raw = data.get("raw") or {}
+    mid = event.get("external_event_id") or ""
+    ig_account_id = event.get("external_asset_id") or ""
+    to_contact = (raw.get("recipient") or {}).get("id") or ""
+    text = (raw.get("message") or {}).get("text")
+    if not ig_account_id or not to_contact:
+        return
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, ig_account_id, provider="instagram")
+        if asset is None:
+            return
+        existing = (
+            await db.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.platform_message_id == mid,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return
+        channel = await _channel_for(
+            db, asset.tenant_id, ig_account_id, asset.username,
+            platform="instagram",
+        )
+        db.add(ChannelMessage(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_message_id=mid[:200] or None,
+            direction="outbound",
+            content=text if text else "[non-text message]",
+            content_type="text",
+            status="sent",
+            contact_phone=to_contact or None,
+        ))
+        await db.commit()
+
+
+def _platform_timestamp(value) -> datetime | None:
+    """Parse Meta's ISO comment timestamp; naive reads as UTC, junk as None."""
+    if not value:
+        return None
+    try:
+        when = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+async def _handle_instagram_comment(event: dict, data: dict) -> None:
+    """Comment on the tenant's own media → stored row + realtime.
+
+    The comment section is an inbox: history accrues in channel_comments
+    and replies go out from the hub — never auto-posted. Public replies
+    are reputation-sensitive and deserve a human or an explicit opt-in,
+    unlike DMs where the AI answers by default.
+
+    A redelivered comment id with NEW text is Meta's "edited" redelivery —
+    unlike messages, comments are editable on Instagram, so the row
+    updates instead of dedupe-skipping.
+    """
+    from ..models import ChannelComment
+
+    ig_account_id = event.get("external_asset_id") or ""
+    comment_id = event.get("external_event_id") or ""
+    if not ig_account_id or not comment_id:
+        return
+    from_ = data.get("from") or {}
+    author_id = from_.get("id") if isinstance(from_, dict) else None
+    author_name = from_.get("username") if isinstance(from_, dict) else None
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, ig_account_id, provider="instagram")
+        if asset is None:
+            logger.warning(
+                "Dropping instagram comment %s for unknown asset %s",
+                comment_id[:32], ig_account_id,
+            )
+            return
+        tenant_id = asset.tenant_id
+
+        existing = (
+            await db.execute(
+                select(ChannelComment).where(
+                    ChannelComment.platform_comment_id == comment_id,
+                )
+            )
+        ).scalar_one_or_none()
+        text = data.get("text") or ""
+        if existing is not None:
+            # Edited redelivery: same id, new text. Any other replay of an
+            # unchanged comment is a Kafka redelivery — nothing to do.
+            if text and existing.content != text:
+                existing.content = text
+                db.add(existing)
+                await db.commit()
+                from ...channels.realtime import publish_inbox_event
+
+                await publish_inbox_event(tenant_id, {
+                    "type": "comment_updated",
+                    "id": existing.id,
+                    "channel_id": existing.channel_id,
+                    "platform": "instagram",
+                    "content": existing.content,
+                })
+            return
+
+        channel = await _channel_for(
+            db, tenant_id, ig_account_id, asset.username,
+            platform="instagram",
+        )
+        row = ChannelComment(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_comment_id=comment_id[:200] or None,
+            parent_platform_comment_id=data.get("parent_id") or None,
+            media_id=data.get("media_id") or None,
+            direction="inbound",
+            content=text or "[non-text comment]",
+            author_id=author_id,
+            author_name=author_name,
+            status="received",
+            platform_timestamp=_platform_timestamp(data.get("timestamp")),
+        )
+        db.add(row)
+        await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "comment",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "instagram",
+            "comment_id": comment_id,
+            "media_id": row.media_id,
+            "direction": "inbound",
+            "content": row.content,
+            "author_id": row.author_id,
+            "author_name": row.author_name,
+            "platform_timestamp": row.platform_timestamp,
+            "created_at": row.created_at,
+        })
+
+
+async def _handle_facebook_comment(event: dict, data: dict) -> None:
+    """Comment on the Page's own post → stored row + realtime.
+
+    Same inbox contract as Instagram: history accrues in channel_comments,
+    replies go out from the hub, nothing is ever auto-posted. FB shape
+    differs from IG in three fields — the post rides post_id (IG:
+    media_id), the author's display name rides from.name (IG: username),
+    and the platform time rides the envelope's occurred_at. Replies carry
+    parent_id, which threads the conversation.
+    """
+    from ..models import ChannelComment
+
+    page_id = event.get("external_asset_id") or ""
+    comment_id = event.get("external_event_id") or ""
+    if not page_id or not comment_id:
+        return
+    from_ = data.get("from") or {}
+    author_id = from_.get("id") if isinstance(from_, dict) else None
+    author_name = from_.get("name") if isinstance(from_, dict) else None
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, page_id, provider="facebook")
+        if asset is None:
+            logger.warning(
+                "Dropping facebook comment %s for unknown asset %s",
+                comment_id[:32], page_id,
+            )
+            return
+        tenant_id = asset.tenant_id
+
+        existing = (
+            await db.execute(
+                select(ChannelComment).where(
+                    ChannelComment.platform_comment_id == comment_id,
+                )
+            )
+        ).scalar_one_or_none()
+        text = data.get("message") or ""
+        if existing is not None:
+            # Edited redelivery: same id, new text. Any other replay of an
+            # unchanged comment is a Kafka redelivery — nothing to do.
+            if text and existing.content != text:
+                existing.content = text
+                db.add(existing)
+                await db.commit()
+                from ...channels.realtime import publish_inbox_event
+
+                await publish_inbox_event(tenant_id, {
+                    "type": "comment_updated",
+                    "id": existing.id,
+                    "channel_id": existing.channel_id,
+                    "platform": "facebook",
+                    "content": existing.content,
+                })
+            return
+
+        channel = await _channel_for(
+            db, tenant_id, page_id, asset.name,
+            platform="facebook",
+        )
+        row = ChannelComment(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_comment_id=comment_id[:200] or None,
+            parent_platform_comment_id=data.get("parent_id") or None,
+            media_id=data.get("post_id") or None,
+            direction="inbound",
+            content=text or "[non-text comment]",
+            author_id=author_id,
+            author_name=author_name,
+            status="received",
+            platform_timestamp=_platform_timestamp(event.get("occurred_at")),
+        )
+        db.add(row)
+        await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "comment",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "facebook",
+            "comment_id": comment_id,
+            "media_id": row.media_id,
+            "direction": "inbound",
+            "content": row.content,
+            "author_id": row.author_id,
+            "author_name": row.author_name,
+            "platform_timestamp": row.platform_timestamp,
+            "created_at": row.created_at,
+        })
+
+
+async def _handle_instagram_message(event: dict, data: dict) -> None:
+    """Instagram DM in → persist, then AI-reply + send via the parent Page.
+
+    Mirrors the WhatsApp handler minus voice / classification / follow-ups.
+    The send rides the parent Facebook Page's token — the IG connection
+    holds no usable messaging credential of its own.
+    """
+    from ..models import ChannelMessage
+    from .providers.base import MetaAPIError
+    from .providers.instagram import InstagramAdapter
+    from .service import get_instagram_page_credentials
+
+    ig_account_id = event.get("external_asset_id") or ""
+    mid = event.get("external_event_id") or ""
+    raw = data.get("raw") or {}
+    message = raw.get("message") or {}
+    text = message.get("text")
+    igsid = (raw.get("sender") or {}).get("id") or ""
+    # Only the messages field carries DMs to answer — messaging_handovers
+    # (a human took over) and standby (a human agent owns the thread)
+    # share the sender/message shape and must never trigger the AI.
+    if data.get("field") != "messages":
+        return
+    if not ig_account_id or not igsid:
+        return
+
+    async with async_session() as db:
+        asset = await _resolve_asset(db, ig_account_id, provider="instagram")
+        if asset is None:
+            logger.warning(
+                "Dropping instagram message %s for unknown asset %s",
+                mid[:32], ig_account_id,
+            )
+            return
+        tenant_id = asset.tenant_id
+
+        # Idempotent replay: Kafka redelivery must not twin the row.
+        existing = (
+            await db.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.platform_message_id == mid,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return
+
+        channel = await _channel_for(
+            db, tenant_id, ig_account_id, asset.username,
+            platform="instagram",
+        )
+        row = ChannelMessage(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            platform_message_id=mid[:200] or None,
+            direction="inbound",
+            content=text if text else "[non-text message]",
+            content_type="text",
+            status="delivered",
+            contact_phone=igsid or None,
+        )
+        db.add(row)
+        await db.commit()
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "instagram",
+            "direction": "inbound",
+            "content": row.content,
+            "content_type": row.content_type,
+            "status": row.status,
+            "contact_phone": row.contact_phone,
+            "created_at": row.created_at,
+        })
+
+        page_id, page_token = await get_instagram_page_credentials(db, asset)
+        if not page_id or not page_token:
+            logger.info(
+                "Instagram AI reply skipped (no parent Page token on asset %s) "
+                "mid=%s from=+%s", ig_account_id, mid[:32], igsid[-6:],
+            )
+            return
+        # Deselected asset (directly, or via its parent Page): keep the
+        # message, never let the AI answer from an account the tenant
+        # turned off.
+        if not asset.active:
+            logger.info("Instagram AI reply skipped (asset deselected) mid=%s", mid[:32])
+            return
+        # Same staleness rule as WhatsApp: a redelivered/backlogged DM is
+        # stored for the inbox but never answered.
+        age = _message_age(event.get("occurred_at"))
+        if age is not None and age > _STALE_REPLY_MAX_AGE:
+            logger.info(
+                "Instagram AI reply skipped (stale event %d min old) mid=%s",
+                int(age.total_seconds() // 60), mid[:32],
+            )
+            return
+
+        adapter = InstagramAdapter()
+
+        # Typing dots while the reply is prepared — best-effort, exactly
+        # like WhatsApp: failure here changes nothing downstream.
+        await adapter.send_typing_indicator(page_id, page_token, igsid)
+
+        # Best-effort contact profile so the inbox shows a person with a
+        # face, not a bare IGSID. Cached in contact_profiles; the Graph
+        # read happens only when the row is missing or stale (avatar URLs
+        # are temporary CDN links — refreshed weekly on inbound traffic).
+        if text:
+            name = await _refresh_instagram_profile(
+                db, tenant_id, adapter, page_token, igsid
+            )
+            row = (
+                await db.execute(
+                    select(ChannelMessage).where(
+                        ChannelMessage.platform_message_id == mid,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is not None and not row.contact_name and name:
+                row.contact_name = name[:120]
+                db.add(row)
+            await db.commit()
+
+        try:
+            reply = await _generate_reply(
+                db, channel, tenant_id, text or "", platform="Instagram"
+            )
+        except Exception as e:
+            logger.warning(
+                "Instagram AI reply generation failed mid=%s: %s: %s",
+                mid[:32], type(e).__name__, str(e)[:200],
+            )
+            return
+
+        if not reply:
+            logger.warning(
+                "Instagram AI reply was empty — skipping send mid=%s", mid[:32],
+            )
+            return
+
+        # Same response-style rendering as WhatsApp: default "concise" is a
+        # single DM; multi-part styles double as defense against Meta's
+        # 1000-byte per-message cap.
+        from ...users.models import User
+        from .response_style import normalize_response_style, render_response
+
+        style_row = (
+            await db.execute(
+                select(User.response_style).where(User.id == tenant_id)
+            )
+        ).first()
+        response_style = normalize_response_style(
+            style_row.response_style if style_row else None
+        )
+        messages = await render_response(response_style, reply, tenant_id, db)
+        if not messages:
+            logger.warning(
+                "Instagram AI reply rendered to zero messages — skipping "
+                "send mid=%s from=+%s", mid[:32], igsid[-6:],
+            )
+            return
+
+        for index, part in enumerate(messages):
+            try:
+                provider_msg_id = await adapter.send_text_message(
+                    page_id, page_token, igsid, part
+                )
+            except MetaAPIError as e:
+                logger.error(
+                    "Instagram send failed from=+%s: %s %s",
+                    igsid[-6:], e.status_code, str(e)[:200],
+                )
+                db.add(ChannelMessage(
+                    id=str(uuid.uuid4()),
+                    channel_id=channel.id,
+                    direction="outbound",
+                    content=part,
+                    status="failed",
+                    error=str(e)[:500],
+                    contact_phone=igsid or None,
+                ))
+                await db.commit()
+                # Later parts would land without their context — stop.
+                return
+            row = ChannelMessage(
+                id=str(uuid.uuid4()),
+                channel_id=channel.id,
+                platform_message_id=provider_msg_id[:200] or None,
+                direction="outbound",
+                content=part,
+                status="sent",
+                contact_phone=igsid or None,
+            )
+            db.add(row)
+            await db.commit()
+            try:
+                from ...channels.realtime import publish_inbox_event as _pub3
+
+                await _pub3(tenant_id, {
+                    "type": "message",
+                    "id": row.id,
+                    "channel_id": channel.id,
+                    "platform": "instagram",
+                    "direction": "outbound",
+                    "content": row.content,
+                    "content_type": "text",
+                    "status": "sent",
+                    "contact_phone": row.contact_phone,
+                    "created_at": row.created_at,
+                })
+            except Exception:
+                pass
+            if index < len(messages) - 1:
+                await asyncio.sleep(_MESSAGE_GAP_SECONDS)
+
+        logger.info(
+            "Instagram AI reply sent to=+%s mid=%s parts=%d",
+            igsid[-6:], mid[:32], len(messages),
+        )
 
 
 async def _process_message(value: bytes | None) -> None:
@@ -665,22 +1361,49 @@ async def _process_message(value: bytes | None) -> None:
     payload = event.get("payload") or {}
 
     try:
-        if event.get("provider") != "whatsapp":
-            logger.debug("Ignoring non-whatsapp meta event %r", event_type)
-        elif event_type == "message.received":
-            await _handle_message_received(event, payload)
-        elif event_type == "message.status":
-            await _handle_message_status(event, payload)
-        elif event_type == "message.history":
-            await _handle_message_history(event, payload)
-        elif event_type == "message.echo":
-            await _handle_message_echo(event, payload)
-        elif event_type == "smb.contacts":
-            await _handle_smb_contacts(event, payload)
-        elif event_type == "connection.disconnect":
-            await _handle_connection_disconnect(event, payload)
+        provider = event.get("provider")
+        if provider == "whatsapp":
+            if event_type == "message.received":
+                await _handle_message_received(event, payload)
+            elif event_type == "message.status":
+                await _handle_message_status(event, payload)
+            elif event_type == "message.history":
+                await _handle_message_history(event, payload)
+            elif event_type == "message.echo":
+                await _handle_message_echo(event, payload)
+            elif event_type == "smb.contacts":
+                await _handle_smb_contacts(event, payload)
+            elif event_type == "connection.disconnect":
+                await _handle_connection_disconnect(event, payload)
+            else:
+                logger.debug("Ignoring meta event type %r on %s", event_type, TOPIC)
+        elif provider == "instagram":
+            if event_type == "message.received":
+                # Merchant replies from Meta's inbox / the IG app arrive as
+                # is_echo — history, not something to auto-answer.
+                if ((payload.get("raw") or {}).get("message") or {}).get("is_echo"):
+                    await _handle_instagram_echo(event, payload)
+                else:
+                    await _handle_instagram_message(event, payload)
+            elif event_type == "comment.received":
+                await _handle_instagram_comment(event, payload)
+            else:
+                logger.debug(
+                    "Ignoring instagram event type %r on %s", event_type, TOPIC
+                )
+        elif provider == "facebook":
+            if event_type == "comment.received":
+                await _handle_facebook_comment(event, payload)
+            else:
+                # post.published stays unhandled on purpose — nothing
+                # auto-posts, and a new Page post needs no inbox row.
+                logger.debug(
+                    "Ignoring facebook event type %r on %s", event_type, TOPIC
+                )
         else:
-            logger.debug("Ignoring meta event type %r on %s", event_type, TOPIC)
+            # Messenger (object=page) stays parsed + ledgered, unanswered —
+            # its own 24h-window/handover semantics are a later phase.
+            logger.debug("Ignoring non-whatsapp meta event %r", event_type)
     except Exception as e:
         logger.exception("Failed processing %s event: %s", event_type, e)
 

@@ -43,6 +43,22 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    # Team suspension is enforced here — not only in team get_context — so a
+    # suspended member is blocked on EVERY authenticated endpoint (messages,
+    # reviews, meta, billing…), including routes that never resolve a tenant
+    # context. Owners (no tenant) and detached accounts are unaffected.
+    if user.tenant_id and user.tenant_id != user.id:
+        from ..modules.team.models import TeamMember
+
+        member = (
+            await db.execute(
+                select(TeamMember.status).where(
+                    TeamMember.user_id == user.id, TeamMember.tenant_id == user.tenant_id
+                )
+            )
+        ).scalar_one_or_none()
+        if member == "suspended":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is suspended")
     # G1 revocation: a blacklisted jti (logout / reuse detection) or a stale
     # token version (password change / logout-all) must not authenticate.
     # is_token_blacklisted fails closed when Redis is down.
