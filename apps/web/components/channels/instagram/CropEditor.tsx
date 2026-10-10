@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { INK, INK2 } from "./ui";
 
 /*
@@ -40,6 +40,23 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error("Could not read this image."));
     img.src = src;
   });
+}
+
+/*
+ * One stable blob URL per file, kept alive for the whole session. React's
+ * dev StrictMode double-runs effects, so an unmount cleanup that revokes
+ * the URL kills the remount's <img> mid-load — every PNG would "fail" to
+ * read. The WeakMap lets entries go when the File itself is collected.
+ */
+const blobUrlCache = new WeakMap<File, string>();
+
+function fileUrl(file: File): string {
+  let url = blobUrlCache.get(file);
+  if (!url) {
+    url = URL.createObjectURL(file);
+    blobUrlCache.set(file, url);
+  }
+  return url;
 }
 
 /** Center-crop any image to a ratio — used for the automatic 9:16 story
@@ -112,9 +129,8 @@ export default function CropEditor({
   const imgRef = useRef<HTMLImageElement | null>(null);
   const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
 
-  // Derived from the file; the cleanup effect below owns the revoke.
-  const imgUrl = useMemo(() => URL.createObjectURL(file), [file]);
-  useEffect(() => () => URL.revokeObjectURL(imgUrl), [imgUrl]);
+  // Derived from the file; never revoked mid-session (see fileUrl above).
+  const imgUrl = fileUrl(file);
 
   const boxH = ratio.aspect ? Math.round(BOX / ratio.aspect) : BOX;
   const activeRatio = ratio.aspect ? ratio : null;
