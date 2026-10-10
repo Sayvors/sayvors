@@ -63,12 +63,16 @@ function Switch({
     >
       <span
         className={`relative inline-block h-6 w-10 shrink-0 rounded-full ${
-          checked ? "bg-[var(--ui-ink)]" : "bg-[var(--ui-line)]"
+          checked
+            ? "bg-[var(--ui-ink)]"
+            : "border border-[var(--ui-line-strong)] bg-[var(--ui-sunken)]"
         }`}
       >
         <span
-          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-transform ${
-            checked ? "translate-x-[18px]" : "translate-x-0.5"
+          className={`absolute top-0.5 h-5 w-5 rounded-full transition-transform ${
+            checked
+              ? "translate-x-[18px] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
+              : "translate-x-0.5 border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] shadow-[0_1px_2px_rgba(0,0,0,0.12)]"
           }`}
         />
       </span>
@@ -93,7 +97,7 @@ function PostPreview({
 }) {
   const aspect = ratio.aspect ?? 1;
   return (
-    <div className="overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
+    <div className="w-full max-w-[232px] overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)]">
       <div className="flex items-center gap-2 px-3 py-2">
         <span
           aria-hidden
@@ -384,7 +388,7 @@ export default function PostComposer({
             </p>
           )}
 
-          <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,288px)_minmax(0,1fr)]">
+          <div className="mt-3 grid gap-4 sm:grid-cols-[232px_minmax(0,1fr)]">
             <PostPreview
               first={entries[0] ?? null}
               username={accountUsername ?? null}

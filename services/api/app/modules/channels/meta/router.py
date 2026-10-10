@@ -1491,6 +1491,22 @@ async def delete_instagram_comment(
     return InstagramCommentActionOut(ok=True)
 
 
+def _publish_error_detail(e: MetaAPIError) -> str:
+    """Meta's message, plus the one hint that actually fixes the most
+    common publishing failure: scopes are minted at OAuth time, so adding
+    instagram_content_publish to the app does nothing until the account
+    is reconnected."""
+    detail = str(e)[:200]
+    low = detail.lower()
+    if any(k in low for k in ("permission", "scope", "authorize", "oauth", "capability")):
+        detail += (
+            " — the app needs the instagram_content_publish permission, and "
+            "the Instagram account must be reconnected in Sayvors so the new "
+            "scope lands in its token."
+        )
+    return detail
+
+
 @router.post("/instagram/{ig_id}/posts/publish", response_model=InstagramPublishOut)
 async def publish_instagram_post(
     ig_id: str,
@@ -1549,7 +1565,11 @@ async def publish_instagram_post(
             )
         media_id = await adapter.publish_media_container(ig_id, token, creation_id)
     except MetaAPIError as e:
-        raise HTTPException(status_code=502, detail=str(e)[:200])
+        logger.warning("Instagram publish failed for %s: %s", ig_id, e)
+        raise HTTPException(
+            status_code=502,
+            detail=_publish_error_detail(e),
+        )
 
     if not media_id:
         raise HTTPException(
@@ -1572,6 +1592,7 @@ async def publish_instagram_post(
             except MetaAPIError as e:
                 # The feed post is already live — a refused story must not
                 # 502 the whole request, but the tenant must hear about it.
+                logger.warning("Instagram story publish failed for %s: %s", ig_id, e)
                 story_media_ids.append(f"failed: {str(e)[:150]}")
                 continue
             if story_id:
