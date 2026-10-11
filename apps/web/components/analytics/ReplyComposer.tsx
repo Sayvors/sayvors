@@ -12,8 +12,10 @@ import {
 
 type Phase = "idle" | "manual" | "generating" | "editing" | "publishing" | "done";
 
+/* Team-ui button base: .ui-btn owns border, radius, hover-invert and disabled
+ * states — no shadows, no hue. Fill/text per variant in the classNames below. */
 const btn =
-  "rounded-lg px-3 py-1.5 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-40";
+  "ui-btn rounded-[2px] px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]";
 
 export function ReplyComposer({
   channelId,
@@ -74,7 +76,7 @@ export function ReplyComposer({
 
   if (phase === "done") {
     return (
-      <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-emerald">
+      <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--ui-ink)]">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
           <polyline points="20 6 9 17 4 12" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -86,7 +88,7 @@ export function ReplyComposer({
   if (phase === "idle" || phase === "generating") {
     return (
       <div className="mt-2">
-        <p className="mb-1.5 text-[11px] text-ink/45">How do you want to answer this review?</p>
+        <p className="mb-1.5 text-[11px] text-[var(--ui-ink-2)]">How do you want to answer this review?</p>
         <div className="flex flex-wrap gap-1.5">
           <button
             onClick={() => {
@@ -101,7 +103,7 @@ export function ReplyComposer({
               );
             }}
             disabled={busy}
-            className={`${btn} bg-deep-violet text-white shadow-sm shadow-deep-violet/20 hover:bg-deep-violet/90`}
+            className={`${btn} bg-[var(--ui-ink)] text-[var(--ui-on-ink)]`}
           >
             {phase === "generating" ? (
               <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Drafting...</span>
@@ -114,12 +116,12 @@ export function ReplyComposer({
               setPhase("manual");
             }}
             disabled={busy}
-            className={`${btn} border border-ink/10 text-ink/60 hover:border-deep-violet/30 hover:text-deep-violet`}
+            className={`${btn} text-[var(--ui-ink)]`}
           >
             I&apos;ll type it
           </button>
         </div>
-        {error && <p className="mt-1 text-[10px] text-coral">{error}</p>}
+        {error && <p className="mt-1 text-[10px] font-semibold text-[var(--ui-ink)]">{error}</p>}
       </div>
     );
   }
@@ -128,7 +130,7 @@ export function ReplyComposer({
     const canSave = draft.trim().length >= 2;
     return (
       <div className="mt-2">
-        <p className="mb-1.5 text-[11px] text-ink/45">Type your reply — it will wait for approval like any other.</p>
+        <p className="mb-1.5 text-[11px] text-[var(--ui-ink-2)]">Type your reply — it will wait for approval like any other.</p>
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -137,9 +139,9 @@ export function ReplyComposer({
           placeholder="Thank you so much for visiting us…"
           aria-label="Type your reply"
           autoFocus
-          className="w-full resize-y rounded-lg border border-ink/10 bg-white p-2.5 text-[12px] leading-relaxed text-ink outline-none transition placeholder:text-ink/30 focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1]"
+          className="ui-input w-full resize-y bg-[var(--ui-surface)] p-2.5 text-[12px] leading-relaxed text-[var(--ui-ink)] placeholder:text-[var(--ui-ink-2)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         />
-        {error && <p className="mt-1 text-[10px] text-coral">{error}</p>}
+        {error && <p className="mt-1 text-[10px] font-semibold text-[var(--ui-ink)]">{error}</p>}
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           <button
             onClick={() => {
@@ -147,7 +149,7 @@ export function ReplyComposer({
               setDraft("");
               setPhase("idle");
             }}
-            className={`${btn} text-ink/50 hover:bg-ink/[0.04]`}
+            className={`${btn} text-[var(--ui-ink-2)]`}
           >
             Back
           </button>
@@ -165,7 +167,7 @@ export function ReplyComposer({
               );
             }}
             disabled={!canSave}
-            className={`${btn} bg-deep-violet text-white shadow-sm shadow-deep-violet/20 hover:bg-deep-violet/90 disabled:opacity-40`}
+            className={`${btn} bg-[var(--ui-ink)] text-[var(--ui-on-ink)]`}
           >
             Save for approval
           </button>
@@ -175,10 +177,10 @@ export function ReplyComposer({
   }
 
   return (
-    <div className="mt-3 rounded-xl border border-deep-violet/[0.12] bg-deep-violet/[0.02] p-3">
+    <div className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-[11px] font-semibold text-deep-violet">AI draft — review before publishing</p>
-        {dirty && <span className="text-[10px] font-medium text-amber-600">unsaved edits</span>}
+        <p className="text-[11px] font-semibold text-[var(--ui-ink)]">AI draft — review before publishing</p>
+        {dirty && <span className="text-[10px] font-medium text-[var(--ui-ink-2)]">unsaved edits</span>}
       </div>
       <textarea
         value={draft}
@@ -188,9 +190,9 @@ export function ReplyComposer({
         }}
         rows={4}
         aria-label="Reply draft"
-        className="w-full resize-y rounded-lg border border-deep-violet/[0.1] bg-white p-2.5 text-[12px] leading-relaxed text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1]"
+        className="ui-input w-full resize-y bg-[var(--ui-surface)] p-2.5 text-[12px] leading-relaxed text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
       />
-      {error && <p className="mt-1 text-[10px] text-coral">{error}</p>}
+      {error && <p className="mt-1 text-[10px] font-semibold text-[var(--ui-ink)]">{error}</p>}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <button
           onClick={() => {
@@ -199,7 +201,7 @@ export function ReplyComposer({
             run(() => approveReply(channelId, replyId));
           }}
           disabled={busy}
-          className={`${btn} bg-emerald text-white hover:bg-emerald/90`}
+          className={`${btn} bg-[var(--ui-ink)] text-[var(--ui-on-ink)]`}
         >
           {phase === "publishing" ? (
             <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Publishing...</span>
@@ -212,7 +214,7 @@ export function ReplyComposer({
             run(() => editReply(channelId, replyId, draft));
           }}
           disabled={busy || !dirty}
-          className={`${btn} bg-deep-violet/[0.07] text-deep-violet hover:bg-deep-violet/[0.12]`}
+          className={`${btn} bg-[var(--ui-surface)] text-[var(--ui-ink)]`}
         >
           Save edits
         </button>
@@ -223,14 +225,14 @@ export function ReplyComposer({
             run(() => regenerateReply(channelId, replyId));
           }}
           disabled={busy}
-          className={`${btn} bg-deep-violet/[0.07] text-deep-violet hover:bg-deep-violet/[0.12]`}
+          className={`${btn} bg-[var(--ui-surface)] text-[var(--ui-ink)]`}
         >
           Regenerate
         </button>
         <button
           onClick={discard}
           disabled={busy}
-          className={`${btn} text-coral hover:bg-coral/[0.06]`}
+          className="ui-btn-danger rounded-[2px] px-3 py-1.5 text-[11px] font-semibold focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] disabled:cursor-not-allowed disabled:opacity-45"
         >
           Discard
         </button>

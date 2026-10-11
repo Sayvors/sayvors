@@ -110,11 +110,11 @@ export default function BenchmarkPage() {
   } : null;
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f3f0ff] p-4 sm:p-6">
+    <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">Benchmark</h1>
-          <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">Your branches, ranked against each other — real data, no estimates.</p>
+          <h1 className="text-[20px] font-bold text-[var(--ui-ink)] sm:text-[22px]">Benchmark</h1>
+          <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)] sm:text-[13px]">Your branches, ranked against each other — real data, no estimates.</p>
         </div>
         <RangeChannelControls
           days={days}
@@ -126,65 +126,65 @@ export default function BenchmarkPage() {
       </div>
 
       {error && !loading ? (
-        <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
-          <p className="text-[13px] font-semibold text-ink/60">Couldn&apos;t load benchmark data.</p>
+        <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
+          <p className="text-[13px] font-semibold text-[var(--ui-ink-2)]">Couldn&apos;t load benchmark data.</p>
           <button
             onClick={() => { setError(false); setLoading(true); setRetryCount((c) => c + 1); }}
-            className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90"
+            className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
             Retry
           </button>
         </div>
       ) : !benchmark && !loading ? (
-        <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
-          <p className="text-[14px] font-bold text-ink">No comparison data yet</p>
-          <p className="max-w-sm text-[12px] text-ink/50">
+        <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
+          <p className="text-[14px] font-bold text-[var(--ui-ink)]">No comparison data yet</p>
+          <p className="max-w-sm text-[12px] text-[var(--ui-ink-2)]">
             Connect at least one location and sync its reviews — branch comparison appears here.
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-8">
           {/* Portfolio health strip — the 4 numbers owners check first */}
           {portfolio && benchmark && (
-            <section aria-label="Portfolio health" className="grid gap-2.5 sm:grid-cols-4">
-              <div className="rounded-2xl border-2 border-white bg-gradient-to-br from-deep-violet to-[#5b3bb0] p-4 text-white shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-white/70">Health score</p>
-                <p className="mt-1 text-[28px] font-black leading-none">{portfolio.health ?? "—"}<span className="text-[14px] font-bold text-white/70">/100</span></p>
-                <p className="mt-1 text-[11px] leading-tight text-white/75">
+            <section aria-label="Portfolio health" className="grid gap-5 sm:gap-6 sm:grid-cols-4">
+              <div className="rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-ink)] p-4 text-[var(--ui-on-ink)]">
+                <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">Health score</p>
+                <p className="mt-1 text-[28px] font-black leading-none">{portfolio.health ?? "—"}<span className="text-[14px] font-bold opacity-70">/100</span></p>
+                <p className="mt-1 text-[11px] leading-tight opacity-75">
                   {portfolio.health != null ? (portfolio.health >= 80 ? "Strong — keep the lead" : portfolio.health >= 60 ? "Solid — close the gaps" : "Needs work — see below") : "—"}
                 </p>
               </div>
-              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-ink/40">Action rate</p>
-                <p className="mt-1 text-[22px] font-black leading-none text-ink">
+              <div className="ui-card p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">Action rate</p>
+                <p className="mt-1 text-[22px] font-black leading-none text-[var(--ui-ink)]">
                   {portfolio.actionRate != null ? `${portfolio.actionRate.toFixed(1)}%` : "—"}
                 </p>
-                <p className="mt-1 text-[11px] leading-tight text-ink/55">
+                <p className="mt-1 text-[11px] leading-tight text-[var(--ui-ink-2)]">
                   {portfolio.impressions != null && portfolio.impressions > 0
                     ? `${portfolio.actions} actions from ${portfolio.impressions.toLocaleString()} views · ${portfolio.actionRate != null && portfolio.actionRate < 5 ? "views not turning into calls" : portfolio.actionRate != null && portfolio.actionRate >= 8 ? "converting well" : "average" }`
                     : "Need location views data"}
                 </p>
               </div>
-              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-ink/40">Velocity</p>
-                <p className="mt-1 text-[22px] font-black leading-none text-ink">
-                  {portfolio.velocity != null ? `${portfolio.velocity}` : "—"}<span className="text-[13px] font-bold text-ink/40">/mo</span>
+              <div className="ui-card p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">Velocity</p>
+                <p className="mt-1 text-[22px] font-black leading-none text-[var(--ui-ink)]">
+                  {portfolio.velocity != null ? `${portfolio.velocity}` : "—"}<span className="text-[13px] font-bold text-[var(--ui-ink-2)]">/mo</span>
                 </p>
-                <p className="mt-1 text-[11px] leading-tight text-ink/55">Reviews per month · last {benchmark.days}d pace</p>
+                <p className="mt-1 text-[11px] leading-tight text-[var(--ui-ink-2)]">Reviews per month · last {benchmark.days}d pace</p>
               </div>
-              <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-ink/40">Response rate</p>
-                <p className="mt-1 text-[22px] font-black leading-none text-ink">{(benchmark.current_response_rate ?? 0).toFixed(0)}%</p>
-                <p className="mt-1 text-[11px] leading-tight text-ink/55">{benchmark.current_response_rate < 70 ? "Lift this to protect reputation" : benchmark.current_response_rate >= 90 ? "Excellent — answering everyone" : "Good — aim for 90%+"}</p>
+              <div className="ui-card p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">Response rate</p>
+                <p className="mt-1 text-[22px] font-black leading-none text-[var(--ui-ink)]">{(benchmark.current_response_rate ?? 0).toFixed(0)}%</p>
+                <p className="mt-1 text-[11px] leading-tight text-[var(--ui-ink-2)]">{benchmark.current_response_rate < 70 ? "Lift this to protect reputation" : benchmark.current_response_rate >= 90 ? "Excellent — answering everyone" : "Good — aim for 90%+"}</p>
               </div>
             </section>
           )}
 
           {/* Plain-English AI summary — replaces industry estimate as primary insight */}
           {portfolio?.plain && (
-            <section aria-label="Summary" className="rounded-2xl border border-deep-violet/10 bg-white p-4 shadow-sm">
-              <p className="text-[11px] font-bold uppercase tracking-widest text-deep-violet">In plain English</p>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-ink/75">{portfolio.plain}</p>
+            <section aria-label="Summary" className="ui-card p-4">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-[var(--ui-ink)]">In plain English</p>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--ui-ink-2)]">{portfolio.plain}</p>
             </section>
           )}
 
@@ -196,10 +196,10 @@ export default function BenchmarkPage() {
                 onClick={() => setFocus(f)}
                 aria-pressed={focus === f}
                 title={FOCUS_META[f].hint}
-                className={`rounded-full px-3.5 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+                className={`rounded-[2px] px-3.5 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                   focus === f
-                    ? "bg-deep-violet text-white shadow-sm shadow-deep-violet/25"
-                    : "border border-ink/[0.08] bg-white/70 text-ink/55 hover:text-ink"
+                    ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+                    : "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
                 }`}
               >
                 {FOCUS_META[f].label}
@@ -208,9 +208,9 @@ export default function BenchmarkPage() {
           </div>
 
           {/* Filter options */}
-          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white bg-white/60 p-3 backdrop-blur-sm">
+          <div className="ui-card flex flex-wrap items-center gap-2 p-3">
             <div className="relative flex-1 min-w-[180px]">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/30" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ui-ink-2)]" aria-hidden>
                 <circle cx="11" cy="11" r="7" />
                 <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
               </svg>
@@ -218,13 +218,13 @@ export default function BenchmarkPage() {
                 value={branchSearch}
                 onChange={(e) => setBranchSearch(e.target.value)}
                 placeholder="Filter branches by name…"
-                className="w-full rounded-xl border border-ink/10 bg-white py-2 pl-8 pr-3 text-[12px] font-medium text-ink placeholder:text-ink/30 outline-none transition focus:border-deep-violet/30 focus:bg-white"
+                className="ui-input w-full bg-[var(--ui-surface)] py-2 pl-8 pr-3 text-[12px] font-medium text-[var(--ui-ink)] placeholder:text-[var(--ui-ink-2)]"
               />
             </div>
             <select
               value={branchFilter}
               onChange={(e) => setBranchFilter(e.target.value as typeof branchFilter)}
-              className="rounded-xl border border-ink/10 bg-white px-3 py-2 text-[12px] font-semibold text-ink/70 outline-none focus:border-deep-violet/30"
+              className="ui-input bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink)]"
             >
               <option value="all">All branches ({benchmark?.branches.length ?? 0})</option>
               <option value="with_reviews">With reviews</option>
@@ -235,19 +235,19 @@ export default function BenchmarkPage() {
             {(branchSearch || branchFilter !== "all") && (
               <button
                 onClick={() => { setBranchSearch(""); setBranchFilter("all"); }}
-                className="rounded-xl bg-ink/[0.06] px-3 py-2 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.08]"
+                className="ui-btn bg-[var(--ui-sunken)] px-3 py-2 text-[11px] font-semibold text-[var(--ui-ink)]"
               >
                 Clear filters
               </button>
             )}
-            <span className="ml-auto text-[11px] font-medium text-ink/40">
+            <span className="ml-auto text-[11px] font-medium text-[var(--ui-ink-2)]">
               {branches.length} of {benchmark?.branches.length ?? 0} shown
             </span>
           </div>
 
           {/* Distribution strip — variance at a glance */}
           {portfolio?.dist && benchmark!.branches.length > 1 && (
-            <section aria-label="Distribution" className="flex flex-wrap gap-2 rounded-2xl border border-white bg-white/60 p-3 text-[11px] backdrop-blur-sm">
+            <section aria-label="Distribution" className="ui-card flex flex-wrap gap-2 p-3 text-[11px]">
               {(() => {
                 const d = portfolio.dist as Record<string, { best: number; median: number; worst: number; gap: number }>;
                 const rep = d["reputation_score"];
@@ -255,14 +255,14 @@ export default function BenchmarkPage() {
                 return (
                   <>
                     {rep && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-ink/[0.06] px-3 py-1.5 font-medium text-ink/70">
-                        <span className="h-1.5 w-1.5 rounded-full bg-deep-violet" aria-hidden />
-                        Reputation: <strong className="text-ink">{rep.best}</strong> best · {rep.median} median · {rep.worst} worst · <span className={rep.gap > 30 ? "font-bold text-coral" : "text-ink/60"}>gap {rep.gap}</span>{rep.gap > 30 ? " — fix variance" : ""}
+                      <span className="ui-chip gap-1.5 px-3 py-1.5 font-medium text-[var(--ui-ink-2)]">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--ui-ink)]" aria-hidden />
+                        Reputation: <strong className="text-[var(--ui-ink)]">{rep.best}</strong> best · {rep.median} median · {rep.worst} worst · <span className={rep.gap > 30 ? "font-bold text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)]"}>gap {rep.gap}</span>{rep.gap > 30 ? " — fix variance" : ""}
                       </span>
                     )}
                     {vel && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-ink/[0.06] px-3 py-1.5 font-medium text-ink/70">
-                        Velocity: <strong className="text-ink">{vel.best}/mo</strong> best · {vel.median}/mo median · gap {vel.gap}/mo
+                      <span className="ui-chip gap-1.5 px-3 py-1.5 font-medium text-[var(--ui-ink-2)]">
+                        Velocity: <strong className="text-[var(--ui-ink)]">{vel.best}/mo</strong> best · {vel.median}/mo median · gap {vel.gap}/mo
                       </span>
                     )}
                   </>
@@ -273,12 +273,12 @@ export default function BenchmarkPage() {
 
           {/* Leader spotlight */}
           {benchmark?.leader && (
-            <section aria-label="Leading branch" className="rounded-2xl border-2 border-amber-300/70 bg-gradient-to-r from-amber-50 to-white p-5 shadow-sm backdrop-blur-sm">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-amber-600">🏆 Leading branch — why {benchmark.leader.name} is great</p>
+            <section aria-label="Leading branch" className="rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-ink)] p-5 text-[var(--ui-on-ink)]">
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">🏆 Leading branch — why {benchmark.leader.name} is great</p>
               <ul className="mt-2 space-y-1">
                 {benchmark.leader.reasons.map((r) => (
-                  <li key={r} className="flex items-start gap-1.5 text-[13px] font-medium text-ink/80">
-                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                  <li key={r} className="flex items-start gap-1.5 text-[13px] font-medium opacity-80">
+                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-on-ink)]" aria-hidden />
                     {r}
                   </li>
                 ))}
@@ -287,39 +287,39 @@ export default function BenchmarkPage() {
           )}
 
           {/* Branch leaderboard */}
-          <section aria-label="Branch ranking" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <section aria-label="Branch ranking" className="ui-card p-5">
             <div className="mb-1 flex items-baseline justify-between gap-2">
-              <h3 className="inline-flex items-center gap-1.5 text-[14px] font-bold text-ink">
+              <h3 className="inline-flex items-center gap-1.5 text-[14px] font-bold text-[var(--ui-ink)]">
                 Branch ranking · {FOCUS_META[focus].label}
                 <span className="group relative inline-flex">
                   <span
                     tabIndex={0}
                     role="button"
                     aria-label="How is this calculated?"
-                    className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-ink/15 bg-ink/[0.04] text-[10px] font-bold leading-none text-ink/60 outline-none transition hover:border-deep-violet/30 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30"
+                    className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] text-[10px] font-bold leading-none text-[var(--ui-ink-2)] transition hover:text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
                   >
                     i
                   </span>
-                  <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 hidden w-[420px] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-ink/10 bg-ink px-4 py-3 text-left text-[11px] font-normal leading-relaxed text-white shadow-2xl group-hover:block group-focus-within:block">
-                    <span className="block text-[11px] font-bold text-white">How scores are calculated</span>
-                    <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-white/70">
+                  <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 hidden w-[420px] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-4 py-3 text-left text-[11px] font-normal leading-relaxed text-[var(--ui-ink)] group-hover:block group-focus-within:block">
+                    <span className="block text-[11px] font-bold text-[var(--ui-ink)]">How scores are calculated</span>
+                    <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[var(--ui-ink-2)]">
                       <span>avg rating, response rate & positive % are live SQL aggregates per branch.</span>
-                      <span className="font-mono text-[10px] text-white/90">
+                      <span className="font-mono text-[10px] text-[var(--ui-ink)]">
                         reputation = (avg&nbsp;rating&nbsp;/&nbsp;5&nbsp;×&nbsp;50) + (response&nbsp;rate&nbsp;×&nbsp;25) + (positive&nbsp;%&nbsp;×&nbsp;25)
                       </span>
                     </span>
-                    <span className="mt-2 flex items-center justify-between gap-3 border-t border-white/10 pt-2 text-white/60">
-                      <span>Al&nbsp;Malqa: 4.86★ →48.6 + 86% →21.5 + 29% →7.1 = <span className="font-bold text-white">~77</span></span>
-                      <span className="shrink-0 text-white/40">Avg = mean of branches</span>
+                    <span className="mt-2 flex items-center justify-between gap-3 border-t border-[var(--ui-line)] pt-2 text-[var(--ui-ink-2)]">
+                      <span>Al&nbsp;Malqa: 4.86★ →48.6 + 86% →21.5 + 29% →7.1 = <span className="font-bold text-[var(--ui-ink)]">~77</span></span>
+                      <span className="shrink-0 text-[var(--ui-ink-2)]">Avg = mean of branches</span>
                     </span>
                   </span>
                 </span>
               </h3>
-              <p className="text-[11px] text-ink/45">Account average: {focus === "rating" ? accountAvg.toFixed(1) + "★" : focus === "volume" ? Math.round(accountAvg) : `${accountAvg.toFixed(0)}${FOCUS_META[focus].unit}`}</p>
+              <p className="text-[11px] text-[var(--ui-ink-2)]">Account average: {focus === "rating" ? accountAvg.toFixed(1) + "★" : focus === "volume" ? Math.round(accountAvg) : `${accountAvg.toFixed(0)}${FOCUS_META[focus].unit}`}</p>
             </div>
-            <p className="mb-4 text-[11px] text-ink/45">{FOCUS_META[focus].hint}</p>
+            <p className="mb-4 text-[11px] text-[var(--ui-ink-2)]">{FOCUS_META[focus].hint}</p>
             {branches.length === 0 ? (
-              <p className="py-6 text-center text-[12px] text-ink/45">No branches with data in this period.</p>
+              <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">No branches with data in this period.</p>
             ) : (
               <div className="space-y-3">
                 {branches.map((b, i) => {
@@ -334,46 +334,46 @@ export default function BenchmarkPage() {
                         </span>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-baseline justify-between gap-2">
-                            <p className="truncate text-[13px] font-bold text-ink">
+                            <p className="truncate text-[13px] font-bold text-[var(--ui-ink)]">
                               {b.name}
                               {b.top_problem ? (
-                                <span className="ml-2 truncate text-[10.5px] font-medium text-coral">
+                                <span className="ml-2 truncate text-[10.5px] font-medium text-[var(--ui-ink)]">
                                   ⚠ guests mention “{b.top_problem}” ×{b.top_problem_mentions}
                                 </span>
                               ) : null}
                             </p>
-                            <p className="shrink-0 text-[15px] font-bold tabular-nums text-deep-violet">
+                            <p className="shrink-0 text-[15px] font-bold tabular-nums text-[var(--ui-ink)]">
                               {empty ? "—" : fmtValue(b, focus)}
                             </p>
                           </div>
-                          <div className="mt-1 h-2 overflow-hidden rounded-full bg-ink/[0.06]">
+                          <div className="mt-1 h-2 overflow-hidden rounded-full bg-[var(--ui-sunken)]">
                             <div
-                              className={`h-full rounded-full transition-all ${empty ? "bg-ink/10" : i === 0 ? "bg-gradient-to-r from-deep-violet to-magenta" : "bg-deep-violet/40"}`}
+                              className={`h-full rounded-full transition-all ${empty ? "bg-[var(--ui-line)]" : i === 0 ? "bg-[var(--ui-ink)]" : "bg-[var(--ui-ink-2)]"}`}
                               style={{ width: `${empty ? 100 : pct}%` }}
                             />
                           </div>
-                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10.5px] text-ink/45">
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10.5px] text-[var(--ui-ink-2)]">
                             <span>⭐ {b.avg_rating.toFixed(1)} · {b.reviews_total} reviews</span>
                             <span>😊 {b.positive_pct.toFixed(0)}% positive</span>
                             <span>↩️ {b.response_rate.toFixed(0)}% replied</span>
-                            {b.health_score != null && <span className="font-semibold text-deep-violet">♥ {b.health_score} health</span>}
+                            {b.health_score != null && <span className="font-semibold text-[var(--ui-ink)]">♥ {b.health_score} health</span>}
                             {b.velocity_per_month != null && <span>⚡ {b.velocity_per_month}/mo</span>}
                             {b.action_rate != null && <span>🎯 {b.action_rate.toFixed(1)}% action rate</span>}
                             {b.impressions_maps != null && b.impressions_maps > 0 && <span>👁 {b.impressions_maps.toLocaleString()} views</span>}
                             {typeof b.rating_delta === "number" && b.rating_delta !== 0 && (
-                              <span className={b.rating_delta > 0 ? "font-semibold text-emerald" : "font-semibold text-coral"}>
+                              <span className={b.rating_delta > 0 ? "font-semibold text-[var(--ui-ink)]" : "font-bold text-[var(--ui-ink)]"}>
                                 {b.rating_delta > 0 ? "▲" : "▼"} {Math.abs(b.rating_delta).toFixed(1)}★ this period
                               </span>
                             )}
                             {b.gap_vs_leader_per_year != null && b.gap_vs_leader_per_year > 0 && (
-                              <span className="font-semibold text-coral">gap +{b.gap_vs_leader_per_year}/yr vs leader</span>
+                              <span className="font-semibold text-[var(--ui-ink)]">gap +{b.gap_vs_leader_per_year}/yr vs leader</span>
                             )}
                           </div>
                           {b.top_problem_mentions > 0 && b.action_rate != null && b.action_rate < 5 && (
-                            <p className="mt-1 text-[10.5px] font-medium text-amber-600">Views not converting — check listing completeness & CTA.</p>
+                            <p className="mt-1 text-[10.5px] font-semibold text-[var(--ui-ink)]">Views not converting — check listing completeness & CTA.</p>
                           )}
                           {empty && (
-                            <p className="mt-1 text-[10.5px] italic text-ink/40">
+                            <p className="mt-1 text-[10.5px] italic text-[var(--ui-ink-2)]">
                               No reviews synced yet — still waiting on Google. Excluded from ranking.
                             </p>
                           )}
@@ -388,19 +388,19 @@ export default function BenchmarkPage() {
 
           {/* Needs attention */}
           {benchmark?.needs_attention && (
-            <section aria-label="Branch needing attention" className="rounded-2xl border-2 border-coral/30 bg-coral/[0.04] p-5 backdrop-blur-sm">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-coral">🎯 Needs attention — {benchmark.needs_attention.name}</p>
+            <section aria-label="Branch needing attention" className="rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-ink)] p-5 text-[var(--ui-on-ink)]">
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">🎯 Needs attention — {benchmark.needs_attention.name}</p>
               <ul className="mt-2 space-y-1">
                 {benchmark.needs_attention.reasons.map((r) => (
-                  <li key={r} className="flex items-start gap-1.5 text-[13px] font-medium text-ink/80">
-                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
+                  <li key={r} className="flex items-start gap-1.5 text-[13px] font-medium opacity-80">
+                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-on-ink)]" aria-hidden />
                     {r}
                   </li>
                 ))}
               </ul>
               <Link
                 href="/dashboard/reviews"
-                className="mt-3 inline-block rounded-lg bg-coral px-3.5 py-1.5 text-[12px] font-bold text-white transition hover:opacity-90"
+                className="mt-3 inline-block rounded-[2px] bg-[var(--ui-on-ink)] px-3.5 py-1.5 text-[12px] font-bold text-[var(--ui-ink)] transition hover:opacity-90"
               >
                 Fix it in Reviews →
               </Link>
@@ -409,33 +409,33 @@ export default function BenchmarkPage() {
 
           {/* Per-branch recommendations */}
           {(benchmark?.recommendations?.length ?? 0) > 0 && (
-            <section aria-label="Branch recommendations" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-              <h3 className="text-[14px] font-bold text-ink">What to do next, per branch</h3>
-              <div className="mt-3 grid gap-2.5 md:grid-cols-2">
+            <section aria-label="Branch recommendations" className="ui-card p-5">
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">What to do next, per branch</h3>
+              <div className="mt-3 grid gap-5 sm:gap-6 md:grid-cols-2">
                 {benchmark!.recommendations.map((rec, i) => (
                   <div
                     key={`${rec.channel_id}-${i}`}
                     className={`rounded-xl border p-3.5 ${
                       rec.priority === "high"
-                        ? "border-coral/25 bg-coral/[0.05]"
+                        ? "border-[var(--ui-line-strong)] bg-[var(--ui-surface)]"
                         : rec.priority === "win"
-                          ? "border-emerald/25 bg-emerald/[0.05]"
-                          : "border-ink/[0.06] bg-ink/[0.02]"
+                          ? "border-[var(--ui-line)] bg-[var(--ui-surface)]"
+                          : "border-[var(--ui-line)] bg-[var(--ui-sunken)]"
                     }`}
                   >
                     <div className="flex items-center gap-2">
                       <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
                         rec.priority === "high"
-                          ? "bg-coral/15 text-coral"
+                          ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                           : rec.priority === "win"
-                            ? "bg-emerald/15 text-emerald"
-                            : "bg-ink/[0.06] text-ink/50"
+                            ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
+                            : "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]"
                       }`}>
                         {rec.priority === "win" ? "Playbook" : rec.priority}
                       </span>
-                      <p className="truncate text-[12px] font-bold text-ink">{rec.name}</p>
+                      <p className="truncate text-[12px] font-bold text-[var(--ui-ink)]">{rec.name}</p>
                     </div>
-                    <p className="mt-1.5 text-[12px] leading-relaxed text-ink/65">{rec.text}</p>
+                    <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--ui-ink-2)]">{rec.text}</p>
                   </div>
                 ))}
               </div>
@@ -444,21 +444,21 @@ export default function BenchmarkPage() {
 
           {/* Recommended locations */}
           {benchmark?.branches && benchmark.branches.length > 0 && (
-            <section aria-label="Recommended locations" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-              <h3 className="text-[14px] font-bold text-ink">📍 Recommended locations</h3>
-              <p className="mt-1 text-[11px] text-ink/45">Where to send customers & where to focus improvement — based on your real branch scores.</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <section aria-label="Recommended locations" className="ui-card p-5">
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">📍 Recommended locations</h3>
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Where to send customers & where to focus improvement — based on your real branch scores.</p>
+              <div className="mt-3 grid gap-5 sm:gap-6 sm:grid-cols-2">
                 {benchmark.branches.slice(0, 2).map((b) => (
-                  <div key={b.channel_id} className="rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3.5">
+                  <div key={b.channel_id} className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-[13px] font-bold text-ink">{b.name}</p>
-                      <span className="shrink-0 rounded-full bg-deep-violet/10 px-2 py-0.5 text-[10px] font-bold text-deep-violet">#{b.rank} · {b.reputation_score}</span>
+                      <p className="truncate text-[13px] font-bold text-[var(--ui-ink)]">{b.name}</p>
+                      <span className="shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2 py-0.5 text-[10px] font-bold text-[var(--ui-on-ink)]">#{b.rank} · {b.reputation_score}</span>
                     </div>
-                    <p className="mt-1 text-[11px] text-ink/50">⭐ {b.avg_rating.toFixed(1)} · {b.reviews_total} reviews · {b.positive_pct.toFixed(0)}% positive · {b.response_rate.toFixed(0)}% replied</p>
-                    <p className="mt-2 text-[11px] font-medium text-ink/60">
+                    <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">⭐ {b.avg_rating.toFixed(1)} · {b.reviews_total} reviews · {b.positive_pct.toFixed(0)}% positive · {b.response_rate.toFixed(0)}% replied</p>
+                    <p className="mt-2 text-[11px] font-medium text-[var(--ui-ink-2)]">
                       {b.rank === 1 ? "🏆 Top choice to recommend — show this location first." : b.avg_rating < 4 ? "🔧 Priority for improvement — lift rating above 4.0★." : "✨ Solid performer — keep the momentum."}
                     </p>
-                    <Link href="/dashboard/locations" className="mt-2 inline-block text-[11px] font-semibold text-deep-violet hover:underline">View location →</Link>
+                    <Link href="/dashboard/locations" className="mt-2 inline-block text-[11px] font-semibold text-[var(--ui-ink)] hover:underline">View location →</Link>
                   </div>
                 ))}
               </div>
@@ -467,35 +467,35 @@ export default function BenchmarkPage() {
 
           {/* Recommended services */}
           {(benchmark && (benchmark.top_services?.length > 0 || benchmark.needs_fix_services?.length > 0)) && (
-            <section aria-label="Service recommendations" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-              <h3 className="text-[14px] font-bold text-ink">🛎️ Recommended services</h3>
-              <p className="mt-1 text-[11px] text-ink/45">What to promote vs fix — derived from review mentions & sentiment.</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border border-emerald/20 bg-emerald/[0.04] p-3.5">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-emerald">Promote these</p>
+            <section aria-label="Service recommendations" className="ui-card p-5">
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">🛎️ Recommended services</h3>
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">What to promote vs fix — derived from review mentions & sentiment.</p>
+              <div className="mt-3 grid gap-5 sm:gap-6 sm:grid-cols-2">
+                <div className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">Promote these</p>
                   {(benchmark.top_services ?? []).length === 0 ? (
-                    <p className="mt-2 text-[12px] text-ink/45">No standout services yet — need more reviews mentioning specific services.</p>
+                    <p className="mt-2 text-[12px] text-[var(--ui-ink-2)]">No standout services yet — need more reviews mentioning specific services.</p>
                   ) : (
                     <ul className="mt-2 space-y-1.5">
                       {(benchmark.top_services ?? []).map((s) => (
                         <li key={s.name} className="flex items-start justify-between gap-2 text-[12px]">
-                          <span className="font-semibold text-ink">{s.name}</span>
-                          <span className="shrink-0 text-[11px] text-ink/50">{s.positive_pct.toFixed(0)}% positive · {s.mentions}×{s.avg_rating ? ` · ${s.avg_rating.toFixed(1)}★` : ""}</span>
+                          <span className="font-semibold text-[var(--ui-ink)]">{s.name}</span>
+                          <span className="shrink-0 text-[11px] text-[var(--ui-ink-2)]">{s.positive_pct.toFixed(0)}% positive · {s.mentions}×{s.avg_rating ? ` · ${s.avg_rating.toFixed(1)}★` : ""}</span>
                         </li>
                       ))}
                     </ul>
                   )}
                 </div>
-                <div className="rounded-xl border border-coral/20 bg-coral/[0.04] p-3.5">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-coral">Fix these</p>
+                <div className="rounded-xl border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">Fix these</p>
                   {(benchmark.needs_fix_services ?? []).length === 0 ? (
-                    <p className="mt-2 text-[12px] text-ink/45">No recurring service complaints detected. Keep monitoring.</p>
+                    <p className="mt-2 text-[12px] text-[var(--ui-ink-2)]">No recurring service complaints detected. Keep monitoring.</p>
                   ) : (
                     <ul className="mt-2 space-y-1.5">
                       {(benchmark.needs_fix_services ?? []).map((s) => (
                         <li key={s.name} className="flex items-start justify-between gap-2 text-[12px]">
-                          <span className="font-semibold text-ink">{s.name}</span>
-                          <span className="shrink-0 text-[11px] text-coral">{s.negative} negative · {s.mentions}×</span>
+                          <span className="font-semibold text-[var(--ui-ink)]">{s.name}</span>
+                          <span className="shrink-0 text-[11px] font-semibold text-[var(--ui-ink)]">{s.negative} negative · {s.mentions}×</span>
                         </li>
                       ))}
                     </ul>
@@ -505,62 +505,62 @@ export default function BenchmarkPage() {
               {(benchmark.top_topics ?? []).length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {(benchmark.top_topics ?? []).slice(0, 6).map((t: { name: string; mentions: number }) => (
-                    <span key={t.name} className="rounded-full bg-ink/[0.06] px-2.5 py-1 text-[11px] font-medium text-ink/60">
+                    <span key={t.name} className="ui-chip px-2.5 py-1 text-[11px] font-medium text-[var(--ui-ink-2)]">
                       #{t.name} · {t.mentions}
                     </span>
                   ))}
                 </div>
               )}
-              <Link href="/dashboard/services" className="mt-3 inline-block text-[11px] font-semibold text-deep-violet hover:underline">Manage services →</Link>
+              <Link href="/dashboard/services" className="mt-3 inline-block text-[11px] font-semibold text-[var(--ui-ink)] hover:underline">Manage services →</Link>
             </section>
           )}
 
           {/* Market view — you vs real Sayvors tenants, no synthetic averages */}
           {benchmark?.cohort && benchmark.cohort.count > 0 && (benchmark.market ?? []).length > 0 ? (
-            <section aria-label="Market ranking" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-              <h3 className="text-[14px] font-bold text-ink">
+            <section aria-label="Market ranking" className="ui-card p-5">
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">
                 🏆 You vs {benchmark.cohort.count} {benchmark.cohort.label} on Sayvors
               </h3>
-              <p className="mt-1 text-[11px] text-ink/45">
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
                 {benchmark.my_rank
-                  ? <>You rank <strong className="font-semibold text-ink">#{benchmark.my_rank} of {(benchmark.market ?? []).length}</strong> — real connected businesses, same {benchmark.cohort.scope === "network" ? "network" : "market"}.</>
+                  ? <>You rank <strong className="font-semibold text-[var(--ui-ink)]">#{benchmark.my_rank} of {(benchmark.market ?? []).length}</strong> — real connected businesses, same {benchmark.cohort.scope === "network" ? "network" : "market"}.</>
                   : <>Real connected businesses in your market — connect a branch to enter the ranking.</>}
               </p>
               <ol className="mt-3 space-y-1.5">
                 {(benchmark.market ?? []).map((e) => (
                   <li
                     key={`${e.is_you ? "you" : "them"}-${e.channel_id ?? e.listing_id ?? e.name}`}
-                    className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 ${e.is_you ? "border-deep-violet/30 bg-deep-violet/[0.05]" : "border-ink/[0.05] bg-white"}`}
+                    className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 ${e.is_you ? "border-[var(--ui-ink)] bg-[var(--ui-surface)]" : "border-[var(--ui-line)] bg-[var(--ui-surface)]"}`}
                   >
-                    <span className="w-6 shrink-0 text-center text-[13px] font-bold text-ink/60">
+                    <span className="w-6 shrink-0 text-center text-[13px] font-bold text-[var(--ui-ink-2)]">
                       {e.rank === 1 ? "🥇" : e.rank === 2 ? "🥈" : e.rank === 3 ? "🥉" : e.rank}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-semibold text-ink">
+                      <span className="block truncate text-[13px] font-semibold text-[var(--ui-ink)]">
                         {e.name}
                         {e.is_you && (
-                          <span className="ml-1.5 rounded-full bg-deep-violet px-1.5 py-px align-middle text-[9px] font-bold uppercase tracking-wide text-white">You</span>
+                          <span className="ml-1.5 rounded-full bg-[var(--ui-ink)] px-1.5 py-px align-middle text-[9px] font-bold uppercase tracking-wide text-[var(--ui-on-ink)]">You</span>
                         )}
                       </span>
-                      <span className="block text-[11px] text-ink/45">
+                      <span className="block text-[11px] text-[var(--ui-ink-2)]">
                         {e.avg_rating.toFixed(1)}★ · {e.reviews_total} reviews
                         {typeof e.response_rate === "number" ? ` · ${e.response_rate.toFixed(0)}% replies` : ""}
                       </span>
                     </span>
-                    <span className="shrink-0 text-[13px] font-bold text-ink">{e.reputation_score}</span>
+                    <span className="shrink-0 text-[13px] font-bold text-[var(--ui-ink)]">{e.reputation_score}</span>
                   </li>
                 ))}
               </ol>
               {typeof benchmark.cohort.median_rating === "number" && (
-                <p className="mt-3 text-[11px] text-ink/45">
-                  Market median: <strong className="font-semibold text-ink/60">{benchmark.cohort.median_rating.toFixed(1)}★</strong>
+                <p className="mt-3 text-[11px] text-[var(--ui-ink-2)]">
+                  Market median: <strong className="font-semibold text-[var(--ui-ink-2)]">{benchmark.cohort.median_rating.toFixed(1)}★</strong>
                   {" · "}{benchmark.cohort.median_reviews ?? 0} reviews
                   {typeof benchmark.cohort.top3_median_rating === "number" && <> · top-3 median {benchmark.cohort.top3_median_rating.toFixed(1)}★</>}
                 </p>
               )}
             </section>
           ) : (
-            <p className="px-1 text-center text-[10.5px] leading-relaxed text-ink/35">
+            <p className="px-1 text-center text-[10.5px] leading-relaxed text-[var(--ui-ink-2)]">
               {benchmark?.benchmark_text}
             </p>
           )}

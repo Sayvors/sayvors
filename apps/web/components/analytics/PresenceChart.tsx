@@ -12,6 +12,10 @@ import type { TimeseriesPoint } from "@/lib/api-analytics";
  *
  * Only daily metrics appear here. Window-level numbers (posts published,
  * avg posting/response time) have no per-day series and stay as tiles below.
+ *
+ * Theme: the Team page's flat system — series are an ink ramp, never hue.
+ * Colour strings go through style props, never SVG presentation attributes,
+ * because var() does not resolve there. Needs the .team-ui ancestor.
  */
 
 type MetricKey =
@@ -63,24 +67,25 @@ const METRICS: MetricDef[] = [
   {
     key: "impressions",
     label: "Impressions",
-    color: "#5b2d8e",
+    color: "var(--ui-ink)",
     group: "discovery",
     value: (p) => (p.impressions_maps || 0) + (p.impressions_search || 0),
   },
-  { key: "impressions_search", label: "Search views", color: "#0ea5e9", group: "discovery", value: (p) => p.impressions_search || 0 },
-  { key: "impressions_maps", label: "Map views", color: "#8b5cf6", group: "discovery", value: (p) => p.impressions_maps || 0 },
-  { key: "website_clicks", label: "Website", color: "#10b981", group: "actions", value: (p) => p.website_clicks || 0 },
-  { key: "direction_requests", label: "Directions", color: "#f59e0b", group: "actions", value: (p) => p.direction_requests || 0 },
-  { key: "call_clicks", label: "Calls", color: "#ff4f6e", group: "actions", value: (p) => p.call_clicks || 0 },
-  { key: "messages", label: "Messages", color: "#d946a8", group: "actions", value: (p) => p.messages || 0 },
-  { key: "bookings", label: "Bookings", color: "#0f766e", group: "actions", value: (p) => p.bookings || 0 },
-  { key: "reviews_count", label: "Reviews", color: "#d97706", group: "actions", value: (p) => p.reviews_count || 0 },
-  { key: "replies_count", label: "Replies", color: "#6366f1", group: "actions", value: (p) => p.replies_count || 0 },
+  { key: "impressions_search", label: "Search views", color: "var(--ui-ink)", group: "discovery", value: (p) => p.impressions_search || 0 },
+  { key: "impressions_maps", label: "Map views", color: "var(--ui-ink)", group: "discovery", value: (p) => p.impressions_maps || 0 },
+  { key: "website_clicks", label: "Website", color: "var(--ui-ink)", group: "actions", value: (p) => p.website_clicks || 0 },
+  { key: "direction_requests", label: "Directions", color: "var(--ui-ink)", group: "actions", value: (p) => p.direction_requests || 0 },
+  { key: "call_clicks", label: "Calls", color: "var(--ui-ink)", group: "actions", value: (p) => p.call_clicks || 0 },
+  { key: "messages", label: "Messages", color: "var(--ui-ink)", group: "actions", value: (p) => p.messages || 0 },
+  { key: "bookings", label: "Bookings", color: "var(--ui-ink)", group: "actions", value: (p) => p.bookings || 0 },
+  { key: "reviews_count", label: "Reviews", color: "var(--ui-ink)", group: "actions", value: (p) => p.reviews_count || 0 },
+  { key: "replies_count", label: "Replies", color: "var(--ui-ink)", group: "actions", value: (p) => p.replies_count || 0 },
 ];
 
-// Branch comparison needs a few distinguishable hues; cycled when a tenant
-// has more locations than colours.
-const BRANCH_COLORS = ["#5b2d8e", "#0ea5e9", "#10b981", "#f59e0b", "#ff4f6e", "#8b5cf6", "#0f766e", "#d946a8"];
+// One metric shows at a time, so every series is the primary ink. Branch
+// comparison rides a weight ramp instead of hues; cycled when a tenant has
+// more locations than steps.
+const BRANCH_COLORS = ["var(--ui-ink)", "var(--ui-ink-2)", "var(--ui-line-strong)"];
 
 const CHART_H = 190;
 const PAD = { top: 10, right: 6, bottom: 22, left: 32 };
@@ -225,10 +230,10 @@ export default function PresenceChart({
 
   if (loading) {
     return (
-      <section aria-label={group === "discovery" ? labels.discovery : labels.actions} className="rounded-2xl border-2 border-white bg-white/80 p-3.5 backdrop-blur-sm sm:p-4">
-        <div className="h-3.5 w-28 animate-pulse rounded bg-ink/[0.07]" />
-        <div className="mt-3 h-9 animate-pulse rounded-lg bg-ink/[0.04]" />
-        <div className="mt-2 h-40 animate-pulse rounded-lg bg-ink/[0.04]" />
+      <section aria-label={group === "discovery" ? labels.discovery : labels.actions} className="ui-card p-3.5 sm:p-4">
+        <div className="h-3.5 w-28 animate-pulse rounded bg-[var(--ui-sunken)]" />
+        <div className="mt-3 h-9 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
+        <div className="mt-2 h-40 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
       </section>
     );
   }
@@ -236,14 +241,14 @@ export default function PresenceChart({
   return (
     <section
       aria-label={group === "discovery" ? labels.discovery : labels.actions}
-      className="rounded-2xl border-2 border-white bg-white/80 p-3.5 backdrop-blur-sm sm:p-4"
+      className="ui-card p-3.5 sm:p-4"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-[13px] font-bold text-ink">
+        <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">
           {group === "discovery" ? labels.discovery : labels.actions}
         </h3>
         {branchSeries.length > 1 && (
-          <div className="flex rounded-lg bg-ink/[0.03] p-0.5 dark:bg-fog/[0.06]" role="group" aria-label={scopeLabel}>
+          <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={scopeLabel}>
             {[
               { key: false, label: labels.scopeTotal },
               { key: true, label: labels.scopeByBranch },
@@ -252,8 +257,8 @@ export default function PresenceChart({
                 key={String(s.key)}
                 onClick={() => setByBranch(s.key)}
                 aria-pressed={byBranch === s.key}
-                className={`rounded-md px-2 py-0.5 text-[10px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
-                  byBranch === s.key ? "bg-white text-deep-violet shadow-sm dark:bg-ink" : "text-ink/45 hover:text-ink/70 dark:text-fog/45"
+                className={`rounded-[2px] px-2 py-0.5 text-[10px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                  byBranch === s.key ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
                 }`}
               >
                 {s.label}
@@ -273,10 +278,10 @@ export default function PresenceChart({
               key={m.key}
               onClick={() => setMetricKey(m.key)}
               aria-pressed={activeKey === m.key}
-              className={`shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-[10px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
+              className={`shrink-0 whitespace-nowrap rounded-[2px] px-2 py-1 text-[10px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                 activeKey === m.key
-                  ? "bg-deep-violet text-white shadow-sm"
-                  : "bg-ink/[0.04] text-ink/55 hover:bg-ink/[0.07] dark:bg-fog/[0.08] dark:text-fog/55"
+                  ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+                  : "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
               }`}
             >
               {localized || m.label}
@@ -287,16 +292,16 @@ export default function PresenceChart({
 
       {/* Headline numbers for the selected metric */}
       <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-        <p className="text-[20px] font-bold leading-none text-ink sm:text-[22px]">
+        <p className="text-[20px] font-bold leading-none text-[var(--ui-ink)] sm:text-[22px]">
           {fmtNum(totals.sum, locale)}
         </p>
-        <p className="text-[10px] text-ink/45">
+        <p className="text-[10px] text-[var(--ui-ink-2)]">
           {byBranch ? labels.perBranchDay : labels.totalLabel} ·{" "}
-          <span className="font-semibold text-ink/70">{fmtNum(totals.avg, locale)}</span> {labels.dailyAvg}
+          <span className="font-semibold text-[var(--ui-ink)]">{fmtNum(totals.avg, locale)}</span> {labels.dailyAvg}
           {totals.best.value > 0 && totals.best.date && (
             <>
               {" · "}
-              {labels.peak} <span className="font-semibold text-ink/70">{fmtNum(totals.best.value, locale)}</span>{" "}
+              {labels.peak} <span className="font-semibold text-[var(--ui-ink)]">{fmtNum(totals.best.value, locale)}</span>{" "}
               {labels.on} {fmtDay(totals.best.date, locale)}
             </>
           )}
@@ -305,11 +310,11 @@ export default function PresenceChart({
 
       {/* Chart */}
       {!hasData ? (
-        <div className="mt-3 flex h-32 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-ink/10 px-3 text-center dark:border-fog/10">
-          <p className="text-[11px] font-semibold text-ink/60">
+        <div className="mt-3 flex h-32 flex-col items-center justify-center gap-1 rounded-[2px] border border-dashed border-[var(--ui-line)] px-3 text-center">
+          <p className="text-[11px] font-semibold text-[var(--ui-ink-2)]">
             {labels.noMetricYet.replace("{metric}", metricLabel.toLowerCase())}
           </p>
-          <p className="max-w-[15rem] text-[10px] leading-snug text-ink/40">{labels.noMetricHint}</p>
+          <p className="max-w-[15rem] text-[10px] leading-snug text-[var(--ui-ink-2)]">{labels.noMetricHint}</p>
         </div>
       ) : (
         <div className="relative mt-2">
@@ -340,26 +345,17 @@ export default function PresenceChart({
             }}
             onTouchEnd={() => setHover(null)}
           >
-            <defs>
-              {series.map((s) => (
-                <linearGradient key={`g-${s.label}`} id={`pg-${s.label.replace(/\W/g, "")}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={s.color} stopOpacity={byBranch ? 0.12 : 0.26} />
-                  <stop offset="100%" stopColor={s.color} stopOpacity="0.02" />
-                </linearGradient>
-              ))}
-            </defs>
-
             {/* Horizontal gridlines + y labels */}
             {[0, 0.25, 0.5, 0.75, 1].map((f) => {
               const y = PAD.top + plotH - f * plotH;
               const val = maxValue * f;
               return (
                 <g key={f}>
-                  <line x1="0" x2={innerW} y1={y} y2={y} stroke="#1a1230" strokeOpacity="0.06" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  <line x1="0" x2={innerW} y1={y} y2={y} className="stroke-[var(--ui-line)]" strokeWidth="1" vectorEffect="non-scaling-stroke" />
                   <text
                     x="0"
                     y={y - 2}
-                    className="fill-ink/35 text-[7px]"
+                    className="fill-[var(--ui-ink-2)] text-[7px]"
                     style={{ fontSize: 7 }}
                     textAnchor="start"
                     transform={`translate(-2, 0)`}
@@ -374,14 +370,13 @@ export default function PresenceChart({
             {series.map((s) => {
               const d = linePath(s.values);
               const area = `${d} L${innerW} ${PAD.top + plotH} L0 ${PAD.top + plotH} Z`;
-              const gid = `pg-${s.label.replace(/\W/g, "")}`;
               return (
                 <g key={s.label}>
-                  {!byBranch && <path d={area} fill={`url(#${gid})`} />}
+                  {!byBranch && <path d={area} style={{ fill: s.color }} fillOpacity="0.08" />}
                   <path
                     d={d}
                     fill="none"
-                    stroke={s.color}
+                    style={{ stroke: s.color }}
                     strokeWidth={byBranch ? 1.75 : 2}
                     strokeLinejoin="round"
                     strokeLinecap="round"
@@ -399,8 +394,7 @@ export default function PresenceChart({
                   x2={xPct(hover)}
                   y1={PAD.top}
                   y2={PAD.top + plotH}
-                  stroke="#5b2d8e"
-                  strokeOpacity="0.3"
+                  className="stroke-[var(--ui-line-strong)]"
                   strokeWidth="1"
                   vectorEffect="non-scaling-stroke"
                 />
@@ -413,8 +407,8 @@ export default function PresenceChart({
                       cx={xPct(hover)}
                       cy={yPx(v)}
                       r="2.5"
-                      fill={s.color}
-                      stroke="#fff"
+                      style={{ fill: s.color }}
+                      className="stroke-[var(--ui-surface)]"
                       strokeWidth="1.5"
                       vectorEffect="non-scaling-stroke"
                     />
@@ -425,7 +419,7 @@ export default function PresenceChart({
           </svg>
 
           {/* X labels (CSS so they don't stretch with preserveAspectRatio) */}
-          <div className="mt-0.5 flex justify-between text-[8px] text-ink/35">
+          <div className="mt-0.5 flex justify-between text-[8px] text-[var(--ui-ink-2)]">
             <span>{dates[0] ? fmtDay(dates[0], locale) : ""}</span>
             {dates.length > 2 && <span>{fmtDay(dates[Math.floor(dates.length / 2)], locale)}</span>}
             <span>{dates[dates.length - 1] ? fmtDay(dates[dates.length - 1], locale) : ""}</span>
@@ -434,20 +428,20 @@ export default function PresenceChart({
           {/* Tooltip */}
           {hover !== null && dates[hover] && (
             <div
-              className="pointer-events-none absolute top-0.5 z-10 rounded-lg border border-deep-violet/10 bg-white/95 px-2 py-1 shadow-lg backdrop-blur-sm"
+              className="pointer-events-none absolute top-0.5 z-10 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-1"
               style={{
                 left: `min(max(${xPct(hover)}%, 62px), calc(100% - 62px))`,
                 transform: "translateX(-50%)",
               }}
             >
-              <p className="text-[10px] font-semibold text-ink/70">{fmtDay(dates[hover], locale)}</p>
+              <p className="text-[10px] font-semibold text-[var(--ui-ink)]">{fmtDay(dates[hover], locale)}</p>
               {series.map((s) => {
                 const v = s.values[hover]?.value ?? 0;
                 return (
-                  <p key={s.label} className="flex items-center gap-1.5 text-[10px] text-ink/55">
+                  <p key={s.label} className="flex items-center gap-1.5 text-[10px] text-[var(--ui-ink-2)]">
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: s.color }} aria-hidden />
                     {showLegend ? `${s.label}: ` : ""}
-                    <span className="font-semibold text-ink">{fmtNum(v, locale)}</span>
+                    <span className="font-semibold text-[var(--ui-ink)]">{fmtNum(v, locale)}</span>
                   </p>
                 );
               })}
@@ -459,7 +453,7 @@ export default function PresenceChart({
       {showLegend && (
         <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5">
           {branchSeries.map((s) => (
-            <li key={s.label} className="flex items-center gap-1.5 text-[10px] text-ink/55">
+            <li key={s.label} className="flex items-center gap-1.5 text-[10px] text-[var(--ui-ink-2)]">
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.color }} aria-hidden />
               {s.label}
             </li>

@@ -53,10 +53,10 @@ function presencePerf(prof: {
 }
 
 const TYPE_STYLES: Record<string, { bg: string; label: string }> = {
-  operations: { bg: "bg-coral/10 text-coral", label: "Operations" },
-  reputation: { bg: "bg-deep-violet/[0.07] text-deep-violet", label: "Reputation" },
-  marketing: { bg: "bg-magenta/[0.08] text-magenta", label: "Marketing" },
-  profile: { bg: "bg-sky/10 text-sky", label: "Profile" },
+  operations: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", label: "Operations" },
+  reputation: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", label: "Reputation" },
+  marketing: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", label: "Marketing" },
+  profile: { bg: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]", label: "Profile" },
 };
 
 const ACTION_ICONS: Record<string, React.ReactNode> = {
@@ -84,6 +84,97 @@ const ACTION_ICONS: Record<string, React.ReactNode> = {
     </svg>
   ),
 };
+
+function TrendArrow({ value }: { value: number | null }) {
+  if (value === null || value === undefined) return <span className="text-[11px] text-[var(--ui-ink-2)]">—</span>;
+  const up = value > 0;
+  const flat = value === 0;
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums ${up ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]" : flat ? "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]" : "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"}`}>
+      {!flat && (
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" className={`h-2 w-2 ${up ? "" : "rotate-180"}`} aria-hidden>
+          <path d="M6 10V2M2.5 5.5L6 2l3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+      {up ? "+" : ""}{value}%
+    </span>
+  );
+}
+
+type TrendMetricKey = "impressions" | "website" | "calls" | "directions";
+
+function trendValue(p: TimeseriesPoint, metric: TrendMetricKey): number {
+  if (metric === "website") return p.website_clicks;
+  if (metric === "calls") return p.call_clicks;
+  if (metric === "directions") return p.direction_requests;
+  return p.impressions_maps;
+}
+
+function rollupMonthly(points: TimeseriesPoint[], metric: TrendMetricKey): { label: string; value: number }[] {
+  const byMonth = new Map<string, number>();
+  for (const p of points) {
+    const key = p.date.slice(0, 7);
+    byMonth.set(key, (byMonth.get(key) ?? 0) + trendValue(p, metric));
+  }
+  return [...byMonth.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([key, value]) => {
+      const [y, m] = key.split("-").map(Number);
+      const label = new Date(y, m - 1, 1).toLocaleDateString("en", { month: "short" });
+      return { label, value };
+    });
+}
+
+function TrendChart({ points, metric, granularity }: {
+  points: TimeseriesPoint[];
+  metric: TrendMetricKey;
+  granularity: "day" | "month";
+}) {
+  const buckets = granularity === "month"
+    ? rollupMonthly(points, metric)
+    : points.map((p) => ({
+        label: new Date(`${p.date}T00:00:00`).toLocaleDateString("en", { day: "numeric", month: "short" }),
+        value: trendValue(p, metric),
+      }));
+  const max = Math.max(1, ...buckets.map((b) => b.value));
+  const W = 600;
+  const H = 150;
+  const PAD = 12;
+  if (buckets.length === 0) {
+    return <div className="flex h-36 items-center justify-center text-[12px] text-[var(--ui-ink-2)]">No activity in this period yet</div>;
+  }
+  const step = buckets.length > 1 ? (W - PAD * 2) / (buckets.length - 1) : 0;
+  const path = buckets
+    .map((b, i) => `${i === 0 ? "M" : "L"}${(PAD + i * step).toFixed(1)},${(H - PAD - (b.value / max) * (H - PAD * 2)).toFixed(1)}`)
+    .join(" ");
+  const ticks = buckets.filter((_, i) => i % Math.max(1, Math.ceil(buckets.length / 6)) === 0);
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-36 w-full" role="img" aria-label={`${metric} trend`}>
+        {[0.25, 0.5, 0.75].map((f) => (
+          <line key={f} x1={PAD} x2={W - PAD} y1={H * f} y2={H * f} className="stroke-[var(--ui-line)]" />
+        ))}
+        <path d={path} fill="none" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" className="stroke-[var(--ui-ink)]" />
+        {buckets.map((b, i) => (
+          <circle
+            key={i}
+            cx={PAD + i * step}
+            cy={H - PAD - (b.value / max) * (H - PAD * 2)}
+            r="3"
+            className="fill-[var(--ui-ink)]"
+          >
+            <title>{`${b.label}: ${b.value.toLocaleString("en")}`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div className="mt-1 flex justify-between text-[10px] tabular-nums text-[var(--ui-ink-2)]">
+        {ticks.map((t, i) => (
+          <span key={i}>{t.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function GrowthPage() {
   const [days, setDays] = useState<number>(30);
@@ -137,97 +228,6 @@ export default function GrowthPage() {
     };
   }, [days, channelId, refreshToken]);
 
-function TrendArrow({ value }: { value: number | null }) {
-  if (value === null || value === undefined) return <span className="text-[11px] text-ink/30">—</span>;
-  const up = value > 0;
-  const flat = value === 0;
-  return (
-    <span className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums ${up ? "bg-emerald/10 text-emerald" : flat ? "bg-ink/[0.05] text-ink/50" : "bg-coral/10 text-coral"}`}>
-      {!flat && (
-        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" className={`h-2 w-2 ${up ? "" : "rotate-180"}`} aria-hidden>
-          <path d="M6 10V2M2.5 5.5L6 2l3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      )}
-      {up ? "+" : ""}{value}%
-    </span>
-  );
-}
-
-type TrendMetricKey = "impressions" | "website" | "calls" | "directions";
-
-function trendValue(p: TimeseriesPoint, metric: TrendMetricKey): number {
-  if (metric === "website") return p.website_clicks;
-  if (metric === "calls") return p.call_clicks;
-  if (metric === "directions") return p.direction_requests;
-  return p.impressions_maps;
-}
-
-function rollupMonthly(points: TimeseriesPoint[], metric: TrendMetricKey): { label: string; value: number }[] {
-  const byMonth = new Map<string, number>();
-  for (const p of points) {
-    const key = p.date.slice(0, 7);
-    byMonth.set(key, (byMonth.get(key) ?? 0) + trendValue(p, metric));
-  }
-  return [...byMonth.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([key, value]) => {
-      const [y, m] = key.split("-").map(Number);
-      const label = new Date(y, m - 1, 1).toLocaleDateString("en", { month: "short" });
-      return { label, value };
-    });
-}
-
-function TrendChart({ points, metric, granularity }: {
-  points: TimeseriesPoint[];
-  metric: TrendMetricKey;
-  granularity: "day" | "month";
-}) {
-  const buckets = granularity === "month"
-    ? rollupMonthly(points, metric)
-    : points.map((p) => ({
-        label: new Date(`${p.date}T00:00:00`).toLocaleDateString("en", { day: "numeric", month: "short" }),
-        value: trendValue(p, metric),
-      }));
-  const max = Math.max(1, ...buckets.map((b) => b.value));
-  const W = 600;
-  const H = 150;
-  const PAD = 12;
-  if (buckets.length === 0) {
-    return <div className="flex h-36 items-center justify-center text-[12px] text-ink/35">No activity in this period yet</div>;
-  }
-  const step = buckets.length > 1 ? (W - PAD * 2) / (buckets.length - 1) : 0;
-  const path = buckets
-    .map((b, i) => `${i === 0 ? "M" : "L"}${(PAD + i * step).toFixed(1)},${(H - PAD - (b.value / max) * (H - PAD * 2)).toFixed(1)}`)
-    .join(" ");
-  const ticks = buckets.filter((_, i) => i % Math.max(1, Math.ceil(buckets.length / 6)) === 0);
-  return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-36 w-full" role="img" aria-label={`${metric} trend`}>
-        {[0.25, 0.5, 0.75].map((f) => (
-          <line key={f} x1={PAD} x2={W - PAD} y1={H * f} y2={H * f} stroke="currentColor" strokeOpacity="0.08" />
-        ))}
-        <path d={path} fill="none" stroke="#5b2d8e" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-        {buckets.map((b, i) => (
-          <circle
-            key={i}
-            cx={PAD + i * step}
-            cy={H - PAD - (b.value / max) * (H - PAD * 2)}
-            r="3"
-            fill="#5b2d8e"
-          >
-            <title>{`${b.label}: ${b.value.toLocaleString("en")}`}</title>
-          </circle>
-        ))}
-      </svg>
-      <div className="mt-1 flex justify-between text-[10px] tabular-nums text-ink/40">
-        {ticks.map((t, i) => (
-          <span key={i}>{t.label}</span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
   const fmt = (n: number) => new Intl.NumberFormat("en").format(n);
   const nativePerf = !!visibility && visibility.impressions_maps > 0;
   // Localith snapshot fills the cards when the native daily sync has no rows yet.
@@ -256,11 +256,11 @@ function TrendChart({ points, metric, granularity }: {
   const showEmpty = !showMain && !hasOpps && !loading;
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f3f0ff] p-4 sm:p-6">
+    <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">Growth</h1>
-          <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">
+          <h1 className="text-[20px] font-bold text-[var(--ui-ink)] sm:text-[22px]">Growth</h1>
+          <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)] sm:text-[13px]">
             Google visibility, customer acquisition and where to grow next.
           </p>
         </div>
@@ -280,37 +280,37 @@ function TrendChart({ points, metric, granularity }: {
       </div>
 
       {error && !loading ? (
-        <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
-          <p className="text-[13px] font-semibold text-ink/60">Couldn&apos;t load growth data.</p>
+        <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
+          <p className="text-[13px] font-semibold text-[var(--ui-ink-2)]">Couldn&apos;t load growth data.</p>
           <button
             onClick={() => {
               setError(false);
               setLoading(true);
               setRefreshToken((t) => t + 1);
             }}
-            className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90"
+            className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
             Retry
           </button>
         </div>
       ) : showEmpty ? (
-        <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
-          <p className="text-[14px] font-bold text-ink">No performance data yet</p>
-          <p className="max-w-sm text-[12px] text-ink/50">
+        <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
+          <p className="text-[14px] font-bold text-[var(--ui-ink)]">No performance data yet</p>
+          <p className="max-w-sm text-[12px] text-[var(--ui-ink-2)]">
             Google performance metrics sync automatically for connected channels — check back after the next sync.
           </p>
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-8">
           {/* KPI row */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-5 sm:gap-6 lg:grid-cols-4">
             <StatCard
               loading={loading}
               label="Maps impressions"
               value={fmt(impressions)}
               sub={usePresence ? `people who saw you${viaNote}` : "people who saw you"}
               delta={nativePerf ? visibility?.impressions_trend_pct : undefined}
-              accent="bg-sky/10 text-sky"
+              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.impressions}
             />
             <StatCard
@@ -319,7 +319,7 @@ function TrendChart({ points, metric, granularity }: {
               value={fmt(website)}
               sub={usePresence ? `last ${days} days${viaNote}` : undefined}
               delta={nativePerf ? acquisition?.website_clicks.trend_pct : undefined}
-              accent="bg-deep-violet/10 text-deep-violet"
+              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.website}
             />
             <StatCard
@@ -328,7 +328,7 @@ function TrendChart({ points, metric, granularity }: {
               value={fmt(calls)}
               sub={usePresence ? `last ${days} days${viaNote}` : undefined}
               delta={nativePerf ? acquisition?.call_clicks.trend_pct : undefined}
-              accent="bg-emerald/10 text-emerald"
+              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.calls}
             />
             <StatCard
@@ -337,31 +337,31 @@ function TrendChart({ points, metric, granularity }: {
               value={fmt(directions)}
               sub={usePresence ? `last ${days} days${viaNote}` : undefined}
               delta={nativePerf ? acquisition?.direction_requests.trend_pct : undefined}
-              accent="bg-amber/10 text-amber-600"
+              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
               icon={ACTION_ICONS.directions}
             />
           </div>
 
           {/* CTR panel */}
           {showMain && (
-          <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-              <h3 className="text-[14px] font-bold text-ink">Conversion</h3>
-              <p className="mt-3 text-[32px] font-bold text-ink">
+          <div className="ui-card p-5">
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">Conversion</h3>
+              <p className="mt-3 text-[32px] font-bold text-[var(--ui-ink)]">
                 {ctr !== null ? `${ctr}%` : "—"}
               </p>
-              <p className="text-[11px] text-ink/45">of impressions became a click, call or direction request{usePresence ? " · via Localith" : ""}</p>
-              <div className="mt-4 space-y-2 border-t border-deep-violet/[0.06] pt-4 text-[12px] text-ink/60">
+              <p className="text-[11px] text-[var(--ui-ink-2)]">of impressions became a click, call or direction request{usePresence ? " · via Localith" : ""}</p>
+              <div className="mt-4 space-y-2 border-t border-[var(--ui-line)] pt-4 text-[12px] text-[var(--ui-ink-2)]">
                 <p className="flex justify-between">
                   <span>Customer actions</span>
-                  <span className="font-semibold text-ink">{fmt(actions)}</span>
+                  <span className="font-semibold text-[var(--ui-ink)]">{fmt(actions)}</span>
                 </p>
                 <p className="flex justify-between">
                   <span>Total reviews</span>
-                  <span className="font-semibold text-ink">{fmt(overview?.total_reviews ?? 0)}</span>
+                  <span className="font-semibold text-[var(--ui-ink)]">{fmt(overview?.total_reviews ?? 0)}</span>
                 </p>
                 <p className="flex justify-between">
                   <span>Response rate</span>
-                  <span className="font-semibold text-ink">{overview ? `${Math.round(overview.response_rate)}%` : "—"}</span>
+                  <span className="font-semibold text-[var(--ui-ink)]">{overview ? `${Math.round(overview.response_rate)}%` : "—"}</span>
                 </p>
               </div>
           </div>
@@ -370,14 +370,14 @@ function TrendChart({ points, metric, granularity }: {
           {/* Trends — daily / monthly, fed by location_daily_metrics
               (native OAuth + Localith daily ingest alike) */}
           {showMain && (
-          <section aria-label="Trends" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+          <section aria-label="Trends" className="ui-card p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h3 className="text-[14px] font-bold text-ink">Trends</h3>
-                <p className="text-[11px] text-ink/45">Which lever is moving — views, clicks, calls or visits.</p>
+                <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">Trends</h3>
+                <p className="text-[11px] text-[var(--ui-ink-2)]">Which lever is moving — views, clicks, calls or visits.</p>
               </div>
               <div className="flex gap-2">
-                <div className="flex rounded-lg bg-deep-violet/[0.06] p-0.5" role="group" aria-label="Trend metric">
+                <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Trend metric">
                   {([
                     { key: "impressions", label: "Views" },
                     { key: "website", label: "Clicks" },
@@ -388,22 +388,22 @@ function TrendChart({ points, metric, granularity }: {
                       key={m.key}
                       onClick={() => setTrendMetric(m.key)}
                       aria-pressed={trendMetric === m.key}
-                      className={`rounded-md px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
-                        trendMetric === m.key ? "bg-white text-deep-violet shadow-sm" : "text-ink/45 hover:text-ink/70"
+                      className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                        trendMetric === m.key ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
                       }`}
                     >
                       {m.label}
                     </button>
                   ))}
                 </div>
-                <div className="flex rounded-lg bg-deep-violet/[0.06] p-0.5" role="group" aria-label="Granularity">
+                <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Granularity">
                   {(["day", "month"] as const).map((g) => (
                     <button
                       key={g}
                       onClick={() => setGranularity(g)}
                       aria-pressed={granularity === g}
-                      className={`rounded-md px-2.5 py-1 text-[11px] font-semibold capitalize outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
-                        granularity === g ? "bg-white text-deep-violet shadow-sm" : "text-ink/45 hover:text-ink/70"
+                      className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold capitalize transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                        granularity === g ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
                       }`}
                     >
                       {g === "day" ? "Daily" : "Monthly"}
@@ -413,7 +413,7 @@ function TrendChart({ points, metric, granularity }: {
               </div>
             </div>
             {loading ? (
-              <div className="h-40 animate-pulse rounded-lg bg-ink/[0.06]" aria-hidden />
+              <div className="h-40 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" aria-hidden />
             ) : (
               <TrendChart points={points} metric={trendMetric} granularity={granularity} />
             )}
@@ -421,29 +421,29 @@ function TrendChart({ points, metric, granularity }: {
           )}
 
           {/* Search keywords — native Google only; honest empty state otherwise */}
-          <section aria-label="Search keywords" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-            <h3 className="text-[14px] font-bold text-ink">Search keywords</h3>
-            <p className="text-[11px] text-ink/45">What people searched when they found you — reuse these words in posts and replies.</p>
+          <section aria-label="Search keywords" className="ui-card p-5">
+            <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">Search keywords</h3>
+            <p className="text-[11px] text-[var(--ui-ink-2)]">What people searched when they found you — reuse these words in posts and replies.</p>
             {loading || !keywords ? (
               <div className="mt-3 space-y-2" aria-hidden>
                 {[0, 1, 2].map((i) => (
-                  <div key={i} className="h-9 animate-pulse rounded-lg bg-ink/[0.06]" />
+                  <div key={i} className="h-9 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
                 ))}
               </div>
             ) : !keywords.available ? (
-              <p className="mt-3 rounded-lg bg-ink/[0.03] px-3 py-3 text-[12px] text-ink/50">
+              <p className="mt-3 rounded-[2px] bg-[var(--ui-sunken)] px-3 py-3 text-[12px] text-[var(--ui-ink-2)]">
                 Keyword data needs the native Google connection — it arrives automatically once your Google approval lands. No estimates shown meanwhile.
               </p>
             ) : keywords.keywords.length === 0 ? (
-              <p className="mt-3 rounded-lg bg-ink/[0.03] px-3 py-3 text-[12px] text-ink/50">
+              <p className="mt-3 rounded-[2px] bg-[var(--ui-sunken)] px-3 py-3 text-[12px] text-[var(--ui-ink-2)]">
                 No keyword data yet — the next performance sync will populate this table.
               </p>
             ) : (
-              <ol className="mt-3 divide-y divide-ink/[0.05]">
+              <ol className="mt-3 divide-y divide-[var(--ui-line)]">
                 {keywords.keywords.slice(0, 10).map((k) => (
                   <li key={k.keyword} className="flex items-center gap-3 py-2">
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{k.keyword}</span>
-                    <span className="shrink-0 text-[12px] tabular-nums text-ink/60">{fmt(k.impressions)} views</span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--ui-ink)]">{k.keyword}</span>
+                    <span className="shrink-0 text-[12px] tabular-nums text-[var(--ui-ink-2)]">{fmt(k.impressions)} views</span>
                     <TrendArrow value={k.trend_pct} />
                   </li>
                 ))}
@@ -452,31 +452,31 @@ function TrendChart({ points, metric, granularity }: {
           </section>
 
           {/* Opportunities — independent of performance data */}
-          <section aria-label="Growth opportunities" className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-            <h3 className="mb-4 text-[14px] font-bold text-ink">AI growth opportunities</h3>
+          <section aria-label="Growth opportunities" className="ui-card p-5">
+            <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">AI growth opportunities</h3>
             {loading || !opportunities ? (
               <div className="space-y-2" aria-hidden>
                 {[0, 1, 2].map((i) => (
-                  <div key={i} className="h-10 animate-pulse rounded-lg bg-ink/[0.06]" />
+                  <div key={i} className="h-10 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" />
                 ))}
               </div>
             ) : opportunities.opportunities.length === 0 ? (
-              <p className="py-4 text-center text-[12px] text-ink/35">No opportunities right now — you&apos;re on top of it.</p>
+              <p className="py-4 text-center text-[12px] text-[var(--ui-ink-2)]">No opportunities right now — you&apos;re on top of it.</p>
             ) : (
               <ol className="space-y-2.5">
                 {opportunities.opportunities.map((o) => {
                   const style = TYPE_STYLES[o.type] ?? TYPE_STYLES.reputation;
                   return (
-                    <li key={o.priority} className="flex items-start gap-3 rounded-xl p-3 transition hover:bg-ink/[0.02]">
-                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-deep-violet to-magenta text-[11px] font-bold text-white">
+                    <li key={o.priority} className="flex items-start gap-3 rounded-xl p-3 transition hover:bg-[var(--ui-sunken)]">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--ui-ink)] text-[11px] font-bold text-[var(--ui-on-ink)]">
                         {o.priority}
                       </span>
                       <div className="min-w-0">
-                        <p className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-ink">
+                        <p className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[var(--ui-ink)]">
                           {o.title}
                           <span className={`rounded px-1.5 py-px text-[9px] font-bold uppercase ${style.bg}`}>{style.label}</span>
                         </p>
-                        <p className="mt-0.5 text-[11px] leading-relaxed text-ink/50">{o.detail}</p>
+                        <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--ui-ink-2)]">{o.detail}</p>
                       </div>
                     </li>
                   );

@@ -72,17 +72,21 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
     google: chartLabels.google,
   };
 
+  // Monochrome ink ramp (needs the .team-ui ancestor for the --ui-* vars):
+  // primary series = ink, secondary = ink-2, tertiary = line-strong. The
+  // colour strings live in style props, never SVG presentation attributes,
+  // because var() does not resolve there.
   const series = useMemo(() => {
     if (metric === "reviews") {
-      return [{ key: "reviews_count", label: chartLabels.reviews, color: "#5b2d8e", values: points.map((p) => p.reviews_count) }];
+      return [{ key: "reviews_count", label: chartLabels.reviews, color: "var(--ui-ink)", values: points.map((p) => p.reviews_count) }];
     }
     if (metric === "google") {
-      return [{ key: "impressions", label: chartLabels.mapsImpressions, color: "#0ea5e9", values: points.map((p) => p.impressions_maps) }];
+      return [{ key: "impressions", label: chartLabels.mapsImpressions, color: "var(--ui-ink)", values: points.map((p) => p.impressions_maps) }];
     }
     return [
-      { key: "pos", label: chartLabels.positive, color: "#10b981", values: points.map((p) => p.positive_count) },
-      { key: "neu", label: chartLabels.neutral, color: "#8b7fb8", values: points.map((p) => p.neutral_count) },
-      { key: "neg", label: chartLabels.negative, color: "#ff4f6e", values: points.map((p) => p.negative_count) },
+      { key: "pos", label: chartLabels.positive, color: "var(--ui-ink)", values: points.map((p) => p.positive_count) },
+      { key: "neu", label: chartLabels.neutral, color: "var(--ui-ink-2)", values: points.map((p) => p.neutral_count) },
+      { key: "neg", label: chartLabels.negative, color: "var(--ui-line-strong)", values: points.map((p) => p.negative_count) },
     ];
   }, [chartLabels, metric, points]);
 
@@ -101,17 +105,17 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
       : null;
 
   return (
-    <div className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
+    <div className="ui-card p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-[14px] font-bold text-ink">{chartLabels.activityOverTime}</h3>
-        <div className="flex rounded-lg bg-deep-violet/[0.06] p-0.5" role="group" aria-label={chartLabels.metric}>
+        <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">{chartLabels.activityOverTime}</h3>
+        <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label={chartLabels.metric}>
           {METRICS.map((m) => (
             <button
               key={m.key}
               onClick={() => setMetric(m.key)}
               aria-pressed={metric === m.key}
-              className={`rounded-md px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
-                metric === m.key ? "bg-white text-deep-violet shadow-sm" : "text-ink/45 hover:text-ink/70"
+              className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                metric === m.key ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
               }`}
             >
               {metricLabels[m.key]}
@@ -121,7 +125,7 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
       </div>
 
       {!hasData ? (
-        <div className="flex h-40 items-center justify-center text-[12px] text-ink/35">
+        <div className="flex h-40 items-center justify-center text-[12px] text-[var(--ui-ink-2)]">
           {chartLabels.noActivity}
         </div>
       ) : (
@@ -129,7 +133,7 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
           {/* legend */}
           <div className="mb-2 flex flex-wrap gap-3">
             {series.map((s) => (
-              <span key={s.key} className="flex items-center gap-1.5 text-[11px] text-ink/50">
+              <span key={s.key} className="flex items-center gap-1.5 text-[11px] text-[var(--ui-ink-2)]">
                 <span className="h-2 w-2 rounded-full" style={{ background: s.color }} aria-hidden />
                 {s.label}
               </span>
@@ -149,23 +153,15 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
                 setHover(Math.min(points.length - 1, Math.max(0, Math.round(frac * (points.length - 1)))));
               }}
             >
-              <defs>
-                {series.map((s) => (
-                  <linearGradient key={s.key} id={`grad-${s.key}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={s.color} stopOpacity="0.28" />
-                    <stop offset="100%" stopColor={s.color} stopOpacity="0.02" />
-                  </linearGradient>
-                ))}
-              </defs>
               {[0.25, 0.5, 0.75].map((f) => (
-                <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} stroke="#1a1230" strokeOpacity="0.05" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} className="stroke-[var(--ui-line)]" strokeWidth="1" vectorEffect="non-scaling-stroke" />
               ))}
               {[...series].reverse().map((s) => {
                 const { line, area } = buildPath(s.values, max, W, H, PAD);
                 return (
                   <g key={s.key}>
-                    <path d={area} fill={`url(#grad-${s.key})`} />
-                    <path d={line} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                    <path d={area} style={{ fill: s.color }} fillOpacity="0.06" />
+                    <path d={line} fill="none" style={{ stroke: s.color }} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
                   </g>
                 );
               })}
@@ -175,8 +171,7 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
                   x2={(hover / (points.length - 1)) * W}
                   y1="0"
                   y2={H}
-                  stroke="#5b2d8e"
-                  strokeOpacity="0.35"
+                  className="stroke-[var(--ui-line-strong)]"
                   strokeWidth="1"
                   vectorEffect="non-scaling-stroke"
                 />
@@ -184,22 +179,22 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
             </svg>
 
             {/* max label */}
-            <span className="pointer-events-none absolute right-1 top-0 text-[9px] font-medium text-ink/30">{fmtNum(max, locale)}</span>
+            <span className="pointer-events-none absolute right-1 top-0 text-[9px] font-medium text-[var(--ui-ink-2)]">{fmtNum(max, locale)}</span>
 
             {/* tooltip */}
             {hoverInfo && (
               <div
-                className="pointer-events-none absolute top-1 z-10 rounded-lg border border-deep-violet/[0.1] bg-white/95 px-2.5 py-1.5 shadow-lg backdrop-blur-sm"
+                className="pointer-events-none absolute top-1 z-10 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1.5"
                 style={{
                   left: `min(max(${(hover! / Math.max(1, points.length - 1)) * 100}%, 60px), calc(100% - 60px))`,
                   transform: "translateX(-50%)",
                 }}
               >
-                <p className="text-[10px] font-semibold text-ink/70">{hoverInfo.date}</p>
+                <p className="text-[10px] font-semibold text-[var(--ui-ink)]">{hoverInfo.date}</p>
                 {hoverInfo.rows.map((r) => (
-                  <p key={r.label} className="flex items-center gap-1.5 text-[10px] text-ink/55">
+                  <p key={r.label} className="flex items-center gap-1.5 text-[10px] text-[var(--ui-ink-2)]">
                     <span className="h-1.5 w-1.5 rounded-full" style={{ background: r.color }} aria-hidden />
-                    {r.label}: <span className="font-semibold text-ink">{fmtNum(r.value, locale)}</span>
+                    {r.label}: <span className="font-semibold text-[var(--ui-ink)]">{fmtNum(r.value, locale)}</span>
                   </p>
                 ))}
               </div>
@@ -207,7 +202,7 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
           </div>
 
           {/* x labels */}
-          <div className="mt-1 flex justify-between text-[9px] text-ink/30">
+          <div className="mt-1 flex justify-between text-[9px] text-[var(--ui-ink-2)]">
             <span>{fmtDay(points[0].date, locale)}</span>
             {points.length > 2 && <span>{fmtDay(points[Math.floor(points.length / 2)].date, locale)}</span>}
             <span>{fmtDay(points[points.length - 1].date, locale)}</span>
@@ -222,7 +217,7 @@ export function MetricChart({ points, labels, locale = "en" }: { points: Timeser
 
 export function Sparkline({
   values,
-  color = "#5b2d8e",
+  color = "var(--ui-ink)",
   width = 96,
   height = 28,
 }: {
@@ -242,44 +237,46 @@ export function Sparkline({
     .join(" ");
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="shrink-0" width={width} height={height} aria-hidden>
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={width} cy={height - 2 - (Math.max(0, values[values.length - 1]) / max) * (height - 4)} r="2.5" fill={color} />
+      <polyline points={pts} fill="none" style={{ stroke: color }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={width} cy={height - 2 - (Math.max(0, values[values.length - 1]) / max) * (height - 4)} r="2.5" style={{ fill: color }} />
     </svg>
   );
 }
 
 /* ── Rating distribution ──────────────────────────────────────────── */
 
+// No hue: more stars = heavier ink, so the ramp reads by weight alone.
 const STAR_COLORS: Record<number, string> = {
-  5: "#10b981",
-  4: "#0ea5e9",
-  3: "#f59e0b",
-  2: "#ff8fa0",
-  1: "#ff4f6e",
+  5: "var(--ui-ink)",
+  4: "var(--ui-ink)",
+  3: "var(--ui-ink-2)",
+  2: "var(--ui-line-strong)",
+  1: "var(--ui-line-strong)",
 };
 
 export function RatingDistribution({ distribution, total, labels = { ariaLabel: "Rating distribution", reviewsTooltip: "{count} reviews ({percent}%)" } }: { distribution: Record<string, number>; total: number; labels?: { ariaLabel: string; reviewsTooltip: string } }) {
   const max = Math.max(1, ...Object.values(distribution));
   return (
-    <div className="space-y-2" aria-label={labels.ariaLabel}>
+    <div className="space-y-3" aria-label={labels.ariaLabel}>
       {[5, 4, 3, 2, 1].map((star) => {
         const count = distribution[String(star)] ?? 0;
         const pct = total ? Math.round((count / total) * 100) : 0;
         return (
-          <div key={star} className="flex items-center gap-2">
-            <span className="flex w-8 items-center gap-0.5 text-[11px] font-semibold text-ink/55">
+          <div key={star} className="flex items-center gap-3">
+            <span className="flex w-8 shrink-0 items-center justify-end gap-1 text-[12px] font-bold tabular-nums text-[var(--ui-ink)]">
               {star}
-              <svg viewBox="0 0 24 24" fill="currentColor" className="h-2.5 w-2.5 text-amber" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="currentColor" className="h-3 w-3 text-[var(--ui-ink-2)]" aria-hidden>
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
               </svg>
             </span>
-            <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-ink/[0.05]">
+            {/* Bar length scales to the biggest star so the graph fills the card */}
+            <div className="h-4 flex-1 overflow-hidden rounded-[2px] bg-[var(--ui-sunken)]">
               <div
-                className="h-full rounded-full transition-all duration-500"
+                className="h-full rounded-[2px] transition-all duration-500"
                 style={{ width: `${(count / max) * 100}%`, background: STAR_COLORS[star] }}
               />
             </div>
-            <span className="w-14 text-right text-[11px] tabular-nums text-ink/40" title={labels.reviewsTooltip.replace("{count}", String(count)).replace("{percent}", String(pct))}>
+            <span className="w-14 shrink-0 text-right text-[11px] font-semibold tabular-nums text-[var(--ui-ink)]" title={labels.reviewsTooltip.replace("{count}", String(count)).replace("{percent}", String(pct))}>
               {count} · {pct}%
             </span>
           </div>
@@ -303,13 +300,13 @@ export function SentimentSplitBar({
   const total = positive + neutral + negative;
   const seg = (n: number) => (total ? (n / total) * 100 : 0);
   const rows = [
-    { label: "Positive", value: positive, color: "#10b981", pct: seg(positive) },
-    { label: "Neutral", value: neutral, color: "#8b7fb8", pct: seg(neutral) },
-    { label: "Negative", value: negative, color: "#ff4f6e", pct: seg(negative) },
+    { label: "Positive", value: positive, color: "var(--ui-ink)", pct: seg(positive) },
+    { label: "Neutral", value: neutral, color: "var(--ui-ink-2)", pct: seg(neutral) },
+    { label: "Negative", value: negative, color: "var(--ui-line-strong)", pct: seg(negative) },
   ];
   return (
     <div>
-      <div className="flex h-3 overflow-hidden rounded-full bg-ink/[0.05]" role="img" aria-label="Sentiment split">
+      <div className="flex h-3 overflow-hidden rounded-full bg-[var(--ui-sunken)]" role="img" aria-label="Sentiment split">
         {rows.map((r) => (
           <div
             key={r.label}
@@ -321,12 +318,12 @@ export function SentimentSplitBar({
       <div className="mt-3 grid grid-cols-3 gap-2">
         {rows.map((r) => (
           <div key={r.label} className="text-center">
-            <p className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-ink/70">
+            <p className="flex items-center justify-center gap-1.5 text-[11px] font-semibold text-[var(--ui-ink)]">
               <span className="h-2 w-2 rounded-full" style={{ background: r.color }} aria-hidden />
               {r.label}
             </p>
-            <p className="text-[16px] font-bold text-ink">{total ? Math.round(r.pct) : 0}%</p>
-            <p className="text-[10px] text-ink/40">{r.value} reviews</p>
+            <p className="text-[16px] font-bold text-[var(--ui-ink)]">{total ? Math.round(r.pct) : 0}%</p>
+            <p className="text-[10px] text-[var(--ui-ink-2)]">{r.value} reviews</p>
           </div>
         ))}
       </div>

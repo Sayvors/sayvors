@@ -17,14 +17,18 @@ type InsightsCopy = ReturnType<typeof useI18n>["t"]["analytics"]["insights"];
 
 function TrendChip({ trend, copy }: { trend: number | null; copy: InsightsCopy }) {
   if (trend === null) {
-    return <span className="text-[10px] font-medium text-ink/30">{copy.badgeNew}</span>;
+    return <span className="text-[10px] font-medium text-[var(--ui-ink-2)]">{copy.badgeNew}</span>;
   }
   const up = trend > 0;
   const flat = trend === 0;
   return (
     <span
-      className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${
-        flat ? "text-ink/40" : up ? "text-coral" : "text-emerald"
+      className={`inline-flex items-center gap-0.5 rounded-[2px] px-2 py-0.5 text-[10px] font-semibold ${
+        flat
+          ? "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]"
+          : up
+            ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+            : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
       }`}
     >
       {!flat && (
@@ -38,9 +42,9 @@ function TrendChip({ trend, copy }: { trend: number | null; copy: InsightsCopy }
 }
 
 const SEVERITY_BADGE: Record<string, string> = {
-  high: "bg-coral/10 text-coral",
-  medium: "bg-amber/10 text-amber-600",
-  low: "bg-ink/[0.05] text-ink/50",
+  high: "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]",
+  medium: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]",
+  low: "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]",
 };
 
 /** Severity / status arrive from the API as English slugs — label them here. */
@@ -63,7 +67,7 @@ function SkeletonList({ rows = 5 }: { rows?: number }) {
   return (
     <div className="space-y-3" aria-hidden>
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-8 animate-pulse rounded-lg bg-ink/[0.06]" style={{ width: `${95 - i * 8}%` }} />
+        <div key={i} className="h-8 animate-pulse rounded-[2px] bg-[var(--ui-sunken)]" style={{ width: `${95 - i * 8}%` }} />
       ))}
     </div>
   );
@@ -71,10 +75,10 @@ function SkeletonList({ rows = 5 }: { rows?: number }) {
 
 function HeroStat({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="min-w-0 flex-1 rounded-xl bg-white/70 px-3.5 py-2.5 backdrop-blur-sm">
-      <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">{label}</p>
-      <p className="mt-0.5 truncate text-[15px] font-bold capitalize text-ink" title={value}>{value}</p>
-      <p className="truncate text-[10px] text-ink/40">{sub}</p>
+    <div className="min-w-0 flex-1 rounded-[2px] bg-[var(--ui-sunken)] px-3.5 py-2.5">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{label}</p>
+      <p className="mt-0.5 truncate text-[15px] font-bold capitalize text-[var(--ui-ink)]" title={value}>{value}</p>
+      <p className="truncate text-[10px] text-[var(--ui-ink-2)]">{sub}</p>
     </div>
   );
 }
@@ -95,26 +99,26 @@ function MomentumBars({
   if (movers.length === 0) return null;
   const max = Math.max(...movers.map((m) => Math.abs(m.trend as number)), 1);
   return (
-    <section aria-label={copy.momentum} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-      <h3 className="text-[14px] font-bold text-ink">{copy.momentum}</h3>
-      <p className="text-[11px] text-ink/45">{copy.momentumSub.replace("{days}", String(days))}</p>
+    <section aria-label={copy.momentum} className="ui-card p-5">
+      <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">{copy.momentum}</h3>
+      <p className="text-[11px] text-[var(--ui-ink-2)]">{copy.momentumSub.replace("{days}", String(days))}</p>
       <ul className="mt-3 space-y-2">
         {movers.map((m) => {
           const v = m.trend as number;
           const up = v > 0;
           return (
             <li key={m.name} className="flex items-center gap-2">
-              <span className="w-28 shrink-0 truncate text-right text-[11px] font-semibold capitalize text-ink/70">{m.name}</span>
-              <span className="relative h-4 flex-1 overflow-hidden rounded-full bg-ink/[0.05]">
-                <span className="absolute left-1/2 top-0 h-full w-px bg-ink/20" aria-hidden />
+              <span className="w-28 shrink-0 truncate text-right text-[11px] font-semibold capitalize text-[var(--ui-ink-2)]">{m.name}</span>
+              <span className="relative h-4 flex-1 overflow-hidden rounded-full bg-[var(--ui-sunken)]">
+                <span className="absolute left-1/2 top-0 h-full w-px bg-[var(--ui-line-strong)]" aria-hidden />
                 <span
-                  className={`absolute top-1 h-2 rounded-full ${up ? "bg-emerald" : "bg-coral"}`}
+                  className={`absolute top-1 h-2 rounded-full ${up ? "bg-[var(--ui-ink)]" : "bg-[var(--ui-ink-2)]"}`}
                   style={up
                     ? { left: "50%", width: `${Math.max(2, (v / max) * 48)}%` }
                     : { right: "50%", width: `${Math.max(2, (Math.abs(v) / max) * 48)}%` }}
                 />
               </span>
-              <span className={`w-12 shrink-0 text-[11px] font-bold tabular-nums ${up ? "text-emerald" : "text-coral"}`}>
+              <span className={`w-12 shrink-0 text-[11px] font-bold tabular-nums ${up ? "text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)]"}`}>
                 {up ? "+" : ""}{v}%
               </span>
             </li>
@@ -164,11 +168,11 @@ export default function InsightsPage() {
   const hasData = !!topics && topics.topics.length > 0;
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f3f0ff] p-4 sm:p-6">
+    <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">{copy.title}</h1>
-          <p className="mt-0.5 text-[12px] text-ink/65 sm:text-[13px]">{copy.subtitle}</p>
+          <h1 className="text-[20px] font-bold text-[var(--ui-ink)] sm:text-[22px]">{copy.title}</h1>
+          <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)] sm:text-[13px]">{copy.subtitle}</p>
         </div>
         <RangeChannelControls
           days={days}
@@ -186,23 +190,23 @@ export default function InsightsPage() {
       </div>
 
       {error && !loading ? (
-        <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
-          <p className="text-[13px] font-semibold text-ink/60">{copy.loadError}</p>
+        <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
+          <p className="text-[13px] font-semibold text-[var(--ui-ink-2)]">{copy.loadError}</p>
           <button
             onClick={() => {
               setError(false);
               setLoading(true);
               setRefreshToken((t) => t + 1);
             }}
-            className="rounded-lg bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-deep-violet/90"
+            className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
             {copy.retry}
           </button>
         </div>
       ) : !hasData && !loading ? (
-        <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-white bg-white/80 py-16 text-center backdrop-blur-sm">
-          <p className="text-[14px] font-bold text-ink">{copy.emptyTitle}</p>
-          <p className="max-w-sm text-[12px] text-ink/50">{copy.emptyBody}</p>
+        <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
+          <p className="text-[14px] font-bold text-[var(--ui-ink)]">{copy.emptyTitle}</p>
+          <p className="max-w-sm text-[12px] text-[var(--ui-ink-2)]">{copy.emptyBody}</p>
         </div>
       ) : (
         <>
@@ -211,7 +215,7 @@ export default function InsightsPage() {
             const emergingTopics = (topics?.topics ?? []).filter((t) => t.emerging).length;
             const topProblem = [...(problems?.problems ?? [])].sort((a, b) => b.impact_score - a.impact_score)[0];
             return (
-              <div className="mb-3 flex flex-col gap-2 rounded-2xl border-2 border-white bg-white/80 p-3 backdrop-blur-sm sm:flex-row">
+              <div className="ui-card mb-6 flex flex-col gap-2 p-3 sm:flex-row">
                 <HeroStat
                   label={copy.mostLoved}
                   value={products?.most_loved ?? "—"}
@@ -245,13 +249,13 @@ export default function InsightsPage() {
             const topProblem = [...(problems?.problems ?? [])].sort((a, b) => b.impact_score - a.impact_score)[0];
             if (loading || !topProblem) return null;
             return (
-              <div className="mb-3 flex flex-wrap items-center gap-3 rounded-2xl border-2 border-coral/20 bg-coral/[0.04] p-4 backdrop-blur-sm">
+              <div className="mb-6 flex flex-wrap items-center gap-3 rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-4">
                 <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${SEVERITY_BADGE[topProblem.severity]}`}>
                   {severityLabel(topProblem.severity, copy)}
                 </span>
-                <p className="min-w-0 flex-1 text-[12.5px] text-ink">
+                <p className="min-w-0 flex-1 text-[12.5px] text-[var(--ui-ink)]">
                   <strong className="capitalize">{topProblem.name}</strong>
-                  <span className="text-ink/55">
+                  <span className="text-[var(--ui-ink-2)]">
                     {" — "}
                     {copy.mentionsShort.replace("{mentions}", String(topProblem.mentions))}
                     {" · "}
@@ -260,20 +264,20 @@ export default function InsightsPage() {
                   </span>
                   <TrendChip trend={topProblem.trend_pct} copy={copy} />
                 </p>
-                <Link href="/dashboard/reviews" className="shrink-0 rounded-lg bg-coral px-3 py-1.5 text-[11px] font-bold text-white transition hover:bg-coral/90">
+                <Link href="/dashboard/reviews" className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-bold text-[var(--ui-on-ink)]">
                   {copy.readReviews}
                 </Link>
               </div>
             );
           })()}
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid gap-5 sm:gap-6 lg:grid-cols-3">
           {/* Topics */}
-          <section aria-label={copy.topics} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-            <h3 className="mb-4 text-[14px] font-bold text-ink">{copy.topics}</h3>
+          <section aria-label={copy.topics} className="ui-card p-5">
+            <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">{copy.topics}</h3>
             {loading || !topics ? (
               <SkeletonList />
             ) : topics.topics.length === 0 ? (
-              <p className="py-6 text-center text-[12px] text-ink/35">{copy.noTopics}</p>
+              <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">{copy.noTopics}</p>
             ) : (
               <ul className="space-y-3">
                 {topics.topics.slice(0, 8).map((t) => {
@@ -281,26 +285,26 @@ export default function InsightsPage() {
                   return (
                     <li key={t.name} className="flex items-center gap-2">
                       <div className="min-w-0 flex-1">
-                        <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold capitalize text-ink/80">
+                        <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold capitalize text-[var(--ui-ink)]">
                           {t.name}
                           {t.emerging && (
-                            <span className="rounded bg-sky/10 px-1 py-px text-[9px] font-bold uppercase text-sky">{copy.badgeNew}</span>
+                            <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeNew}</span>
                           )}
                         </p>
                         <div
-                          className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-ink/[0.05]"
+                          className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-[var(--ui-sunken)]"
                           role="img"
                           aria-label={copy.sentimentSplit
                             .replace("{positive}", String(t.positive))
                             .replace("{neutral}", String(t.neutral))
                             .replace("{negative}", String(t.negative))}
                         >
-                          <div className="h-full bg-emerald" style={{ width: `${(t.positive / total) * 100}%` }} />
-                          <div className="h-full bg-amber-400" style={{ width: `${(t.neutral / total) * 100}%` }} />
-                          <div className="h-full bg-coral" style={{ width: `${(t.negative / total) * 100}%` }} />
+                          <div className="h-full bg-[var(--ui-ink)]" style={{ width: `${(t.positive / total) * 100}%` }} />
+                          <div className="h-full bg-[var(--ui-ink-2)]" style={{ width: `${(t.neutral / total) * 100}%` }} />
+                          <div className="h-full bg-[var(--ui-line-strong)]" style={{ width: `${(t.negative / total) * 100}%` }} />
                         </div>
                       </div>
-                      <span className="text-[11px] tabular-nums text-ink/40">{t.mentions}</span>
+                      <span className="text-[11px] tabular-nums text-[var(--ui-ink-2)]">{t.mentions}</span>
                       <TrendChip trend={t.trend_pct} copy={copy} />
                     </li>
                   );
@@ -310,33 +314,33 @@ export default function InsightsPage() {
           </section>
 
           {/* Problems */}
-          <section aria-label={copy.problems} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-            <h3 className="mb-4 text-[14px] font-bold text-ink">{copy.problems}</h3>
+          <section aria-label={copy.problems} className="ui-card p-5">
+            <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">{copy.problems}</h3>
             {loading || !problems ? (
               <SkeletonList />
             ) : problems.problems.length === 0 ? (
               <div className="py-6 text-center">
-                <p className="text-[12px] font-semibold text-emerald">{copy.noProblemsTitle}</p>
-                <p className="mt-1 text-[11px] text-ink/35">{copy.noProblemsBody}</p>
+                <p className="text-[12px] font-semibold text-[var(--ui-ink)]">{copy.noProblemsTitle}</p>
+                <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{copy.noProblemsBody}</p>
               </div>
             ) : (
               <ul className="space-y-3">
                 {problems.problems.slice(0, 8).map((p) => (
                   <li key={p.name} className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold capitalize text-ink/80">
+                      <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold capitalize text-[var(--ui-ink)]">
                         {p.name}
                         <span className={`rounded px-1 py-px text-[9px] font-bold uppercase ${SEVERITY_BADGE[p.severity]}`}>
                           {severityLabel(p.severity, copy)}
                         </span>
                       </p>
-                      <p className="text-[10px] text-ink/35">
+                      <p className="text-[10px] text-[var(--ui-ink-2)]">
                         {statusLabel(p.status, copy)} · {copy.impactMentions
                           .replace("{impact}", String(p.impact_score))
                           .replace("{mentions}", String(p.mentions))}
                       </p>
                     </div>
-                    <span className="text-[11px] tabular-nums text-ink/40">{p.mentions}</span>
+                    <span className="text-[11px] tabular-nums text-[var(--ui-ink-2)]">{p.mentions}</span>
                     <TrendChip trend={p.trend_pct} copy={copy} />
                   </li>
                 ))}
@@ -345,12 +349,12 @@ export default function InsightsPage() {
           </section>
 
           {/* Products */}
-          <section aria-label={copy.productsServices} className="rounded-2xl border-2 border-white bg-white/80 p-5 backdrop-blur-sm">
-            <h3 className="mb-4 text-[14px] font-bold text-ink">{copy.productsServices}</h3>
+          <section aria-label={copy.productsServices} className="ui-card p-5">
+            <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">{copy.productsServices}</h3>
             {loading || !products ? (
               <SkeletonList />
             ) : products.products.length === 0 ? (
-              <p className="py-6 text-center text-[12px] text-ink/35">{copy.noProducts}</p>
+              <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">{copy.noProducts}</p>
             ) : (
               <ul className="space-y-3">
                 {products.products.slice(0, 8).map((p) => {
@@ -360,14 +364,14 @@ export default function InsightsPage() {
                   return (
                     <li key={p.name} className="flex items-center gap-2">
                       <div className="min-w-0 flex-1">
-                        <p className="flex flex-wrap items-center gap-1.5 text-[12px] font-semibold capitalize text-ink/80">
+                        <p className="flex flex-wrap items-center gap-1.5 text-[12px] font-semibold capitalize text-[var(--ui-ink)]">
                           {p.name}
-                          {loved && <span className="rounded bg-emerald/10 px-1 py-px text-[9px] font-bold uppercase text-emerald">{copy.badgeLoved}</span>}
-                          {criticized && <span className="rounded bg-coral/10 px-1 py-px text-[9px] font-bold uppercase text-coral">{copy.badgeCriticized}</span>}
-                          {growing && <span className="rounded bg-sky/10 px-1 py-px text-[9px] font-bold uppercase text-sky">{copy.badgeRising}</span>}
-                          {p.emerging && <span className="rounded bg-sky/10 px-1 py-px text-[9px] font-bold uppercase text-sky">{copy.badgeNew}</span>}
+                          {loved && <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeLoved}</span>}
+                          {criticized && <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeCriticized}</span>}
+                          {growing && <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeRising}</span>}
+                          {p.emerging && <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeNew}</span>}
                         </p>
-                        <p className="text-[10px] text-ink/35">
+                        <p className="text-[10px] text-[var(--ui-ink-2)]">
                           {copy.positiveMentions
                             .replace("{percent}", String(p.positive_pct))
                             .replace("{mentions}", String(p.mentions))}
@@ -383,7 +387,7 @@ export default function InsightsPage() {
           </section>
         </div>
         {!loading && (topics || products) && (
-          <div className="mt-3">
+          <div className="mt-6">
             <MomentumBars
               days={days}
               copy={copy}
