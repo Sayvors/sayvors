@@ -83,7 +83,7 @@ async def _amain() -> None:
     from ..modules.analytics.messaging_rollup import run_messaging_rollup_worker
     from ..modules.analytics.performance import run_performance_sync_worker
     from ..modules.channels.meta.consumer import run_meta_events_consumer
-    from ..modules.channels.meta.followup_worker import run_followup_worker
+    from ..modules.channels.meta.lead_action_worker import run_lead_action_worker
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.localith.worker import run_localith_sync_worker
     from ..modules.posts.worker import run_post_publish_worker
@@ -96,7 +96,7 @@ async def _amain() -> None:
         "performance-sync": run_performance_sync_worker,
         "messaging-rollup": run_messaging_rollup_worker,
         "meta-events-ai-replies": run_meta_events_consumer,
-        "whatsapp-followups": run_followup_worker,
+        "lead-actions": run_lead_action_worker,
     }
     tasks = [asyncio.create_task(fn(), name=name) for name, fn in loops.items()]
 

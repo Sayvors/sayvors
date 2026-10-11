@@ -245,11 +245,17 @@ async def _generate_reply(
 
     api_model, _provider_key = _resolve_model(model_id)
     provider = get_provider_for_model(model_id)
+    # Lead capture rides this same call: the model may append one silent
+    # LEAD line, which the handlers split off after the fact — extraction
+    # without a second LLM request.
+    from .lead_engine import LEAD_PROMPT_BLOCK
+
     req = LLMRequest(
         model=api_model,
         messages=history,
         system_prompt=_system_prompt(user, platform=platform)
-        + (f"\n\n{business_card}" if business_card else ""),
+        + (f"\n\n{business_card}" if business_card else "")
+        + f"\n\n{LEAD_PROMPT_BLOCK}",
         temperature=_REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
         stream=False,
@@ -351,12 +357,26 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         await _upsert_whatsapp_profile_name(
             db, tenant_id, from_wa, data.get("profile_name")
         )
-        # The customer wrote again: any pending one-shot follow-up closes —
-        # nothing is owed anymore.
-        from .thread_state import clear_awaiting
+        # Lead engine: the customer spoke — every pending follow-up for
+        # this thread is stale (their reply is the guard), and cheap
+        # deterministic capture runs on EVERY inbound, reply or not.
+        # Committed before capture so a capture rollback can't lose the
+        # message row or the cancellations.
+        from .lead_engine import cancel_pending_actions, capture_lead
 
-        await clear_awaiting(db, channel.id, from_wa)
+        await cancel_pending_actions(db, channel.id, from_wa, reason="answered")
         await db.commit()
+        await capture_lead(
+            db,
+            tenant_id=tenant_id,
+            channel_id=channel.id,
+            platform="whatsapp",
+            contact_id=from_wa,
+            contact_name=data.get("profile_name"),
+            message_id=wamid[:200] or None,
+            inbound_text=text,
+            occurred_at=row.created_at,
+        )
 
         from ...channels.realtime import publish_inbox_event
 
@@ -438,13 +458,20 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         )
 
         try:
-            reply = await _generate_reply(db, channel, tenant_id, text)
+            raw_reply = await _generate_reply(db, channel, tenant_id, text)
         except Exception as e:
             logger.warning(
                 "WhatsApp AI reply generation failed wamid=%s: %s: %s",
                 wamid[:32], type(e).__name__, str(e)[:200],
             )
             return
+
+        # The reply call may carry a silent LEAD extraction line — split it
+        # off here so the customer never sees it. No LEAD line (tests,
+        # nothing to record) → byte-identical reply, no capture delta.
+        from .lead_engine import split_reply_and_lead
+
+        reply, lead_delta = split_reply_and_lead(raw_reply)
 
         if not reply:
             logger.warning(
@@ -462,7 +489,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
 
         style_row = (
             await db.execute(
-                select(User.response_style, User.voice_replies).where(
+                select(User.response_style, User.voice_replies, User.lead_settings).where(
                     User.id == tenant_id
                 )
             )
@@ -473,6 +500,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         voice_tier = normalize_voice_tier(
             style_row.voice_replies if style_row else None
         )
+        lead_settings = style_row.lead_settings if style_row else None
 
         # Voice escape hatch: a confused customer gets the reply as a voice
         # note in their own language. Any problem (no engine for the tier,
@@ -630,15 +658,37 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 if index < len(messages) - 1:
                     await asyncio.sleep(_MESSAGE_GAP_SECONDS)
 
-        # One-shot follow-up: when the reply ends by asking the customer
-        # something, open the 60s window for exactly one gentle nudge
-        # (armed now, closed by their next message, never sent twice).
-        from .thread_state import arm_followup
+        # Lead engine, send side: merge whatever the reply call extracted,
+        # then arm the durable follow-up when the reply ended with a
+        # question. Scheduling happens only after the reply actually went
+        # out; the worker owns everything after this (claims, templates,
+        # window checks — zero LLM calls).
+        from .lead_engine import capture_lead, is_open_question, schedule_followup
 
-        final_text = reply if voice_sent else messages[-1]
-        if final_text.rstrip().endswith(("?", "؟", "?")):
-            await arm_followup(db, channel.id, from_wa)
-            await db.commit()
+        lead = await capture_lead(
+            db,
+            tenant_id=tenant_id,
+            channel_id=channel.id,
+            platform="whatsapp",
+            contact_id=from_wa,
+            contact_name=data.get("profile_name"),
+            message_id=wamid[:200] or None,
+            inbound_text=text,
+            delta=lead_delta,
+        )
+        if lead is not None:
+            final_text = reply if voice_sent else messages[-1]
+            if is_open_question(final_text):
+                await schedule_followup(
+                    db,
+                    lead=lead,
+                    channel_id=channel.id,
+                    contact_id=from_wa,
+                    platform="whatsapp",
+                    guard_message_id=wamid[:200] or None,
+                    question=final_text,
+                    settings=lead_settings,
+                )
 
         logger.info(
             "WhatsApp AI reply sent to=+%s wamid=%s provider_msg=%s parts=%d%s",
@@ -1197,6 +1247,26 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             "created_at": row.created_at,
         })
 
+        # Lead engine: the customer spoke — every pending follow-up for
+        # this thread is stale (their reply is the guard), and cheap
+        # deterministic capture runs on EVERY inbound, reply or not.
+        # Committed before capture so a capture rollback can't lose the
+        # message row or the cancellations.
+        from .lead_engine import cancel_pending_actions, capture_lead
+
+        await cancel_pending_actions(db, channel.id, igsid, reason="answered")
+        await db.commit()
+        await capture_lead(
+            db,
+            tenant_id=tenant_id,
+            channel_id=channel.id,
+            platform="instagram",
+            contact_id=igsid,
+            message_id=mid[:200] or None,
+            inbound_text=text,
+            occurred_at=row.created_at,
+        )
+
         page_id, page_token = await get_instagram_page_credentials(db, asset)
         if not page_id or not page_token:
             logger.info(
@@ -1230,8 +1300,9 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         # face, not a bare IGSID. Cached in contact_profiles; the Graph
         # read happens only when the row is missing or stale (avatar URLs
         # are temporary CDN links — refreshed weekly on inbound traffic).
+        profile_name = None
         if text:
-            name = await _refresh_instagram_profile(
+            profile_name = await _refresh_instagram_profile(
                 db, tenant_id, adapter, page_token, igsid
             )
             row = (
@@ -1241,13 +1312,13 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                     )
                 )
             ).scalar_one_or_none()
-            if row is not None and not row.contact_name and name:
-                row.contact_name = name[:120]
+            if row is not None and not row.contact_name and profile_name:
+                row.contact_name = profile_name[:120]
                 db.add(row)
             await db.commit()
 
         try:
-            reply = await _generate_reply(
+            raw_reply = await _generate_reply(
                 db, channel, tenant_id, text or "", platform="Instagram"
             )
         except Exception as e:
@@ -1256,6 +1327,13 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 mid[:32], type(e).__name__, str(e)[:200],
             )
             return
+
+        # The reply call may carry a silent LEAD extraction line — split it
+        # off here so the customer never sees it. No LEAD line (tests,
+        # nothing to record) → byte-identical reply, no capture delta.
+        from .lead_engine import split_reply_and_lead
+
+        reply, lead_delta = split_reply_and_lead(raw_reply)
 
         if not reply:
             logger.warning(
@@ -1271,12 +1349,13 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
 
         style_row = (
             await db.execute(
-                select(User.response_style).where(User.id == tenant_id)
+                select(User.response_style, User.lead_settings).where(User.id == tenant_id)
             )
         ).first()
         response_style = normalize_response_style(
             style_row.response_style if style_row else None
         )
+        lead_settings = style_row.lead_settings if style_row else None
         messages = await render_response(response_style, reply, tenant_id, db)
         if not messages:
             logger.warning(
@@ -1342,6 +1421,34 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             "Instagram AI reply sent to=+%s mid=%s parts=%d",
             igsid[-6:], mid[:32], len(messages),
         )
+
+        # Lead engine, send side: merge whatever the reply call extracted,
+        # then arm the durable follow-up when the reply ended with a
+        # question — same engine WhatsApp uses, same worker dispatches it.
+        from .lead_engine import capture_lead, is_open_question, schedule_followup
+
+        lead = await capture_lead(
+            db,
+            tenant_id=tenant_id,
+            channel_id=channel.id,
+            platform="instagram",
+            contact_id=igsid,
+            contact_name=profile_name,
+            message_id=mid[:200] or None,
+            inbound_text=text,
+            delta=lead_delta,
+        )
+        if lead is not None and is_open_question(messages[-1]):
+            await schedule_followup(
+                db,
+                lead=lead,
+                channel_id=channel.id,
+                contact_id=igsid,
+                platform="instagram",
+                guard_message_id=mid[:200] or None,
+                question=messages[-1],
+                settings=lead_settings,
+            )
 
 
 async def _process_message(value: bytes | None) -> None:

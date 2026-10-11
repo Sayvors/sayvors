@@ -219,3 +219,67 @@ class ReviewReplyGenerate(BaseModel):
 
 class ReviewReplyEdit(BaseModel):
     reply_text: str = Field(..., min_length=1, max_length=4000)
+
+
+class LeadOut(BaseModel):
+    id: str
+    channel_id: str
+    platform: str
+    contact_id: str
+    contact_name: str | None = None
+    contact_username: str | None = None
+    language: str = "en"
+    intent: str | None = None
+    request: str | None = None
+    # From contact_profiles when a cached avatar exists — temporary CDN
+    # URL, refreshed on inbound traffic like the inbox's.
+    avatar_url: str | None = None
+    summary: str | None = None
+    stage: str
+    phone_number: str | None = None
+    phone_status: str | None = None
+    opt_out: bool = False
+    next_action_at: str | None = None
+    thread_key: str | None = None
+    last_message_at: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class LeadListResponse(BaseModel):
+    leads: list[LeadOut]
+    total: int
+
+
+class LeadUpdate(BaseModel):
+    stage: str | None = Field(None, pattern="^(new|qualified|follow_up|converted|lost)$")
+    summary: str | None = Field(None, max_length=2000)
+
+
+class LeadSettingsOut(BaseModel):
+    """The tenant's follow-up knobs, normalized (clamped) — what the
+    engine actually uses, so the UI can't show an out-of-range value."""
+
+    enabled: bool
+    first_nudge_minutes: int
+    second_followup_hours: int
+    final_followup_hours: int
+    max_attempts: int
+    quiet_start_hour: int
+    quiet_end_hour: int
+    timezone: str
+
+
+class LeadSettingsUpdate(BaseModel):
+    """Partial update. Types only here — the safe value envelope is
+    normalize_lead_settings's clamps (single source of truth), so an
+    out-of-range input is clamped, not rejected."""
+
+    enabled: bool | None = None
+    first_nudge_minutes: int | None = None
+    second_followup_hours: int | None = None
+    final_followup_hours: int | None = None
+    max_attempts: int | None = None
+    quiet_start_hour: int | None = None
+    quiet_end_hour: int | None = None
+    timezone: str | None = Field(None, max_length=64)

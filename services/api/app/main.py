@@ -10,6 +10,7 @@ from .modules.auth.router import router as auth_router
 from .modules.tts.router import router as tts_router
 from .modules.stt.router import router as stt_router
 from .modules.llm.router import router as llm_router
+from .modules.channels.leads import router as leads_router
 from .modules.channels.router import _inbox_router as inbox_router
 from .modules.channels.router import router as channels_router
 from .modules.channels.meta.router import router as meta_router
@@ -215,6 +216,7 @@ app.include_router(tts_router)
 app.include_router(stt_router)
 app.include_router(llm_router)
 app.include_router(channels_router)
+app.include_router(leads_router)
 app.include_router(inbox_router)
 app.include_router(meta_router)
 app.include_router(meta_webhooks_router)

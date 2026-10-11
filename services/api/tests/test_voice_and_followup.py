@@ -1,8 +1,10 @@
-"""Conversation stats, voice notes, and the one-shot follow-up worker.
+"""Conversation stats, voice notes, and the durable lead follow-up engine.
 
 Covers the pieces that must fail safe: a classifier outage never blocks a
-reply, a voice problem never costs the customer their reply, and the
-follow-up fires EXACTLY ONCE per armed window (or not at all).
+reply, a voice problem never costs the customer their reply, and lead
+follow-ups fire through the durable scheduler exactly as scheduled —
+cancelled by the customer's reply, bounded, and dispatched with zero LLM
+calls.
 """
 import json
 import uuid
@@ -17,7 +19,13 @@ from app.modules.channels.meta import thread_stats as ts
 from app.modules.channels.meta import thread_state as tstate
 from app.modules.channels.meta import voice as vo
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
-from app.modules.channels.models import Channel, ChannelMessage, WhatsAppThreadState
+from app.modules.channels.models import (
+    Channel,
+    ChannelMessage,
+    Lead,
+    LeadAction,
+    WhatsAppThreadState,
+)
 from conftest import TEST_ENGINE
 
 _PHONE_ID = "pn-voice-test-1"
@@ -550,7 +558,6 @@ async def test_thread_state_roundtrip(db, channel_id):
     state = await tstate.get_or_create_thread_state(db, channel_id, _FROM)
     assert state is not None
     assert state.language == "en"
-    assert state.followup_sent is False
 
     await tstate.apply_classification(
         db, channel_id, _FROM, {"language": "ur", "confused": True}
@@ -560,20 +567,6 @@ async def test_thread_state_roundtrip(db, channel_id):
     assert state.language == "ur"
     assert state.confused is True
     assert state.confused_at is not None
-
-    # Arming opens exactly one window.
-    await tstate.arm_followup(db, channel_id, _FROM)
-    await db.commit()
-    state = await tstate.get_thread_state(db, channel_id, _FROM)
-    assert state.awaiting_since is not None
-    assert state.followup_sent is False
-
-    # The customer's next message closes it and resets the one-shot flag.
-    await tstate.clear_awaiting(db, channel_id, _FROM)
-    await db.commit()
-    state = await tstate.get_thread_state(db, channel_id, _FROM)
-    assert state.awaiting_since is None
-    assert state.followup_sent is False
 
     # No phone -> no state at all.
     assert await tstate.get_or_create_thread_state(db, channel_id, None) is None
@@ -607,31 +600,29 @@ async def test_clear_confusion_resets_signal(db, channel_id):
     await tstate.clear_confusion(db, channel_id, "19998887777")
 
 
-# ── follow-up worker: one-shot guarantee ──
+# ── lead action worker: durable follow-ups, zero LLM ──
 
 def _test_session_factory():
     return async_sessionmaker(TEST_ENGINE, class_=AsyncSession, expire_on_commit=False)
 
 
-async def _seed_thread(db, *, awaiting_age=None, followup_sent=False,
-                       language="en", with_inbound=True):
-    """User + channel + asset + thread state, optionally with a due window.
-
-    The seeded inbound always predates the arming (the AI's question is sent
-    after the customer's last message) — pass `inbound_after_arming` to flip
-    that for cancel-window tests."""
+async def _seed_lead(db, *, guard_id="wamid-guard-1", attempt=1, language="en",
+                     question="What do you need?", opt_out=False,
+                     stage="follow_up", inbound_age=300):
+    """Full tenant + open lead + due action, WhatsApp-flavored. The seeded
+    inbound is recent enough that Meta's 24h window is open."""
     from app.modules.users.models import User
 
-    uid = f"fu-user-{uuid.uuid4().hex[:8]}"
+    uid = f"lead-user-{uuid.uuid4().hex[:8]}"
     db.add(User(
-        id=uid, first_name="F", last_name="U",
+        id=uid, first_name="L", last_name="E",
         email=f"{uid}@example.com", password_hash="x",
         response_style="concise", voice_replies="off",
     ))
     channel = Channel(
-        id=f"fu-channel-{uuid.uuid4().hex[:8]}", user_id=uid,
+        id=f"lead-channel-{uuid.uuid4().hex[:8]}", user_id=uid,
         platform="whatsapp", platform_user_id=_PHONE_ID,
-        display_name="FU Test", status="active",
+        display_name="Lead Test", status="active",
     )
     db.add(channel)
     await db.flush()
@@ -646,23 +637,26 @@ async def _seed_thread(db, *, awaiting_age=None, followup_sent=False,
         provider="whatsapp", asset_type="phone_number",
         external_asset_id=_PHONE_ID, phone="+1555", active=True,
     ))
-    if with_inbound:
-        # The customer spoke, then the AI asked its question (awaiting_since),
-        # then silence — inbound strictly before the arming.
-        inbound_age = (awaiting_age + 120) if awaiting_age is not None else 300
-        db.add(ChannelMessage(
-            id=str(uuid.uuid4()), channel_id=channel.id, direction="inbound",
-            content="hi", status="delivered", contact_phone=_FROM,
-            created_at=datetime.now(timezone.utc) - timedelta(seconds=inbound_age),
-        ))
-    state = WhatsAppThreadState(
-        id=str(uuid.uuid4()), channel_id=channel.id, contact_phone=_FROM,
-        language=language,
+    lead = Lead(
+        id=str(uuid.uuid4()), tenant_id=uid, channel_id=channel.id,
+        platform="whatsapp", contact_id=_FROM, stage=stage,
+        language=language, opt_out=opt_out,
     )
-    if awaiting_age is not None:
-        state.awaiting_since = datetime.now(timezone.utc) - timedelta(seconds=awaiting_age)
-    state.followup_sent = followup_sent
-    db.add(state)
+    db.add(lead)
+    await db.flush()
+    db.add(ChannelMessage(
+        id=str(uuid.uuid4()), channel_id=channel.id, direction="inbound",
+        platform_message_id=guard_id,
+        content="i want shawarma", status="delivered", contact_phone=_FROM,
+        created_at=datetime.now(timezone.utc) - timedelta(seconds=inbound_age),
+    ))
+    db.add(LeadAction(
+        id=str(uuid.uuid4()), tenant_id=uid, lead_id=lead.id,
+        channel_id=channel.id, contact_id=_FROM, platform="whatsapp",
+        attempt=attempt, question=question, language=language,
+        guard_message_id=guard_id,
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=5),
+    ))
     await db.commit()
     return channel
 
@@ -674,168 +668,222 @@ def _encrypt(value: str) -> str:
 
 
 class _FakeWaAdapter:
-    """Stands in for WhatsAppAdapter inside the follow-up worker."""
+    """Stands in for the WhatsApp adapter inside the lead action worker."""
     sent: list[str] = []
+    error: Exception | None = None
 
     async def send_text_message(self, phone_number_id, token, to, text):
+        if _FakeWaAdapter.error is not None:
+            raise _FakeWaAdapter.error
         _FakeWaAdapter.sent.append(text)
         return f"wamp-{len(_FakeWaAdapter.sent)}"
-
-
-def _wire_worker(monkeypatch, nudge="Still there? Happy to help!"):
-    from app.modules.channels.meta import followup_worker as fw
-    from app.modules.channels.meta.providers import whatsapp as wa_provider
-
-    monkeypatch.setattr(fw, "async_session", _test_session_factory())
-    monkeypatch.setattr(wa_provider, "WhatsAppAdapter", _FakeWaAdapter)
-
-    async def _fake_nudge(db, channel, contact_phone, language):
-        return nudge
-
-    monkeypatch.setattr(fw, "_generate_nudge", _fake_nudge)
 
 
 @pytest.fixture(autouse=True)
 def _reset_fake_adapter():
     _FakeWaAdapter.sent = []
+    _FakeWaAdapter.error = None
     yield
     _FakeWaAdapter.sent = []
+    _FakeWaAdapter.error = None
 
 
-@pytest.mark.asyncio
-async def test_followup_sends_once_then_never_again(db, monkeypatch):
-    channel = await _seed_thread(db, awaiting_age=90)
-    _wire_worker(monkeypatch)
+def _wire_worker(monkeypatch):
+    from app.modules.channels.meta import lead_action_worker as law
+    from app.modules.channels.meta import service as meta_service
 
-    sent = await _process()
-    assert sent == 1
-    assert len(_FakeWaAdapter.sent) == 1
-
-    async with _test_session_factory()() as s:
-        state = (await s.execute(
-            select(WhatsAppThreadState).where(
-                WhatsAppThreadState.channel_id == channel.id)
-        )).scalar_one()
-        assert state.followup_sent is True
-        assert state.awaiting_since is None
-
-    # Second poll: the one-shot flag blocks any repeat.
-    assert await _process() == 0
-    assert len(_FakeWaAdapter.sent) == 1
+    monkeypatch.setattr(law, "async_session", _test_session_factory())
+    monkeypatch.setattr(meta_service, "get_adapter", lambda name: _FakeWaAdapter())
 
 
 async def _process():
-    from app.modules.channels.meta import followup_worker as fw
+    from app.modules.channels.meta import lead_action_worker as law
 
-    return await fw.process_due_followups()
-
-
-@pytest.mark.asyncio
-async def test_followup_not_due_before_60s(db, monkeypatch):
-    await _seed_thread(db, awaiting_age=30)
-    _wire_worker(monkeypatch)
-    assert await _process() == 0
-    assert _FakeWaAdapter.sent == []
+    return await law.process_due_actions()
 
 
-@pytest.mark.asyncio
-async def test_followup_gives_up_after_10_minutes(db, monkeypatch):
-    channel = await _seed_thread(db, awaiting_age=700)
-    _wire_worker(monkeypatch)
-
-    assert await _process() == 0
-    assert _FakeWaAdapter.sent == []
-
+async def _action_rows():
     async with _test_session_factory()() as s:
-        state = (await s.execute(
-            select(WhatsAppThreadState).where(
-                WhatsAppThreadState.channel_id == channel.id)
-        )).scalar_one()
-        # Window closed silently — it must never retry.
-        assert state.followup_sent is True
-        assert state.awaiting_since is None
+        return (await s.execute(
+            select(LeadAction).order_by(LeadAction.attempt)
+        )).scalars().all()
+
+
+def _aware(dt):
+    """SQLite reads back naive datetimes; normalize for comparisons."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 @pytest.mark.asyncio
-async def test_followup_cancelled_when_customer_replied(db, monkeypatch):
-    """An inbound that lands after arming always wins — no nudge at all."""
-    channel = await _seed_thread(db, awaiting_age=90)
-    # Customer answered AFTER the AI's question armed the window.
+async def test_lead_followup_sends_and_arms_next_attempt(db, monkeypatch):
+    await _seed_lead(db)
+    _wire_worker(monkeypatch)
+
+    assert await _process() == 1
+    assert len(_FakeWaAdapter.sent) == 1
+    # The nudge is the deterministic template over the stored question —
+    # no LLM produced it.
+    assert "what do you need" in _FakeWaAdapter.sent[0].lower()
+    # The nudge landed in the inbox as an outbound row.
+    async with _test_session_factory()() as s:
+        outs = (await s.execute(
+            select(ChannelMessage).where(ChannelMessage.direction == "outbound")
+        )).scalars().all()
+    assert len(outs) == 1 and outs[0].status == "sent"
+
+    rows = await _action_rows()
+    assert [r.status for r in rows] == ["sent", "pending"]
+    assert rows[1].attempt == 2
+    assert rows[1].guard_message_id == rows[0].guard_message_id
+    # Attempt 2 waits ~24h, not minutes.
+    assert rows[1].due_at - rows[0].sent_at >= timedelta(hours=23)
+
+    # Not due yet → a second poll sends nothing, sends once per action.
+    assert await _process() == 0
+    assert len(_FakeWaAdapter.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_lead_followup_attempt_cap_stops_the_sequence(db, monkeypatch):
+    await _seed_lead(db, attempt=3)
+    _wire_worker(monkeypatch)
+
+    assert await _process() == 1
+    rows = await _action_rows()
+    assert [r.status for r in rows] == ["sent"]  # final attempt: no attempt 4
+    assert rows[0].status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_lead_followup_cancelled_when_customer_replied(db, monkeypatch):
+    """A newer inbound than the guard always wins — the nudge is stale."""
+    channel = await _seed_lead(db, guard_id="wamid-guard-1")
     async with _test_session_factory()() as s:
         s.add(ChannelMessage(
             id=str(uuid.uuid4()), channel_id=channel.id, direction="inbound",
-            content="chicken please", status="delivered", contact_phone=_FROM,
-            created_at=datetime.now(timezone.utc) - timedelta(seconds=10),
+            platform_message_id="wamid-newer", content="yes please",
+            status="delivered", contact_phone=_FROM,
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=30),
         ))
         await s.commit()
 
     _wire_worker(monkeypatch)
-    assert await _process() == 0
+    assert await _process() == 1
     assert _FakeWaAdapter.sent == []
-
-    async with _test_session_factory()() as s:
-        state = (await s.execute(
-            select(WhatsAppThreadState).where(
-                WhatsAppThreadState.channel_id == channel.id)
-        )).scalar_one()
-        assert state.awaiting_since is None
-        assert state.followup_sent is False  # a fresh question may re-arm
+    rows = await _action_rows()
+    assert rows[0].status == "cancelled"
+    assert rows[0].ineligible_reason == "answered"
 
 
 @pytest.mark.asyncio
-async def test_followup_generation_failure_closes_window(db, monkeypatch):
-    """A failing LLM must not be hammered every poll — the window closes."""
-    from app.modules.channels.meta import followup_worker as fw
-    from app.modules.channels.meta.providers import whatsapp as wa_provider
+async def test_lead_followup_window_closed_is_ineligible(db, monkeypatch):
+    # The guard inbound is 25h old: Meta's 24h free-form window is shut.
+    await _seed_lead(db, inbound_age=25 * 3600)
+    _wire_worker(monkeypatch)
 
-    channel = await _seed_thread(db, awaiting_age=90)
-    monkeypatch.setattr(fw, "async_session", _test_session_factory())
-    monkeypatch.setattr(wa_provider, "WhatsAppAdapter", _FakeWaAdapter)
-
-    async def _boom(db, channel_, contact_phone, language):
-        raise ValueError("No AI model is enabled by your administrator.")
-
-    monkeypatch.setattr(fw, "_generate_nudge", _boom)
-
-    assert await _process() == 0
+    assert await _process() == 1
     assert _FakeWaAdapter.sent == []
-
-    async with _test_session_factory()() as s:
-        state = (await s.execute(
-            select(WhatsAppThreadState).where(
-                WhatsAppThreadState.channel_id == channel.id)
-        )).scalar_one()
-        assert state.followup_sent is True
+    rows = await _action_rows()
+    assert rows[0].status == "ineligible"
+    assert rows[0].ineligible_reason == "window_closed"
 
 
 @pytest.mark.asyncio
-async def test_followup_send_failure_still_marks_sent(db, monkeypatch):
-    """Meta rejection closes the window too — never a retry loop."""
-    from app.modules.channels.meta import followup_worker as fw
-    from app.modules.channels.meta.providers import whatsapp as wa_provider
+async def test_lead_followup_opt_out_never_sends(db, monkeypatch):
+    await _seed_lead(db, opt_out=True)
+    _wire_worker(monkeypatch)
+
+    assert await _process() == 1
+    assert _FakeWaAdapter.sent == []
+    rows = await _action_rows()
+    assert rows[0].status == "ineligible"
+    assert rows[0].ineligible_reason == "opt_out"
+
+
+@pytest.mark.asyncio
+async def test_lead_followup_permanent_failure_stops_the_attempt(db, monkeypatch):
     from app.modules.channels.meta.providers.base import MetaAPIError
 
-    channel = await _seed_thread(db, awaiting_age=90)
-    monkeypatch.setattr(fw, "async_session", _test_session_factory())
+    await _seed_lead(db)
+    _FakeWaAdapter.error = MetaAPIError("bad request", status_code=400)
+    _wire_worker(monkeypatch)
 
-    class _FailingAdapter:
-        async def send_text_message(self, phone_number_id, token, to, text):
-            raise MetaAPIError("out of window", status_code=400)
-
-    monkeypatch.setattr(wa_provider, "WhatsAppAdapter", _FailingAdapter)
-
-    async def _fake_nudge(db, channel_, contact_phone, language):
-        return "Still there?"
-
-    monkeypatch.setattr(fw, "_generate_nudge", _fake_nudge)
-
+    assert await _process() == 1
+    rows = await _action_rows()
+    assert rows[0].status == "failed"
+    assert rows[0].error_category == "permanent"
+    # A permanent failure never re-arms a later attempt either.
     assert await _process() == 0
+    assert _FakeWaAdapter.sent == []
+
+
+@pytest.mark.asyncio
+async def test_lead_followup_transient_failure_backs_off_then_sends(db, monkeypatch):
+    from app.modules.channels.meta.providers.base import MetaAPIError
+
+    await _seed_lead(db)
+    _FakeWaAdapter.error = MetaAPIError("upstream 502", status_code=502)
+    _wire_worker(monkeypatch)
+
+    assert await _process() == 1
+    rows = await _action_rows()
+    assert rows[0].status == "pending"  # nothing burned
+    assert rows[0].error_category == "transient"
+    assert _aware(rows[0].due_at) > datetime.now(timezone.utc)
+    assert _FakeWaAdapter.sent == []
+
+    # Recovered: the SAME attempt goes out after the backoff.
+    _FakeWaAdapter.error = None
     async with _test_session_factory()() as s:
-        state = (await s.execute(
-            select(WhatsAppThreadState).where(
-                WhatsAppThreadState.channel_id == channel.id)
-        )).scalar_one()
-        assert state.followup_sent is True
+        row = (await s.execute(select(LeadAction))).scalar_one()
+        row.due_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        await s.commit()
+    assert await _process() == 1
+    assert len(_FakeWaAdapter.sent) == 1
+    rows = await _action_rows()
+    assert rows[0].status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_lead_followup_ambiguous_timeout_is_never_resent(db, monkeypatch):
+    import httpx as _httpx
+
+    await _seed_lead(db)
+    _FakeWaAdapter.error = _httpx.ReadTimeout("timed out")
+    _wire_worker(monkeypatch)
+
+    assert await _process() == 1
+    rows = await _action_rows()
+    assert rows[0].status == "ambiguous"
+    assert rows[0].error_category == "ambiguous"
+    # Even re-polled, an ambiguous action is never retried: the provider
+    # may have delivered it and a resend would double-text the customer.
+    assert await _process() == 0
+    assert _FakeWaAdapter.sent == []
+
+
+@pytest.mark.asyncio
+async def test_lead_followup_quiet_hours_defer_without_burn(db, monkeypatch):
+    from app.modules.users.models import User
+
+    await _seed_lead(db)
+    # A 2-hour quiet window that definitely covers "now" in UTC.
+    async with _test_session_factory()() as s:
+        user = (await s.execute(select(User))).scalar_one()
+        hour = datetime.now(timezone.utc).hour
+        user.lead_settings = {
+            "quiet_start_hour": hour,
+            "quiet_end_hour": (hour + 2) % 24,
+            "timezone": "UTC",
+        }
+        await s.commit()
+
+    _wire_worker(monkeypatch)
+    assert await _process() == 1
+    assert _FakeWaAdapter.sent == []
+    rows = await _action_rows()
+    assert rows[0].status == "pending"  # deferred, attempt NOT burned
+    assert _aware(rows[0].due_at) > datetime.now(timezone.utc)
 
 
 # ── consumer: the voice branch + follow-up arming ──
@@ -1077,10 +1125,10 @@ async def test_consumer_confused_but_tier_off_sends_text(db, user_id, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_consumer_arms_followup_only_for_questions(db, user_id, monkeypatch):
+async def test_consumer_schedules_lead_followup_only_for_questions(db, user_id, monkeypatch):
     await _seed_voice_tenant(db, user_id, voice_replies="off")
 
-    # Reply ends with a question mark -> window armed.
+    # Reply ends with a question -> durable lead action armed, lead created.
     adapter = _VoiceAdapter()
     _wire_voice_consumer(
         monkeypatch, adapter, reply="Sure — what kind of shawarma?",
@@ -1089,12 +1137,17 @@ async def test_consumer_arms_followup_only_for_questions(db, user_id, monkeypatc
     event, data = _event()
     await meta_consumer._handle_message_received(event, data)
 
-    states = await _thread_state_for()
-    assert len(states) == 1
-    assert states[0].awaiting_since is not None
-    assert states[0].followup_sent is False
+    async with _test_session_factory()() as s:
+        actions = (await s.execute(select(LeadAction))).scalars().all()
+        leads = (await s.execute(select(Lead))).scalars().all()
+    assert len(actions) == 1
+    assert actions[0].status == "pending"
+    assert actions[0].guard_message_id == _WAMID
+    assert len(leads) == 1
+    assert leads[0].stage == "follow_up"
 
-    # A statement reply -> no window.
+    # A statement reply -> no new action; and the customer's inbound
+    # ("ok chicken") already cancelled the armed one.
     adapter2 = _VoiceAdapter()
     _wire_voice_consumer(
         monkeypatch, adapter2, reply="Great, your order is confirmed.",
@@ -1104,11 +1157,10 @@ async def test_consumer_arms_followup_only_for_questions(db, user_id, monkeypatc
               {"from": _FROM, "text": "ok chicken", "msg_type": "text"})
     await meta_consumer._handle_message_received(event2[0], event2[1])
 
-    states = await _thread_state_for()
-    assert len(states) == 1  # same thread row
-    # clear_awaiting ran on the inbound, and the statement did not re-arm.
-    assert states[0].awaiting_since is None
-    assert states[0].followup_sent is False
+    async with _test_session_factory()() as s:
+        actions = (await s.execute(select(LeadAction))).scalars().all()
+    assert [a.status for a in actions] == ["cancelled"]
+    assert actions[0].ineligible_reason == "answered"
 
 
 # ── API: tenant voice-replies endpoint + admin voice engines ──

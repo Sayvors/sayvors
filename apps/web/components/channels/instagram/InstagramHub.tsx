@@ -14,7 +14,7 @@ import CommentsTab from "./CommentsTab";
 import PostComposer from "./PostComposer";
 import PostsGrid from "./PostsGrid";
 import StoriesStrip from "./StoriesStrip";
-import { MessagesTab } from "./ListsTab";
+import LeadsTab from "./LeadsTab";
 
 /*
  * Instagram hub.
@@ -37,12 +37,12 @@ const FIELD_LABEL = "text-[12px] font-semibold text-[var(--ui-ink-2)]";
 const VALUE = "mt-1 text-[13px] text-[var(--ui-ink)]";
 const HAIRLINE = "border-b border-[var(--ui-line)] pb-4";
 
-type Tab = "profile" | "audience" | "messages" | "posts" | "comments";
+type Tab = "profile" | "audience" | "leads" | "posts" | "comments";
 
 const TABS: { key: Tab; label: string; live: boolean }[] = [
   { key: "profile", label: "Profile", live: true },
   { key: "audience", label: "Audience", live: true },
-  { key: "messages", label: "Messages", live: true },
+  { key: "leads", label: "Leads", live: true },
   { key: "posts", label: "Posts", live: true },
   { key: "comments", label: "Comments", live: true },
 ];
@@ -336,7 +336,7 @@ export default function InstagramHub() {
             Instagram
           </h1>
           <p className="mt-0.5 text-[13px] text-[var(--ui-ink-2)]">
-            Accounts, messages, posts and comments.
+            Accounts, leads, posts and comments.
           </p>
         </div>
       </div>
@@ -421,7 +421,7 @@ export default function InstagramHub() {
             </div>
           ) : (
             <div className="mt-6">
-              <MessagesTab />
+              <LeadsTab />
             </div>
           )
         )}
