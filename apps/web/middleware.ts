@@ -53,6 +53,10 @@ export function middleware(request: NextRequest) {
   // covers. Mixed-content is exempt for localhost; only CSP needed the entry.
   // Prod loads the SDK straight from the API host, so no entry there.
   const devSdk = isProd ? "" : " http://localhost:8000";
+  // The realtime inbox socket dials ws:// / wss:// — browsers refuse to
+  // match an https:// host source against a wss:// URL, so connect-src
+  // carries the API host in both spellings.
+  const wsApiUrl = apiUrl.replace(/^http/, "ws");
   const csp = [
     "default-src 'self'",
     // API host: serves the proxied Meta SDK script (cross-origin script tag).
@@ -63,8 +67,9 @@ export function middleware(request: NextRequest) {
     // WhatsApp business profile photos are served from pps.whatsapp.net.
     `img-src 'self' data: blob: ${gsi} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com https://*.whatsapp.net`,
     "font-src 'self' data:",
-    // Meta SDK subresources (graph calls, dialog/popup channel frames).
-    `connect-src 'self' ${apiUrl} ${gsi} https://graph.facebook.com https://connect.facebook.net`,
+    // Meta SDK subresources (graph calls, dialog/popup channel frames)
+    // plus the realtime inbox WebSocket (wss:// form of the API host).
+    `connect-src 'self' ${apiUrl} ${wsApiUrl} ${gsi} https://graph.facebook.com https://connect.facebook.net`,
     `frame-src 'self' ${gsi} https://www.facebook.com https://web.facebook.com`,
     "frame-ancestors 'none'",
   ].join("; ");
