@@ -1,11 +1,17 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any --
+   Google Identity + Facebook JS SDK globals (w.google / w.FB) ship no
+   window types here; the typed surface used is tiny and every call is
+   runtime-guarded in a try/catch. */
+
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth-context";
 import LogoLoader from "@/components/LogoLoader";
+import Mascot, { type MascotHandle } from "@/components/Mascot";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -196,6 +202,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   const [loginFailed, setLoginFailed] = useState(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
   const [gisFailed, setGisFailed] = useState(false);
+  const mascot = useRef<MascotHandle>(null);
 
   useEffect(() => {
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
@@ -250,7 +257,8 @@ export default function AuthForm({ mode }: { mode: Mode }) {
 
   useEffect(() => {
     const appId = process.env.NEXT_PUBLIC_META_LOGIN_APP_ID;
-    if (!appId) { setFbStatus("hidden"); return; }
+    // No appId → the lazy initializer above already set "hidden".
+    if (!appId) return;
     const w = window as any;
     const initFb = () => {
       try {
@@ -279,7 +287,6 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     };
     document.head.appendChild(s);
     // Init once on mount; facebookLogin identity is stable enough for this use.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const pw = useMemo(() => strength(v.password), [v.password]);
@@ -297,7 +304,10 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   const next = useCallback(() => {
     const e = validate(step, v, false);
     setErrs(e);
-    if (Object.keys(e).length > 0) return;
+    if (Object.keys(e).length > 0) {
+      mascot.current?.play("error");
+      return;
+    }
     setStep((s) => Math.min(s + 1, totalSteps - 1));
   }, [step, v]);
 
@@ -332,7 +342,10 @@ export default function AuthForm({ mode }: { mode: Mode }) {
     if (isLogin) {
       const e = validate(0, v, true);
       setErrs(e);
-      if (Object.keys(e).length > 0) return;
+      if (Object.keys(e).length > 0) {
+        mascot.current?.play("error");
+        return;
+      }
 
       setBusy(true);
       setLoginFailed(false);
@@ -348,6 +361,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
           return;
         }
         setError(err.message || "Login failed");
+        mascot.current?.play("error");
         if ((err.message || "") === "Invalid email or password") setLoginFailed(true);
       } finally {
         setBusy(false);
@@ -370,12 +384,16 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         if (result.verification_token) {
           localStorage.setItem("verification_token", result.verification_token);
         }
+        // The redirect below is immediate, so this is the only beat the user gets to
+        // see the account actually went through.
+        mascot.current?.play("delighted");
         // Straight to the code entry. The green-tick "Check your email" screen
         // that sat here only asked the user to click through to the only thing
         // they could actually do next.
         router.push(`/verify-otp?email=${encodeURIComponent(v.email.trim())}`);
       } catch (err: any) {
         setError(err.message || "Signup failed");
+        mascot.current?.play("error");
       } finally {
         setBusy(false);
       }
@@ -386,17 +404,22 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   return (
     <>
       {/* header */}
-      <div className="mb-8">
-        <Link href="/" aria-label="Sayvors home" className="mb-6 inline-flex items-center gap-2">
-          <Image src="/Sayvors_Icon.png" alt="" width={36} height={26} className="h-6 w-auto" />
-          <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={130} height={22} className="h-[22px] w-auto" priority />
-        </Link>
-        <h1 className="text-[22px] font-semibold tracking-tight text-ink">
-          {isLogin ? "Sign in" : stepTitle[step]}
-        </h1>
-        <p className="mt-1.5 text-[14px] text-ink/55">
-          {isLogin ? "Welcome back — enter your email to continue." : stepSub[step]}
-        </p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <Link href="/" aria-label="Sayvors home" className="mb-6 inline-flex items-center gap-2">
+            <Image src="/Sayvors_Icon.png" alt="" width={36} height={26} className="h-6 w-auto" />
+            <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={130} height={22} className="h-[22px] w-auto" priority />
+          </Link>
+          <h1 className="text-[22px] font-semibold tracking-tight text-ink">
+            {isLogin ? "Sign in" : stepTitle[step]}
+          </h1>
+          <p className="mt-1.5 text-[14px] text-ink/55">
+            {isLogin ? "Welcome back — enter your email to continue." : stepSub[step]}
+          </p>
+        </div>
+        <div className="-mt-1 shrink-0" title="Sayvors Mascot — tracks your pointer!">
+          <Mascot ref={mascot} size={92} label="Sayvors Mascot" />
+        </div>
       </div>
 
       {/* step indicator */}

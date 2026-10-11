@@ -1,0 +1,190 @@
+{
+  "schema": "bible-strong/avatar-definition",
+  "schemaVersion": 1,
+  "name": "Sayvors Signup Guide",
+  "body": {
+    "primary": { "type": "sphere", "width": 210, "height": 210, "depth": 210, "roundness": 1 },
+    "nodes": []
+  },
+  "colors": { "body": "#5b2d8e", "eyes": "#ffffff" },
+  "expressions": {
+    "neutral": {
+      "head": { "x": 0, "y": 0, "z": 0 },
+      "eyes": {
+        "left": { "width": 34, "height": 36, "x": 0, "y": -6, "angle": 0 },
+        "right": { "width": 34, "height": 36, "x": 0, "y": -6, "angle": 0 },
+        "spacing": 50
+      },
+      "perspective": 1.4,
+      "motion": { "eyes": "microSaccades", "body": "slowDrift" }
+    },
+    "sway": {
+      "head": { "x": 0, "y": 11, "z": -8 },
+      "eyes": {
+        "left": { "width": 34, "height": 36, "x": 0, "y": -6, "angle": 0 },
+        "right": { "width": 34, "height": 36, "x": 0, "y": -6, "angle": 0 },
+        "spacing": 50
+      },
+      "perspective": 1.4,
+      "motion": { "eyes": "none", "body": "none" }
+    },
+    "invite": {
+      "head": { "x": -14, "y": -6, "z": -13 },
+      "eyes": {
+        "left": { "width": 30, "height": 40, "x": 0, "y": 0, "angle": -6 },
+        "right": { "width": 30, "height": 40, "x": 0, "y": 0, "angle": -6 },
+        "spacing": 52
+      },
+      "perspective": 1.4,
+      "motion": { "eyes": "none", "body": "slowDrift" }
+    },
+    "invite-alt": {
+      "head": { "x": -11, "y": 3, "z": -10 },
+      "eyes": {
+        "left": { "width": 32, "height": 38, "x": 0, "y": -2, "angle": -3 },
+        "right": { "width": 32, "height": 38, "x": 0, "y": -2, "angle": -3 },
+        "spacing": 51
+      },
+      "perspective": 1.4,
+      "motion": { "eyes": "none", "body": "none" }
+    },
+    "verify": {
+      "head": { "x": -15, "y": -4, "z": -14 },
+      "eyes": {
+        "left": { "width": 30, "height": 34, "x": 0, "y": 0, "angle": -16 },
+        "right": { "width": 40, "height": 14, "x": 0, "y": 0, "angle": -4 },
+        "spacing": 54
+      },
+      "perspective": 1.4,
+      "motion": { "eyes": "none", "body": "slowDrift" }
+    },
+    "verify-alt": {
+      "head": { "x": -12, "y": 2, "z": -11 },
+      "eyes": {
+        "left": { "width": 32, "height": 26, "x": 0, "y": 0, "angle": -10 },
+        "right": { "width": 34, "height": 22, "x": 0, "y": 0, "angle": -6 },
+        "spacing": 52
+      },
+      "perspective": 1.4,
+      "motion": { "eyes": "none", "body": "none" }
+    },
+    "almost": {
+      "head": { "x": 6, "y": -14, "z": -12 },
+      "eyes": {
+        "left": { "width": 36, "height": 38, "x": 0, "y": -3, "angle": 3 },
+        "right": { "width": 36, "height": 38, "x": 0, "y": -3, "angle": 3 },
+        "spacing": 52
+      },
+      "perspective": 1.4,
+      "motion": { "eyes": "none", "body": "slowDrift" }
+    },
+    "almost-alt": {
+      "head": { "x": 3, "y": -10, "z": -9 },
+      "eyes": {
+        "left": { "width": 34, "height": 36, "x": 0, "y": -2, "angle": 2 },
+        "right": { "width": 34, "height": 36, "x": 0, "y": -2, "angle": 2 },
+        "spacing": 51
+      },
+      "perspective": 1.4,
+      "motion": { "eyes": "none", "body": "none" }
+    },
+    "celebrate": {
+      "head": { "x": -2, "y": -16, "z": -14 },
+      "eyes": {
+        "left": { "width": 38, "height": 62, "x": 0, "y": -6, "angle": 0 },
+        "right": { "width": 38, "height": 62, "x": 0, "y": -6, "angle": 0 },
+        "spacing": 56
+      },
+      "perspective": 1.4,
+      "motion": { "eyes": "none", "body": "slowDrift" }
+    }
+  },
+  "expressionOrder": [
+    "neutral",
+    "sway",
+    "invite",
+    "invite-alt",
+    "verify",
+    "verify-alt",
+    "almost",
+    "almost-alt",
+    "celebrate"
+  ],
+  "animations": {
+    "idle": {
+      "playbackMode": "loop",
+      "steps": [
+        { "expression": "neutral", "holdMs": 4000, "transitionMs": 600, "transition": "smooth" },
+        { "expression": "sway", "holdMs": 4000, "transitionMs": 600, "transition": "smooth" }
+      ],
+      "blink": {
+        "enabled": true,
+        "initialDelayMs": 2600,
+        "minIntervalMs": 3400,
+        "maxIntervalMs": 6200,
+        "durationMs": 280
+      },
+      "metadata": { "label": "Idle", "group": "Sayvors" }
+    },
+    "invite": {
+      "playbackMode": "loop",
+      "steps": [
+        { "expression": "invite", "holdMs": 3400, "transitionMs": 550, "transition": "smooth" },
+        { "expression": "invite-alt", "holdMs": 3400, "transitionMs": 550, "transition": "smooth" }
+      ],
+      "blink": {
+        "enabled": true,
+        "initialDelayMs": 2200,
+        "minIntervalMs": 3000,
+        "maxIntervalMs": 5200,
+        "durationMs": 260
+      },
+      "metadata": { "label": "Name and email", "group": "Sayvors" }
+    },
+    "verify": {
+      "playbackMode": "loop",
+      "steps": [
+        { "expression": "verify", "holdMs": 3400, "transitionMs": 500, "transition": "smooth" },
+        { "expression": "verify-alt", "holdMs": 3400, "transitionMs": 500, "transition": "smooth" }
+      ],
+      "blink": {
+        "enabled": true,
+        "initialDelayMs": 2400,
+        "minIntervalMs": 3200,
+        "maxIntervalMs": 5600,
+        "durationMs": 260
+      },
+      "metadata": { "label": "Password", "group": "Sayvors" }
+    },
+    "almost": {
+      "playbackMode": "loop",
+      "steps": [
+        { "expression": "almost", "holdMs": 3400, "transitionMs": 550, "transition": "smooth" },
+        { "expression": "almost-alt", "holdMs": 3400, "transitionMs": 550, "transition": "smooth" }
+      ],
+      "blink": {
+        "enabled": true,
+        "initialDelayMs": 2200,
+        "minIntervalMs": 3000,
+        "maxIntervalMs": 5200,
+        "durationMs": 260
+      },
+      "metadata": { "label": "Almost done", "group": "Sayvors" }
+    },
+    "celebrate": {
+      "playbackMode": "once",
+      "steps": [
+        { "expression": "celebrate", "holdMs": 900, "transitionMs": 350, "transition": "snappy" }
+      ],
+      "blink": {
+        "enabled": true,
+        "initialDelayMs": 1200,
+        "minIntervalMs": 1800,
+        "maxIntervalMs": 3600,
+        "durationMs": 220
+      },
+      "metadata": { "label": "Account created", "group": "Sayvors" }
+    }
+  },
+  "animationOrder": ["idle", "invite", "verify", "almost", "celebrate"]
+}

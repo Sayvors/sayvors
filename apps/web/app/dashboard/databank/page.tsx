@@ -36,19 +36,19 @@ function formatBytes(bytes = 0): string {
 }
 
 function StatusBadge({ status }: { status?: string }) {
-  const base = "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold tracking-wide";
+  const base = "inline-flex items-center gap-1.5 rounded-[2px] px-2.5 py-1 text-[10px] font-bold tracking-wide";
   if (status === "ready" || status === "completed" || status === "processed") {
     return (
-      <span className={`${base} bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60`}>
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      <span className={`${base} bg-emerald/10 text-emerald ring-1 ring-emerald/30`}>
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
         Ready
       </span>
     );
   }
   if (status === "processing") {
     return (
-      <span className={`${base} bg-amber-50 text-amber-700 ring-1 ring-amber-200/60`}>
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+      <span className={`${base} bg-amber/10 text-amber ring-1 ring-amber/30`}>
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber" />
         Processing
       </span>
     );
@@ -57,23 +57,23 @@ function StatusBadge({ status }: { status?: string }) {
     return (
       <span
         title="Waiting to be parsed"
-        className={`${base} bg-sky-50 text-sky-700 ring-1 ring-sky-200/60`}
+        className={`${base} bg-sky/10 text-sky ring-1 ring-sky/30`}
       >
-        <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+        <span className="h-1.5 w-1.5 rounded-full bg-sky" />
         Queued
       </span>
     );
   }
   if (status === "failed") {
     return (
-      <span className={`${base} bg-red-50 text-red-600 ring-1 ring-red-200/60`}>
-        <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+      <span className={`${base} bg-coral/10 text-coral ring-1 ring-coral/30`}>
+        <span className="h-1.5 w-1.5 rounded-full bg-coral" />
         Failed
       </span>
     );
   }
   return (
-    <span className={`${base} bg-ink/5 text-ink/40`}>
+    <span className={`${base} bg-foreground/5 text-foreground/40`}>
       {status || "Unknown"}
     </span>
   );
@@ -83,7 +83,7 @@ function FileIcon({ type }: { type?: string }) {
   const t = (type || "").toLowerCase();
   if (t.includes("pdf")) {
     return (
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600 ring-1 ring-red-200/50">
+      <span className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-coral/10 text-coral ring-1 ring-coral/30">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
           <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
           <path d="M14 2v6h6" />
@@ -94,7 +94,7 @@ function FileIcon({ type }: { type?: string }) {
   }
   if (t.includes("csv") || t.includes("xls")) {
     return (
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200/50">
+      <span className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-emerald/10 text-emerald ring-1 ring-emerald/30">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
           <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
           <path d="M14 2v6h6" />
@@ -105,7 +105,7 @@ function FileIcon({ type }: { type?: string }) {
   }
   if (t.includes("doc")) {
     return (
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sky-600 ring-1 ring-sky-200/50">
+      <span className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-sky/10 text-sky ring-1 ring-sky/30">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
           <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
           <path d="M14 2v6h6" />
@@ -115,7 +115,7 @@ function FileIcon({ type }: { type?: string }) {
     );
   }
   return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink/[0.06] text-ink/40">
+    <span className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-accent-soft text-foreground/40">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
         <path d="M14 2v6h6" />
@@ -199,10 +199,10 @@ function BusinessProfileCard() {
   const busy = saving || regenerating;
 
   return (
-    <div className="rounded-[20px] border border-white bg-white shadow-[0_12px_32px_rgba(58,39,120,0.08)] dark:border-fog/[0.08] dark:bg-ink">
-      <div className="flex flex-col gap-3 border-b border-ink/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-fog/[0.08]">
+    <div className="rounded-[2px] border border-card-border bg-card shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-card-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-deep-violet to-[#6d28d9] text-white shadow-sm">
+          <div className="flex h-9 w-9 items-center justify-center rounded-[2px] bg-gradient-to-br from-deep-violet to-violet-light text-white shadow-sm">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-4.5 w-4.5">
               <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
               <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
@@ -210,21 +210,21 @@ function BusinessProfileCard() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-[15px] font-bold leading-tight text-ink dark:text-fog">Business profile</h2>
+              <h2 className="text-[15px] font-bold leading-tight text-foreground">Business profile</h2>
               {profile && (
                 <span
                   title={isEdited ? "You edited this card — AI regeneration never overwrites your text" : "Generated from your databank uploads"}
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                  className={`inline-flex items-center gap-1 rounded-[2px] px-2 py-0.5 text-[10px] font-bold ${
                     isEdited
-                      ? "bg-sky-50 text-sky-700 ring-1 ring-sky-200/60"
-                      : "bg-violet-50 text-violet-700 ring-1 ring-violet-200/60"
+                      ? "bg-sky/10 text-sky ring-1 ring-sky/30"
+                      : "bg-accent-soft text-deep-violet ring-1 ring-violet-light/30 dark:text-violet-light"
                   }`}
                 >
                   {isEdited ? "Edited by you" : "Auto-generated"}
                 </span>
               )}
             </div>
-            <p className="text-[11px] font-medium text-ink/40 dark:text-fog/40">
+            <p className="text-[11px] font-medium text-foreground/40">
               What your AI knows about your business — used to answer customers instantly.
             </p>
           </div>
@@ -236,7 +236,7 @@ function BusinessProfileCard() {
               onClick={() => void handleRegenerate()}
               disabled={busy}
               title="Re-read your databank and refresh the card (your edits are never overwritten)"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-ink/10 bg-white px-3 py-2 text-[11px] font-bold text-ink/60 transition hover:bg-ink/[0.03] disabled:opacity-50 dark:border-fog/10 dark:bg-transparent dark:text-fog/60 dark:hover:bg-fog/[0.04]"
+              className="inline-flex items-center gap-1.5 rounded-[2px] border border-card-border bg-card px-3 py-2 text-[11px] font-bold text-foreground/60 transition hover:bg-foreground/[0.04] disabled:opacity-50"
             >
               {regenerating ? (
                 <>
@@ -258,7 +258,7 @@ function BusinessProfileCard() {
                 type="button"
                 onClick={startEdit}
                 disabled={busy}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-deep-violet px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className="h-3.5 w-3.5">
                   <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z" />
@@ -271,7 +271,7 @@ function BusinessProfileCard() {
       </div>
 
       {error && (
-        <p className="mx-5 mt-3 rounded-xl bg-red-50 px-3 py-2 text-[12px] font-medium text-red-600 ring-1 ring-red-200/60">
+        <p className="mx-5 mt-3 rounded-[2px] bg-coral/10 px-3 py-2 text-[12px] font-medium text-coral ring-1 ring-coral/30">
           {error}
         </p>
       )}
@@ -279,33 +279,33 @@ function BusinessProfileCard() {
       {editing ? (
         <div className="space-y-3 px-5 py-4">
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-widest text-ink/40">Summary</label>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-foreground/40">Summary</label>
             <textarea
               value={form.summary ?? ""}
               onChange={(e) => setForm({ ...form, summary: e.target.value })}
               rows={3}
               placeholder="2–3 sentences on what the business does"
-              className="mt-1 w-full resize-none rounded-xl border border-ink/10 bg-ink/[0.02] px-3 py-2 text-[12px] font-medium text-ink placeholder:text-ink/30 outline-none focus:border-deep-violet/40 focus:bg-white dark:border-fog/10 dark:bg-transparent dark:text-fog"
+              className="mt-1 w-full resize-none rounded-[2px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
             />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {PROFILE_FIELD_META.map((f) => (
               <div key={f.key}>
-                <label className="text-[10px] font-bold uppercase tracking-widest text-ink/40">{f.label}</label>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-foreground/40">{f.label}</label>
                 {f.textarea ? (
                   <textarea
                     value={form[f.key] ?? ""}
                     onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
                     rows={2}
                     placeholder={f.placeholder}
-                    className="mt-1 w-full resize-none rounded-xl border border-ink/10 bg-ink/[0.02] px-3 py-2 text-[12px] font-medium text-ink placeholder:text-ink/30 outline-none focus:border-deep-violet/40 focus:bg-white dark:border-fog/10 dark:bg-transparent dark:text-fog"
+                    className="mt-1 w-full resize-none rounded-[2px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
                   />
                 ) : (
                   <input
                     value={form[f.key] ?? ""}
                     onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
                     placeholder={f.placeholder}
-                    className="mt-1 w-full rounded-xl border border-ink/10 bg-ink/[0.02] px-3 py-2 text-[12px] font-medium text-ink placeholder:text-ink/30 outline-none focus:border-deep-violet/40 focus:bg-white dark:border-fog/10 dark:bg-transparent dark:text-fog"
+                    className="mt-1 w-full rounded-[2px] border border-card-border bg-foreground/[0.03] px-3 py-2 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none focus:border-deep-violet/40 focus:bg-card"
                   />
                 )}
               </div>
@@ -316,7 +316,7 @@ function BusinessProfileCard() {
               type="button"
               onClick={() => setEditing(false)}
               disabled={saving}
-              className="rounded-xl px-4 py-2 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/50"
+              className="rounded-[2px] px-4 py-2 text-[12px] font-semibold text-foreground/50 transition hover:bg-foreground/[0.04] disabled:opacity-50"
             >
               Cancel
             </button>
@@ -324,7 +324,7 @@ function BusinessProfileCard() {
               type="button"
               onClick={() => void handleSave()}
               disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
             >
               {saving && <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />}
               Save profile
@@ -333,23 +333,23 @@ function BusinessProfileCard() {
         </div>
       ) : loading ? (
         <div className="space-y-2 px-5 py-5">
-          <div className="h-4 w-3/4 animate-pulse rounded bg-ink/[0.06]" />
-          <div className="h-4 w-1/2 animate-pulse rounded bg-ink/[0.04]" />
+          <div className="h-4 w-3/4 animate-pulse rounded-[2px] bg-foreground/[0.06]" />
+          <div className="h-4 w-1/2 animate-pulse rounded-[2px] bg-foreground/[0.04]" />
         </div>
       ) : profile ? (
         <div className="px-5 py-4">
           {profile.summary ? (
-            <p className="text-[13px] leading-relaxed text-ink/80 dark:text-fog/80">{profile.summary}</p>
+            <p className="text-[13px] leading-relaxed text-foreground/80">{profile.summary}</p>
           ) : (
-            <p className="text-[12px] italic text-ink/35">No summary yet — edit or regenerate.</p>
+            <p className="text-[12px] italic text-foreground/35">No summary yet — edit or regenerate.</p>
           )}
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {PROFILE_FIELD_META.map((f) => {
               const value = (profile[f.key] as string) ?? "";
               return (
-                <div key={f.key} className="rounded-xl bg-ink/[0.03] px-3 py-2.5 dark:bg-fog/[0.05]">
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-ink/35">{f.label}</div>
-                  <div className={`mt-0.5 text-[12px] leading-relaxed ${value ? "text-ink/75 dark:text-fog/75" : "italic text-ink/30"}`}>
+                <div key={f.key} className="rounded-[2px] bg-foreground/[0.03] px-3 py-2.5">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-foreground/35">{f.label}</div>
+                  <div className={`mt-0.5 text-[12px] leading-relaxed ${value ? "text-foreground/75" : "italic text-foreground/30"}`}>
                     {value || "Not set"}
                   </div>
                 </div>
@@ -359,8 +359,8 @@ function BusinessProfileCard() {
         </div>
       ) : (
         <div className="flex flex-col items-start gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="max-w-lg text-[12px] leading-relaxed text-ink/50 dark:text-fog/50">
-            Your AI doesn&apos;t have a business card yet. Upload files to a databank and generate one — it lets your
+          <p className="max-w-lg text-[12px] leading-relaxed text-foreground/50">
+            Your AI has no business card yet. Upload files to a databank and generate one — it lets your
             assistant answer &ldquo;what can you do for me?&rdquo; instantly, without searching your documents.
           </p>
         </div>
@@ -391,7 +391,7 @@ export default function DatabankPage() {
         const data = await listDatabanks();
         const list = Array.isArray(data) ? data : data?.databanks ?? [];
         setDatabanks(list);
-        if (list.length > 0 && !selectedId) setSelectedId(list[0].id);
+        if (list.length > 0) setSelectedId((prev) => prev ?? list[0].id);
       } catch {
         setDatabanks([]);
       } finally {
@@ -403,16 +403,19 @@ export default function DatabankPage() {
 
   const selected = databanks.find((db) => db.id === selectedId) ?? null;
 
+  function selectBank(id: string | null) {
+    setSelectedId(id);
+    setDocs([]);
+  }
+
   useEffect(() => {
-    if (!selectedId) {
-      setDocs([]);
-      return;
-    }
+    if (!selectedId) return;
+    const bankId = selectedId;
     let cancelled = false;
     async function loadDocs() {
       setDocsLoading(true);
       try {
-        const data = await listDocuments(selectedId!);
+        const data = await listDocuments(bankId);
         if (!cancelled) setDocs(Array.isArray(data) ? data : data?.documents ?? []);
       } catch {
         if (!cancelled) setDocs([]);
@@ -435,7 +438,7 @@ export default function DatabankPage() {
     try {
       await deleteDatabank(id);
       setDatabanks((prev) => prev.filter((db) => db.id !== id));
-      if (selectedId === id) setSelectedId(databanks.find((d) => d.id !== id)?.id ?? null);
+      if (selectedId === id) selectBank(databanks.find((d) => d.id !== id)?.id ?? null);
       setConfirmDeleteId(null);
     } catch {}
     finally {
@@ -519,14 +522,14 @@ export default function DatabankPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f8f7ff]">
+    <div className="h-full overflow-y-auto bg-background">
       <div className="space-y-6 p-4 sm:p-6">
         {/* Company Header */}
-        <div className="overflow-hidden rounded-[20px] border border-white bg-white shadow-sm">
-          <div className="bg-gradient-to-r from-deep-violet via-[#4c2a8a] to-[#6d28d9] px-6 py-5">
+        <div className="overflow-hidden rounded-[2px] border border-card-border bg-card shadow-sm">
+          <div className="bg-gradient-to-r from-deep-violet via-[#4c2a8a] to-violet-light px-6 py-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-4">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15 text-white backdrop-blur ring-1 ring-white/20">
+                <div className="flex h-11 w-11 items-center justify-center rounded-[2px] bg-white/15 text-white backdrop-blur ring-1 ring-white/20">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-6 w-6">
                     <ellipse cx="12" cy="5" rx="9" ry="3" />
                     <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
@@ -542,7 +545,7 @@ export default function DatabankPage() {
               </div>
               <Link
                 href="/dashboard/databank/new"
-                className="inline-flex items-center justify-center gap-1.5 self-start rounded-xl bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet shadow-sm transition hover:bg-white/90 active:scale-[0.98] sm:self-auto"
+                className="inline-flex items-center justify-center gap-1.5 self-start rounded-[2px] bg-white px-4 py-2.5 text-[12px] font-bold text-deep-violet shadow-sm transition hover:bg-white/90 active:scale-[0.98] sm:self-auto"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-3.5 w-3.5">
                   <path d="M12 5v14M5 12h14" strokeLinecap="round" />
@@ -551,19 +554,19 @@ export default function DatabankPage() {
               </Link>
             </div>
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
+              <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">Databanks</div>
                 <div className="mt-1 text-[20px] font-bold text-white">{databanks.length}</div>
               </div>
-              <div className="rounded-xl bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
+              <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">Documents</div>
                 <div className="mt-1 text-[20px] font-bold text-white">{totalDocs}</div>
               </div>
-              <div className="rounded-xl bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
+              <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">Storage</div>
                 <div className="mt-1 text-[20px] font-bold text-white">{formatBytes(totalSize)}</div>
               </div>
-              <div className="rounded-xl bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
+              <div className="rounded-[2px] bg-white/10 px-3 py-3 ring-1 ring-white/10 backdrop-blur">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-white/60">AI Ready</div>
                 <div className="mt-1 flex items-baseline gap-1.5 text-[20px] font-bold text-white">
                   {readyDocs}
@@ -572,13 +575,13 @@ export default function DatabankPage() {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 px-6 py-3 text-[11px] font-medium text-ink/50">
+          <div className="flex flex-wrap items-center gap-2 px-6 py-3 text-[11px] font-medium text-foreground/50">
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" /> Live indexing
+              <span className="h-2 w-2 rounded-full bg-emerald" /> Live indexing
             </span>
-            <span className="text-ink/20">•</span>
+            <span className="text-foreground/20">•</span>
             <span>Secure & private to your workspace</span>
-            <span className="ml-auto hidden items-center gap-1 text-ink/40 sm:inline-flex">
+            <span className="ml-auto hidden items-center gap-1 text-foreground/40 sm:inline-flex">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-3.5 w-3.5">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 <path d="M9 12l2 2 4-4" />
@@ -594,16 +597,16 @@ export default function DatabankPage() {
         {/* Databank Grid */}
         <div>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[13px] font-bold uppercase tracking-widest text-ink/40">Your databanks</h2>
-            <span className="text-[11px] font-medium text-ink/30">{databanks.length} total</span>
+            <h2 className="text-[13px] font-bold uppercase tracking-widest text-foreground/40">Your databanks</h2>
+            <span className="text-[11px] font-medium text-foreground/30">{databanks.length} total</span>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {loading
               ? Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="animate-pulse rounded-2xl border border-white bg-white p-5">
-                    <div className="h-10 w-10 rounded-xl bg-ink/[0.06]" />
-                    <div className="mt-4 h-4 w-32 rounded bg-ink/[0.06]" />
-                    <div className="mt-2 h-3 w-20 rounded bg-ink/[0.04]" />
+                  <div key={i} className="animate-pulse rounded-[2px] border border-card-border bg-card p-5">
+                    <div className="h-10 w-10 rounded-[2px] bg-foreground/[0.06]" />
+                    <div className="mt-4 h-4 w-32 rounded-[2px] bg-foreground/[0.06]" />
+                    <div className="mt-2 h-3 w-20 rounded-[2px] bg-foreground/[0.04]" />
                   </div>
                 ))
               : databanks.map((db) => {
@@ -613,25 +616,25 @@ export default function DatabankPage() {
                       key={db.id}
                       role="button"
                       tabIndex={0}
-                      onClick={() => setSelectedId(isSelected ? null : db.id)}
+                      onClick={() => selectBank(isSelected ? null : db.id)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          setSelectedId(isSelected ? null : db.id);
+                          selectBank(isSelected ? null : db.id);
                         }
                       }}
                       className={[
-                        "group relative overflow-hidden rounded-2xl border bg-white p-5 text-left transition-all",
+                        "group relative overflow-hidden rounded-[2px] border bg-card p-5 text-left transition-all",
                         isSelected
                           ? "border-deep-violet shadow-lg shadow-deep-violet/10 ring-1 ring-deep-violet/10"
-                          : "border-ink/[0.06] hover:border-deep-violet/20 hover:shadow-md",
+                          : "border-card-border hover:border-deep-violet/20 hover:shadow-md",
                       ].join(" ")}
                     >
                       {isSelected && <div className="absolute inset-x-0 top-0 h-1 bg-deep-violet" />}
                       <div className="flex items-start justify-between gap-3">
                         <div
-                          className="flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-sm"
-                          style={{ backgroundColor: db.accent_color || "#3d1d6e" }}
+                          className="flex h-11 w-11 items-center justify-center rounded-[2px] text-white shadow-sm"
+                          style={{ backgroundColor: db.accent_color || "var(--color-deep-violet)" }}
                         >
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-5 w-5">
                             <ellipse cx="12" cy="5" rx="9" ry="3" />
@@ -653,7 +656,7 @@ export default function DatabankPage() {
                               e.stopPropagation();
                               setConfirmDeleteId(db.id);
                             }}
-                            className="rounded-lg p-1.5 text-ink/20 opacity-0 transition hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+                            className="rounded-[2px] p-1.5 text-foreground/20 opacity-0 transition hover:bg-coral/10 hover:text-coral group-hover:opacity-100"
                             title="Delete databank"
                           >
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5">
@@ -662,16 +665,16 @@ export default function DatabankPage() {
                           </button>
                         </div>
                       </div>
-                      <div className="mt-4 text-[15px] font-bold leading-tight text-ink">{db.name}</div>
-                      <div className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/50">
+                      <div className="mt-4 text-[15px] font-bold leading-tight text-foreground">{db.name}</div>
+                      <div className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-foreground/50">
                         {db.description || "No description — add one to help your team."}
                       </div>
                       <div className="mt-4 flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1 rounded-full bg-ink/[0.06] px-2.5 py-1 text-[11px] font-semibold text-ink/60">
+                        <span className="inline-flex items-center gap-1 rounded-[2px] bg-foreground/[0.06] px-2.5 py-1 text-[11px] font-semibold text-foreground/60">
                           <span className="h-1.5 w-1.5 rounded-full bg-deep-violet" />
                           {db.doc_count ?? 0} docs
                         </span>
-                        <span className="text-[11px] font-medium text-ink/30">{formatBytes(db.total_size ?? 0)}</span>
+                        <span className="text-[11px] font-medium text-foreground/30">{formatBytes(db.total_size ?? 0)}</span>
                         {isSelected && <span className="ml-auto text-[11px] font-bold text-deep-violet">Selected</span>}
                       </div>
                     </div>
@@ -681,21 +684,21 @@ export default function DatabankPage() {
         </div>
 
         {!loading && databanks.length === 0 && (
-          <div className="flex flex-col items-center justify-center rounded-[20px] border-2 border-dashed border-deep-violet/15 bg-white px-6 py-16 text-center shadow-sm">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-deep-violet to-[#6d28d9] text-white shadow-lg shadow-deep-violet/20">
+          <div className="flex flex-col items-center justify-center rounded-[2px] border-2 border-dashed border-deep-violet/15 bg-card px-6 py-16 text-center shadow-sm">
+            <div className="flex h-16 w-16 items-center justify-center rounded-[2px] bg-gradient-to-br from-deep-violet to-violet-light text-white shadow-lg shadow-deep-violet/20">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-8 w-8">
                 <ellipse cx="12" cy="5" rx="9" ry="3" />
                 <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
                 <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
               </svg>
             </div>
-            <h2 className="mt-5 text-[18px] font-bold tracking-tight text-ink">Create your first databank</h2>
-            <p className="mt-2 max-w-md text-[13px] leading-relaxed text-ink/50">
+            <h2 className="mt-5 text-[18px] font-bold tracking-tight text-foreground">Create your first databank</h2>
+            <p className="mt-2 max-w-md text-[13px] leading-relaxed text-foreground/50">
               Upload files, crawl your website, or connect a database. Your AI will search it instantly.
             </p>
             <Link
               href="/dashboard/databank/new"
-              className="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-deep-violet px-6 py-2.5 text-[13px] font-bold text-white shadow-md shadow-deep-violet/20 transition hover:bg-deep-violet/90 active:scale-[0.98]"
+              className="mt-6 inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-6 py-2.5 text-[13px] font-bold text-white shadow-md shadow-deep-violet/20 transition hover:bg-deep-violet/90 active:scale-[0.98]"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-4 w-4">
                 <path d="M12 5v14M5 12h14" strokeLinecap="round" />
@@ -707,12 +710,12 @@ export default function DatabankPage() {
 
         {/* Selected databank detail */}
         {selected && (
-          <div className="overflow-hidden rounded-[20px] border border-white bg-white shadow-[0_12px_32px_rgba(58,39,120,0.08)]">
-            <div className="flex flex-col gap-3 border-b border-ink/[0.06] bg-gradient-to-r from-white to-[#faf8ff] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="overflow-hidden rounded-[2px] border border-card-border bg-card shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-card-border bg-foreground/[0.02] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
                 <div
-                  className="flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-sm"
-                  style={{ backgroundColor: selected.accent_color || "#3d1d6e" }}
+                  className="flex h-10 w-10 items-center justify-center rounded-[2px] text-white shadow-sm"
+                  style={{ backgroundColor: selected.accent_color || "var(--color-deep-violet)" }}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-5 w-5">
                     <ellipse cx="12" cy="5" rx="9" ry="3" />
@@ -721,17 +724,17 @@ export default function DatabankPage() {
                   </svg>
                 </div>
                 <div>
-                  <h2 className="text-[16px] font-bold leading-tight text-ink">{selected.name}</h2>
-                  {selected.description && <p className="text-[12px] text-ink/50">{selected.description}</p>}
+                  <h2 className="text-[16px] font-bold leading-tight text-foreground">{selected.name}</h2>
+                  {selected.description && <p className="text-[12px] text-foreground/50">{selected.description}</p>}
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-200/50 sm:inline-flex">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live
+                <span className="hidden items-center gap-1.5 rounded-[2px] bg-emerald/10 px-3 py-1 text-[11px] font-bold text-emerald ring-1 ring-emerald/30 sm:inline-flex">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald" /> Live
                 </span>
                 <Link
                   href="/dashboard/databank/new"
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90"
+                  className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90"
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
                     <path d="M12 5v14M5 12h14" strokeLinecap="round" />
@@ -742,48 +745,48 @@ export default function DatabankPage() {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-3 divide-x divide-ink/[0.06] border-b border-ink/[0.06] bg-ink/[0.015]">
+            <div className="grid grid-cols-3 divide-x divide-card-border border-b border-card-border bg-foreground/[0.015]">
               <div className="px-5 py-4">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-ink/40">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-3 w-3">
                     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                     <path d="M14 2v6h6" />
                   </svg>
                   Documents
                 </div>
-                <div className="mt-1 text-[22px] font-bold tracking-tight text-ink">{selected.doc_count ?? docs.length}</div>
+                <div className="mt-1 text-[22px] font-bold tracking-tight text-foreground">{selected.doc_count ?? docs.length}</div>
               </div>
               <div className="px-5 py-4">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-ink/40">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-3 w-3">
                     <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
                     <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
                   </svg>
                   Storage
                 </div>
-                <div className="mt-1 text-[22px] font-bold tracking-tight text-ink">{formatBytes(selected.total_size ?? 0)}</div>
+                <div className="mt-1 text-[22px] font-bold tracking-tight text-foreground">{formatBytes(selected.total_size ?? 0)}</div>
               </div>
               <div className="px-5 py-4">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-ink/40">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" /> AI Search
+                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">
+                  <span className="h-2 w-2 rounded-full bg-emerald" /> AI Search
                 </div>
                 <div className="mt-1 text-[13px] font-bold">
                   {docs.some((d) => d.status === "completed" || d.status === "ready") ? (
-                    <span className="text-emerald-600">Active — ready to answer</span>
+                    <span className="text-emerald">Active — ready to answer</span>
                   ) : docsLoading ? (
-                    <span className="text-ink/40">Checking…</span>
+                    <span className="text-foreground/40">Checking…</span>
                   ) : (
-                    <span className="text-ink/40">No indexed data</span>
+                    <span className="text-foreground/40">No indexed data</span>
                   )}
                 </div>
               </div>
             </div>
 
             {/* Toolbar */}
-            <div className="flex flex-col gap-3 border-b border-ink/[0.06] bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-card-border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-1 items-center gap-2">
                 <div className="relative flex-1 sm:max-w-xs">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/30">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground/30">
                     <circle cx="11" cy="11" r="7" />
                     <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
                   </svg>
@@ -791,13 +794,13 @@ export default function DatabankPage() {
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     placeholder="Search documents…"
-                    className="w-full rounded-xl border border-ink/10 bg-ink/[0.02] py-2 pl-8 pr-3 text-[12px] font-medium text-ink placeholder:text-ink/30 outline-none transition focus:border-deep-violet/30 focus:bg-white"
+                    className="w-full rounded-[2px] border border-card-border bg-foreground/[0.03] py-2 pl-8 pr-3 text-[12px] font-medium text-foreground placeholder:text-foreground/30 outline-none transition focus:border-deep-violet/30 focus:bg-card"
                   />
                 </div>
                 <select
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  className="rounded-xl border border-ink/10 bg-white px-2.5 py-2 text-[12px] font-semibold text-ink/60 outline-none focus:border-deep-violet/30"
+                  className="rounded-[2px] border border-card-border bg-card px-2.5 py-2 text-[12px] font-semibold text-foreground/60 outline-none focus:border-deep-violet/30"
                 >
                   <option value="all">All statuses</option>
                   <option value="ready">Ready</option>
@@ -807,7 +810,7 @@ export default function DatabankPage() {
                 </select>
               </div>
               <div className="flex items-center gap-2">
-                <span className="hidden text-[11px] font-medium text-ink/40 sm:block">
+                <span className="hidden text-[11px] font-medium text-foreground/40 sm:block">
                   {filteredDocs.length} of {docs.length}
                 </span>
                 {stuckCount > 0 && (
@@ -815,7 +818,7 @@ export default function DatabankPage() {
                     type="button"
                     onClick={() => void handleRetryAll()}
                     disabled={processing === "all"}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-deep-violet px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-50"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
                       <path d="M21 12a9 9 0 11-9-9" strokeLinecap="round" />
@@ -831,25 +834,25 @@ export default function DatabankPage() {
             {docsLoading ? (
               <div className="space-y-2 p-4">
                 {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-14 animate-pulse rounded-xl bg-ink/[0.04]" />
+                  <div key={i} className="h-14 animate-pulse rounded-[2px] bg-foreground/[0.04]" />
                 ))}
               </div>
             ) : filteredDocs.length === 0 ? (
               <div className="flex flex-col items-center px-6 py-12 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-ink/[0.04] text-ink/20">
+                <div className="flex h-12 w-12 items-center justify-center rounded-[2px] bg-foreground/[0.04] text-foreground/20">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-6 w-6">
                     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" strokeLinecap="round" strokeLinejoin="round" />
                     <path d="M14 2v6h6" />
                   </svg>
                 </div>
-                <p className="mt-3 text-[13px] font-semibold text-ink/60">
+                <p className="mt-3 text-[13px] font-semibold text-foreground/60">
                   {q || filter !== "all" ? "No matching documents" : "No documents yet"}
                 </p>
-                <p className="mt-1 max-w-sm text-[12px] leading-relaxed text-ink/35">
+                <p className="mt-1 max-w-sm text-[12px] leading-relaxed text-foreground/35">
                   {q || filter !== "all" ? "Try a different search or filter." : "Upload a CSV, PDF, or text file to make your AI smarter."}
                 </p>
                 {!q && filter === "all" && (
-                  <Link href="/dashboard/databank/new" className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-deep-violet/10 px-4 py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet/15">
+                  <Link href="/dashboard/databank/new" className="mt-4 inline-flex items-center gap-1.5 rounded-[2px] bg-accent-soft px-4 py-2 text-[12px] font-bold text-deep-violet transition hover:bg-deep-violet/15 dark:text-violet-light">
                     Add your first source
                   </Link>
                 )}
@@ -859,33 +862,33 @@ export default function DatabankPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
-                      <tr className="border-b border-ink/[0.06] bg-ink/[0.02] text-left">
-                        <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-ink/40">File</th>
-                        <th className="hidden px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-ink/40 sm:table-cell">Type</th>
-                        <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-ink/40">Size</th>
-                        <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-ink/40">Status</th>
-                        <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-widest text-ink/40">Actions</th>
+                      <tr className="border-b border-card-border bg-foreground/[0.02] text-left">
+                        <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">File</th>
+                        <th className="hidden px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40 sm:table-cell">Type</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">Size</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-foreground/40">Status</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] font-bold uppercase tracking-widest text-foreground/40">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-ink/[0.04]">
+                    <tbody className="divide-y divide-card-border">
                       {filteredDocs.map((doc) => (
                         <Fragment key={doc.id}>
-                          <tr className="group transition hover:bg-ink/[0.015]">
+                          <tr className="group transition hover:bg-foreground/[0.015]">
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-3">
                                 <FileIcon type={doc.file_type} />
                                 <div className="min-w-0">
-                                  <div className="truncate text-[12px] font-semibold text-ink">{doc.filename || doc.name || doc.id}</div>
-                                  <div className="text-[11px] text-ink/35 sm:hidden">{doc.file_type || "—"} · {formatBytes(doc.file_size ?? 0)}</div>
+                                  <div className="truncate text-[12px] font-semibold text-foreground">{doc.filename || doc.name || doc.id}</div>
+                                  <div className="text-[11px] text-foreground/35 sm:hidden">{doc.file_type || "—"} · {formatBytes(doc.file_size ?? 0)}</div>
                                 </div>
                               </div>
                             </td>
                             <td className="hidden px-3 py-3 sm:table-cell">
-                              <span className="inline-flex rounded-md bg-ink/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/50">
+                              <span className="inline-flex rounded-[2px] bg-foreground/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground/50">
                                 {doc.file_type || "—"}
                               </span>
                             </td>
-                            <td className="px-3 py-3 text-[12px] font-medium tabular-nums text-ink/50">{formatBytes(doc.file_size ?? 0)}</td>
+                            <td className="px-3 py-3 text-[12px] font-medium tabular-nums text-foreground/50">{formatBytes(doc.file_size ?? 0)}</td>
                             <td className="px-3 py-3">
                               <StatusBadge status={doc.status} />
                             </td>
@@ -894,7 +897,7 @@ export default function DatabankPage() {
                                 <button
                                   type="button"
                                   onClick={() => togglePreview(doc.id)}
-                                  className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${previewDocId === doc.id ? "bg-ink text-white" : "border border-ink/10 bg-white text-ink/60 hover:bg-ink/[0.04]"}`}
+                                  className={`rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition ${previewDocId === doc.id ? "bg-foreground text-background" : "border border-card-border bg-card text-foreground/60 hover:bg-foreground/[0.04]"}`}
                                 >
                                   {previewDocId === doc.id ? "Hide" : "View"}
                                 </button>
@@ -903,7 +906,7 @@ export default function DatabankPage() {
                                     type="button"
                                     onClick={() => void handleRetryDoc(doc.id)}
                                     disabled={processing === doc.id}
-                                    className="rounded-lg bg-deep-violet/10 px-2.5 py-1 text-[11px] font-bold text-deep-violet transition hover:bg-deep-violet/15 disabled:opacity-50"
+                                    className="rounded-[2px] bg-accent-soft px-2.5 py-1 text-[11px] font-bold text-deep-violet transition hover:bg-deep-violet/15 disabled:opacity-50 dark:text-violet-light"
                                   >
                                     {processing === doc.id ? "…" : "Retry"}
                                   </button>
@@ -912,30 +915,30 @@ export default function DatabankPage() {
                             </td>
                           </tr>
                           {previewDocId === doc.id && (
-                            <tr className="bg-ink/[0.015]">
+                            <tr className="bg-foreground/[0.015]">
                               <td colSpan={5} className="px-4 py-4">
                                 {previewLoading ? (
                                   <div className="space-y-2">
                                     {Array.from({ length: 3 }).map((_, i) => (
-                                      <div key={i} className="h-10 animate-pulse rounded-xl bg-ink/[0.05]" />
+                                      <div key={i} className="h-10 animate-pulse rounded-[2px] bg-foreground/[0.05]" />
                                     ))}
                                   </div>
                                 ) : !preview ? (
-                                  <p className="py-2 text-center text-[12px] text-ink/40">Could not load content.</p>
+                                  <p className="py-2 text-center text-[12px] text-foreground/40">Could not load content.</p>
                                 ) : preview.kind === "table" ? (
-                                  <div className="overflow-hidden rounded-xl border border-ink/[0.08] bg-white shadow-sm">
-                                    <div className="flex items-center justify-between border-b border-ink/[0.06] bg-ink/[0.02] px-3 py-2">
-                                      <span className="text-[11px] font-bold text-ink/60">
+                                  <div className="overflow-hidden rounded-[2px] border border-card-border bg-card shadow-sm">
+                                    <div className="flex items-center justify-between border-b border-card-border bg-foreground/[0.02] px-3 py-2">
+                                      <span className="text-[11px] font-bold text-foreground/60">
                                         {preview.total} rows · {preview.columns?.length ?? 0} cols
                                       </span>
-                                      <span className="text-[11px] font-medium text-ink/30">Page {previewPage}</span>
+                                      <span className="text-[11px] font-medium text-foreground/30">Page {previewPage}</span>
                                     </div>
                                     <div className="overflow-x-auto">
                                       <table className="w-full text-[12px]">
                                         <thead>
-                                          <tr className="border-b border-ink/[0.08] bg-ink/[0.03]">
+                                          <tr className="border-b border-card-border bg-foreground/[0.03]">
                                             {(preview.columns ?? []).map((col) => (
-                                              <th key={col} className="whitespace-nowrap px-3 py-2 text-left text-[11px] font-bold text-ink/60">
+                                              <th key={col} className="whitespace-nowrap px-3 py-2 text-left text-[11px] font-bold text-foreground/60">
                                                 {col}
                                               </th>
                                             ))}
@@ -943,9 +946,9 @@ export default function DatabankPage() {
                                         </thead>
                                         <tbody>
                                           {(preview.rows ?? []).map((row, ri) => (
-                                            <tr key={ri} className="border-b border-ink/[0.04] last:border-0 hover:bg-ink/[0.015]">
+                                            <tr key={ri} className="border-b border-foreground/[0.04] last:border-0 hover:bg-foreground/[0.015]">
                                               {(preview.columns ?? []).map((col) => (
-                                                <td key={col} className="max-w-[200px] truncate px-3 py-2 text-ink/70">
+                                                <td key={col} className="max-w-[200px] truncate px-3 py-2 text-foreground/70">
                                                   {row[col] ?? ""}
                                                 </td>
                                               ))}
@@ -955,23 +958,23 @@ export default function DatabankPage() {
                                       </table>
                                     </div>
                                     {preview.total > preview.page_size && (
-                                      <div className="flex items-center justify-between border-t border-ink/[0.06] bg-ink/[0.015] px-3 py-2">
+                                      <div className="flex items-center justify-between border-t border-card-border bg-foreground/[0.015] px-3 py-2">
                                         <button
                                           type="button"
                                           disabled={previewPage <= 1 || previewLoading}
                                           onClick={() => void loadPreview(doc.id, previewPage - 1)}
-                                          className="rounded-lg border border-ink/10 bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.03] disabled:opacity-30"
+                                          className="rounded-[2px] border border-card-border bg-card px-3 py-1.5 text-[11px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.03] disabled:opacity-30"
                                         >
                                           ← Prev
                                         </button>
-                                        <span className="text-[11px] font-medium text-ink/40">
+                                        <span className="text-[11px] font-medium text-foreground/40">
                                           Page {previewPage} of {Math.ceil(preview.total / preview.page_size)}
                                         </span>
                                         <button
                                           type="button"
                                           disabled={previewPage >= Math.ceil(preview.total / preview.page_size) || previewLoading}
                                           onClick={() => void loadPreview(doc.id, previewPage + 1)}
-                                          className="rounded-lg border border-ink/10 bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.03] disabled:opacity-30"
+                                          className="rounded-[2px] border border-card-border bg-card px-3 py-1.5 text-[11px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.03] disabled:opacity-30"
                                         >
                                           Next →
                                         </button>
@@ -979,18 +982,18 @@ export default function DatabankPage() {
                                     )}
                                   </div>
                                 ) : (
-                                  <div className="rounded-xl border border-ink/[0.06] bg-white p-4 shadow-sm">
-                                    <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-ink/40">
+                                  <div className="rounded-[2px] border border-card-border bg-card p-4 shadow-sm">
+                                    <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-foreground/40">
                                       {preview.total} chunks — what the AI actually searches
                                     </p>
                                     <div className="space-y-2">
                                       {(preview.chunks ?? []).map((c, i) => (
-                                        <p key={i} className="rounded-xl bg-ink/[0.03] px-3 py-2.5 text-[12px] leading-relaxed text-ink/65">
+                                        <p key={i} className="rounded-[2px] bg-foreground/[0.03] px-3 py-2.5 text-[12px] leading-relaxed text-foreground/65">
                                           {c}
                                         </p>
                                       ))}
                                       {(preview.chunks ?? []).length === 0 && (
-                                        <p className="py-2 text-center text-[12px] text-ink/40">No parsed content yet — still processing.</p>
+                                        <p className="py-2 text-center text-[12px] text-foreground/40">No parsed content yet — still processing.</p>
                                       )}
                                     </div>
                                   </div>
@@ -1015,28 +1018,28 @@ export default function DatabankPage() {
           role="alertdialog"
           aria-modal="true"
           aria-label="Confirm databank deletion"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm"
           onClick={() => !deleting && setConfirmDeleteId(null)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink"
+            className="w-full max-w-md rounded-[2px] border border-card-border bg-card p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-red-600">
+            <div className="flex h-10 w-10 items-center justify-center rounded-[2px] bg-coral/10 text-coral">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
                 <path d="M12 9v6M12 17h.01M10.3 3.3l-7 12A2 2 0 005 18h14a2 2 0 001.7-3l-7-12a2 2 0 00-3.4 0z" />
               </svg>
             </div>
-            <h2 className="mt-3 text-[15px] font-bold text-ink dark:text-fog">
+            <h2 className="mt-3 text-[15px] font-bold text-foreground">
               Delete “{confirmDeleteDb?.name ?? "databank"}”?
             </h2>
-            <p className="mt-2 text-[13px] leading-relaxed text-ink/60 dark:text-fog/60">
+            <p className="mt-2 text-[13px] leading-relaxed text-foreground/60">
               All documents, chunks and embeddings inside this databank will be{" "}
-              <strong className="font-bold text-red-600">permanently deleted</strong>. Your AI will no longer be able to
+              <strong className="font-bold text-coral">permanently deleted</strong>. Your AI will no longer be able to
               search this knowledge. This cannot be undone.
             </p>
             {confirmDeleteDb && (confirmDeleteDb.doc_count ?? 0) > 0 && (
-              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200/50">
+              <p className="mt-2 rounded-[2px] bg-amber/10 px-3 py-2 text-[11px] font-medium text-amber ring-1 ring-amber/30">
                 {confirmDeleteDb.doc_count} document{confirmDeleteDb.doc_count === 1 ? "" : "s"} · {formatBytes(confirmDeleteDb.total_size ?? 0)} will be lost.
               </p>
             )}
@@ -1044,14 +1047,14 @@ export default function DatabankPage() {
               <button
                 onClick={() => setConfirmDeleteId(null)}
                 disabled={deleting}
-                className="rounded-xl px-4 py-2 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/60"
+                className="rounded-[2px] px-4 py-2 text-[12px] font-semibold text-foreground/60 transition hover:bg-foreground/[0.04] disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={() => void confirmDelete()}
                 disabled={deleting}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-[2px] bg-coral px-4 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-coral/90 disabled:opacity-50"
               >
                 {deleting ? (
                   <>
