@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import LogoLoader from "@/components/LogoLoader";
+import { Switch } from "@/components/channels/ui";
 import type { BellNotification } from "@/components/dashboard/NotificationsBell";
 import { apiFetch } from "@/lib/api-rag";
 
@@ -53,6 +54,79 @@ function DetailRows({ n }: { n: BellNotification }) {
   );
 }
 
+const PREF_META = [
+  {
+    key: "messages",
+    label: "New messages",
+    hint: "Pop a toast when a customer messages any connected channel.",
+  },
+  {
+    key: "leads",
+    label: "Qualified leads",
+    hint: "Alert the team the moment the AI qualifies a lead.",
+  },
+] as const;
+type PrefKey = (typeof PREF_META)[number]["key"];
+
+/*
+ * Live-toast preferences. Optimistic flip + PATCH; a failed save flips
+ * back so the switch never lies about what the backend will honor.
+ */
+function NotificationPrefs() {
+  const [prefs, setPrefs] = useState<Record<PrefKey, boolean> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/api/v1/notifications/settings").then(
+      (r) => {
+        if (!cancelled) setPrefs({ messages: !!r?.messages, leads: !!r?.leads });
+      },
+      () => {
+        if (!cancelled) setPrefs({ messages: true, leads: true });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggle(key: PrefKey, value: boolean) {
+    setPrefs((p) => (p ? { ...p, [key]: value } : p));
+    try {
+      await apiFetch("/api/v1/notifications/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ [key]: value }),
+      });
+    } catch {
+      setPrefs((p) => (p ? { ...p, [key]: !value } : p));
+    }
+  }
+
+  return (
+    <div className="team-ui rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
+        Live popups
+      </p>
+      <div className="mt-3 space-y-3.5">
+        {PREF_META.map((m) => (
+          <div key={m.key} className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{m.label}</p>
+              <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--ui-ink-2)]">{m.hint}</p>
+            </div>
+            <Switch
+              checked={prefs ? prefs[m.key] : false}
+              disabled={!prefs}
+              onChange={(v) => void toggle(m.key, v)}
+              label=""
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function NotificationsPage() {
   const router = useRouter();
   const [items, setItems] = useState<BellNotification[]>([]);
@@ -99,8 +173,9 @@ export default function NotificationsPage() {
   }, [filter, category]);
 
   useEffect(() => {
-    setItems([]);
-    void load(0, false);
+    // Off the synchronous path: load() flips loading state, and no
+    // setState may run directly from an effect body (cascading renders).
+    void Promise.resolve().then(() => load(0, false));
   }, [load]);
 
   async function openItem(n: BellNotification) {
@@ -186,6 +261,8 @@ export default function NotificationsPage() {
             </div>
           </div>
         </div>
+
+        <NotificationPrefs />
 
         {loading ? (
           <div className="flex items-center justify-center py-16">

@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.modules.notifications import router as notif_router
+from app.modules.notifications import service as notif_service
 from app.modules.notifications.models import Notification
 from app.modules.notifications.service import notify
 from app.modules.users.models import User
@@ -197,3 +198,75 @@ async def test_category_summary_counts(db, user_id):
     assert cats["reviews"] == {"total": 3, "unread": 2}
     assert cats["syncs"] == {"total": 1, "unread": 1}
     assert cats["replies"] == {"total": 0, "unread": 0}
+
+
+# ── live-toast settings ───────────────────────────────────────────────
+
+
+def test_normalize_notification_settings():
+    norm = notif_service.normalize_notification_settings
+    # NULL column = every toggle on.
+    assert norm(None) == {"messages": True, "leads": True}
+    # Non-dict junk degrades to defaults.
+    assert norm("junk") == {"messages": True, "leads": True}
+    # Whitelist: unknown keys dropped, values bool-coerced.
+    assert norm({"messages": False, "bogus": False}) == {
+        "messages": False, "leads": True,
+    }
+    assert norm({"messages": "", "leads": 0}) == {
+        "messages": False, "leads": False,
+    }
+    assert norm({"messages": "yes"}) == {"messages": True, "leads": True}
+
+
+@pytest.mark.asyncio
+async def test_settings_defaults_without_stored_row(db, user_id):
+    out = await notif_router.get_notification_settings(
+        user=_user(user_id), db=db,
+    )
+    assert (out.messages, out.leads) == (True, True)
+
+
+@pytest.mark.asyncio
+async def test_settings_patch_roundtrip(db, user_id):
+    user = _user(user_id)
+    db.add(user)
+    await db.commit()
+
+    out = await notif_router.update_notification_settings(
+        payload=notif_router.NotificationSettingsIn(messages=False),
+        user=user, db=db,
+    )
+    assert (out.messages, out.leads) == (False, True)
+
+    # PATCH persisted — a fresh read sees it, and the stored JSON is
+    # the normalized whitelist, not the raw payload.
+    stored = await db.get(User, user_id)
+    assert notif_service.normalize_notification_settings(
+        stored.notification_settings
+    ) == {"messages": False, "leads": True}
+
+    # Partial PATCH leaves the other toggle untouched.
+    out = await notif_router.update_notification_settings(
+        payload=notif_router.NotificationSettingsIn(leads=False),
+        user=user, db=db,
+    )
+    assert (out.messages, out.leads) == (False, False)
+
+    # Flip back on.
+    out = await notif_router.update_notification_settings(
+        payload=notif_router.NotificationSettingsIn(messages=True, leads=True),
+        user=user, db=db,
+    )
+    assert (out.messages, out.leads) == (True, True)
+
+
+@pytest.mark.asyncio
+async def test_settings_patch_404_without_user_row(db):
+    other = _user("00000000-0000-0000-0000-00000000dead")
+    with pytest.raises(HTTPException) as exc:
+        await notif_router.update_notification_settings(
+            payload=notif_router.NotificationSettingsIn(messages=False),
+            user=other, db=db,
+        )
+    assert exc.value.status_code == 404

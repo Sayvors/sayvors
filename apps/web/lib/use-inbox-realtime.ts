@@ -5,6 +5,18 @@ import { getAccessToken } from "@/lib/auth-context";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export interface NotificationPayload {
+  kind: "message" | string;
+  platform?: string | null;
+  channel_id?: string | null;
+  contact_id?: string | null;
+  contact_name?: string | null;
+  preview?: string | null;
+  content_type?: string | null;
+  message_id?: string | null;
+  created_at?: string | null;
+}
+
 export interface InboxRealtimeEvent {
   type:
     | "message"
@@ -12,7 +24,9 @@ export interface InboxRealtimeEvent {
     | "comment"
     | "comment_updated"
     | "comment_deleted"
+    | "notification"
     | "ping";
+  notification?: NotificationPayload;
   id?: string;
   message_id?: string;
   channel_id?: string;

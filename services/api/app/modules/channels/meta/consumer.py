@@ -50,6 +50,45 @@ def _message_age(occurred_at: str | None) -> timedelta | None:
     return datetime.now(timezone.utc) - when
 
 
+async def _publish_message_notification(db, tenant_id: str, row, platform: str) -> None:
+    """Pop a dashboard toast for one live inbound message.
+
+    Realtime only — no Notification row is written (the bell is for
+    meaningful events, not every "hi"), and the tenant's notification
+    settings gate the whole thing. Live handlers call this after commit;
+    history-sync backfill deliberately never does (a backlog must not
+    flood the screen with hours-old pops). Any failure here must never
+    disturb the message pipeline — publish_inbox_event already swallows.
+    """
+    from ...notifications.service import normalize_notification_settings
+    from ...users.models import User
+
+    prefs = (
+        await db.execute(
+            select(User.notification_settings).where(User.id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if not normalize_notification_settings(prefs)["messages"]:
+        return
+
+    from ...channels.realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "notification",
+        "notification": {
+            "kind": "message",
+            "platform": platform,
+            "channel_id": row.channel_id,
+            "contact_id": row.contact_phone,
+            "contact_name": row.contact_name,
+            "preview": (row.content or "")[:160],
+            "content_type": row.content_type,
+            "message_id": row.platform_message_id,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        },
+    })
+
+
 async def _upsert_whatsapp_profile_name(
     db, tenant_id: str, phone: str, name: str | None
 ) -> None:
@@ -173,29 +212,66 @@ def _system_prompt(user, platform: str = "WhatsApp") -> str:
     if user.business_doesnt_sell:
         lines.append(f"We do NOT sell: {user.business_doesnt_sell}")
     lines += [
-        "Style: you are a real human agent chatting on WhatsApp — warm, "
+        f"Style: you are a real human agent chatting on {platform} — warm, "
         "brief, 1 to 3 short sentences, plain text, no markdown. Vary your "
         "wording; never repeat the same explanation twice.",
         "Every reply moves the chat forward: after answering, ask ONE short "
         "question that helps the customer — e.g. 'What are you looking to "
-        "build?', 'Shall I connect you with the team?', 'Anything else I "
-        "can help you with?'. A flat statement with no question feels like "
-        "a bot.",
+        "build?', 'What's your budget?', 'What features do you need?'. A "
+        "flat statement with no question feels like a bot — except when "
+        "you are closing the conversation after confirming their request.",
+        # Requirements gathering: structured, so nothing is missed.
+        "When a customer describes a project, collect their requirements "
+        "as a clear list: ask them to write what they need separated by "
+        "commas (e.g. 'products page, cart, online payments, reviews'), "
+        "then fill gaps with one short question at a time.",
+        # The close: restate what was actually saved, then stop talking.
+        "Closing: once you have their name and what they need (plus "
+        "budget if they offered one), send ONE short confirmation that "
+        "restates exactly what you saved — e.g. 'Noted, Sara — online "
+        "store with payments and reviews, around 10k. Our team will "
+        "follow up with you right here soon. Thank you!' — and ask "
+        "nothing further. The request is saved as a ticket for the team "
+        "the moment they tell you; do not keep chatting after the "
+        "confirmation beyond a goodbye.",
+        # Honest handoff: every conversation is already logged as a lead
+        # for the team — there is no separate transfer step to promise.
+        "Everything the customer tells you (their name, what they need, "
+        "contact details) is logged for the team automatically — there is "
+        "no separate handoff step. So never say you will 'connect', "
+        "'transfer' or 'check with' anyone, never promise a call, email "
+        "or message to a different number, and never say someone will "
+        "reach out elsewhere. If the customer wants a human, say the team "
+        "will follow up with them right here in this chat.",
+        "Never ask for a detail the customer already gave — name, "
+        "requirement, budget or number. Re-asking reads as not listening.",
         "If the request is outside what we offer: acknowledge it kindly in "
         "one short sentence, then pivot to what we CAN do and ask what "
         "they need. Do not lecture about what the company is.",
         "If the customer seems frustrated or confused: acknowledge it, "
-        "simplify, and offer to explain by voice note or connect the team.",
-        "When a customer shows interest in the services, get their details: "
-        "ask their name and what they need, so the team can follow up.",
+        "simplify, and offer to explain by voice note.",
         "If the customer is clearly saying goodbye, a short warm sign-off "
         "is fine without a question.",
         "Language: reply in the language the customer wrote in "
         "(Arabic or English; match their script exactly).",
         "Never invent prices, stock, opening hours or policies you were "
-        "not given — say you will confirm and offer to connect the team.",
+        "not given — say you will confirm with the team and follow up here.",
         "Do not mention that you are an AI unless the customer asks directly.",
     ]
+    # Platform ground truth about contact details.
+    if platform == "WhatsApp":
+        lines.append(
+            "The customer is messaging you FROM their own phone number — "
+            "you already have it and it is logged with their inquiry. "
+            "NEVER ask for their phone number; this chat is exactly how "
+            "the team reaches them."
+        )
+    else:
+        lines.append(
+            "You do not see the customer's phone number. Ask for it at "
+            "most once, only when they clearly want to be contacted "
+            "outside this chat — never as a condition of helping."
+        )
     return "\n".join(lines)
 
 
@@ -393,6 +469,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             "contact_name": row.contact_name,
             "created_at": row.created_at,
         })
+
+        await _publish_message_notification(db, tenant_id, row, "whatsapp")
 
         token = decrypt_connection_token(asset.connection) if asset.connection else None
         if not token:
@@ -1246,6 +1324,8 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             "contact_phone": row.contact_phone,
             "created_at": row.created_at,
         })
+
+        await _publish_message_notification(db, tenant_id, row, "instagram")
 
         # Lead engine: the customer spoke — every pending follow-up for
         # this thread is stale (their reply is the guard), and cheap

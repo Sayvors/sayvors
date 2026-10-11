@@ -14,6 +14,7 @@ true so a single uvicorn process stays self-sufficient.
 """
 import asyncio
 import logging
+import os
 import signal
 
 from ..config import settings
@@ -98,6 +99,22 @@ async def _amain() -> None:
         "meta-events-ai-replies": run_meta_events_consumer,
         "lead-actions": run_lead_action_worker,
     }
+    # Deployment-only split by role, no code changes: WORKER_LOOPS is a
+    # comma-separated allowlist of loop names ("meta-events-ai-replies,
+    # lead-actions" -> an AI-only container on the same image). Unknown
+    # names fail fast — a typo'd env var must not silently run nothing.
+    # Unset = every loop, the default single-container topology.
+    only = os.environ.get("WORKER_LOOPS", "").strip()
+    if only:
+        wanted = {name.strip() for name in only.split(",") if name.strip()}
+        unknown = wanted - loops.keys()
+        if unknown:
+            raise SystemExit(
+                "WORKER_LOOPS names unknown loops: "
+                f"{', '.join(sorted(unknown))} (known: {', '.join(sorted(loops))})"
+            )
+        loops = {name: fn for name, fn in loops.items() if name in wanted}
+
     tasks = [asyncio.create_task(fn(), name=name) for name, fn in loops.items()]
 
     outbox_worker = OutboxWorker()
