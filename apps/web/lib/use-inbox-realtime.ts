@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { getAccessToken } from "@/lib/auth-context";
+import { getAccessToken, refreshSession } from "@/lib/auth-context";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -62,9 +62,18 @@ export function useInboxRealtime(onEvent: (e: InboxRealtimeEvent) => void) {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     function connect() {
+      if (closed) return;
       const token = getAccessToken();
-      if (closed || !token) {
-        if (!closed && !token) timer = setTimeout(connect, 2000);
+      if (!token) {
+        // Cookie-only session (the state right after any reload): /auth/me
+        // and every apiFetch succeed on cookies, so nothing else ever mints
+        // a bearer token — we have to ask. refreshSession is deduped
+        // app-wide; back off while the session is truly gone.
+        void refreshSession().then(() => {
+          if (closed) return;
+          if (getAccessToken()) connect();
+          else timer = setTimeout(connect, 5000);
+        });
         return;
       }
       const url = `${API.replace(/^http/, "ws")}/api/v1/inbox/ws?token=${encodeURIComponent(token)}`;

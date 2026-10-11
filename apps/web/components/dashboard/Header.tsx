@@ -123,13 +123,14 @@ export default function Header() {
     pilot === "on" ? t.pilot.on : pilot === "off" ? t.pilot.off : pilot === "mixed" ? t.pilot.mixed : t.pilot.none;
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-deep-violet/[0.06] bg-white px-4 dark:bg-ink dark:border-deep-violet/[0.06]">
-      {/* Search */}
+    <header className="flex h-12 shrink-0 items-center justify-between gap-1.5 border-b border-deep-violet/[0.06] bg-white px-3 sm:gap-2 sm:px-4 dark:bg-ink dark:border-deep-violet/[0.06]">
+      {/* Search — desktop only; the phone row is navigation-only and ⌘K
+          doesn't exist there. Hidden below md, where the hamburger floats. */}
       <button
         onClick={() => setSearchOpen(true)}
         aria-label={t.header.searchLabel}
         title={`${t.header.searchLabel} (⌘K)`}
-        className="flex h-8 items-center gap-2 rounded-[2px] border border-deep-violet/[0.08] bg-deep-violet/[0.03] px-2.5 text-[12px] text-ink/40 outline-none transition hover:border-deep-violet/25 hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 ms-12 md:ms-0 sm:w-56 dark:text-fog/40 dark:hover:text-fog/60"
+        className="hidden h-8 shrink-0 items-center gap-2 rounded-[2px] border border-deep-violet/[0.08] bg-deep-violet/[0.03] px-2.5 text-[12px] text-ink/40 outline-none transition hover:border-deep-violet/25 hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 md:flex sm:w-56 dark:text-fog/40 dark:hover:text-fog/60"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0" aria-hidden>
           <circle cx="11" cy="11" r="8" />
@@ -141,10 +142,10 @@ export default function Header() {
         </kbd>
       </button>
 
-      <div className="flex items-center gap-2">
+      <div className="ms-auto flex items-center gap-1.5 sm:gap-2">
       <NotificationsBell />
-      {/* Help — guided tour */}
-      <div className="relative" ref={helpRef}>
+      {/* Help — guided tour (desktop only) */}
+      <div className="relative hidden md:block" ref={helpRef}>
         <button
           onClick={() => setHelpOpen(!helpOpen)}
           aria-label="Help"
@@ -192,13 +193,15 @@ export default function Header() {
         <span className="hidden lg:inline">{t.header.ask}</span>
       </button>
 
-      {/* Team — visible to owners and team.view/manage roles (same as sidebar) */}
+      {/* Team — the ONLY navigation to the team page (the sidebar has no
+          team item), so it must never hide on small screens. Below lg it
+          collapses to the icon, same as Ask Sayvors. */}
       {teamPermitted && (
         <Link
           href="/dashboard/team"
           aria-label="Team"
           title="Team — members, roles and per-channel access"
-          className="hidden h-8 shrink-0 items-center gap-1.5 rounded-[2px] border border-deep-violet/[0.12] px-2.5 text-[12px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] sm:flex"
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-[2px] border border-deep-violet/[0.12] px-2.5 text-[12px] font-semibold text-deep-violet outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98]"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
             <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
@@ -209,15 +212,18 @@ export default function Header() {
         </Link>
       )}
 
-      {/* Connect channel */}
+      {/* Connect channel — hidden on phones too; the row carries navigation
+          only. Channels stay reachable from the sidebar menu. */}
       <Link
         href="/dashboard/channels"
-        className="flex h-8 items-center gap-1.5 rounded-[2px] bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-md active:scale-[0.98]"
+        aria-label={t.header.connect}
+        title={t.header.connect}
+        className="hidden h-8 shrink-0 items-center gap-1.5 rounded-[2px] bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm shadow-deep-violet/25 transition hover:bg-deep-violet/90 hover:shadow-md active:scale-[0.98] md:flex"
       >
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
           <path d="M8 3v10M3 8h10" strokeLinecap="round" />
         </svg>
-        {t.header.connect}
+        <span>{t.header.connect}</span>
       </Link>
 
       {/* Profile */}
