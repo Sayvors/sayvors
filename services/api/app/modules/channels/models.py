@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Enum,
@@ -200,6 +201,165 @@ class ContactProfile(Base):
             "tenant_id", "platform", "contact_id",
             name="uq_contact_profiles_identity",
         ),
+    )
+
+
+class Lead(Base):
+    """A customer the messaging loop is converting.
+
+    One row per (channel, contact): the conversation identity is the key —
+    a lead never requires a name or phone number to exist. Capture rides
+    the reply LLM call (a trailing ``LEAD: {json}`` line, parsed for free)
+    plus cheap deterministic parsing; the merge never overwrites a known
+    field with an empty or lower-confidence value, and every captured
+    field keeps its provenance in field_provenance.
+
+    stage is the deterministic pipeline state — new -> qualified ->
+    follow_up -> converted/lost. The engine moves it; the tenant can
+    override to won/lost at any point. opt_out suppresses every scheduled
+    action regardless of stage. thread_key is the unified-inbox thread
+    identifier, so the UI can walk from the lead into the conversation.
+    """
+
+    __tablename__ = "leads"
+    __table_args__ = (
+        # Dashboard list scans (tenant, newest first) and the capture
+        # step's open-lead lookup (channel, contact) — one index each.
+        Index("ix_leads_tenant_created", "tenant_id", "created_at"),
+        Index("ix_leads_channel_contact", "channel_id", "contact_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id"), index=True
+    )
+    # Denormalized from the channel so the list can filter without a join.
+    platform: Mapped[str] = mapped_column(String(20))
+    # The platform's own contact addressing (IGSID / phone / PSID) — the
+    # tenant-scoped conversation identity, never a global customer id.
+    contact_id: Mapped[str] = mapped_column(String(64))
+    contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    contact_username: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # What the customer writes in — templates and localization key off it.
+    language: Mapped[str] = mapped_column(String(16), default="en")
+    # Buying intent, one of "buying" | "booking" | "quote" | "info".
+    intent: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # What they need, in the customer's own words.
+    request: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # One-line UI summary (falls back to request in the API when unset).
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stage: Mapped[str] = mapped_column(
+        Enum("new", "qualified", "follow_up", "converted", "lost", name="lead_stage"),
+        default="new",
+    )
+    # A phone number the customer TYPED (never the Meta sender identity,
+    # which lives in contact_id). "stated" = validated shape only;
+    # "verified" requires a real verification flow (nobody sets it yet).
+    phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    phone_status: Mapped[str] = mapped_column(
+        Enum("stated", "verified", name="lead_phone_status"),
+        default="stated",
+    )
+    # Deterministic opt-out (customer said stop / توقف). Kills every
+    # pending and future scheduled action for this lead.
+    opt_out: Mapped[bool] = mapped_column(Boolean, default=False)
+    opt_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # {field: {value, confidence, source_message_id, at}} — provenance for
+    # every extracted field, so a merge can refuse to downgrade.
+    field_provenance: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Platform message id that first created the lead (provenance anchor).
+    source_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Staleness guard for scheduled actions: the last inbound we had seen
+    # when the action was armed. A different id at send time means the
+    # customer replied since — the action is stale.
+    last_inbound_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Mirror of the next scheduled follow-up's due_at (cheap UI badge).
+    next_action_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Unified-inbox thread key, for the lead -> conversation deep link.
+    thread_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class LeadAction(Base):
+    """One durable, scheduled follow-up for a lead.
+
+    The database is the scheduler — no in-memory timers. A worker claims
+    rows with a short lease and never holds a transaction across the Meta
+    API call. guard_message_id (the inbound we were answering) is the
+    staleness guard: if the thread's newest inbound differs at send time,
+    the customer answered and the action cancels itself. Idempotency is
+    structural: unique (lead, guard message, attempt) can only exist once,
+    however many workers race to arm it.
+    """
+
+    __tablename__ = "lead_actions"
+    __table_args__ = (
+        UniqueConstraint(
+            "lead_id", "guard_message_id", "attempt",
+            name="uq_lead_actions_step",
+        ),
+        # The dispatcher's only scan: claimable rows, due first.
+        Index("ix_lead_actions_due", "status", "due_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    lead_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("leads.id"), index=True
+    )
+    channel_id: Mapped[str] = mapped_column(String(36))
+    contact_id: Mapped[str] = mapped_column(String(64))
+    platform: Mapped[str] = mapped_column(String(20))
+    action_type: Mapped[str] = mapped_column(
+        Enum("follow_up", name="lead_action_type"), default="follow_up"
+    )
+    status: Mapped[str] = mapped_column(
+        Enum(
+            "pending", "claimed", "sent", "cancelled", "failed",
+            "ineligible", "ambiguous",
+            name="lead_action_status",
+        ),
+        default="pending",
+    )
+    # 1-based: 1 = first nudge (minutes), 2 = second (~24h), 3 = final (~72h).
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    # The open question being chased + context for the template.
+    question: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language: Mapped[str] = mapped_column(String(16), default="en")
+    guard_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Claim lease: a worker owns this row only until claimed_until.
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Why a send never happened: "opt_out", "window_closed", "stage_closed",
+    # "answered", "attempt_cap", "guard_stale", ...
+    ineligible_reason: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # "transient" (backoff + retry) vs "permanent" (stop, actionable).
+    error_category: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Bounded transient retries per action — no unbounded background work.
+    send_retries: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 

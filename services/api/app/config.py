@@ -123,6 +123,11 @@ class Settings(BaseSettings):
     ANALYTICS_PERFORMANCE_SYNC_INTERVAL_SECONDS: int = 6 * 3600
     # How many days of daily metrics to pull per sync pass.
     ANALYTICS_PERFORMANCE_DAYS_BACK: int = 30
+    # How often the messaging rollup worker recomputes channel_daily_metrics
+    # (message volume + response health per WhatsApp/IG/FB channel). Fresh
+    # enough that the unanswered snapshot reads as "now", cheap enough to
+    # never matter.
+    MESSAGING_ROLLUP_INTERVAL_SECONDS: int = 900
 
     # ── LLM ────────────────────────────────────────────
     # Provider keys live exclusively in the database (Admin → LLMs).

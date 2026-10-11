@@ -386,6 +386,55 @@ export interface KeywordsResponse {
 export const fetchKeywords = (days: number, channelId?: string | null): Promise<KeywordsResponse> =>
   apiFetch(`/api/v1/analytics/growth/keywords?${qs(days, channelId)}`);
 
+/* ── Messaging overview (WhatsApp / IG / FB, from the rollup table) ── */
+
+export interface MessagingChannelRow {
+  channel_id: string;
+  platform: string;
+  label: string;
+  messages_in: number;
+  messages_out: number;
+  messages_in_prev: number;
+  conversations: number;
+  conversations_prev: number;
+  response_rate: number | null;
+  median_first_response_seconds: number | null;
+  unanswered_now: number | null;
+  comments_in: number;
+  comments_replied: number;
+}
+
+export interface MessagingTotals {
+  messages_in: number;
+  messages_out: number;
+  messages_in_prev: number;
+  messages_out_prev: number;
+  conversations: number;
+  conversations_prev: number;
+  response_rate: number | null;
+  response_rate_prev: number | null;
+  median_first_response_seconds: number | null;
+  median_first_response_seconds_prev: number | null;
+  p90_first_response_seconds: number | null;
+  unanswered_now: number | null;
+  oldest_unanswered_seconds: number | null;
+  as_of: string | null;
+}
+
+export interface MessagingOverview {
+  days: number;
+  /** Meta's own "Very responsive" gate: 90% answered, median < 15 min. */
+  goal: { response_rate: number; median_seconds: number };
+  totals: MessagingTotals;
+  channels: MessagingChannelRow[];
+}
+
+export const fetchMessagingOverview = (
+  days: number,
+  channelId?: string | null
+): Promise<MessagingOverview> =>
+  apiFetch(`/api/v1/analytics/messaging/overview?${qs(days, channelId)}`);
+
 /* ── Benchmark pillar ─────────────────────────────────────────────── */
 
 export interface BenchmarkResponse {

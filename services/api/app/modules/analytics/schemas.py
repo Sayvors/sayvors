@@ -536,3 +536,47 @@ class ExecutiveSummaryResponse(BaseModel):
     opportunity: str
     recommended_action: str
     benchmark_text: str
+
+
+# ── Messaging overview (served from channel_daily_metrics rows only) ──
+
+class MessagingChannelRow(BaseModel):
+    channel_id: str
+    platform: str
+    label: str
+    messages_in: int
+    messages_out: int
+    messages_in_prev: int
+    conversations: int
+    conversations_prev: int
+    response_rate: float | None = None
+    median_first_response_seconds: int | None = None
+    unanswered_now: int | None = None
+    comments_in: int
+    comments_replied: int
+
+
+class MessagingTotals(BaseModel):
+    messages_in: int
+    messages_out: int
+    messages_in_prev: int
+    messages_out_prev: int
+    conversations: int
+    conversations_prev: int
+    response_rate: float | None = None
+    response_rate_prev: float | None = None
+    median_first_response_seconds: int | None = None
+    median_first_response_seconds_prev: int | None = None
+    p90_first_response_seconds: int | None = None
+    unanswered_now: int | None = None
+    oldest_unanswered_seconds: int | None = None
+    as_of: datetime | None = None
+
+
+class MessagingOverviewResponse(BaseModel):
+    days: int
+    # Meta's own "Very responsive to messages" gate: 90% answered, median
+    # reply < 15 min. The UI draws the goal line here.
+    goal: dict[str, float]
+    totals: MessagingTotals
+    channels: list[MessagingChannelRow]

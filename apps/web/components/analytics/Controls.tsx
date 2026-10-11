@@ -49,8 +49,8 @@ export function RangeChannelControls({
   channels: ChannelOption[];
 }) {
   const rangeBtn = (active: boolean) =>
-    `rounded-md px-2.5 py-1 text-[11px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${
-      active ? "bg-white text-deep-violet shadow-sm" : "text-ink/45 hover:text-ink/70"
+    `rounded-[2px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+      active ? "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)] hover:text-[var(--ui-ink)]"
     }`;
   return (
     <div className="flex items-center gap-2">
@@ -59,7 +59,7 @@ export function RangeChannelControls({
           value={channelId ?? ""}
           onChange={(e) => setChannelId(e.target.value || null)}
           aria-label="Filter by location"
-          className="h-8 rounded-lg border border-deep-violet/[0.1] bg-white px-2 text-[12px] text-ink outline-none transition focus:ring-2 focus:ring-deep-violet/30"
+          className="ui-input h-8 bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
         >
           <option value="">All locations</option>
           {channels.map((c) => (
@@ -67,7 +67,7 @@ export function RangeChannelControls({
           ))}
         </select>
       )}
-      <div className="flex rounded-lg bg-deep-violet/[0.06] p-0.5" role="group" aria-label="Time range">
+      <div className="flex rounded-[2px] bg-[var(--ui-sunken)] p-0.5" role="group" aria-label="Time range">
         {RANGES.map((r) => (
           <button key={r} onClick={() => setDays(r)} aria-pressed={days === r} className={rangeBtn(days === r)}>
             {r}d

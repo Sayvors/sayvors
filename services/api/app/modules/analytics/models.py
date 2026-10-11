@@ -290,6 +290,81 @@ class LocationDailyMetric(Base):
     )
 
 
+class ChannelDailyMetric(Base):
+    """One row per messaging channel per day: conversation rollups.
+
+    The messaging analog of `location_daily_metrics`. Written ONLY by the
+    rollup worker (`messaging_rollup.py`) — every analytics read of this
+    table serves stored rows; nothing derives numbers from
+    `channel_messages` at request time.
+
+    Response-time semantics: a conversation is (channel_id, contact_phone).
+    FRT = the day's first inbound → the next outbound in that thread, and a
+    reply may land up to 48h after the inbound — each worker pass recomputes
+    the last 2 days so late replies land in the right row, and rows freeze
+    after that (a reply 3+ days later is not counted; rare and honest).
+
+    Raw per-conversation FRTs ride in `frt_samples` (capped, evenly thinned)
+    so a window median/p90 is computed from real samples instead of
+    averaging daily medians.
+    """
+
+    __tablename__ = "channel_daily_metrics"
+    __table_args__ = (
+        UniqueConstraint("channel_id", "date", name="uq_channel_daily_channel_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    date: Mapped[datetime] = mapped_column(Date, index=True)
+
+    # ── Message volume ──
+    messages_in: Mapped[int] = mapped_column(Integer, default=0)
+    messages_out: Mapped[int] = mapped_column(Integer, default=0)
+
+    # ── Conversations & response health ──
+    # Distinct non-null contact_phone with ≥1 inbound that day.
+    conversations_in: Mapped[int] = mapped_column(Integer, default=0)
+    # Of those, how many got ≥1 outbound reply (within the 48h lookback).
+    conversations_replied: Mapped[int] = mapped_column(Integer, default=0)
+    median_first_response_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    p90_first_response_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The day's real FRT values, seconds, ascending, thinned to ≤500 samples.
+    frt_samples: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+    # Snapshot-only (today's row): conversations with inbound and no reply
+    # yet, and the age of the oldest. NULL on frozen days.
+    unanswered_open: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    oldest_unanswered_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # ── Comments (inbox on the tenant's own media) ──
+    comments_in: Mapped[int] = mapped_column(Integer, default=0)
+    # Inbound comments that received ≥1 direct outbound reply.
+    comments_replied: Mapped[int] = mapped_column(Integer, default=0)
+
+    # ── Future pillars (filled by later phases, columns exist so the
+    #    rollup worker never needs a second migration) ──
+    ai_handled_out: Mapped[int] = mapped_column(Integer, default=0)  # needs handled_by flag
+    contacts_new: Mapped[int] = mapped_column(Integer, default=0)  # first-ever inbound that day
+    followers_count: Mapped[int | None] = mapped_column(Integer, nullable=True)  # daily snapshot
+    posts_count: Mapped[int | None] = mapped_column(Integer, nullable=True)  # daily snapshot
+    # 24 ints, UTC-hour buckets of inbound volume — heatmap feed (later phase).
+    by_hour_in: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+
+    computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class ReviewIntelligenceReport(Base):
     """Cached AI review-intelligence analysis (analyze once, serve many).
 

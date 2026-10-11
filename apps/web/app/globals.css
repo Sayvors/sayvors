@@ -250,14 +250,19 @@ html[lang="ar"] {
  * and no tinted shadow stacks - an earlier clay pass was rejected.
  */
 .team-ui {
-  --ui-ink: #000000;
+  /* --ui-ink: #383838; */
+  /* --ui-ink: #ac334d; */
+    /* --ui-ink: #181818; */
+  /* Values follow the /dashboard design: Deep Violet ink on the lavender
+   * page. Names unchanged — every consumer keeps working. */
+  --ui-ink: #3d1d6e; /* brand Deep Violet — /dashboard's accent */
   --ui-on-ink: #ffffff; /* text on an ink-filled surface */
-  --ui-ink-2: rgba(0, 0, 0, 0.6); /* 5.7:1 on white, 5.5:1 on #F5F5F5 */
-  --ui-line: rgba(0, 0, 0, 0.12);
-  --ui-line-strong: rgba(0, 0, 0, 0.22);
+  --ui-ink-2: rgba(61, 29, 110, 0.62); /* secondary text on white/#f3f0ff */
+  --ui-line: rgba(61, 29, 110, 0.14);
+  --ui-line-strong: rgba(61, 29, 110, 0.28);
   --ui-surface: #ffffff;
-  --ui-sunken: #f5f5f5;
-  --ui-page: #f5f5f5;
+  --ui-sunken: #e7e1f6; /* deep-violet wash over the page */
+  --ui-page: #f3f0ff; /* the /dashboard page */
 
   background: var(--ui-page);
   color: var(--ui-ink);
@@ -278,16 +283,17 @@ html[lang="ar"] {
   background: var(--ui-page);
 }
 
-/* Non-clickable containers: a hairline and nothing else. */
+/* Non-clickable containers: a hairline and nothing else. Near-zero radius,
+ * matching /dashboard's rounded-[2px] cards. */
 .ui-panel {
   border: 1px solid var(--ui-line);
-  border-radius: 12px;
+  border-radius: 2px;
   background: var(--ui-surface);
 }
 
 .ui-card {
   border: 1px solid var(--ui-line);
-  border-radius: 10px;
+  border-radius: 2px;
   background: var(--ui-surface);
 }
 
@@ -297,7 +303,7 @@ html[lang="ar"] {
  * unlayered rule would beat a Tailwind utility of the same specificity. */
 .ui-btn {
   border: 1px solid var(--ui-line-strong);
-  border-radius: 8px;
+  border-radius: 2px;
   transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .ui-btn:hover {
@@ -318,7 +324,7 @@ html[lang="ar"] {
  * neighbouring button. */
 .ui-btn-danger {
   border: 1px solid var(--ui-ink);
-  border-radius: 8px;
+  border-radius: 2px;
   font-weight: 700;
   transition: background-color 120ms ease, color 120ms ease;
 }
@@ -335,7 +341,7 @@ html[lang="ar"] {
  * overrode per-state colours passed in JSX. */
 .ui-input {
   border: 1px solid var(--ui-line-strong);
-  border-radius: 8px;
+  border-radius: 2px;
 }
 
 /* Read-only badge: a data chip, not a field. Lighter hairline than an input,
@@ -344,7 +350,7 @@ html[lang="ar"] {
   display: inline-flex;
   align-items: center;
   border: 1px solid var(--ui-line);
-  border-radius: 8px;
+  border-radius: 2px;
   background: var(--ui-sunken);
 }
 

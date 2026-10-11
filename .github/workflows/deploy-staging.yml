@@ -54,25 +54,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy over SSH
-        env:
-          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          SSH_HOST: ${{ secrets.EC2_HOST }}
-          SSH_USER: ${{ secrets.EC2_USER }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" '
-            set -e
-            cd ~/sayvors
-            git fetch origin staging
-            git reset --hard origin/staging
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
-            docker image prune -f
-          '
+  # Deploys are manual since the repo went private (the EC2's anonymous
+  # HTTPS git fetch broke): CI builds + pushes the :staging image above,
+  # a human pulls it up on the EC2:
+  #   cd ~/sayvors && docker compose -f docker-compose.prod.yml pull \
+  #     && docker compose -f docker-compose.prod.yml up -d --remove-orphans
+  # The api container runs `alembic upgrade head` on boot, so migrations
+  # stay automatic. compose/Caddyfile changes still need a manual
+  # `git pull` on the server (add a read-only deploy key when needed).
+

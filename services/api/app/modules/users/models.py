@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -41,6 +41,11 @@ class User(Base):
     # actual engine resolved from the admin-managed voice models. Admin
     # decides which provider powers each tier — tenants never see it.
     voice_replies: Mapped[str] = mapped_column(String(16), default="off", server_default="off")
+    # Lead-conversion knobs, validated/clamped by
+    # lead_engine.normalize_lead_settings (NULL = safe defaults). JSON, not
+    # columns: a handful of numeric windows, and new knobs must not need a
+    # migration. Never free-form prompts or scheduling expressions.
+    lead_settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Google identity (sign-in with Google). Non-NULL google_sub ⇒ the account
     # authenticates via Google; password_hash stays a random unusable value.
     google_sub: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)

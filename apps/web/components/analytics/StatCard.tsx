@@ -4,18 +4,20 @@ import { ReactNode } from "react";
 
 export function DeltaChip({ delta, suffix = "%", noPriorData = "no prior data" }: { delta: number | null; suffix?: string; noPriorData?: string }) {
   if (delta === null || delta === undefined) {
-    return <span className="text-[11px] font-medium text-ink/35">{noPriorData}</span>;
+    return <span className="text-[11px] font-medium text-[var(--ui-ink-2)]">{noPriorData}</span>;
   }
   const up = delta > 0;
   const flat = delta === 0;
+  // No hue (needs the .team-ui ancestor for the --ui-* vars): "worse" inverts
+  // to ink, "better" sits on sunken, "flat" dims — same chips as MessagingSection.
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+      className={`inline-flex items-center gap-1 rounded-[2px] px-2 py-0.5 text-[11px] font-bold tabular-nums ${
         flat
-          ? "bg-ink/[0.05] text-ink/50"
+          ? "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]"
           : up
-            ? "bg-emerald/10 text-emerald"
-            : "bg-coral/10 text-coral"
+            ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
+            : "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
       }`}
     >
       {!flat && (
@@ -51,28 +53,28 @@ export function StatCard({
 }) {
   if (loading) {
     return (
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm" aria-hidden>
-        <div className="h-3 w-24 animate-pulse rounded bg-ink/[0.07]" />
-        <div className="mt-3 h-7 w-16 animate-pulse rounded bg-ink/[0.07]" />
-        <div className="mt-2 h-3 w-20 animate-pulse rounded bg-ink/[0.05]" />
+      <div className="ui-card p-4" aria-hidden>
+        <div className="h-3 w-24 animate-pulse rounded bg-[var(--ui-sunken)]" />
+        <div className="mt-3 h-7 w-16 animate-pulse rounded bg-[var(--ui-sunken)]" />
+        <div className="mt-2 h-3 w-20 animate-pulse rounded bg-[var(--ui-sunken)]" />
       </div>
     );
   }
   return (
-    <div className="rounded-2xl border-2 border-white bg-white/80 p-4 backdrop-blur-sm transition hover:shadow-md hover:shadow-deep-violet/[0.06]">
+    <div className="ui-card p-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-ink/55">{label}</p>
+        <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-[var(--ui-ink-2)]">{label}</p>
         {icon && (
-          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${accent ?? "bg-deep-violet/10 text-deep-violet"}`}>
+          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[2px] ${accent ?? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
             {icon}
           </span>
         )}
       </div>
       <div className="mt-1 flex items-baseline gap-2">
-        <p className="text-[22px] font-bold text-ink">{value}</p>
+        <p className="text-[22px] font-bold text-[var(--ui-ink)]">{value}</p>
         <DeltaChip delta={delta ?? null} suffix={deltaSuffix} noPriorData={noPriorData} />
       </div>
-      {sub && <p className="text-[10px] text-ink/40">{sub}</p>}
+      {sub && <p className="text-[10px] text-[var(--ui-ink-2)]">{sub}</p>}
     </div>
   );
 }

@@ -19,6 +19,7 @@ from .schemas import (
     IssueUpdateBody,
     KeywordsResponse,
     LocationIssueOut,
+    MessagingOverviewResponse,
     OpportunitiesResponse,
     OverviewResponse,
     ProblemsResponse,
@@ -196,6 +197,23 @@ async def get_overview(
     """KPI block: ratings, sentiment, response metrics, scores, Google performance."""
     uid = tenant_id_of(user)
     return await service.get_overview(db, uid, channel_id, days)
+
+
+@router.get("/messaging/overview", response_model=MessagingOverviewResponse)
+async def get_messaging_overview(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Message volume + response health across WhatsApp / IG / FB.
+
+    Served from the `channel_daily_metrics` rollup table only — the worker
+    owns every calculation, this endpoint just reads stored rows.
+    """
+    uid = tenant_id_of(user)
+    return await service.get_messaging_overview(db, uid, channel_id, days)
 
 
 @router.get("/timeseries", response_model=TimeseriesResponse)
