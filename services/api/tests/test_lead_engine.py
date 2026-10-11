@@ -298,6 +298,161 @@ async def test_capture_failure_never_raises(db, channel_id, user_id, monkeypatch
     assert result is None  # a capture problem never costs the customer their reply
 
 
+# ── platform ground truth: WhatsApp's sender IS a verified phone ──────
+
+
+@pytest.mark.asyncio
+async def test_capture_whatsapp_stores_verified_sender_phone(db, channel_id, user_id):
+    lead = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="971501234567", message_id="wp-1", inbound_text="hello",
+    )
+    # The customer is messaging FROM this number — Meta verified it; asking
+    # them for it in the chat is absurd, so the engine records it.
+    assert lead.phone_number == "+971501234567"
+    assert lead.field_provenance["phone"]["status"] == "verified"
+    # Instagram's numeric sender id is NOT a phone — never stored as one.
+    ig = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="instagram",
+        contact_id="1560689862767193", message_id="ig-1", inbound_text="hello",
+    )
+    assert ig.phone_number is None
+
+
+@pytest.mark.asyncio
+async def test_stated_phone_outranks_verified_only_when_confident(db, channel_id, user_id):
+    lead = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="971501234567", message_id="wp-2", inbound_text="hi",
+    )
+    # A low-confidence stated number loses to the verified sender address.
+    await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="971501234567", message_id="wp-3", inbound_text="hi",
+        delta={"phone": "+971500000000", "confidence": 0.6},
+    )
+    await db.refresh(lead)
+    assert lead.phone_number == "+971501234567"
+    assert lead.field_provenance["phone"]["status"] == "verified"
+    # A confident stated number wins and flips the status to "stated".
+    await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="971501234567", message_id="wp-4",
+        inbound_text="actually reach me on my other line",
+        delta={"phone": "+971500000000", "confidence": 0.95},
+    )
+    await db.refresh(lead)
+    assert lead.phone_number == "+971500000000"
+    assert lead.field_provenance["phone"]["status"] == "stated"
+
+
+# ── summary: a running digest, not the first greeting ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_summary_is_a_running_digest_not_the_first_greeting(db, channel_id, user_id):
+    lead = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="summ-1", message_id="s-1", inbound_text="Hi",
+    )
+    assert lead.summary == "Hi"  # verbatim fallback until substance exists
+
+    await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="summ-1", message_id="s-2", inbound_text="I need a website",
+        delta={
+            "request": "custom e-commerce website",
+            "summary": "Wants a customized e-commerce website, ~10k budget",
+            "confidence": 0.9,
+        },
+    )
+    await db.refresh(lead)
+    assert lead.summary == "Wants a customized e-commerce website, ~10k budget"
+
+    # A newer digest REPLACES the old one — summaries must track the
+    # conversation as it grows (facts like request never downgrade).
+    await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="summ-1", message_id="s-3", inbound_text="budget is 15k now",
+        delta={
+            "summary": "Wants a customized e-commerce site, budget raised to 15k",
+            "confidence": 0.9,
+        },
+    )
+    await db.refresh(lead)
+    assert lead.summary == "Wants a customized e-commerce site, budget raised to 15k"
+    assert lead.request == "custom e-commerce website"
+
+
+# ── the honest handoff: the team is actually told ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_qualified_lead_notifies_the_team_once(db, channel_id, user_id):
+    from app.modules.notifications.models import Notification
+
+    lead = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="notif-1", message_id="n-1",
+        inbound_text="how much for 50 boxes?",
+    )
+
+    async def _pings():
+        rows = (await db.execute(
+            select(Notification).where(
+                Notification.user_id == user_id,
+                Notification.type == "lead",
+                Notification.data["lead_id"].as_string() == lead.id,
+            )
+        )).scalars().all()
+        return rows
+
+    pings = await _pings()
+    assert len(pings) == 1
+    assert "how much" in pings[0].body or "50 boxes" in pings[0].body
+
+    # Capturing the same (already qualified) lead again never re-pings.
+    await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="notif-1", message_id="n-2", inbound_text="ok thanks",
+    )
+    assert len(await _pings()) == 1
+
+
+@pytest.mark.asyncio
+async def test_qualified_lead_notify_respects_tenant_settings(db, channel_id, user_id):
+    from app.modules.notifications.models import Notification
+    from app.modules.users.models import User
+
+    db.add(User(
+        id=user_id,
+        email="quiet-tenant@sayvors.com",
+        first_name="Quiet",
+        last_name="Tenant",
+        password_hash="x",
+        onboarded=True,
+        notification_settings={"leads": False},
+    ))
+    await db.commit()
+
+    lead = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="notif-2", message_id="q-1",
+        inbound_text="how much for 50 boxes?",
+    )
+
+    rows = (await db.execute(
+        select(Notification).where(
+            Notification.user_id == user_id,
+            Notification.type == "lead",
+        )
+    )).scalars().all()
+    assert rows == []
+    # Only the pop is gated — the lead itself is untouched.
+    await db.refresh(lead)
+    assert lead.stage == "qualified"
+
+
 # ── scheduling: durable, idempotent, capped ──────────────────────────
 
 

@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 import { fetchOverview } from "@/lib/api-analytics";
+import { fetchLeads } from "@/lib/api-leads";
 
 interface BizRow {
   id: string;
@@ -46,6 +47,7 @@ export default function GlanceStrip() {
   const [totalReviews, setTotalReviews] = useState<number | null>(null);
   const [avgRating, setAvgRating] = useState<number | null>(null);
   const [postStats, setPostStats] = useState<{ total: number; published: number; scheduled: number; draft: number } | null>(null);
+  const [leadStats, setLeadStats] = useState<{ total: number; new: number; followUp: number; converted: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,6 +124,21 @@ export default function GlanceStrip() {
       } catch {
         /* leave empty */
       }
+
+      // Leads by stage for the glance card (same limit as the board).
+      try {
+        const { leads } = await fetchLeads({ limit: 200 });
+        if (cancelled) return;
+        const stats = { total: leads.length, new: 0, followUp: 0, converted: 0 };
+        for (const l of leads) {
+          if (l.stage === "new" || l.stage === "qualified") stats.new++;
+          else if (l.stage === "follow_up") stats.followUp++;
+          else if (l.stage === "converted") stats.converted++;
+        }
+        setLeadStats(stats);
+      } catch {
+        /* leave empty */
+      }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -148,15 +165,34 @@ export default function GlanceStrip() {
         </div>
       </div>
 
-      {/* Tickets card — placeholder, no API call yet */}
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Tickets</p>
-          <Image src="/leads.png" alt="Tickets" width={32} height={32} />
+      {/* Leads card — live from /api/v1/leads, all channels */}
+      <Link href="/dashboard/leads" aria-label="Open leads">
+        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-ink/80">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Leads</p>
+            <Image src="/leads.png" alt="Leads" width={32} height={32} />
+          </div>
+          <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{leadStats ? leadStats.total : "-"}</p>
+          {leadStats ? (
+            <div className="mt-3 space-y-1.5">
+              <div className="flex items-center justify-between text-[12px]">
+                <span className="text-ink/55 dark:text-fog/55">New</span>
+                <span className="font-bold text-ink dark:text-fog">{leadStats.new}</span>
+              </div>
+              <div className="flex items-center justify-between text-[12px]">
+                <span className="text-ink/55 dark:text-fog/55">In follow-up</span>
+                <span className="font-bold text-deep-violet">{leadStats.followUp}</span>
+              </div>
+              <div className="flex items-center justify-between text-[12px]">
+                <span className="text-ink/55 dark:text-fog/55">Converted</span>
+                <span className="font-bold text-ink dark:text-fog">{leadStats.converted}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">All channels</p>
+          )}
         </div>
-        <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">0</p>
-        <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">All channels</p>
-      </div>
+      </Link>
 
       <div className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
         <div className="flex items-center justify-between">

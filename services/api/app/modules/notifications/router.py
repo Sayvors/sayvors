@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
 from .models import Notification
+from .service import normalize_notification_settings
 from ..team.context import tenant_id_of, require_perm, TenantContext
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,53 @@ async def unread_count(
         )
     ).scalar_one()
     return {"unread": count}
+
+
+class NotificationSettingsOut(BaseModel):
+    messages: bool
+    leads: bool
+
+
+class NotificationSettingsIn(BaseModel):
+    # None = leave the toggle untouched (PATCH semantics).
+    messages: bool | None = None
+    leads: bool | None = None
+
+
+@router.get("/settings", response_model=NotificationSettingsOut)
+async def get_notification_settings(
+    ctx: TenantContext = Depends(require_perm("notifications.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Live-toast preferences (dashboard popup toggles)."""
+    row = await db.get(User, _uid(user))
+    return NotificationSettingsOut(
+        **normalize_notification_settings(
+            row.notification_settings if row else None
+        )
+    )
+
+
+@router.patch("/settings", response_model=NotificationSettingsOut)
+async def update_notification_settings(
+    payload: NotificationSettingsIn,
+    ctx: TenantContext = Depends(require_perm("notifications.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Flip live-toast toggles; unknown keys can't pass the whitelist."""
+    uid = _uid(user)
+    row = await db.get(User, uid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    current = normalize_notification_settings(row.notification_settings)
+    current.update(payload.model_dump(exclude_none=True))
+    row.notification_settings = normalize_notification_settings(current)
+    await db.commit()
+    return NotificationSettingsOut(
+        **normalize_notification_settings(row.notification_settings)
+    )
 
 
 @router.post("/{notification_id}/read", response_model=NotificationItem)

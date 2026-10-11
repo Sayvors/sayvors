@@ -35,10 +35,13 @@ LEAD_PROMPT_BLOCK = (
     "need, or shared their name or phone number, END YOUR REPLY with ONE "
     "final line exactly like:\n"
     'LEAD: {"intent": "buying|booking|quote|info", "request": "<what they '
-    'need, in their words>", "name": "<name if they gave it>", "phone": '
+    'need, in their words>", "summary": "<one short sentence: what THIS '
+    'customer wants so far>", "name": "<name if they gave it>", "phone": '
     '"<phone only if the customer typed it>", "confidence": <0.0-1.0>}\n'
-    "Omit any field you were not given. Omit the whole line when there is "
-    "nothing to record. Never invent facts. Never mention this line."
+    "Keep summary current with the WHOLE conversation, not just this "
+    "message, and include it whenever the chat has any substance. Omit "
+    "any other field you were not given. Omit the whole line when there "
+    "is nothing to record. Never invent facts. Never mention this line."
 )
 
 _LEAD_ALLOWED_INTENTS = ("buying", "booking", "quote", "info")
@@ -150,6 +153,9 @@ def _parse_lead_delta(tail: str | None) -> dict | None:
     request = str(data.get("request") or "").strip()
     if request:
         delta["request"] = request[:500]
+    summary = str(data.get("summary") or "").strip()
+    if summary:
+        delta["summary"] = summary[:300]
     name = str(data.get("name") or "").strip()
     if name:
         delta["name"] = name[:120]
@@ -294,16 +300,18 @@ async def capture_lead(
         prov = dict(lead.field_provenance or {})
         confidence = float((delta or {}).get("confidence") or (0.6 if delta else 0.4))
         source = message_id or None
+        previous_stage = lead.stage
 
-        def _merge(field: str, column: str, value, source_conf: float) -> None:
+        def _merge(field: str, column: str, value, source_conf: float) -> bool:
             # The core merge rule: nothing empty, nothing downgraded.
+            # Returns whether the value was actually written.
             if value in (None, "", False):
-                return
+                return False
             prev = prov.get(field) or {}
             if prev.get("value") not in (None, "") and source_conf < float(
                 prev.get("confidence") or 0.0
             ):
-                return
+                return False
             prov[field] = {
                 "value": value,
                 "confidence": round(source_conf, 2),
@@ -311,22 +319,35 @@ async def capture_lead(
                 "at": now.isoformat(),
             }
             setattr(lead, column, value)
+            return True
+
+        # Platform ground truth: on WhatsApp the sender address IS a phone
+        # number Meta has verified — store it (status "verified") unless the
+        # customer later states a specific number with higher confidence.
+        if platform == "whatsapp" and contact_id and contact_id.lstrip("+").isdigit():
+            verified = validate_phone(f"+{contact_id.lstrip('+')}")
+            if verified and _merge("phone", "phone_number", verified, 0.9):
+                prov["phone"]["status"] = "verified"
 
         if delta:
             _merge("name", "contact_name", delta.get("name"), confidence)
             _merge("intent", "intent", delta.get("intent"), confidence)
             _merge("request", "request", delta.get("request"), confidence)
-            if delta.get("phone"):
-                _merge("phone", "phone_number", delta["phone"], confidence)
-                prov.setdefault("phone", {})
+            if delta.get("phone") and _merge(
+                "phone", "phone_number", delta["phone"], confidence
+            ):
                 prov["phone"]["status"] = "stated"
+            # A digest, not a fact: the newest summary replaces the old one
+            # (confidence rules don't apply — it must track the conversation
+            # as it grows, while facts like name/phone never downgrade).
+            new_summary = (delta.get("summary") or "").strip()
+            if new_summary:
+                lead.summary = new_summary[:300]
         else:
             # No extraction line: cheap deterministic signals only.
             _merge("intent", "intent", detect_intent(inbound_text), 0.4)
             candidate = validate_phone(_extract_phone_candidate(inbound_text))
-            if candidate:
-                _merge("phone", "phone_number", candidate, 0.4)
-                prov.setdefault("phone", {})
+            if candidate and _merge("phone", "phone_number", candidate, 0.4):
                 prov["phone"]["status"] = "stated"
 
         if contact_name and not lead.contact_name:
@@ -355,6 +376,28 @@ async def capture_lead(
         # next capture reads exactly this.
         lead.field_provenance = prov
         db.add(lead)
+        # The honest handoff: when a lead gains substance, the team is
+        # actually TOLD (once per transition) — no "connecting you" theater.
+        # Gated by the tenant's notification settings like every other pop.
+        if lead.stage == "qualified" and previous_stage != "qualified":
+            from ...notifications.service import normalize_notification_settings, notify
+            from ...users.models import User
+
+            prefs = (
+                await db.execute(
+                    select(User.notification_settings).where(User.id == tenant_id)
+                )
+            ).scalar_one_or_none()
+            if normalize_notification_settings(prefs)["leads"]:
+                await notify(
+                    db,
+                    tenant_id,
+                    "lead",
+                    f"New lead on {platform}",
+                    f"{lead.contact_name or contact_id}: "
+                    f"{lead.summary or lead.request or ''}".strip()[:300],
+                    data={"lead_id": lead.id, "platform": platform},
+                )
         await db.commit()
         return lead
     except Exception as e:

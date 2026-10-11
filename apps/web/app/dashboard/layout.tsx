@@ -3,6 +3,7 @@ import Header from "@/components/dashboard/Header";
 import SayvorsChat from "@/components/chat/SayvorsChat";
 import TourProvider from "@/components/tour/TourProvider";
 import ToastProvider from "@/components/feedback/ToastStack";
+import MessageToasts from "@/components/feedback/MessageToasts";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthGuard } from "@/components/AuthGuard";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
@@ -23,6 +24,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </main>
               </div>
               <SayvorsChat />
+              <MessageToasts />
             </div>
           </TourProvider>
           </ToastProvider>

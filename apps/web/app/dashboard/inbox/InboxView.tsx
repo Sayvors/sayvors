@@ -13,6 +13,7 @@ import {
   type InboxThread,
 } from "@/lib/api-inbox";
 import { platformMeta } from "@/lib/platform";
+import { setActiveThread } from "@/lib/active-thread";
 import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
 
 type Filter = "all" | "unread" | "unknown";
@@ -220,6 +221,11 @@ export default function InboxView() {
     () => threads.find((t) => `${t.channel_id}:${t.key}` === selectedKey) ?? null,
     [threads, selectedKey],
   );
+
+  // Message toasts mute themselves for the thread the agent is reading.
+  useEffect(() => {
+    setActiveThread(selectedKey);
+  }, [selectedKey]);
 
   const effectiveSelected = useMemo(() => {
     if (selected) return selected;

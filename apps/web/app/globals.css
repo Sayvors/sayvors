@@ -38,6 +38,11 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  /* Semantic surfaces, so utilities like bg-card / border-card-border /
+   * bg-accent-soft follow the .dark palette flip automatically. */
+  --color-card: var(--card-bg);
+  --color-card-border: var(--card-border);
+  --color-accent-soft: var(--accent-soft);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
