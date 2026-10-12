@@ -84,22 +84,15 @@ def setup_logging():
 
 # ── GlitchTip error tracking ─────────────────────────────────────────────
 def setup_glitchtip():
-    """Initialize GlitchTip error tracking."""
-    dsn = settings.GLITCHTIP_DSN
-    if not dsn:
-        return
-    try:
-        import glitchtip
-        glitchtip.init(
-            dsn=settings.GLITCHTIP_DSN,
-            environment=settings.ENVIRONMENT,
-            release=settings.VERSION,
-            traces_sample_rate=0.1,
-            profiles_sample_rate=0.1,
-        )
-        logging.getLogger(__name__).info("GlitchTip initialized")
-    except Exception as e:
-        logging.getLogger(__name__).warning("GlitchTip init failed: %s", e)
+    """Initialize GlitchTip error tracking for the API process.
+
+    Configuration lives in app/observability.py so every entrypoint (api,
+    worker) shares one source of truth. Re-exported here for callers that
+    already import from app.main.
+    """
+    from .observability import init_observability
+
+    return init_observability("api")
 
 
 # ── Request-ID middleware ────────────────────────────────────────────────

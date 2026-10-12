@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from functools import lru_cache
 
 from redis.asyncio import Redis
@@ -16,6 +17,12 @@ _redis: Redis | None = None
 # failing every caller (which would trip fail-closed auth/blacklist paths).
 _redis_loop = None
 _redis_available = True
+_redis_marked_unavailable_at = 0.0
+# How long to wait before re-probing Redis after it was marked unavailable.
+# Fail-closed paths (rate limiting, token blacklist) call get_redis() on every
+# request, so without this cooldown a single Redis blip would permanently latch
+# the client offline and 429 every login until restart.
+REDIS_REPROBE_COOLDOWN_SECONDS = 5.0
 
 
 def _fresh_client() -> Redis:
@@ -29,19 +36,43 @@ def _fresh_client() -> Redis:
 
 
 async def get_redis() -> Redis:
-    global _redis, _redis_available, _redis_loop
+    global _redis, _redis_available, _redis_loop, _redis_marked_unavailable_at
     if not _redis_available:
-        raise ConnectionError("Redis marked unavailable")
+        if (time.monotonic() - _redis_marked_unavailable_at) < REDIS_REPROBE_COOLDOWN_SECONDS:
+            raise ConnectionError("Redis marked unavailable")
+        # Cooldown elapsed: re-probe instead of staying latched offline.
+        probe = _fresh_client()
+        try:
+            await probe.ping()
+        except Exception as e:
+            _redis_marked_unavailable_at = time.monotonic()
+            raise ConnectionError(f"Redis unavailable: {e}") from e
+        finally:
+            try:
+                await probe.aclose()
+            except Exception:
+                pass
+        # Redis is back: drop the stale client so the normal path below builds
+        # a fresh one on this loop instead of reusing a dead connection.
+        if _redis is not None:
+            try:
+                await _redis.aclose()
+            except Exception:
+                pass
+            _redis = None
+            _redis_loop = None
+        mark_redis_available()
+        logger.info("Redis recovered, rate limiting re-enabled")
     try:
         running = asyncio.get_running_loop()
     except RuntimeError:
         running = None
     if _redis is None or (
         _redis_loop is not None and running is not None and _redis_loop is not running
-    ):
+):
         if _redis is not None:
             try:
-                await _redis.close()
+                await _redis.aclose()
             except Exception:
                 pass
         _redis = _fresh_client()
@@ -53,7 +84,7 @@ async def close_redis() -> None:
     global _redis, _redis_loop
     if _redis is not None:
         try:
-            await _redis.close()
+            await _redis.aclose()
         except Exception:
             pass
         _redis = None
@@ -61,9 +92,13 @@ async def close_redis() -> None:
 
 
 def mark_redis_unavailable():
-    global _redis_available
+    global _redis_available, _redis_marked_unavailable_at
     _redis_available = False
-    logger.warning("Redis marked unavailable, will retry in 30s")
+    _redis_marked_unavailable_at = time.monotonic()
+    logger.warning(
+        "Redis marked unavailable, re-probing in %ss",
+        REDIS_REPROBE_COOLDOWN_SECONDS,
+    )
 
 
 def mark_redis_available():

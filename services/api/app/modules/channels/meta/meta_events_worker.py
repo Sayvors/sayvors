@@ -119,7 +119,7 @@ async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List
         LIMIT :limit
         FOR UPDATE SKIP LOCKED
     """)
-    result = await db.execute(text, {"now": datetime.now(timezone.utc), "limit": limit})
+    result = await db.execute(query, {"now": now, "limit": limit})
     rows = result.mappings().all()
 
     events = []
@@ -135,114 +135,6 @@ async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List
         await db.commit()
 
     return events
-
-
-def _event_type_handled(provider: str, event_type: str) -> bool:
-    """Check if we handle this event type."""
-    return event_type in HANDLED_EVENT_TYPES.get(provider, set())
-
-
-async def _process_event(db, event_data: Dict[str, Any]) -> bool:
-    """Process a single meta event. Returns True if successful, False if should retry."""
-    event_id = event_data["id"]
-    event_type = event_data["event_type"]
-    payload = event_data["payload"]
-    topic = event_data["topic"]
-
-    try:
-        # Parse the payload if it's a string
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-
-        provider = payload.get("provider", "")
-        event_type = payload.get("event_type", "")
-
-        if not _event_type_handled(provider, event_type):
-            # Mark as sent (ignored)
-            await _mark_event_sent(db, event_id)
-            return True
-
-        # Route to appropriate handler
-        if provider == "whatsapp":
-            if event_type == "message.received":
-                await _handle_message_received(payload)
-            elif event_type == "message.status":
-                await _handle_message_status(payload)
-            elif event_type == "message.history":
-                await _handle_message_history(payload)
-            elif event_type == "message.echo":
-                await _handle_message_echo(payload)
-            elif event_type == "smb.contacts":
-                await _handle_smb_contacts(payload)
-            elif event_type == "connection.disconnect":
-                await _handle_connection_disconnect(payload)
-        elif provider == "instagram":
-            if event_type == "message.received":
-                if ((payload.get("raw") or {}).get("message") or {}).get("is_echo"):
-                    await _handle_instagram_echo(payload)
-                else:
-                    await _handle_instagram_message(payload)
-            elif event_type == "comment.received":
-                await _handle_instagram_comment(payload)
-        elif provider == "facebook":
-            if event_type == "comment.received":
-                await _handle_facebook_comment(payload)
-
-        # Mark as sent
-        await _mark_event_sent(db, event_id)
-        return True
-
-    except _AmbiguousError:
-        # Delivery unknown - don't retry
-        await _mark_event_ambiguous(db, event_id)
-        return False
-    except _PermanentError:
-        await _mark_event_failed(db, event_id, retry=False)
-        return False
-    except Exception as e:
-        logger.exception("Failed processing meta event %s: %s", event_id, e)
-        # Determine if retryable
-        await _mark_event_failed(db, event_id, str(e), retry=True)
-        return False
-
-
-async def _mark_event_sent(db, event_id: str) -> None:
-    """Mark event as successfully sent."""
-    await db.execute(
-        text("UPDATE event_outbox SET status = 'sent', last_error = NULL WHERE id = :id"),
-        {"id": event_id}
-    )
-    await db.commit()
-
-
-async def _mark_event_ambiguous(db, event_id: str) -> None:
-    """Mark event as ambiguous (delivered but not confirmed)."""
-    await db.execute(
-        text("UPDATE event_outbox SET status = 'ambiguous' WHERE id = :id"),
-        {"id": event_id}
-    )
-    await db.commit()
-
-
-async def _mark_event_failed(db, event_id: str, error: str, retry: bool = True) -> None:
-    """Mark event as failed, schedule retry if appropriate."""
-    now = datetime.now(timezone.utc)
-    if retry:
-        await db.execute(
-            text("""
-                UPDATE event_outbox
-                SET status = 'failed', attempts = attempts + 1,
-                    last_error = :error, next_retry_at = :next_retry
-                WHERE id = :id
-            """),
-            {"id": event_id, "error": str(error)[:500], "next_retry": datetime.now(timezone.utc) + timedelta(seconds=300)}
-        )
-    else:
-        await db.execute(
-            text("UPDATE event_outbox SET status = 'dead', last_error = :error WHERE id = :id"),
-            {"id": event_id, "error": str(error)[:500]}
-        )
-    await db.commit()
 
 
 async def _process_event(db, event_data: Dict[str, Any]) -> bool:

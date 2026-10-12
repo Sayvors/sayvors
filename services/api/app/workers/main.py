@@ -69,6 +69,13 @@ async def _amain() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # The worker is a separate process from the API, and sentry_sdk patches
+    # handlers in-process only. Without this call every failure in the
+    # outbox/review/localith/post-publish loops is invisible in GlitchTip.
+    from ..observability import init_observability
+
+    init_observability("worker")
+
     if not settings.RUN_BACKGROUND_WORKERS:
         # Guard against a misconfigured deploy where BOTH api and worker
         # run with the flag flipped the wrong way: the worker entrypoint
