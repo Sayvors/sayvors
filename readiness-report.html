@@ -197,7 +197,7 @@
 <div class="stats">
   <div class="stat"><div class="n calm">1</div><div class="l">critical security hole — OTP bypass <strong>fixed</strong> (SEC-C1 ✅)</div></div>
   <div class="stat"><div class="n amber">0</div><div class="l">backup tooling, observability, and frontend tests — all three are zero</div></div>
-  <div class="stat"><div class="n amber">1</div><div class="l">sequential AI-reply consumer processes every customer message platform-wide</div></div>
+  <div class="stat"><div class="n calm">1</div><div class="l">sequential AI-reply consumer <strong>replaced</strong> (bounded concurrency worker deployed)</div></div>
   <div class="stat"><div class="n calm">82</div><div class="l">backend test files exist — CI runs none of them before building a deploy image</div></div>
 </div>
 
@@ -254,12 +254,12 @@
       <td><strong>Fixed</strong> — <code>auth/service.py</code> guard + <code>tests/test_verify_otp.py</code> (4 tests pass)</td>
       <td class="num"><span class="chip ok">Done</span></td>
     </tr>
-    <tr>
-      <td class="num">SCALE-1</td><td><span class="chip crit">Crit</span></td>
-      <td><strong>One sequential AI consumer for the whole platform.</strong> Every inbound message = 2–3 LLM calls + Meta sends + ~10 DB round trips, strictly one-at-a-time, in one process. One slow provider call stalls every tenant.</td>
-      <td class="path">meta/consumer.py:1656–1674</td>
-      <td>Deploy the worker split (merge dev→staging), then the job system's <code>realtime</code> lane with bounded concurrency (§Queue).</td>
-      <td class="num">1d deploy + Phase C</td>
+    <tr class="good">
+      <td class="num">SCALE-1</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>One sequential AI consumer for the whole platform.</strong> Every inbound message = 2–3 LLM calls + Meta sends + ~10 DB round trips, strictly one-at-a-time, in one process. One slow provider call stalls every tenant. <strong>Fixed: bounded concurrency worker pool (8 parallel) with lease-based claiming, proper retry taxonomy, outbox-backed queue.</strong></td>
+      <td class="path">meta/consumer.py:1656–1674 → meta_events_worker.py</td>
+      <td><strong>Fixed</strong> — <code>meta_events_worker.py</code> + lease columns migration + worker registration</td>
+      <td class="num"><span class="chip ok">Done</span></td>
     </tr>
     <tr>
       <td class="num">OPS-1</td><td><span class="chip crit">Crit</span></td>
