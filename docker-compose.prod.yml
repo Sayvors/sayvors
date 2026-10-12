@@ -18,6 +18,14 @@ services:
     mem_limit: 128m
     depends_on:
       - api
+    # Caddy exposes its admin API on localhost:2019 inside the container.
+    # Probing it proves the process is serving rather than merely running.
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   api:
     image: ghcr.io/sayvors/sayvors-api:staging
@@ -49,6 +57,17 @@ services:
       kafka:
         condition: service_healthy
     mem_limit: 768m
+    # /readyz probes DB/Redis/Kafka and returns 503 when any is unreachable,
+    # which is the signal to stop routing traffic to this instance. urllib is
+    # used because the image has no curl.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Generous: the probe opens real connections to Postgres/Redis/Kafka,
+      # and a cold pool after boot should not be mistaken for a failure.
+      start_period: 40s
     volumes:
       # Uploaded files (media photos for Google, databank docs) live here —
       # without this volume every redeploy would wipe them.
@@ -71,7 +90,19 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      api:
+        # The worker talks to the same Postgres schema the api migrates, so
+        # starting before `alembic upgrade head` finishes risks a crash loop.
+        condition: service_healthy
     mem_limit: 384m
+    # The worker serves no HTTP, so /readyz is unavailable here. Same probe,
+    # invoked in-process, so worker and api agree on what "ready" means.
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 40s
 
   redis:
     image: redis:7-alpine

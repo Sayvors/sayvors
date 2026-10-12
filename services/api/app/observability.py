@@ -17,9 +17,11 @@ discards the first configuration, and config drift across entrypoints is how
 worker errors get lost.
 """
 
+import json
 import logging
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -152,3 +154,53 @@ def init_observability(service: str = DEFAULT_SERVICE) -> bool:
     except Exception as e:  # pragma: no cover - defensive
         logger.warning("GlitchTip init failed: %s", e)
         return False
+
+
+# ── Structured JSON logging ──────────────────────────────────────────────
+class JsonFormatter(logging.Formatter):
+    """One JSON object per log line, so log aggregators can parse it.
+
+    Lives here rather than in main.py so the worker process emits the same
+    shape as the API. Two log formats across two processes means a query
+    written against one silently misses the other.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_data = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        if hasattr(record, "request_id"):
+            log_data["request_id"] = record.request_id
+        if hasattr(record, "tenant_id"):
+            log_data["tenant_id"] = record.tenant_id
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data, ensure_ascii=False)
+
+
+def configure_json_logging(service: str = DEFAULT_SERVICE) -> None:
+    """Install the JSON formatter on the root logger.
+
+    Applied to the root logger (not a single logger) so libraries and worker
+    modules are covered without per-module opt-in.
+    """
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S%z"))
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+
+    # Per-service noise suppression: HTTP access logs are high-volume and
+    # low-signal for the worker, which makes no HTTP requests of its own.
+    if service == "api":
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    for noisy in ("sqlalchemy.engine", "httpx", "httpcore", "aiokafka", "asyncio"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)

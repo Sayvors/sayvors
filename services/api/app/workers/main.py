@@ -65,15 +65,14 @@ async def _warmup() -> None:
 
 
 async def _amain() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    # Same JSON log shape as the API process, so one log query covers both.
+    from ..observability import configure_json_logging, init_observability
+
+    configure_json_logging("worker")
+
     # The worker is a separate process from the API, and sentry_sdk patches
     # handlers in-process only. Without this call every failure in the
     # outbox/review/localith/post-publish loops is invisible in GlitchTip.
-    from ..observability import init_observability
-
     init_observability("worker")
 
     if not settings.RUN_BACKGROUND_WORKERS:
