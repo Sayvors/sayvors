@@ -1,4 +1,9 @@
 from contextlib import asynccontextmanager
+from uuid import uuid4
+import logging
+import json
+import sys
+import time
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,6 +44,98 @@ from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
 
 
+# ── Structured JSON logging ──────────────────────────────────────────────
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        log_data = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        if hasattr(record, "request_id"):
+            log_data["request_id"] = record.request_id
+        if hasattr(record, "tenant_id"):
+            log_data["tenant_id"] = record.tenant_id
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data, ensure_ascii=False)
+
+
+def setup_logging():
+    """Configure structured JSON logging."""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S%z"))
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+
+    # Silence noisy libraries
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+# ── GlitchTip error tracking ─────────────────────────────────────────────
+def setup_glitchtip():
+    """Initialize GlitchTip error tracking."""
+    dsn = settings.GLITCHTIP_DSN
+    if not dsn:
+        return
+    try:
+        import glitchtip
+        glitchtip.init(
+            dsn=settings.GLITCHTIP_DSN,
+            environment=settings.ENVIRONMENT,
+            release=settings.VERSION,
+            traces_sample_rate=0.1,
+            profiles_sample_rate=0.1,
+        )
+        logging.getLogger(__name__).info("GlitchTip initialized")
+    except Exception as e:
+        logging.getLogger(__name__).warning("GlitchTip init failed: %s", e)
+
+
+# ── Request-ID middleware ────────────────────────────────────────────────
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("x-request-id") or str(uuid4())
+        request.state.request_id = request_id
+
+        logger = logging.getLogger(__name__)
+        extra = {"request_id": request_id}
+
+        if hasattr(request.state, "tenant_id"):
+            extra["tenant_id"] = request.state.tenant_id
+
+        start_time = time.perf_counter()
+        try:
+            response = await call_next(request)
+            process_time = time.perf_counter() - start_time
+            response.headers["X-Request-ID"] = request_id
+            response.headers["X-Process-Time"] = f"{process_time:.4f}"
+            logger.info(
+                "%s %s %d %.4fs",
+                request.method, request.url.path, response.status_code, process_time,
+                extra=extra,
+            )
+            return response
+        except Exception as e:
+            process_time = time.perf_counter() - start_time
+            logger.exception(
+                "%s %s failed: %s %.4fs",
+                request.method, request.url.path, e, process_time,
+                extra={"request_id": request_id},
+            )
+            raise
+
+
 class CSRFMiddleware(BaseHTTPMiddleware):
     """Double-submit CSRF protection: validate X-CSRF-Token header against csrf_token cookie."""
 
@@ -62,7 +159,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             "/api/v1/team/invites/accept",  # token-in-body is the proof; works pre-auth
             "/health",
         )
-        if any(path.startswith(p) for p in skip_prefixes):
+        if any(request.url.path.startswith(p) for p in skip_prefixes):
             return await call_next(request)
 
         csrf_header = request.headers.get("x-csrf-token")
@@ -82,6 +179,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     import logging
     log = logging.getLogger(__name__)
+
+    setup_logging()  # Initialize structured JSON logging
+    setup_glitchtip()  # Initialize GlitchTip error tracking
 
     # Warm up database connection pool (critical for first-request speed)
     try:
@@ -133,8 +233,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    # Schedule periodic retention cleanup (startup-only runs never fire again
-    # on long-lived pods). Auth housekeeping stays HTTP-adjacent on purpose.
+    # Schedule periodic retention cleanup
     import asyncio
     from .modules.auth.service import run_retention_loop
     retention_task = asyncio.create_task(run_retention_loop())
@@ -153,7 +252,7 @@ async def lifespan(app: FastAPI):
         from .modules.analytics.consumer import run_analytics_consumer
         from .modules.analytics.messaging_rollup import run_messaging_rollup_worker
         from .modules.analytics.performance import run_performance_sync_worker
-        from .modules.channels.meta.consumer import run_meta_events_consumer
+        from .modules.channels.meta.meta_events_worker import run_meta_events_worker
         from .modules.outbox.worker import OutboxWorker
 
         bg_tasks.append(asyncio.create_task(run_google_reviews_worker()))
@@ -162,7 +261,7 @@ async def lifespan(app: FastAPI):
         bg_tasks.append(asyncio.create_task(run_analytics_consumer()))
         bg_tasks.append(asyncio.create_task(run_performance_sync_worker()))
         bg_tasks.append(asyncio.create_task(run_messaging_rollup_worker()))
-        bg_tasks.append(asyncio.create_task(run_meta_events_consumer()))
+        bg_tasks.append(asyncio.create_task(run_meta_events_worker()))
 
         outbox_worker = OutboxWorker()
         await outbox_worker.start()
@@ -192,11 +291,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limit=100_000_000)
 
-# Route convention: collection endpoints are declared BARE (`@router.get("")`
-# under a prefix, giving /api/v1/channels), matching what the frontends call.
-# Never declare them as "/" — Starlette then only serves the trailing-slash
-# form and answers the bare path with a 307 whose Location is built from the
-# ASGI scope, which is wrong behind any proxy/tunnel and dead-ends the browser.
+# ── Middleware ──────────────────────────────────────────────────────────
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -210,7 +306,39 @@ app.add_middleware(CSRFMiddleware)
 if settings.ALLOWED_HOSTS:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 
-# ── register modules ────────────────────────────────────
+# ── register modules ──────────────────────────────────────────────────
+from .modules.auth.router import router as auth_router
+from .modules.tts.router import router as tts_router
+from .modules.stt.router import router as stt_router
+from .modules.llm.router import router as llm_router
+from .modules.channels.leads import router as leads_router
+from .modules.channels.router import _inbox_router as inbox_router
+from .modules.channels.router import router as channels_router
+from .modules.channels.meta.router import router as meta_router
+from .modules.channels.meta.webhooks.router import router as meta_webhooks_router
+from .modules.redis.router import router as redis_router
+from .modules.kafka.router import router as kafka_router
+from .modules.rag.router import router as rag_router
+from .modules.analytics.router import router as analytics_router
+from .modules.analytics.abuse_router import router as analytics_abuse_router
+from .modules.profile.router import router as profile_router
+from .modules.localith.router import router as localith_router
+from .modules.locations.router import router as locations_router
+from .modules.posts.router import router as posts_router
+from .modules.media.router import router as media_router
+from .modules.storage.router import router as storage_router
+from .modules.admin.router import router as admin_router
+from .modules.user_feedback.router import router as feedback_router
+from .modules.email.router import router as email_router
+from .modules.review_engine.router import router as review_engine_router
+from .modules.review_engine.csv_router import router as csv_router
+from .modules.assistant.router import router as assistant_router
+from .modules.notifications.router import router as notifications_router
+from .modules.billing.router import router as billing_router
+from .modules.team.router import router as team_router
+from .modules.redis.client import close_redis
+from .modules.kafka.client import close_kafka
+
 app.include_router(auth_router)
 app.include_router(tts_router)
 app.include_router(stt_router)
@@ -221,7 +349,38 @@ app.include_router(inbox_router)
 app.include_router(meta_router)
 app.include_router(meta_webhooks_router)
 app.include_router(analytics_router)
-# Abuse reporting lives in its own module but shares the analytics prefix.
+app.include_router(analytics_abuse_router)
+app.include_router(redis_router)
+app.include_router(kafka_router)
+app.include_router(rag_router)
+app.include_router(profile_router)
+app.include_router(localith_router)
+app.include_router(locations_router)
+app.include_router(posts_router)
+app.include_router(media_router)
+app.include_router(storage_router)
+app.include_router(admin_router)
+app.include_router(feedback_router)
+app.include_router(email_router)
+app.include_router(review_engine_router)
+app.include_router(csv_router)
+app.include_router(assistant_router)
+app.include_router(notifications_router)
+app.include_router(billing_router)
+app.include_router(team_router)
+from .modules.redis.client import close_redis
+from .modules.kafka.client import close_kafka
+
+app.include_router(auth_router)
+app.include_router(tts_router)
+app.include_router(stt_router)
+app.include_router(llm_router)
+app.include_router(channels_router)
+app.include_router(leads_router)
+app.include_router(inbox_router)
+app.include_router(meta_router)
+app.include_router(meta_webhooks_router)
+app.include_router(analytics_router)
 app.include_router(analytics_abuse_router)
 app.include_router(redis_router)
 app.include_router(kafka_router)
@@ -242,12 +401,9 @@ app.include_router(notifications_router)
 app.include_router(billing_router)
 app.include_router(team_router)
 
-# Public media files: owner uploads that go to Google by URL. Served here
-# (Caddy proxies the whole API host, so this path is public) from a
-# persistent volume — redeploys never wipe them.
+# Public media files
 try:
     import os as _os
-
     from fastapi.staticfiles import StaticFiles as _StaticFiles
 
     _os.makedirs(settings.MEDIA_DIR, exist_ok=True)
@@ -258,6 +414,54 @@ try:
     )
 except Exception:
     pass
+
+
+# ── Health & readiness endpoints ───────────────────────────────────────
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readyz(request: Request):
+    """Readiness probe — checks DB, Redis, Kafka connectivity."""
+    from .database import engine
+    from .modules.redis.client import get_redis
+    from .modules.kafka.client import get_kafka_producer, mark_kafka_unavailable
+
+    checks = {}
+
+    # Database
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"failed: {e}"
+
+    # Redis
+    try:
+        redis = await get_redis()
+        await redis.ping()
+        checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"failed: {e}"
+
+    # Kafka
+    try:
+        await get_kafka_producer()
+        checks["kafka"] = "ok"
+    except Exception as e:
+        checks["kafka"] = f"failed: {e}"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    status_code = 200 if all_ok else 503
+
+    return Response(
+        content=json.dumps({"status": "ready" if all_ok else "degraded", "checks": checks}),
+        media_type="application/json",
+        status_code=status_code,
+    )
 
 
 @app.get("/health")

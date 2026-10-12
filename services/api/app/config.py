@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     JWT_REFRESH_EXPIRATION_DAYS: int = 7
     # "production" arms the fail-closed startup validation below.
     ENVIRONMENT: str = "development"
+    VERSION: str = "0.1.0"
+    GLITCHTIP_DSN: str = ""
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     # Optional regex for rotating dev-tunnel origins (e.g. free-tier ngrok
     # gives the frontend a new subdomain on every restart). Starlette echoes

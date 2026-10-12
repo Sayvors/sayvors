@@ -58,6 +58,30 @@ services:
       retries: 10
       start_period: 20s
 
+  # GlitchTip — open-source Sentry alternative for error tracking
+  glitchtip:
+    image: glitchtip/glitchtip:latest
+    container_name: sayvors-glitchtip
+    ports:
+      - "127.0.0.1:8001:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:mentee@postgres:5432/glitchtip
+      - REDIS_URL=redis://redis:6379/1
+      - SECRET_KEY=${GLITCHTIP_SECRET_KEY}
+      - DOMAIN=glitchtip.localhost
+      - EMAIL_URL=smtp://smtp.example.com:587  # optional, for alerts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   api:
     build:
       context: ./services/api
