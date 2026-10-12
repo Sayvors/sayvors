@@ -83,7 +83,7 @@ async def _amain() -> None:
     from ..modules.analytics.consumer import run_analytics_consumer
     from ..modules.analytics.messaging_rollup import run_messaging_rollup_worker
     from ..modules.analytics.performance import run_performance_sync_worker
-    from ..modules.channels.meta.consumer import run_meta_events_consumer
+    from ..modules.channels.meta.meta_events_worker import run_meta_events_worker
     from ..modules.channels.meta.lead_action_worker import run_lead_action_worker
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.localith.worker import run_localith_sync_worker
@@ -96,7 +96,7 @@ async def _amain() -> None:
         "analytics-consumer": run_analytics_consumer,
         "performance-sync": run_performance_sync_worker,
         "messaging-rollup": run_messaging_rollup_worker,
-        "meta-events-ai-replies": run_meta_events_consumer,
+        "meta-events-ai-replies": run_meta_events_worker,
         "lead-actions": run_lead_action_worker,
     }
     # Deployment-only split by role, no code changes: WORKER_LOOPS is a
