@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     VERSION: str = "0.1.0"
     GLITCHTIP_DSN: str = ""
+    GLITCHTIP_SECRET_KEY: str = ""
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     # Optional regex for rotating dev-tunnel origins (e.g. free-tier ngrok
     # gives the frontend a new subdomain on every restart). Starlette echoes
