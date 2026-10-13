@@ -1,9 +1,10 @@
 "use client";
 
+import { API_BASE } from "./api-base";
 import { useEffect, useRef } from "react";
 import { getAccessToken, refreshSession } from "@/lib/auth-context";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = API_BASE;
 
 export interface NotificationPayload {
   kind: "message" | string;
@@ -25,6 +26,7 @@ export interface InboxRealtimeEvent {
     | "comment_updated"
     | "comment_deleted"
     | "notification"
+    | "typing"
     | "ping";
   notification?: NotificationPayload;
   id?: string;
@@ -39,6 +41,9 @@ export interface InboxRealtimeEvent {
   contact_phone?: string | null;
   contact_name?: string | null;
   created_at?: string;
+  /* typing events — who is composing in this thread right now */
+  typing?: boolean;
+  typing_source?: "ai" | "agent";
   /* comment events */
   comment_id?: string | null;
   parent_comment_id?: string | null;

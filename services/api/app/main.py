@@ -1,4 +1,9 @@
 from contextlib import asynccontextmanager
+from uuid import uuid4
+import logging
+import json
+import sys
+import time
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,6 +44,64 @@ from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
 
 
+# ── Structured JSON logging ──────────────────────────────────────────────
+# Implementation lives in app.observability so the worker process emits the
+# same JSON shape; re-exported here for existing importers.
+from .observability import JsonFormatter, configure_json_logging as _configure_json_logging
+
+
+def setup_logging():
+    """Configure structured JSON logging for the API process."""
+    _configure_json_logging("api")
+
+
+# ── GlitchTip error tracking ─────────────────────────────────────────────
+def setup_glitchtip():
+    """Initialize GlitchTip error tracking for the API process.
+
+    Configuration lives in app/observability.py so every entrypoint (api,
+    worker) shares one source of truth. Re-exported here for callers that
+    already import from app.main.
+    """
+    from .observability import init_observability
+
+    return init_observability("api")
+
+
+# ── Request-ID middleware ────────────────────────────────────────────────
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("x-request-id") or str(uuid4())
+        request.state.request_id = request_id
+
+        logger = logging.getLogger(__name__)
+        extra = {"request_id": request_id}
+
+        if hasattr(request.state, "tenant_id"):
+            extra["tenant_id"] = request.state.tenant_id
+
+        start_time = time.perf_counter()
+        try:
+            response = await call_next(request)
+            process_time = time.perf_counter() - start_time
+            response.headers["X-Request-ID"] = request_id
+            response.headers["X-Process-Time"] = f"{process_time:.4f}"
+            logger.info(
+                "%s %s %d %.4fs",
+                request.method, request.url.path, response.status_code, process_time,
+                extra=extra,
+            )
+            return response
+        except Exception as e:
+            process_time = time.perf_counter() - start_time
+            logger.exception(
+                "%s %s failed: %s %.4fs",
+                request.method, request.url.path, e, process_time,
+                extra={"request_id": request_id},
+            )
+            raise
+
+
 class CSRFMiddleware(BaseHTTPMiddleware):
     """Double-submit CSRF protection: validate X-CSRF-Token header against csrf_token cookie."""
 
@@ -62,13 +125,49 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             "/api/v1/team/invites/accept",  # token-in-body is the proof; works pre-auth
             "/health",
         )
-        if any(path.startswith(p) for p in skip_prefixes):
+        if any(request.url.path.startswith(p) for p in skip_prefixes):
             return await call_next(request)
 
         csrf_header = request.headers.get("x-csrf-token")
         csrf_cookie = request.cookies.get(settings.CSRF_COOKIE_NAME)
 
         if not csrf_header or not csrf_cookie or csrf_header != csrf_cookie:
+            # "CSRF validation failed" told the caller nothing and the operator
+            # nothing at all. These three cases need different fixes: a missing
+            # header means the client never read the cookie, a missing cookie
+            # means the browser declined to send it (cross-site + SameSite), and
+            # a mismatch usually means two cookies share the name and the client
+            # and the server picked different ones. Never log the values.
+            if not csrf_header:
+                why = "no X-CSRF-Token header"
+            elif not csrf_cookie:
+                why = f"no {settings.CSRF_COOKIE_NAME} cookie sent"
+            else:
+                why = (
+                    f"mismatch (header {len(csrf_header)} chars, cookie "
+                    f"{len(csrf_cookie)} chars)"
+                )
+            # A duplicate cookie name is the usual cause of a mismatch: ours is
+            # host-only, but a sibling environment on a sayvors.com subdomain
+            # sets Domain=.sayvors.com and that one rides along to every
+            # subdomain. Name the count so it is never a mystery again.
+            cookie_count = sum(
+                1
+                for c in request.cookies.keys()
+                if c == settings.CSRF_COOKIE_NAME
+            )
+            if cookie_count > 1:
+                why += f"; {cookie_count} cookies share this name"
+            # Module-level `logging` is imported at the top; the loggers used
+            # elsewhere in this file are function-local, so resolve one here
+            # rather than reaching for a name that does not exist at class scope.
+            logging.getLogger("app.main").warning(
+                "CSRF rejected %s %s from origin=%s: %s",
+                request.method,
+                request.url.path,
+                request.headers.get("origin", "-"),
+                why,
+            )
             return Response(
                 content='{"detail":"CSRF validation failed"}',
                 status_code=403,
@@ -82,6 +181,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     import logging
     log = logging.getLogger(__name__)
+
+    setup_logging()  # Initialize structured JSON logging
+    setup_glitchtip()  # Initialize GlitchTip error tracking
 
     # Warm up database connection pool (critical for first-request speed)
     try:
@@ -133,8 +235,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    # Schedule periodic retention cleanup (startup-only runs never fire again
-    # on long-lived pods). Auth housekeeping stays HTTP-adjacent on purpose.
+    # Schedule periodic retention cleanup
     import asyncio
     from .modules.auth.service import run_retention_loop
     retention_task = asyncio.create_task(run_retention_loop())
@@ -153,7 +254,7 @@ async def lifespan(app: FastAPI):
         from .modules.analytics.consumer import run_analytics_consumer
         from .modules.analytics.messaging_rollup import run_messaging_rollup_worker
         from .modules.analytics.performance import run_performance_sync_worker
-        from .modules.channels.meta.consumer import run_meta_events_consumer
+        from .modules.channels.meta.meta_events_worker import run_meta_events_worker
         from .modules.outbox.worker import OutboxWorker
 
         bg_tasks.append(asyncio.create_task(run_google_reviews_worker()))
@@ -162,7 +263,7 @@ async def lifespan(app: FastAPI):
         bg_tasks.append(asyncio.create_task(run_analytics_consumer()))
         bg_tasks.append(asyncio.create_task(run_performance_sync_worker()))
         bg_tasks.append(asyncio.create_task(run_messaging_rollup_worker()))
-        bg_tasks.append(asyncio.create_task(run_meta_events_consumer()))
+        bg_tasks.append(asyncio.create_task(run_meta_events_worker()))
 
         outbox_worker = OutboxWorker()
         await outbox_worker.start()
@@ -192,11 +293,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limit=100_000_000)
 
-# Route convention: collection endpoints are declared BARE (`@router.get("")`
-# under a prefix, giving /api/v1/channels), matching what the frontends call.
-# Never declare them as "/" — Starlette then only serves the trailing-slash
-# form and answers the bare path with a 307 whose Location is built from the
-# ASGI scope, which is wrong behind any proxy/tunnel and dead-ends the browser.
+# ── Middleware ──────────────────────────────────────────────────────────
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -204,13 +302,16 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "Authorization", "X-CSRF-Token", "X-Requested-With"],
-    expose_headers=["X-CSRF-Token"],
+    expose_headers=["X-CSRF-Token", "X-Request-ID"],
 )
 app.add_middleware(CSRFMiddleware)
 if settings.ALLOWED_HOSTS:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 
-# ── register modules ────────────────────────────────────
+# ── register modules ──────────────────────────────────────────────────
+# Routers are imported at the top of this module; only registration happens
+# here. Re-importing them lower down shadowed nothing but left two copies of
+# every import to keep in sync.
 app.include_router(auth_router)
 app.include_router(tts_router)
 app.include_router(stt_router)
@@ -221,7 +322,6 @@ app.include_router(inbox_router)
 app.include_router(meta_router)
 app.include_router(meta_webhooks_router)
 app.include_router(analytics_router)
-# Abuse reporting lives in its own module but shares the analytics prefix.
 app.include_router(analytics_abuse_router)
 app.include_router(redis_router)
 app.include_router(kafka_router)
@@ -242,12 +342,9 @@ app.include_router(notifications_router)
 app.include_router(billing_router)
 app.include_router(team_router)
 
-# Public media files: owner uploads that go to Google by URL. Served here
-# (Caddy proxies the whole API host, so this path is public) from a
-# persistent volume — redeploys never wipe them.
+# Public media files
 try:
     import os as _os
-
     from fastapi.staticfiles import StaticFiles as _StaticFiles
 
     _os.makedirs(settings.MEDIA_DIR, exist_ok=True)
@@ -260,6 +357,36 @@ except Exception:
     pass
 
 
+# ── Health & readiness endpoints ───────────────────────────────────────
 @app.get("/health")
 async def health():
+    """Liveness probe — is this process up and serving?
+
+    Deliberately does NOT touch dependencies. A liveness check that fails when
+    Postgres is slow makes the orchestrator restart an otherwise healthy
+    process, turning a dependency blip into an outage. Dependency health is
+    /readyz's job: it reports 503 so traffic stops being routed, without
+    killing the container.
+    """
     return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readyz(request: Request):
+    """Readiness probe — checks DB, Redis, Kafka connectivity.
+
+    Returns 503 when any dependency is unreachable so the orchestrator stops
+    routing traffic to this instance. Liveness is /health, which deliberately
+    ignores dependencies so a slow database never triggers a restart loop.
+    """
+    from .healthcheck import probe_dependencies
+
+    checks = await probe_dependencies()
+    all_ok = all(v == "ok" for v in checks.values())
+    status_code = 200 if all_ok else 503
+
+    return Response(
+        content=json.dumps({"status": "ready" if all_ok else "degraded", "checks": checks}),
+        media_type="application/json",
+        status_code=status_code,
+    )

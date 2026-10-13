@@ -480,9 +480,13 @@ async def test_schedule_followup_moves_stage_and_sets_next_action(db, channel_id
 
 @pytest.mark.asyncio
 async def test_schedule_followup_rearm_walks_attempts_not_duplicates(db, channel_id, user_id):
+    # Buying-intent text, so capture_leal qualifies the lead. This test is
+    # about the attempt ladder, not about qualification -- an unqualified lead
+    # is now correctly refused by schedule_followup (see
+    # tests/test_lead_escalation.py::test_schedule_followup_refuses_unqualified_lead).
     lead = await le.capture_lead(
         db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
-        contact_id="sched-2", message_id="s2", inbound_text="info",
+        contact_id="sched-2", message_id="s2", inbound_text="how much for 50 boxes?",
     )
     a1 = await le.schedule_followup(
         db, lead=lead, channel_id=channel_id, contact_id="sched-2",
@@ -537,9 +541,10 @@ async def test_duplicate_step_is_structurally_impossible(db, channel_id, user_id
     backstop that holds even where row locks don't exist."""
     from sqlalchemy.exc import IntegrityError
 
+    # Buying-intent text so the lead qualifies (see the ladder test above).
     lead = await le.capture_lead(
         db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
-        contact_id="sched-5", message_id="s5", inbound_text="hi",
+        contact_id="sched-5", message_id="s5", inbound_text="can I book a table?",
     )
     first = await le.schedule_followup(
         db, lead=lead, channel_id=channel_id, contact_id="sched-5",
@@ -587,7 +592,7 @@ def test_worker_and_engine_contain_no_llm_machinery():
     structurally — neither the dispatcher nor the engine may import or
     touch any LLM/provider code (case-sensitive: prose may say "LLM")."""
     meta_dir = Path(__file__).resolve().parents[1] / "app" / "modules" / "channels" / "meta"
-    for name in ("lead_action_worker.py", "lead_engine.py"):
+    for name in ("lead_action_worker.py", "lead_engine.py", "lead_escalation.py"):
         src = (meta_dir / name).read_text(encoding="utf-8")
         for banned in ("llm", "resolve_tenant_model", "provider.complete", "_generate_reply"):
             assert banned not in src, f"{name} references {banned!r} — the deterministic path must never touch LLM code"

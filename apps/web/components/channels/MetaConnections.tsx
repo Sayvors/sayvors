@@ -299,8 +299,11 @@ export default function MetaConnections({
         return;
       }
       window.location.href = entry.auth_url;
-    } catch {
-      onNotice("err", `Could not start ${provider} connect.`);
+    } catch (e) {
+      onNotice(
+        "err",
+        `Could not start ${provider} connect: ${e instanceof Error ? e.message : "request failed"}`,
+      );
       setBusy(null);
     }
   };
@@ -607,8 +610,14 @@ export default function MetaConnections({
       const res = await validateMeta(provider);
       onNotice(res.status === "active" ? "ok" : "err", `${provider}: ${res.detail ?? res.status}`);
       await refresh();
-    } catch {
-      onNotice("err", `Could not validate ${provider}.`);
+    } catch (e) {
+      // Say what actually failed. "Could not validate facebook." is true of
+      // every cause — a dead tunnel, an expired token, a rejected CSRF token —
+      // and it told the user nothing they could act on.
+      onNotice(
+        "err",
+        `Could not validate ${provider}: ${e instanceof Error ? e.message : "request failed"}`,
+      );
     } finally {
       setBusy(null);
     }

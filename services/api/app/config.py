@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     JWT_REFRESH_EXPIRATION_DAYS: int = 7
     # "production" arms the fail-closed startup validation below.
     ENVIRONMENT: str = "development"
+    VERSION: str = "0.1.0"
+    GLITCHTIP_DSN: str = ""
+    GLITCHTIP_SECRET_KEY: str = ""
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     # Optional regex for rotating dev-tunnel origins (e.g. free-tier ngrok
     # gives the frontend a new subdomain on every restart). Starlette echoes
@@ -159,6 +162,11 @@ class Settings(BaseSettings):
     # the platform META_APP_ID/SECRET (same values for now; split later by env only).
     META_LOGIN_APP_ID: str = ""
     META_LOGIN_APP_SECRET: str = ""
+
+    # Lead escalation knobs (threshold, resume window, reminder window,
+    # recipients) are deliberately NOT here -- they are per-tenant, edited by
+    # the owner in lead_settings and clamped by
+    # lead_engine.normalize_lead_settings.
 
     @property
     def facebook_login_app_id(self) -> str:

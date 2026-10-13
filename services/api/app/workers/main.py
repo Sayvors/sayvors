@@ -65,10 +65,16 @@ async def _warmup() -> None:
 
 
 async def _amain() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    # Same JSON log shape as the API process, so one log query covers both.
+    from ..observability import configure_json_logging, init_observability
+
+    configure_json_logging("worker")
+
+    # The worker is a separate process from the API, and sentry_sdk patches
+    # handlers in-process only. Without this call every failure in the
+    # outbox/review/localith/post-publish loops is invisible in GlitchTip.
+    init_observability("worker")
+
     if not settings.RUN_BACKGROUND_WORKERS:
         # Guard against a misconfigured deploy where BOTH api and worker
         # run with the flag flipped the wrong way: the worker entrypoint
@@ -83,8 +89,9 @@ async def _amain() -> None:
     from ..modules.analytics.consumer import run_analytics_consumer
     from ..modules.analytics.messaging_rollup import run_messaging_rollup_worker
     from ..modules.analytics.performance import run_performance_sync_worker
-    from ..modules.channels.meta.consumer import run_meta_events_consumer
+    from ..modules.channels.meta.meta_events_worker import run_meta_events_worker
     from ..modules.channels.meta.lead_action_worker import run_lead_action_worker
+    from ..modules.channels.meta.escalation_worker import run_escalation_sweeps
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.localith.worker import run_localith_sync_worker
     from ..modules.posts.worker import run_post_publish_worker
@@ -96,8 +103,12 @@ async def _amain() -> None:
         "analytics-consumer": run_analytics_consumer,
         "performance-sync": run_performance_sync_worker,
         "messaging-rollup": run_messaging_rollup_worker,
-        "meta-events-ai-replies": run_meta_events_consumer,
+        "meta-events-ai-replies": run_meta_events_worker,
         "lead-actions": run_lead_action_worker,
+        # Reminder + handover resume for escalated leads. Cheap enough to run
+        # everywhere; an AI-only deployment still wants the 24h resume, since
+        # that is what stops a misrouted escalation silencing a customer.
+        "escalation-sweeps": run_escalation_sweeps,
     }
     # Deployment-only split by role, no code changes: WORKER_LOOPS is a
     # comma-separated allowlist of loop names ("meta-events-ai-replies,

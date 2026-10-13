@@ -160,6 +160,18 @@ function LeadCard({
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
+          {lead.priority === "important" && (
+            <span
+              title={
+                lead.priority_since
+                  ? `Escalated ${timeAgo(lead.priority_since)} — the AI could not resolve this thread`
+                  : "Escalated — the AI could not resolve this thread"
+              }
+              className="rounded-[8px] bg-coral/10 px-2 py-0.5 text-[11px] font-bold text-coral"
+            >
+              Important
+            </span>
+          )}
           <span
             className={`rounded-[8px] px-2 py-0.5 text-[11px] font-bold ${STAGE_CHIP[lead.stage]}`}
           >
@@ -262,6 +274,8 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
   const [leads, setLeads] = useState<Lead[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState<"all" | LeadStage>("all");
+  const [priorityFilter, setPriorityFilter] = useState<"all" | "important">("all");
+  const [priorityFirst, setPriorityFirst] = useState(true);
   const [channelFilter, setChannelFilter] = useState<string>("all");
   const [age, setAge] = useState<AgeKey>("any");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -273,7 +287,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetchLeads({ platform, limit: 200 }).then(
+    fetchLeads({ platform, limit: 200, priorityFirst }).then(
       (data) => {
         if (!cancelled) {
           setLeads(data.leads ?? []);
@@ -291,7 +305,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [platform, reload]);
+  }, [platform, reload, priorityFirst]);
 
   // Channel + age narrow the base set; stage chips count against it, so
   // the numbers always describe what the filters can actually show.
@@ -313,6 +327,13 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
     for (const lead of base) c[lead.stage] += 1;
     return c;
   }, [base]);
+
+  // Counted against the same narrowed set as the stage chips, so the number
+  // always describes what the other filters can actually show.
+  const importantCount = useMemo(
+    () => base.filter((l) => l.priority === "important").length,
+    [base],
+  );
 
   const channelCounts = useMemo(() => {
     const ageDef = AGES.find((a) => a.key === age);
@@ -363,11 +384,61 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
     return <p className={`mt-4 text-[13px] ${INK2}`}>Loading leads…</p>;
   }
 
-  const visible = stageFilter === "all" ? base : base.filter((l) => l.stage === stageFilter);
+  // Plain computation, not useMemo: this sits after the error/loading early
+  // returns, and a hook there would violate the Rules of Hooks. n is capped at
+  // 200 by the fetch, so the sort is free.
+  let rows = stageFilter === "all" ? base : base.filter((l) => l.stage === stageFilter);
+  if (priorityFilter === "important") {
+    rows = rows.filter((l) => l.priority === "important");
+  }
+  // Safety net: if the server sort is unavailable the escalated leads must
+  // still be reachable, not silently buried under recency order.
+  if (priorityFirst) {
+    rows = [...rows].sort((a, b) => {
+      const rank = (l: Lead) => (l.priority === "important" ? 0 : 1);
+      return rank(a) - rank(b) || +new Date(b.updated_at) - +new Date(a.updated_at);
+    });
+  }
+  const visible = rows;
 
   return (
     <>
       <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div
+          className="flex gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-0.5"
+          role="group"
+          aria-label="Filter leads by escalation priority"
+        >
+          {(["all", "important"] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setPriorityFilter(key)}
+              aria-pressed={priorityFilter === key}
+              className={`rounded-[6px] border px-3 py-1 text-[12px] font-semibold ${FOCUS} ${
+                priorityFilter === key
+                  ? `border-[var(--ui-line)] bg-[var(--ui-surface)] ${INK}`
+                  : `border-transparent ${INK2} hover:text-[var(--ui-ink)]`
+              }`}
+            >
+              {key === "all" ? "All priority" : "Important"}
+              {key === "important" && importantCount > 0 && (
+                <span className="ml-1 tabular-nums">{importantCount}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        <label className="flex cursor-pointer items-center gap-2 text-[12px] font-semibold text-ink/60">
+          <input
+            type="checkbox"
+            checked={priorityFirst}
+            onChange={(e) => setPriorityFirst(e.target.checked)}
+            className={`h-3.5 w-3.5 rounded accent-[var(--ui-ink)] ${FOCUS}`}
+          />
+          Escalated first
+        </label>
+
         <div
           className="flex gap-1 rounded-[8px] bg-[var(--ui-sunken)] p-0.5"
           role="group"
@@ -449,7 +520,11 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
       </div>
 
       {visible.length === 0 ? (
-        <p className={`mt-6 text-[13px] ${INK2}`}>No leads in this view.</p>
+        <p className={`mt-6 text-[13px] ${INK2}`}>
+          {priorityFilter === "important"
+            ? "No escalated leads. Nothing here needs a human right now."
+            : "No leads in this view."}
+        </p>
       ) : (
         <ul className="mt-3 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
           {visible.map((lead) => (

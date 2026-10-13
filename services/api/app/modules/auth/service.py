@@ -740,13 +740,18 @@ async def verify_signup_otp(
     user = result.scalar_one_or_none()
     if not user:
         raise ValueError("No account with that email")
-    just_verified = False
-    if not user.email_verified:
-        if not await verify_otp(email, code):
-            raise ValueError("Invalid or expired code.")
-        user.email_verified = True
-        just_verified = True
-        await log_email_verified(user.id, user.email)
+    if user.email_verified:
+        # This endpoint completes signup; it is not a login. Skipping the OTP
+        # check for already-verified accounts (the old behavior) let anyone who
+        # knew a verified user's email mint a full session with an arbitrary
+        # code — an account-takeover bypass. Verified users sign in with their
+        # password; the verify-otp page links there.
+        raise ValueError("This account is already verified. Please sign in instead.")
+    if not await verify_otp(email, code):
+        raise ValueError("Invalid or expired code.")
+    just_verified = True
+    user.email_verified = True
+    await log_email_verified(user.id, user.email)
 
     access_token = create_access_token(user.id, user.token_version or 0)
     refresh_raw = create_refresh_token(user.id)

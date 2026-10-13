@@ -1,8 +1,10 @@
 "use client";
 
+import { API_BASE } from "./api-base";
 import { getAccessToken } from "./auth-context";
+import { getCsrfToken } from "./csrf";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = API_BASE;
 
 export interface AssistantStreamEvent {
   type: "step" | "delta" | "done" | "error";
@@ -15,12 +17,6 @@ export interface AssistantStreamEvent {
   grounded_in_rag?: boolean;
   citations?: Array<{ source?: string; kind?: string; detail?: string }>;
   model?: string;
-}
-
-function getCsrfToken(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.split("; ").find((c) => c.startsWith("csrf_token="));
-  return match ? match.slice(match.indexOf("=") + 1) : null;
 }
 
 /**

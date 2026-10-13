@@ -20,6 +20,7 @@ class ProfileResponse(BaseModel):
     language: str = "en"
     response_style: str = "concise"
     voice_replies: str = "off"
+    typing_indicator: bool = True
     plan: str = "pro"
     member_since: str
     # Actual service shape: a list of {emoji_rating, message, created_at}
@@ -65,6 +66,14 @@ class VoiceRepliesUpdateRequest(BaseModel):
     """
 
     voice_replies: str = Field(..., pattern="^(off|simple|advanced)$")
+
+
+class TypingIndicatorUpdateRequest(BaseModel):
+    """Whether we send the WhatsApp/Instagram typing indicator before an AI
+    reply. Previously a UI-only toggle that persisted nothing; the consumer
+    now reads this before calling send_typing_indicator."""
+
+    typing_indicator: bool
 
 
 class FeedbackRequest(BaseModel):

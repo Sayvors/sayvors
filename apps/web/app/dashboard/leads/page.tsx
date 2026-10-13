@@ -7,6 +7,9 @@ import LeadsBoard from "@/components/leads/LeadsBoard";
  * The all-channels Leads page — WhatsApp, Instagram, and Messenger leads
  * in one board. Reached from the dashboard's Leads glance card; the
  * conversations themselves live in the unified inbox.
+ *
+ * Follow-up and escalation settings live on /dashboard/settings — they are
+ * account-wide rules an owner sets once, not per-conversation data.
  */
 export default function LeadsPage() {
   return (
@@ -24,6 +27,12 @@ export default function LeadsPage() {
             .
           </p>
         </div>
+        <Link
+          href="/dashboard/settings"
+          className="rounded-[3px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)]"
+        >
+          Follow-up &amp; escalation settings
+        </Link>
       </div>
       <LeadsBoard />
     </div>

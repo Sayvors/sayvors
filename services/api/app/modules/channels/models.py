@@ -103,6 +103,13 @@ class ChannelMessage(Base):
     # Best-known display name. WhatsApp only sends a profile name on some
     # payloads, so this is often NULL and the UI falls back to the phone.
     contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # True when the platform's AI authored this outbound row. Set only by the
+    # consumer on rows it writes itself. Drives lead_escalation's counter.
+    # Never inferred from message text — that would misclassify a human whose
+    # reply happens to read like the AI's.
+    is_ai: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -227,6 +234,13 @@ class Lead(Base):
         # step's open-lead lookup (channel, contact) — one index each.
         Index("ix_leads_tenant_created", "tenant_id", "created_at"),
         Index("ix_leads_channel_contact", "channel_id", "contact_id"),
+        # Board sort: WHERE tenant_id=? ORDER BY priority DESC, updated_at DESC.
+        # Stored (not derived in SQL) so this stays an index scan rather than
+        # a full sort of the lead table. See lead_escalation.py.
+        Index("ix_leads_tenant_priority", "tenant_id", "priority", "updated_at"),
+        # NOTE: ix_leads_pending_reminder is deliberately NOT declared here.
+        # It is a partial index (WHERE priority='important'), which SQLite
+        # cannot express, so it lives only in the migration.
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -279,6 +293,26 @@ class Lead(Base):
     )
     # Mirror of the next scheduled follow-up's due_at (cheap UI badge).
     next_action_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ── Escalation state ──────────────────────────────────────────────
+    # Consecutive "AI replied, customer wrote again" cycles. This is the sole
+    # input that ever moves `priority` — see lead_escalation.py, which is the
+    # only writer of both, so the two cannot drift.
+    ai_miss_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    # "normal" | "important". Stored and indexed so the board can sort and
+    # filter, and so the reminder sweep can query across tenants.
+    priority: Mapped[str] = mapped_column(
+        Enum("normal", "important", name="lead_priority"),
+        default="normal", server_default="normal", nullable=False,
+    )
+    priority_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # NULL is terminal — "already reminded, or never armed" — NOT "not yet".
+    escalation_reminder_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The holding line ("let me get my colleague help") has been delivered, so
+    # a re-trigger never repeats it.
+    handover_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Unified-inbox thread key, for the lead -> conversation deep link.
     thread_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

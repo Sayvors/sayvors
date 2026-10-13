@@ -1,23 +1,4 @@
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: sayvors-postgres
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: mentee
-      POSTGRES_DB: sayvors
-    ports:
-      # Dev-only credentials; bind to loopback so an unauthenticated dev
-      # database is never reachable from the LAN.
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d sayvors"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   redis:
     image: redis:7-alpine
     container_name: sayvors-redis
@@ -58,44 +39,39 @@ services:
       retries: 10
       start_period: 20s
 
-  api:
-    build:
-      context: ./services/api
-    container_name: sayvors-api
+  # GlitchTip — open-source Sentry alternative for error tracking
+  glitchtip:
+    image: glitchtip/glitchtip:latest
+    container_name: sayvors-glitchtip
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8001:8000"
     env_file:
-      - ./services/api/.env
+      - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:mentee@postgres:5432/sayvors
-      REDIS_URL: redis://redis:6379/0
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      CORS_ORIGINS: '["http://localhost:3000"]'
-      FRONTEND_URL: http://localhost:3000
-      ALLOWED_HOSTS: '["localhost", "127.0.0.1"]'
+      # Use host.docker.internal to reach YOUR LOCAL postgres from Docker.
+      # Password comes from LOCAL_POSTGRES_PASSWORD in .env, never inline.
+      - DATABASE_URL=postgresql://postgres:${LOCAL_POSTGRES_PASSWORD}@host.docker.internal:5432/glitchtip
+      - REDIS_URL=redis://redis:6379/1
+      - SECRET_KEY=${GLITCHTIP_SECRET_KEY}
+      - DOMAIN=glitchtip.localhost
+      - ALLOWED_HOSTS=glitchtip.localhost,localhost,127.0.0.1,glitchtip.sayvors.com
+      - GLITCHTIP_DSN=http://glitchtip:8000/1
+      - EMAIL_URL=smtp://smtp.example.com:587  # optional, for alerts
+      # Single-container local run: embed the queue consumer in the web
+      # process. Without this, SERVER_ROLE stays "web" (run-web.sh), which
+      # serves the UI but never drains the Valkey ingest queue -- events are
+      # accepted with HTTP 200 and then silently never persisted.
+      - GLITCHTIP_EMBED_WORKER=true
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"
-
-  web:
-    build:
-      context: ./apps/web
-      args:
-        NEXT_PUBLIC_API_URL: http://localhost:8000
-    container_name: sayvors-web
-    ports:
-      - "3000:3000"
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-    depends_on:
-      - api
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 volumes:
-  pgdata:
   redisdata:
   kafkadata:

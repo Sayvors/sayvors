@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import { channels, agents } from "@/lib/channel-data";
-import { getProfile, updateResponseStyle } from "@/lib/api-profile";
+import { getProfile, updateResponseStyle, updateTypingIndicator } from "@/lib/api-profile";
 import { ChannelLogo } from "@/components/dashboard/ChannelLogos";
 
 const RESPONSE_STYLE_OPTIONS = [
@@ -84,11 +84,13 @@ function Toggle({
   desc,
   checked,
   onChange,
+  disabled,
 }: {
   label: string;
   desc: string;
   checked: boolean;
   onChange: () => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5">
@@ -98,7 +100,8 @@ function Toggle({
       </div>
       <button
         onClick={onChange}
-        className={`relative h-7 w-12 shrink-0 rounded-full transition ${checked ? "bg-deep-violet" : "bg-ink/15"}`}
+        disabled={disabled}
+        className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-60 ${checked ? "bg-deep-violet" : "bg-ink/15"}`}
       >
         <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-md transition-transform ${checked ? "translate-x-[22px]" : "translate-x-0.5"}`} />
       </button>
@@ -117,13 +120,33 @@ export default function ChannelSettingsPage() {
   const [workingStart, setWorkingStart] = useState("09:00");
   const [workingEnd, setWorkingEnd] = useState("17:00");
   const [offlineMsg, setOfflineMsg] = useState("We're currently offline. Leave a message and we'll get back to you!");
-  const [typingIndicator, setTypingIndicator] = useState(true);
 
-  // Response style is a real tenant-level setting (per account, applies to
-  // every WhatsApp reply) — the rest of this page is still display-only.
+  // Response style and typing indicator are real tenant-level settings
+  // (per account, applying to every reply) — the rest of this page is still
+  // display-only.
   const isWhatsApp = slug === "whatsapp";
   const [responseStyle, setResponseStyle] = useState<string>("concise");
   const [styleStatus, setStyleStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  // Was local useState that persisted nothing, so the toggle looked real and
+  // did nothing. Now backed by users.typing_indicator and read by the
+  // consumer before it calls send_typing_indicator.
+  const [typingIndicator, setTypingIndicator] = useState(true);
+  const [typingStatus, setTypingStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  useEffect(() => {
+    let cancelled = false;
+    getProfile()
+      .then((profile) => {
+        if (!cancelled && profile) {
+          setTypingIndicator(profile.typing_indicator !== false);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isWhatsApp) return;
@@ -139,6 +162,23 @@ export default function ChannelSettingsPage() {
       cancelled = true;
     };
   }, [isWhatsApp]);
+
+  async function toggleTypingIndicator(next: boolean) {
+    if (typingStatus === "saving") return;
+    const previous = typingIndicator;
+    setTypingIndicator(next);
+    setTypingStatus("saving");
+    try {
+      await updateTypingIndicator(next);
+      setTypingStatus("saved");
+      setTimeout(() => setTypingStatus("idle"), 2500);
+    } catch {
+      // Roll back so the switch never shows a state the server rejected.
+      setTypingIndicator(previous);
+      setTypingStatus("error");
+      setTimeout(() => setTypingStatus("idle"), 4000);
+    }
+  }
 
   async function chooseResponseStyle(style: string) {
     if (style === responseStyle || styleStatus === "saving") return;
@@ -314,7 +354,7 @@ export default function ChannelSettingsPage() {
             <p className="mb-4 text-[13px] text-ink/60">Configure how this channel operates.</p>
             <div className="space-y-3">
               <Toggle label="Auto-Reply" desc="Automatically respond to incoming messages" checked={autoReply} onChange={() => setAutoReply(!autoReply)} />
-              <Toggle label="Typing Indicator" desc='Show "typing..." while the agent processes' checked={typingIndicator} onChange={() => setTypingIndicator(!typingIndicator)} />
+              <Toggle label="Typing Indicator" desc='Show "typing..." while the agent processes' checked={typingIndicator} disabled={typingStatus === "saving"} onChange={() => toggleTypingIndicator(!typingIndicator)} />
               <Toggle label="Working Hours" desc="Only respond during business hours" checked={workingHours} onChange={() => setWorkingHours(!workingHours)} />
             </div>
           </section>

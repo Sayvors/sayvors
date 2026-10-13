@@ -1,4 +1,6 @@
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { API_BASE } from "./api-base";
+
+const API = API_BASE;
 
 /**
  * Auth transport: httpOnly cookie set by POST /api/v1/admin/login.

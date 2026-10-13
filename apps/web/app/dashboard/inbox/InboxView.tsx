@@ -14,7 +14,14 @@ import {
 } from "@/lib/api-inbox";
 import { platformMeta } from "@/lib/platform";
 import { setActiveThread } from "@/lib/active-thread";
+import {
+  clearThreadTyping,
+  setAiTyping,
+  setCustomerAwaiting,
+  useTypingSource,
+} from "@/lib/inbox-typing";
 import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
+import TypingIndicator from "@/components/inbox/TypingIndicator";
 
 type Filter = "all" | "unread" | "unknown";
 
@@ -252,10 +259,20 @@ export default function InboxView() {
       );
       return;
     }
+    // Server-pushed AI composing state. Handled before the message guard
+    // below, which requires an id and would drop this.
+    if (e.type === "typing" && e.channel_id) {
+      setAiTyping(e.channel_id, e.contact_phone ?? UNKNOWN_THREAD_KEY, e.typing !== false);
+      return;
+    }
     if (e.type !== "message" || !e.channel_id || !e.id) return;
     const contactKey = e.contact_phone ?? UNKNOWN_THREAD_KEY;
     const composite = `${e.channel_id}:${contactKey}`;
     const open = composite === targetKeyRef.current;
+    // An outbound message means whatever reply was pending has landed, on
+    // either side. An inbound one means we are now waiting on the reply.
+    if (e.direction === "outbound") clearThreadTyping(e.channel_id, contactKey);
+    else setCustomerAwaiting(e.channel_id, contactKey);
     const msg: InboxMessage = {
       id: e.id,
       channel_id: e.channel_id,
@@ -330,10 +347,19 @@ export default function InboxView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetKey]);
 
+  // Typing state for the open thread, read reactively so the row appears and
+  // disappears without touching `messages`.
+  const typingSource = useTypingSource(
+    target?.channel_id,
+    target?.key ?? null,
+  );
+
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, targetKey]);
+    // typingSource is in the deps because the indicator renders below the
+    // message list and would otherwise be left below the fold.
+  }, [messages.length, targetKey, typingSource]);
 
   const platformsPresent = useMemo(() => {
     const set = new Set<string>();
@@ -375,6 +401,10 @@ export default function InboxView() {
         content: text,
       });
       setDraft("");
+      // The agent answered, so nothing is pending on either side. The realtime
+      // socket would clear this too, but a failed send never produces an
+      // outbound event — clear here so a rejected message cannot strand dots.
+      clearThreadTyping(thread.channel_id, thread.key);
       // The realtime socket usually delivers this same outbound message
       // while the POST is still in flight — skip it if it already landed.
       setMessages((prev) =>
@@ -668,6 +698,12 @@ export default function InboxView() {
                       </div>
                     );
                   })
+                )}
+                {typingSource && loadedKey === targetKey && (
+                  <TypingIndicator
+                    source={typingSource}
+                    contactName={target?.display_name}
+                  />
                 )}
               </div>
 

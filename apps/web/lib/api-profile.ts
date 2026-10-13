@@ -23,6 +23,8 @@ export interface Profile {
   response_style: string;
   /** WhatsApp voice notes tier: "off" | "simple" | "advanced" (engine is admin-managed) */
   voice_replies: string;
+  /** Send the typing indicator before an AI reply. */
+  typing_indicator: boolean;
   plan: string;
   member_since: string;
   feedback: Record<string, number>;
@@ -82,6 +84,14 @@ export async function updateVoiceReplies(voiceReplies: string): Promise<Profile>
   return apiFetch("/api/v1/profile/voice-replies", {
     method: "PUT",
     body: JSON.stringify({ voice_replies: voiceReplies }),
+  });
+}
+
+/** Typing-indicator preference. Takes effect for the next AI reply. */
+export async function updateTypingIndicator(typingIndicator: boolean): Promise<Profile> {
+  return apiFetch("/api/v1/profile/typing-indicator", {
+    method: "PUT",
+    body: JSON.stringify({ typing_indicator: typingIndicator }),
   });
 }
 

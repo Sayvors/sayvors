@@ -1,4 +1,6 @@
 import type { NextConfig } from "next";
+// v11 moved the build-time wrapper to the /config subpath export.
+import { withSentryConfig } from "@sentry/nextjs/config";
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -56,4 +58,10 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  // Sourcemaps let GlitchTip show real code frames instead of minified bundles.
+  // Upload them with `npx @sentry/cli sourcemaps upload` so production stack
+  // traces are readable.
+  silent: !process.env.NEXT_PUBLIC_GLITCHTIP_DSN,
+  widenClientFileUpload: true,
+});

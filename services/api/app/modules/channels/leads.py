@@ -63,6 +63,11 @@ def _lead_out(lead: Lead, avatar_url: str | None) -> LeadOut:
         next_action_at=(
             lead.next_action_at.isoformat() if lead.next_action_at else None
         ),
+        priority=lead.priority or "normal",
+        ai_miss_count=int(lead.ai_miss_count or 0),
+        priority_since=(
+            lead.priority_since.isoformat() if lead.priority_since else None
+        ),
         thread_key=lead.thread_key,
         last_message_at=(
             lead.last_message_at.isoformat() if lead.last_message_at else None
@@ -112,6 +117,12 @@ async def update_lead_settings(
 async def list_leads(
     platform: str | None = Query(None, max_length=20),
     stage_filter: str | None = Query(None, alias="stage", pattern="^(new|qualified|follow_up|converted|lost)$"),
+    priority_filter: str | None = Query(None, alias="priority", pattern="^(normal|important)$"),
+    priority_first: bool = Query(
+        False,
+        alias="priority_first",
+        description="Sort escalated leads to the top before recency.",
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     ctx: TenantContext = Depends(require_perm("channels.view")),
@@ -122,6 +133,17 @@ async def list_leads(
         conds.append(Lead.platform == platform)
     if stage_filter:
         conds.append(Lead.stage == stage_filter)
+    if priority_filter:
+        conds.append(Lead.priority == priority_filter)
+
+    # Sorting by priority uses ix_leads_tenant_priority, so it stays an index
+    # scan. Postgres orders enums by declaration, and 'important' is declared
+    # second, so DESC puts escalated leads first.
+    order = (
+        (Lead.priority.desc(), Lead.updated_at.desc())
+        if priority_first
+        else (Lead.created_at.desc(),)
+    )
 
     total = (
         await db.execute(select(func.count()).select_from(Lead).where(*conds))
@@ -136,7 +158,7 @@ async def list_leads(
                 & (ContactProfile.contact_id == Lead.contact_id),
             )
             .where(*conds)
-            .order_by(Lead.created_at.desc())
+            .order_by(*order)
             .offset(offset)
             .limit(limit)
         )

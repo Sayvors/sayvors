@@ -7,7 +7,7 @@ import ChatView from "./ChatView";
 import AnalyticsTab from "./tabs/AnalyticsTab";
 import ProfileTab from "./tabs/ProfileTab";
 import AdsTab from "./tabs/AdsTab";
-import LeadsTab from "./tabs/LeadsTab";
+import LeadsBoard from "@/components/leads/LeadsBoard";
 import CallsTab from "./tabs/CallsTab";
 import LogsTab from "./tabs/LogsTab";
 import {
@@ -174,7 +174,11 @@ export default function ChannelWorkspace({ slug }: ChannelWorkspaceProps) {
 
         {activeTab === "leads" && (
           <div className="h-full overflow-y-auto">
-            <LeadsTab channelSlug={slug} channelName={channel.name} />
+            {/* Real, API-backed board. This slot previously rendered a
+                hardcoded mock with invented scores (92/85/78) and
+                hot/warm/cold statuses, which implied a ranking system that
+                never existed. */}
+            <LeadsBoard />
           </div>
         )}
 
