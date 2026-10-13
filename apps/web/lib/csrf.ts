@@ -26,9 +26,21 @@ const API = API_BASE;
 const COOKIE = "csrf_token";
 const HEADER = "X-CSRF-Token";
 
-/** Read the token from the cookie jar. Null when absent or on the server. */
+/**
+ * Read the token from the cookie jar. Null when absent or on the server.
+ *
+ * LAST match wins, deliberately. A browser can legitimately hold two cookies
+ * named `csrf_token` for one host — ours is host-only, but a sibling
+ * environment on a sayvors.com subdomain sets `Domain=.sayvors.com`, and that
+ * one is attached to every subdomain including this one. Starlette's
+ * cookie_parser assigns into a dict in header order, so the server reads the
+ * last; taking the first here meant the header carried a different token than
+ * the cookie the server compared against and every write 403'd with two valid
+ * 64-char tokens in play. Selection has to match the server's exactly.
+ */
 export function getCsrfToken(): string | null {
   if (typeof document === "undefined") return null;
+  let found: string | null = null;
   // Split on the first "=" only: the value is hex today, but the parser should
   // not silently truncate if that ever changes.
   for (const part of document.cookie.split(";")) {
@@ -36,9 +48,9 @@ export function getCsrfToken(): string | null {
     if (eq === -1) continue;
     if (part.slice(0, eq).trim() !== COOKIE) continue;
     const value = part.slice(eq + 1).trim();
-    return value || null;
+    if (value) found = value;
   }
-  return null;
+  return found;
 }
 
 /**

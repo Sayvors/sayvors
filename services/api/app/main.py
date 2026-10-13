@@ -147,6 +147,17 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     f"mismatch (header {len(csrf_header)} chars, cookie "
                     f"{len(csrf_cookie)} chars)"
                 )
+            # A duplicate cookie name is the usual cause of a mismatch: ours is
+            # host-only, but a sibling environment on a sayvors.com subdomain
+            # sets Domain=.sayvors.com and that one rides along to every
+            # subdomain. Name the count so it is never a mystery again.
+            cookie_count = sum(
+                1
+                for c in request.cookies.keys()
+                if c == settings.CSRF_COOKIE_NAME
+            )
+            if cookie_count > 1:
+                why += f"; {cookie_count} cookies share this name"
             # Module-level `logging` is imported at the top; the loggers used
             # elsewhere in this file are function-local, so resolve one here
             # rather than reaching for a name that does not exist at class scope.
