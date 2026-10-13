@@ -1,13 +1,40 @@
 "use client";
 
 import { getAccessToken, refreshSession } from "./auth-context";
+import { ensureCsrfToken, getCsrfToken, isCsrfFailure, prefetchCsrfToken } from "./csrf";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-function getCsrfToken(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.split("; ").find((c) => c.startsWith("csrf_token="));
-  return match ? match.split("=")[1] : null;
+/**
+ * Turn an error response into something a person can act on. `res.text()` was
+ * dumped raw, so a FastAPI rejection surfaced as `{"detail":"CSRF validation
+ * failed"}` in the middle of a form -- true, but it read like gibberish and
+ * named a protection the user never triggered.
+ */
+async function readError(res: Response): Promise<string> {
+  let body: string;
+  try {
+    body = await res.text();
+  } catch {
+    return `Request failed (${res.status}).`;
+  }
+  let detail: string | null = null;
+  try {
+    const parsed = JSON.parse(body);
+    if (typeof parsed?.detail === "string") detail = parsed.detail;
+    else if (Array.isArray(parsed?.detail) && typeof parsed.detail[0]?.msg === "string") {
+      // Pydantic validation errors: surface the field, not the object dump.
+      const d = parsed.detail[0];
+      detail = d.loc?.length ? `${String(d.loc[1] ?? d.loc[0])}: ${d.msg}` : d.msg;
+    }
+  } catch {
+    /* not JSON */
+  }
+  if (!detail) return body.slice(0, 300) || `Request failed (${res.status}).`;
+  if (detail === "CSRF validation failed") {
+    return "Your session expired mid-request and could not be renewed. Reload the page and try again.";
+  }
+  return detail;
 }
 
 function buildHeaders(isForm = false): Record<string, string> {
@@ -21,8 +48,14 @@ function buildHeaders(isForm = false): Record<string, string> {
 }
 
 export async function apiFetch(path: string, options: RequestInit = {}, timeoutMs = 60000): Promise<any> {
-  const method = options.method || "GET";
+  const method = (options.method || "GET").toUpperCase();
   const isForm = options.body instanceof FormData;
+  const isWrite = !["GET", "HEAD", "OPTIONS"].includes(method);
+
+  // Mint a token up front for writes when the jar is empty. Without this the
+  // header was simply omitted and the request was guaranteed to 403.
+  if (isWrite) await prefetchCsrfToken();
+
   const headers = {
     ...buildHeaders(isForm),
     ...(options.headers as Record<string, string>),
@@ -39,7 +72,21 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
     });
 
   try {
-    const res = await doFetch(headers);
+    let res = await doFetch(headers);
+
+    // One self-heal: a stale or missing token is recoverable, and the CSRF
+    // middleware answers before the route, so a rejected write never had a
+    // side effect and replaying it cannot duplicate one.
+    if (isWrite && isCsrfFailure(res)) {
+      const fresh = await ensureCsrfToken();
+      if (fresh) {
+        res = await doFetch({
+          ...buildHeaders(isForm),
+          ...(options.headers as Record<string, string>),
+          "X-CSRF-Token": fresh,
+        });
+      }
+    }
 
     // A proxy error page (Cloudflare tunnel down, nginx, etc.) arrives as
     // HTML with any status — never dump its markup into a UI error box.
@@ -53,13 +100,17 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
       const refreshed = await refreshSession();
       if (refreshed) {
         const retryHeaders = { ...buildHeaders(isForm), ...(options.headers as Record<string, string>) };
-        const retryRes = await doFetch(retryHeaders);
+        let retryRes = await doFetch(retryHeaders);
+        if (isWrite && isCsrfFailure(retryRes)) {
+          const fresh = await ensureCsrfToken();
+          if (fresh) retryRes = await doFetch({ ...retryHeaders, "X-CSRF-Token": fresh });
+        }
         if ((retryRes.headers.get("content-type") || "").includes("text/html")) {
           throw new Error(
             `The server is unreachable right now (gateway error ${retryRes.status}) — try again in a minute.`,
           );
         }
-        if (!retryRes.ok) throw new Error(await retryRes.text());
+        if (!retryRes.ok) throw new Error(await readError(retryRes));
         if (retryRes.status === 204) return undefined;
         return retryRes.json();
       }
@@ -71,7 +122,7 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
       throw new Error("Unauthorized");
     }
 
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await readError(res));
     if (res.status === 204) return undefined;
     return res.json();
   } catch (e) {

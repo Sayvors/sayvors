@@ -1,6 +1,7 @@
 "use client";
 
 import { getAccessToken } from "./auth-context";
+import { getCsrfToken } from "./csrf";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -48,12 +49,6 @@ export interface StreamEvent {
     status?: string;
     relevance?: { verdict: string; reason: string; evidence: string; matched_terms: string[] };
   };
-}
-
-function getCsrfToken(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.split("; ").find((c) => c.startsWith("csrf_token="));
-  return match ? match.split("=")[1] : null;
 }
 
 export async function* streamReviewReply(
