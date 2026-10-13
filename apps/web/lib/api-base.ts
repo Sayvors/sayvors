@@ -3,21 +3,32 @@
  *
  * Why this is not just `process.env.NEXT_PUBLIC_API_URL`: CSRF is a
  * double-submit cookie, and a cookie set by a *different origin* than the page
- * is never sent back on a cross-site fetch. With COOKIE_SAMESITE=lax — which
- * local dev needs, because the backend runs on plain http — the browser
- * silently drops it. The symptom was every POST failing 403 "CSRF validation
- * failed" while every GET worked, on a page whose channels were all connected.
+ * is not sent back on a cross-site fetch. The symptom was every POST failing
+ * 403 "CSRF validation failed" while every GET worked, on a page whose
+ * channels were all connected.
  *
- * So on a localhost page origin we return "" and the calls go to relative
- * paths, which next.config.ts rewrites to the backend on the same origin. The
- * cookie is then first-party and is always sent. Everywhere else the
- * configured absolute URL is used unchanged, which is what production wants.
+ * The fix depends on the scheme, not on the hostname:
+ *
+ *   http  -> return "" so calls go to relative paths, which next.config.ts
+ *            rewrites to the backend on the page's own origin. The cookie is
+ *            then first-party and always sent. This is the only option that
+ *            can work: SameSite=None requires Secure, and Secure cookies are
+ *            refused over plain http, so a cross-origin call on http could
+ *            never carry the token no matter how it is configured. Keying on
+ *            "localhost" alone missed access from a LAN IP or any other http
+ *            hostname, which is the same failure with a different name.
+ *
+ *   https -> use the configured absolute URL. Production deliberately runs the
+ *            SPA and the API on different origins (api.staging.sayvors.com vs
+ *            staging.sayvors.com) and carries CSRF across them with
+ *            COOKIE_DOMAIN=.sayvors.com plus SameSite=None over TLS, which is
+ *            valid there.
  */
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "0.0.0.0"]);
-
 function resolveApiBase(): string {
-  if (typeof window !== "undefined" && LOCAL_HOSTS.has(window.location.hostname)) {
+  // Runs in the browser only. On the server there is no page origin to be
+  // relative to, so fall through to the configured value.
+  if (typeof window !== "undefined" && window.location.protocol === "http:") {
     return "";
   }
   return process.env.NEXT_PUBLIC_API_URL || "";

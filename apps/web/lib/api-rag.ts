@@ -48,6 +48,27 @@ function buildHeaders(isForm = false): Record<string, string> {
   return headers;
 }
 
+/**
+ * Explain a CSRF rejection using facts only the browser knows. "Your session
+ * expired, reload the page" is unactionable when the session is fine and the
+ * real fault is that the cookie is not being attached to the request.
+ */
+function csrfDiagnosis(path: string): string {
+  if (typeof window === "undefined") return "CSRF check failed.";
+  const cookie = getCsrfToken();
+  const crossSite = new URL(API || window.location.origin, window.location.href).origin !== window.location.origin;
+  return [
+    "Your security token was not accepted.",
+    `page ${window.location.origin} · api ${API || "(same origin)"} · ${
+      crossSite ? "CROSS-SITE request" : "same-origin"
+    } · cookie ${cookie ? "readable" : "MISSING"}`,
+    `on POST ${path}.`,
+    crossSite
+      ? "Over plain http a cross-site cookie can never be sent, so browse the dev server origin directly."
+      : "Reload the page to re-issue the cookie.",
+  ].join(" ");
+}
+
 export async function apiFetch(path: string, options: RequestInit = {}, timeoutMs = 60000): Promise<any> {
   const method = (options.method || "GET").toUpperCase();
   const isForm = options.body instanceof FormData;
@@ -86,6 +107,12 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
           ...(options.headers as Record<string, string>),
           "X-CSRF-Token": fresh,
         });
+      }
+      // Still rejected. Report what the browser actually did rather than a
+      // generic "reload the page" that cannot help: the usual cause is the
+      // request being cross-site, so the cookie exists but is never attached.
+      if (isCsrfFailure(res)) {
+        throw new Error(csrfDiagnosis(path));
       }
     }
 
