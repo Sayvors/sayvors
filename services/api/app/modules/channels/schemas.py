@@ -240,6 +240,12 @@ class LeadOut(BaseModel):
     phone_status: str | None = None
     opt_out: bool = False
     next_action_at: str | None = None
+    # "normal" | "important". Set by the backend when the AI could not resolve
+    # the thread and a human has been emailed. Stored and indexed, so the
+    # board can sort and filter on it.
+    priority: str = "normal"
+    ai_miss_count: int = 0
+    priority_since: str | None = None
     thread_key: str | None = None
     last_message_at: str | None = None
     created_at: str
@@ -268,6 +274,11 @@ class LeadSettingsOut(BaseModel):
     quiet_start_hour: int
     quiet_end_hour: int
     timezone: str
+    # Escalation knobs, same normalised/clamped contract as the rest.
+    escalation_threshold: int
+    escalation_resume_hours: int
+    escalation_reminder_hours: int
+    escalation_emails: list[str]
 
 
 class LeadSettingsUpdate(BaseModel):
@@ -283,3 +294,7 @@ class LeadSettingsUpdate(BaseModel):
     quiet_start_hour: int | None = None
     quiet_end_hour: int | None = None
     timezone: str | None = Field(None, max_length=64)
+    escalation_threshold: int | None = None
+    escalation_resume_hours: int | None = None
+    escalation_reminder_hours: int | None = None
+    escalation_emails: list[str] | None = Field(None, max_length=10)
