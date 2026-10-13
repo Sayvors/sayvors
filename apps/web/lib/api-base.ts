@@ -31,7 +31,12 @@ function resolveApiBase(): string {
   if (typeof window !== "undefined" && window.location.protocol === "http:") {
     return "";
   }
-  return process.env.NEXT_PUBLIC_API_URL || "";
+  // https keeps the original resolution exactly, including the localhost
+  // fallback: staging and production build with NEXT_PUBLIC_API_URL pointed at
+  // the API host, and returning "" here instead would send every call to
+  // staging.sayvors.com/api/* where no rewrite exists. Do not change this to
+  // "" without auditing that first.
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 }
 
 /**
