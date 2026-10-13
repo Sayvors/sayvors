@@ -58,6 +58,14 @@ SETTINGS_DEFAULTS = {
     "quiet_start_hour": 22,
     "quiet_end_hour": 8,
     "timezone": "UTC",
+    # ── Escalation ────────────────────────────────────────────────────
+    # Per-tenant, so an owner can tune how quickly a struggling thread is
+    # pulled off the AI and how long it stays muted before being handed back.
+    "escalation_threshold": 3,
+    "escalation_resume_hours": 24,
+    "escalation_reminder_hours": 4,
+    # Empty = escalate to the tenant owner's own signup email.
+    "escalation_emails": [],
 }
 
 _INT_KEYS = (
@@ -67,6 +75,9 @@ _INT_KEYS = (
     "max_attempts",
     "quiet_start_hour",
     "quiet_end_hour",
+    "escalation_threshold",
+    "escalation_resume_hours",
+    "escalation_reminder_hours",
 )
 # Sanity clamps: a tenant can delay or soften nudges, never spam (max 4
 # attempts) or disable the safety properties. max_attempts=0 turns the
@@ -78,14 +89,21 @@ _INT_CLAMP = {
     "max_attempts": (0, 4),
     "quiet_start_hour": (0, 23),
     "quiet_end_hour": (0, 23),
+    # Escalation floor of 1: a threshold of 0 would flag every first contact
+    # as a failure and page a human for "hello".
+    "escalation_threshold": (1, 10),
+    # A resume window of 0 would mute the thread and hand it straight back,
+    # making the handover pointless.
+    "escalation_resume_hours": (1, 336),
+    "escalation_reminder_hours": (1, 72),
 }
 
 
 def normalize_lead_settings(raw: dict | None) -> dict:
     """Whitelist + clamp tenant input. Never raises; junk -> defaults.
 
-    Only these eight knobs exist — arbitrary prompts, expressions, or
-    content are not settings, so they are simply dropped here.
+    Only these knobs exist — arbitrary prompts, expressions, or content
+    are not settings, so they are simply dropped here.
     """
     settings = dict(SETTINGS_DEFAULTS)
     if not isinstance(raw, dict):
@@ -104,6 +122,16 @@ def normalize_lead_settings(raw: dict | None) -> dict:
         settings["timezone"] = tz
     except Exception:
         pass
+    raw_emails = raw.get("escalation_emails")
+    if isinstance(raw_emails, list):
+        cleaned = [
+            e.strip().lower()
+            for e in raw_emails
+            if isinstance(e, str) and e.strip()
+        ]
+        # Sorted + de-duplicated so two runs with the same input send the same
+        # mail, and capped so a tenant cannot mail a whole address book.
+        settings["escalation_emails"] = sorted(set(cleaned))[:10]
     return settings
 
 

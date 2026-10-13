@@ -33,4 +33,8 @@ async def run_escalation_sweeps() -> None:
             logger.warning(
                 "escalation sweep failed: %s: %s", type(e).__name__, e
             )
+        finally:
+            # Per-tick cache: a settings change reaches the sweeps within
+            # POLL_SECONDS, and a stale entry cannot outlive one cycle.
+            lead_escalation.clear_settings_cache()
         await asyncio.sleep(POLL_SECONDS)

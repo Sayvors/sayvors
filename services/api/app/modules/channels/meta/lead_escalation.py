@@ -17,23 +17,53 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from ..models import ChannelMessage, Lead
-from ....config import settings
 
 logger = logging.getLogger(__name__)
 
-#: Consecutive "AI replied, customer wrote again" cycles before a lead is
-#: escalated. Deployment-level (env), not per-tenant -- escalation is a safety
-#: net and must behave identically everywhere. See spec, non-goals.
-ESCALATION_THRESHOLD = settings.ESCALATION_THRESHOLD
+# Fallbacks used only when a tenant row cannot be read. The real defaults
+# live in lead_engine.SETTINGS_DEFAULTS so they are configurable per tenant
+# through lead_settings; these mirror them for the failure path.
+_FALLBACK_THRESHOLD = 3
+_FALLBACK_RESUME_HOURS = 24
+_FALLBACK_REMINDER_HOURS = 4
 
-#: A handover silences the AI. If no human picks the lead up within this
-#: long, the AI resumes -- otherwise a misrouted escalation silently starves
-#: the customer. Safety requirement, not a nicety.
-HANDOVER_RESUME_HOURS = settings.ESCALATION_RESUME_HOURS
+# Per-tenant escalation settings, cached for the lifetime of one sweep so a
+# 50-row batch issues at most one query per distinct tenant rather than one
+# per lead.
+_settings_cache: dict[str, dict] = {}
 
-#: Reminder window after the escalation email. NULL is terminal -- "already
-#: reminded, or never armed" -- never "not yet".
-REMINDER_DELAY = timedelta(hours=settings.ESCALATION_REMINDER_HOURS)
+
+def clear_settings_cache() -> None:
+    """Drop the per-tenant settings cache. Called at the end of each sweep."""
+    _settings_cache.clear()
+
+
+async def load_settings(db, tenant_id: str) -> dict:
+    """Escalation knobs for one tenant, normalised and clamped.
+
+    Never raises: a missing or malformed row falls back to the defaults,
+    because failing to read a setting must never stop a customer getting a
+    reply.
+    """
+    from ...users.models import User
+    from .lead_engine import normalize_lead_settings
+
+    cached = _settings_cache.get(tenant_id)
+    if cached is not None:
+        return cached
+    try:
+        row = (
+            await db.execute(
+                select(User.lead_settings).where(User.id == tenant_id)
+            )
+        ).scalar_one_or_none()
+        settings = normalize_lead_settings(row)
+    except Exception as e:
+        logger.warning("escalation settings read failed for %s: %s", tenant_id, e)
+        settings = normalize_lead_settings(None)
+    _settings_cache[tenant_id] = settings
+    return settings
+
 
 # Cleared whenever a lead leaves 'important'. Without this a re-escalation
 # would read the stale NULL reminder as already-handled and send nothing.
@@ -81,8 +111,11 @@ async def update_escalation_state(db, lead) -> None:
     previous_is_ai = None if previous is None else bool(previous.is_ai)
     lead.ai_miss_count = (lead.ai_miss_count or 0) + 1 if previous_is_ai else 0
 
+    tenant_settings = await load_settings(db, lead.tenant_id)
+    threshold = tenant_settings["escalation_threshold"]
+
     was_important = lead.priority == "important"
-    if (lead.ai_miss_count or 0) >= ESCALATION_THRESHOLD:
+    if (lead.ai_miss_count or 0) >= threshold:
         if was_important:
             return
         # Entering: a fresh escalation. Clearing here is what makes a
@@ -91,7 +124,7 @@ async def update_escalation_state(db, lead) -> None:
         _clear_escalation_state(lead)
         lead.priority = "important"
         lead.priority_since = _now()
-        await on_escalate(db, lead)
+        await on_escalate(db, lead, tenant_settings)
         return
 
     if was_important:
@@ -130,18 +163,10 @@ async def resolve_recipients(db, lead) -> list[str]:
     """
     from ...users.models import User
 
-    row = (
-        await db.execute(
-            select(User.lead_settings).where(User.id == lead.tenant_id)
-        )
-    ).scalar_one_or_none()
-    configured = (row or {}).get("escalation_emails")
-    cleaned = (
-        [e.strip().lower() for e in configured if isinstance(e, str) and e.strip()]
-        if isinstance(configured, list) else []
-    )
-    if cleaned:
-        return sorted(set(cleaned))
+    tenant_settings = await load_settings(db, lead.tenant_id)
+    configured = tenant_settings.get("escalation_emails") or []
+    if configured:
+        return list(configured)
 
     owner_email = (
         await db.execute(select(User.email).where(User.id == lead.tenant_id))
@@ -149,7 +174,7 @@ async def resolve_recipients(db, lead) -> list[str]:
     return [owner_email] if owner_email else []
 
 
-async def on_escalate(db, lead) -> None:
+async def on_escalate(db, lead, tenant_settings: dict | None = None) -> None:
     """Side effects on entering 'important'. Never raises.
 
     One in-app notification plus one escalation email. Neither may be able to
@@ -199,7 +224,10 @@ async def on_escalate(db, lead) -> None:
         return
 
     lead.escalated_at = _now()
-    lead.escalation_reminder_at = _now() + REMINDER_DELAY
+    reminder_hours = (tenant_settings or {}).get(
+        "escalation_reminder_hours", _FALLBACK_REMINDER_HOURS
+    )
+    lead.escalation_reminder_at = _now() + timedelta(hours=reminder_hours)
 
 
 async def send_handover(db, lead, adapter, phone_number_id: str, token: str) -> None:
@@ -267,6 +295,8 @@ async def run_reminder_sweep(db, limit: int = 50) -> int:
             continue
         try:
             recipients = await resolve_recipients(db, lead)
+            tenant_settings = await load_settings(db, lead.tenant_id)
+            resume_hours = tenant_settings["escalation_resume_hours"]
             if not recipients:
                 logger.warning("lead %s reminder has no recipient", lead.id)
             else:
@@ -275,8 +305,8 @@ async def run_reminder_sweep(db, limit: int = 50) -> int:
                     ESCALATION_SUBJECT.format(name=_lead_label(lead)),
                     (
                         f"Still no reply on {_lead_label(lead)} after the "
-                        f"escalation. The AI will resume in "
-                        f"{HANDOVER_RESUME_HOURS}h if nobody picks it up."
+                        f"escalation. The AI will resume in {resume_hours}h "
+                        f"if nobody picks it up."
                     ),
                     cta_url=(
                         f"/dashboard/inbox?channel={lead.channel_id}"
@@ -294,7 +324,8 @@ async def run_reminder_sweep(db, limit: int = 50) -> int:
 
 
 async def run_resume_sweep(db, limit: int = 50) -> int:
-    """Hand threads back to the AI after HANDOVER_RESUME_HOURS with no human.
+    """Hand threads back to the AI after the tenant's resume window with no
+    human acting.
 
     Without this a misrouted escalation silently starves the customer: the
     thread is muted, the email went nowhere, and nothing ever puts it back.
@@ -302,26 +333,42 @@ async def run_resume_sweep(db, limit: int = 50) -> int:
     Deliberately does NOT require handover_sent_at. If the holding line fails
     to send the thread is still silent, so keying on that column would strand
     exactly the leads most likely to need rescuing.
+
+    The cutoff is per-tenant, so this cannot be a single indexed predicate
+    across the whole table -- but each row is filtered in Python after the
+    (priority, priority_since) index narrows the candidates, and the batch is
+    capped, so the cost stays bounded.
     """
-    cutoff = _now() - timedelta(hours=HANDOVER_RESUME_HOURS)
+    horizon = _now() - timedelta(hours=_FALLBACK_RESUME_HOURS)
     rows = (
         await db.execute(
             select(Lead)
             .where(
                 Lead.priority == "important",
                 Lead.priority_since.isnot(None),
-                Lead.priority_since <= cutoff,
+                # Pre-filter with the loosest possible window so the index
+                # still does the narrowing; the real per-tenant cutoff is
+                # applied below.
+                Lead.priority_since <= horizon,
             )
             .order_by(Lead.priority_since.asc())
             .limit(limit)
         )
     ).scalars().all()
 
+    resumed = 0
     for lead in rows:
+        tenant_settings = await load_settings(db, lead.tenant_id)
+        own_cutoff = _now() - timedelta(
+            hours=tenant_settings["escalation_resume_hours"]
+        )
+        if lead.priority_since > own_cutoff:
+            continue        # this tenant allows longer
         lead.priority = "normal"
         _clear_escalation_state(lead)
+        resumed += 1
         logger.info(
             "lead %s handed back to the AI: no human action within %sh",
-            lead.id, HANDOVER_RESUME_HOURS,
+            lead.id, tenant_settings["escalation_resume_hours"],
         )
-    return len(rows)
+    return resumed

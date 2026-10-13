@@ -495,3 +495,82 @@ async def test_resume_skips_thread_a_human_already_answered(db, monkeypatch):
 
     assert lead.priority == "normal"
     assert await lead_escalation.run_resume_sweep(db) == 0
+
+
+# ── Per-tenant configuration ────────────────────────────────────────────
+
+def test_normalizer_clamps_escalation_settings():
+    """Owner input is bounded: no paging a human on every first contact, and
+    no zero-length mute that makes the handover pointless."""
+    from app.modules.channels.meta.lead_engine import normalize_lead_settings
+
+    d = normalize_lead_settings(None)
+    assert d["escalation_threshold"] == 3
+    assert d["escalation_resume_hours"] == 24
+    assert d["escalation_reminder_hours"] == 4
+    assert d["escalation_emails"] == []
+
+    c = normalize_lead_settings({
+        "escalation_threshold": 99,        # -> max 10
+        "escalation_resume_hours": 0,      # -> min 1
+        "escalation_reminder_hours": "nonsense",
+        "escalation_emails": [" A@X.com ", "a@x.com", 5, ""],
+    })
+    assert c["escalation_threshold"] == 10
+    assert c["escalation_resume_hours"] == 1
+    assert c["escalation_reminder_hours"] == 4      # junk -> default
+    assert c["escalation_emails"] == ["a@x.com"]   # normalised + de-duped
+
+
+@pytest.mark.asyncio
+async def test_tenant_threshold_is_honoured(db, monkeypatch):
+    """One tenant escalating at 2, the default tenant at 3 -- the counter is
+    the same, the outcome differs by configuration."""
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+    lead_escalation.clear_settings_cache()
+
+    # impatient tenant: escalate on the 2nd cycle
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=2, phone="+15550000021")
+    u = await db.get(User, lead.tenant_id)
+    u.lead_settings = {"escalation_threshold": 2, **QUIET_OFF}
+    await db.commit()
+
+    lead.ai_miss_count = 1
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    await db.commit()
+
+    assert lead.ai_miss_count == 2
+    assert lead.priority == "important"
+    lead_escalation.clear_settings_cache()
+
+
+@pytest.mark.asyncio
+async def test_tenant_resume_window_is_honoured(db, monkeypatch):
+    """A tenant that wants a 48h window must not have its thread handed back
+    at the 24h default."""
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+    lead_escalation.clear_settings_cache()
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3, phone="+15550000022")
+    u = await db.get(User, lead.tenant_id)
+    u.lead_settings = {"escalation_threshold": 3, "escalation_resume_hours": 48, **QUIET_OFF}
+    await db.commit()
+
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    assert lead.priority == "important"
+
+    # 25h in: past the 24h default, well inside this tenant's 48h.
+    lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=25)
+    await db.commit()
+
+    assert await lead_escalation.run_resume_sweep(db) == 0
+    await db.commit()
+    assert lead.priority == "important", "tenant asked for a longer mute"
+    lead_escalation.clear_settings_cache()
