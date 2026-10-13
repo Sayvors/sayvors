@@ -1,9 +1,10 @@
 "use client";
 
+import { API_BASE } from "./api-base";
 import { getAccessToken, refreshSession } from "./auth-context";
 import { ensureCsrfToken, getCsrfToken, isCsrfFailure, prefetchCsrfToken } from "./csrf";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = API_BASE;
 
 /**
  * Turn an error response into something a person can act on. `res.text()` was

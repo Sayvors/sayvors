@@ -1,9 +1,10 @@
 "use client";
 
+import { API_BASE } from "./api-base";
 import { getAccessToken } from "./auth-context";
 import { getCsrfToken } from "./csrf";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = API_BASE;
 
 export interface AssistantStreamEvent {
   type: "step" | "delta" | "done" | "error";

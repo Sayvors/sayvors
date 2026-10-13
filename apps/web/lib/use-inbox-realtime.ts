@@ -1,9 +1,10 @@
 "use client";
 
+import { API_BASE } from "./api-base";
 import { useEffect, useRef } from "react";
 import { getAccessToken, refreshSession } from "@/lib/auth-context";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = API_BASE;
 
 export interface NotificationPayload {
   kind: "message" | string;

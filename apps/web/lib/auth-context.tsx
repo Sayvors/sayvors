@@ -1,9 +1,10 @@
 "use client";
 
+import { API_BASE } from "./api-base";
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { getCsrfToken } from "./csrf";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = API_BASE;
 
 let _accessToken: string | null = null;
 export function getAccessToken(): string | null { return _accessToken; }

@@ -19,7 +19,9 @@
  * on the middleware's exempt list and needs no token of its own.
  */
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { API_BASE } from "./api-base";
+
+const API = API_BASE;
 
 const COOKIE = "csrf_token";
 const HEADER = "X-CSRF-Token";
