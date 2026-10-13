@@ -493,6 +493,19 @@ async def schedule_followup(
             or settings["max_attempts"] < 1
             or lead.opt_out
             or lead.stage in ("converted", "lost")
+            # Qualification gate. capture_lead creates a Lead for EVERY inbound
+            # DM, so without this an unqualified conversation ("hello") gets the
+            # full sales sequence the moment the AI's reply ends in a "?" —
+            # is_open_question was the only gate, and it says nothing about
+            # intent. stage=="qualified" is set by the buying-word regex or the
+            # LLM's LEAD extraction.
+            #
+            # "follow_up" also passes: it only ever means "was qualified, then
+            # got a sequence armed". capture_lead transitions new->qualified
+            # once and never rewrites a later stage, so requiring "qualified"
+            # exactly would permanently block every follow-up for any lead that
+            # had already progressed past its first arm.
+            or lead.stage not in ("qualified", "follow_up")
         ):
             return None
         gaps = _followup_gaps(settings)

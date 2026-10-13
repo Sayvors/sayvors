@@ -981,9 +981,17 @@ def _wire_voice_consumer(monkeypatch, adapter, *, reply, confused, language,
     monkeypatch.setattr(meta_consumer.asyncio, "sleep", _fake_sleep)
 
 
-def _event():
+def _event(inbound_text: str = "what?? i dont get it"):
+    """Build the inbound webhook pair.
+
+    `inbound_text` is parameterised because schedule_followup now refuses
+    unqualified leads: a follow-up is only armed for a lead that showed
+    buying intent, so the tests that assert an action exists pass text that
+    qualifies. Tests about voice/confusion care only about the reply, and keep
+    the default.
+    """
     return ({"external_asset_id": _PHONE_ID, "external_event_id": _WAMID},
-            {"from": _FROM, "text": "what?? i dont get it", "msg_type": "text"})
+            {"from": _FROM, "text": inbound_text, "msg_type": "text"})
 
 
 async def _thread_state_for(channel_phone=_FROM):
@@ -1136,12 +1144,14 @@ async def test_consumer_schedules_lead_followup_only_for_questions(db, user_id, 
     await _seed_voice_tenant(db, user_id, voice_replies="off")
 
     # Reply ends with a question -> durable lead action armed, lead created.
+    # Inbound text carries buying intent so the lead qualifies; schedule_followup
+    # refuses unqualified leads, and this test is about the question-mark gate.
     adapter = _VoiceAdapter()
     _wire_voice_consumer(
         monkeypatch, adapter, reply="Sure — what kind of shawarma?",
         confused=False, language="en", voice_result=None,
     )
-    event, data = _event()
+    event, data = _event("how much for 50 boxes?")
     await meta_consumer._handle_message_received(event, data)
 
     async with _test_session_factory()() as s:

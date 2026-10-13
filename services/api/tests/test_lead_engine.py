@@ -480,9 +480,13 @@ async def test_schedule_followup_moves_stage_and_sets_next_action(db, channel_id
 
 @pytest.mark.asyncio
 async def test_schedule_followup_rearm_walks_attempts_not_duplicates(db, channel_id, user_id):
+    # Buying-intent text, so capture_leal qualifies the lead. This test is
+    # about the attempt ladder, not about qualification -- an unqualified lead
+    # is now correctly refused by schedule_followup (see
+    # tests/test_lead_escalation.py::test_schedule_followup_refuses_unqualified_lead).
     lead = await le.capture_lead(
         db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
-        contact_id="sched-2", message_id="s2", inbound_text="info",
+        contact_id="sched-2", message_id="s2", inbound_text="how much for 50 boxes?",
     )
     a1 = await le.schedule_followup(
         db, lead=lead, channel_id=channel_id, contact_id="sched-2",
@@ -537,9 +541,10 @@ async def test_duplicate_step_is_structurally_impossible(db, channel_id, user_id
     backstop that holds even where row locks don't exist."""
     from sqlalchemy.exc import IntegrityError
 
+    # Buying-intent text so the lead qualifies (see the ladder test above).
     lead = await le.capture_lead(
         db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
-        contact_id="sched-5", message_id="s5", inbound_text="hi",
+        contact_id="sched-5", message_id="s5", inbound_text="can I book a table?",
     )
     first = await le.schedule_followup(
         db, lead=lead, channel_id=channel_id, contact_id="sched-5",
