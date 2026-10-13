@@ -356,3 +356,142 @@ async def test_handover_line_failure_still_silences_thread(db, monkeypatch):
 
     assert lead.handover_sent_at is None, "failure is recorded as not-sent"
     assert lead.priority == "important", "but the thread is still handed over"
+
+
+@pytest.mark.asyncio
+async def test_reminder_sends_once_then_stops(db, monkeypatch):
+    """Exactly one reminder, ever. A second sweep must be a no-op."""
+    from app.modules.channels.meta import lead_escalation
+
+    sent: list[str] = []
+
+    async def _fake(to, subject, message, cta_url=None):
+        sent.append(subject)
+        return "id"
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _fake)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    lead.escalation_reminder_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    await db.commit()
+    sent.clear()          # drop the initial escalation; count only the reminder
+
+    assert await lead_escalation.run_reminder_sweep(db) == 1
+    await db.commit()
+    assert lead.escalation_reminder_at is None, "NULL = already reminded"
+
+    assert await lead_escalation.run_reminder_sweep(db) == 0
+    await db.commit()
+    assert len(sent) == 1, "must never remind twice"
+
+
+@pytest.mark.asyncio
+async def test_reminder_failure_keeps_retry(db, monkeypatch):
+    """A failed reminder must stay armed, or the lead is silently dropped."""
+    from app.modules.channels.meta import lead_escalation
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("resend down")
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _boom)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    lead.escalation_reminder_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    await db.commit()
+
+    assert await lead_escalation.run_reminder_sweep(db) == 0
+    await db.commit()
+    assert lead.escalation_reminder_at is not None, "must retry next tick"
+
+
+@pytest.mark.asyncio
+async def test_resume_hands_thread_back_after_24h(db, monkeypatch):
+    """The safety net: a misrouted escalation may not silence a customer
+    indefinitely."""
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=25)
+    await db.commit()
+    assert lead.priority == "important"
+
+    assert await lead_escalation.run_resume_sweep(db) == 1
+    await db.commit()
+    assert lead.priority == "normal"
+    assert lead.handover_sent_at is None
+    assert lead.priority_since is None
+    assert lead_escalation.should_ai_reply(lead) is True
+
+
+@pytest.mark.asyncio
+async def test_resume_waits_until_24h(db, monkeypatch):
+    """Not early -- a human is entitled a full day to answer."""
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=23)
+    await db.commit()
+
+    assert await lead_escalation.run_resume_sweep(db) == 0
+    await db.commit()
+    assert lead.priority == "important"
+
+
+@pytest.mark.asyncio
+async def test_resume_fires_even_if_handover_line_never_sent(db, monkeypatch):
+    """The exact leads most likely to need rescuing: the handover happened but
+    its holding line failed, so handover_sent_at is NULL. Keying the sweep on
+    that column would strand them silently forever."""
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=25)
+    lead.handover_sent_at = None
+    await db.commit()
+
+    assert lead.priority == "important"
+    assert await lead_escalation.run_resume_sweep(db) == 1
+    await db.commit()
+    assert lead.priority == "normal"
+
+
+@pytest.mark.asyncio
+async def test_resume_skips_thread_a_human_already_answered(db, monkeypatch):
+    """A human reply resets the counter, which drops priority -- the sweep
+    must not then fire for a thread that was handled."""
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    lead.ai_miss_count = 0
+    await lead_escalation.update_escalation_state(db, lead)
+    lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=25)
+    await db.commit()
+
+    assert lead.priority == "normal"
+    assert await lead_escalation.run_resume_sweep(db) == 0

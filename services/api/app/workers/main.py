@@ -91,6 +91,7 @@ async def _amain() -> None:
     from ..modules.analytics.performance import run_performance_sync_worker
     from ..modules.channels.meta.meta_events_worker import run_meta_events_worker
     from ..modules.channels.meta.lead_action_worker import run_lead_action_worker
+    from ..modules.channels.meta.escalation_worker import run_escalation_sweeps
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.localith.worker import run_localith_sync_worker
     from ..modules.posts.worker import run_post_publish_worker
@@ -104,6 +105,10 @@ async def _amain() -> None:
         "messaging-rollup": run_messaging_rollup_worker,
         "meta-events-ai-replies": run_meta_events_worker,
         "lead-actions": run_lead_action_worker,
+        # Reminder + handover resume for escalated leads. Cheap enough to run
+        # everywhere; an AI-only deployment still wants the 24h resume, since
+        # that is what stops a misrouted escalation silencing a customer.
+        "escalation-sweeps": run_escalation_sweeps,
     }
     # Deployment-only split by role, no code changes: WORKER_LOOPS is a
     # comma-separated allowlist of loop names ("meta-events-ai-replies,

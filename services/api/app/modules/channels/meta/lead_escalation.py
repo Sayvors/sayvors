@@ -17,21 +17,23 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from ..models import ChannelMessage, Lead
+from ....config import settings
 
 logger = logging.getLogger(__name__)
 
 #: Consecutive "AI replied, customer wrote again" cycles before a lead is
-#: escalated. Fixed, not tenant-configurable (spec, non-goals).
-ESCALATION_THRESHOLD = 3
+#: escalated. Deployment-level (env), not per-tenant -- escalation is a safety
+#: net and must behave identically everywhere. See spec, non-goals.
+ESCALATION_THRESHOLD = settings.ESCALATION_THRESHOLD
 
 #: A handover silences the AI. If no human picks the lead up within this
 #: long, the AI resumes -- otherwise a misrouted escalation silently starves
 #: the customer. Safety requirement, not a nicety.
-HANDOVER_RESUME_HOURS = 24
+HANDOVER_RESUME_HOURS = settings.ESCALATION_RESUME_HOURS
 
 #: Reminder window after the escalation email. NULL is terminal -- "already
 #: reminded, or never armed" -- never "not yet".
-REMINDER_DELAY = timedelta(hours=4)
+REMINDER_DELAY = timedelta(hours=settings.ESCALATION_REMINDER_HOURS)
 
 # Cleared whenever a lead leaves 'important'. Without this a re-escalation
 # would read the stale NULL reminder as already-handled and send nothing.
@@ -234,3 +236,92 @@ async def escalate_to_human(db, lead, adapter, phone_number_id: str, token: str)
     except Exception as e:
         logger.warning("handover cancel failed for lead %s: %s", lead.id, e)
     await send_handover(db, lead, adapter, phone_number_id, token)
+
+
+async def run_reminder_sweep(db, limit: int = 50) -> int:
+    """Send the single 4h reminder for leads still awaiting a human.
+
+    Bounded and index-friendly: the partial index ix_leads_pending_reminder
+    means this never walks more than the handful of rows actually due, so it
+    is safe to call on every tick even with millions of leads.
+    """
+    now = _now()
+    rows = (
+        await db.execute(
+            select(Lead)
+            .where(
+                Lead.priority == "important",
+                Lead.escalation_reminder_at.isnot(None),
+                Lead.escalation_reminder_at <= now,
+            )
+            .order_by(Lead.escalation_reminder_at.asc())
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    sent = 0
+    for lead in rows:
+        if lead.priority != "important":
+            # A human reply already reset the counter and dropped priority.
+            lead.escalation_reminder_at = None
+            continue
+        try:
+            recipients = await resolve_recipients(db, lead)
+            if not recipients:
+                logger.warning("lead %s reminder has no recipient", lead.id)
+            else:
+                await _send_email(
+                    recipients,
+                    ESCALATION_SUBJECT.format(name=_lead_label(lead)),
+                    (
+                        f"Still no reply on {_lead_label(lead)} after the "
+                        f"escalation. The AI will resume in "
+                        f"{HANDOVER_RESUME_HOURS}h if nobody picks it up."
+                    ),
+                    cta_url=(
+                        f"/dashboard/inbox?channel={lead.channel_id}"
+                        f"&key={lead.contact_id}"
+                    ),
+                )
+                sent += 1
+        except Exception as e:
+            # Leave the timestamp armed: a failed reminder must retry, or the
+            # lead is silently dropped with no second notification.
+            logger.warning("escalation reminder failed for lead %s: %s", lead.id, e)
+            continue
+        lead.escalation_reminder_at = None    # NULL = terminal, never again
+    return sent
+
+
+async def run_resume_sweep(db, limit: int = 50) -> int:
+    """Hand threads back to the AI after HANDOVER_RESUME_HOURS with no human.
+
+    Without this a misrouted escalation silently starves the customer: the
+    thread is muted, the email went nowhere, and nothing ever puts it back.
+
+    Deliberately does NOT require handover_sent_at. If the holding line fails
+    to send the thread is still silent, so keying on that column would strand
+    exactly the leads most likely to need rescuing.
+    """
+    cutoff = _now() - timedelta(hours=HANDOVER_RESUME_HOURS)
+    rows = (
+        await db.execute(
+            select(Lead)
+            .where(
+                Lead.priority == "important",
+                Lead.priority_since.isnot(None),
+                Lead.priority_since <= cutoff,
+            )
+            .order_by(Lead.priority_since.asc())
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    for lead in rows:
+        lead.priority = "normal"
+        _clear_escalation_state(lead)
+        logger.info(
+            "lead %s handed back to the AI: no human action within %sh",
+            lead.id, HANDOVER_RESUME_HOURS,
+        )
+    return len(rows)

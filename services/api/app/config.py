@@ -163,6 +163,21 @@ class Settings(BaseSettings):
     META_LOGIN_APP_ID: str = ""
     META_LOGIN_APP_SECRET: str = ""
 
+    # ── Lead escalation ────────────────────────────────────────────────────
+    # Read by app/modules/channels/meta/lead_escalation.py. Defaults are the
+    # values the spec was designed against, so leaving them unset is safe.
+    # Deployment-level (env), not per-tenant: escalation is a safety net and
+    # must behave identically everywhere.
+    #
+    # Consecutive "AI replied, customer wrote again" cycles before a lead is
+    # escalated and the AI hands the thread to a human.
+    ESCALATION_THRESHOLD: int = 3
+    # How long the AI stays silent before the thread is handed back. A
+    # misrouted escalation email must not starve a customer indefinitely.
+    ESCALATION_RESUME_HOURS: int = 24
+    # Window before the single reminder email is sent.
+    ESCALATION_REMINDER_HOURS: int = 4
+
     @property
     def facebook_login_app_id(self) -> str:
         return self.META_LOGIN_APP_ID or self.META_APP_ID

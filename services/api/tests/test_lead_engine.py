@@ -592,7 +592,7 @@ def test_worker_and_engine_contain_no_llm_machinery():
     structurally — neither the dispatcher nor the engine may import or
     touch any LLM/provider code (case-sensitive: prose may say "LLM")."""
     meta_dir = Path(__file__).resolve().parents[1] / "app" / "modules" / "channels" / "meta"
-    for name in ("lead_action_worker.py", "lead_engine.py"):
+    for name in ("lead_action_worker.py", "lead_engine.py", "lead_escalation.py"):
         src = (meta_dir / name).read_text(encoding="utf-8")
         for banned in ("llm", "resolve_tenant_model", "provider.complete", "_generate_reply"):
             assert banned not in src, f"{name} references {banned!r} — the deterministic path must never touch LLM code"
