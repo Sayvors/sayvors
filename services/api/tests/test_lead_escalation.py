@@ -92,3 +92,85 @@ async def test_schedule_followup_refuses_unqualified_lead(db):
         question="What do you need?", settings=dict(QUIET_OFF),
     )
     assert armed is not None, "qualified lead must be armed"
+
+
+@pytest.mark.asyncio
+async def test_counter_increments_after_ai_reply(db):
+    from app.modules.channels.meta.lead_escalation import update_escalation_state
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=1)
+    await update_escalation_state(db, lead)
+    await db.commit()
+    assert lead.ai_miss_count == 1
+    assert lead.priority == "normal"      # below threshold
+
+
+@pytest.mark.asyncio
+async def test_counter_resets_after_human_reply(db):
+    """is_ai is a stored flag, not text matching -- a human whose message
+    reads like the AI's must still reset the counter."""
+    from app.modules.channels.meta.lead_escalation import update_escalation_state
+
+    lead = await _seed_thread(db, last_outbound_is_ai=False, count=1)
+    await update_escalation_state(db, lead)
+    await db.commit()
+    assert lead.ai_miss_count == 0
+    assert lead.priority == "normal"
+
+
+@pytest.mark.asyncio
+async def test_first_contact_is_zero(db):
+    """Nobody has replied yet, so there is no miss to count."""
+    from app.modules.channels.meta.lead_escalation import update_escalation_state
+
+    lead = await _seed_thread(db, last_outbound_is_ai=None, count=1)
+    await update_escalation_state(db, lead)
+    await db.commit()
+    assert lead.ai_miss_count == 0
+
+
+@pytest.mark.asyncio
+async def test_priority_escalates_at_three(db):
+    from app.modules.channels.meta.lead_escalation import update_escalation_state
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+
+    await update_escalation_state(db, lead)
+    await db.commit()
+    assert lead.ai_miss_count == 3
+    assert lead.priority == "important"
+    assert lead.priority_since is not None
+
+
+@pytest.mark.asyncio
+async def test_priority_deescalates_and_clears_state(db):
+    """Counter falls -> priority follows, and all four timestamps clear.
+
+    Without the clearing, a lead that de-escalates and later becomes
+    important again would find escalation_reminder_at IS NULL and silently
+    receive no second email -- the sweep would read it as already handled.
+    """
+    from app.modules.channels.meta.lead_escalation import update_escalation_state
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await update_escalation_state(db, lead)
+    await db.commit()
+    assert lead.priority == "important"
+    lead.escalated_at = datetime.now(timezone.utc)
+    lead.escalation_reminder_at = datetime.now(timezone.utc) + timedelta(hours=4)
+    lead.handover_sent_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    lead.ai_miss_count = 0
+    await update_escalation_state(db, lead)
+    await db.commit()
+
+    assert lead.priority == "normal"
+    assert lead.priority_since is None
+    assert lead.escalated_at is None
+    assert lead.escalation_reminder_at is None
+    assert lead.handover_sent_at is None
