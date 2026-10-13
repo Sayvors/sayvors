@@ -132,6 +132,28 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         csrf_cookie = request.cookies.get(settings.CSRF_COOKIE_NAME)
 
         if not csrf_header or not csrf_cookie or csrf_header != csrf_cookie:
+            # "CSRF validation failed" told the caller nothing and the operator
+            # nothing at all. These three cases need different fixes: a missing
+            # header means the client never read the cookie, a missing cookie
+            # means the browser declined to send it (cross-site + SameSite), and
+            # a mismatch usually means two cookies share the name and the client
+            # and the server picked different ones. Never log the values.
+            if not csrf_header:
+                why = "no X-CSRF-Token header"
+            elif not csrf_cookie:
+                why = f"no {settings.CSRF_COOKIE_NAME} cookie sent"
+            else:
+                why = (
+                    f"mismatch (header {len(csrf_header)} chars, cookie "
+                    f"{len(csrf_cookie)} chars)"
+                )
+            log.warning(
+                "CSRF rejected %s %s from origin=%s: %s",
+                request.method,
+                request.url.path,
+                request.headers.get("origin", "-"),
+                why,
+            )
             return Response(
                 content='{"detail":"CSRF validation failed"}',
                 status_code=403,
