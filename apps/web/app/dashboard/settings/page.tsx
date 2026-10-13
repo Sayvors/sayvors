@@ -5,6 +5,7 @@ import Breadcrumbs from "@/components/Breadcrumbs";
 import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
 import { getProfile, updateProfile } from "@/lib/api-profile";
+import LeadSettingsSection from "@/components/leads/LeadSettingsSection";
 import { disconnectMeta, fetchMetaConnections, type MetaConnection } from "@/lib/api-meta";
 
 interface ChannelCfg {
@@ -997,6 +998,12 @@ export default function SettingsPage() {
           )}
         </>
       )}
+
+      {/* Lead automation lives here rather than on the leads board: these are
+          account-wide rules an owner sets once, not per-conversation data to
+          scan past. Near-zero radius and hairline groups to match the
+          operations feel of this section. */}
+      <LeadSettingsSection />
 
       {/* Danger zone — the only place a disconnect also deletes data. The
           channels-page dialog intentionally disconnects without wiping. */}

@@ -1,18 +1,17 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import LeadsBoard from "@/components/leads/LeadsBoard";
-import LeadSettingsPanel from "@/components/leads/LeadSettingsPanel";
 
 /*
  * The all-channels Leads page — WhatsApp, Instagram, and Messenger leads
  * in one board. Reached from the dashboard's Leads glance card; the
  * conversations themselves live in the unified inbox.
+ *
+ * Follow-up and escalation settings live on /dashboard/settings — they are
+ * account-wide rules an owner sets once, not per-conversation data.
  */
 export default function LeadsPage() {
-  const [showSettings, setShowSettings] = useState(false);
-
   return (
     <div className="team-ui h-full overflow-y-auto p-4 sm:p-6">
       <div className="mb-1 flex flex-wrap items-end justify-between gap-3">
@@ -28,22 +27,13 @@ export default function LeadsPage() {
             .
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowSettings((v) => !v)}
-          aria-expanded={showSettings}
-          className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+        <Link
+          href="/dashboard/settings"
+          className="rounded-[3px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)]"
         >
-          {showSettings ? "Hide settings" : "Follow-up & escalation settings"}
-        </button>
+          Follow-up &amp; escalation settings
+        </Link>
       </div>
-
-      {showSettings && (
-        <section className="mt-4 rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4 sm:p-5">
-          <LeadSettingsPanel />
-        </section>
-      )}
-
       <LeadsBoard />
     </div>
   );
