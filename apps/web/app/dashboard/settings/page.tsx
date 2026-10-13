@@ -377,9 +377,18 @@ export default function SettingsPage() {
   // of in an effect: an effect would first paint the previous location's
   // values, so switching branches flashed the old language and tone before
   // correcting itself. React re-runs this before committing the new frame.
+  //
+  // The key must include the config itself, not just selectedId: the location
+  // list resolves before the per-location configs are fetched, so keying on
+  // selectedId alone would seed defaults and then never overwrite them when
+  // the real config arrived. The config fields are included so a save that
+  // clamps a value server-side is reflected back into the form.
+  const seedKey = `${selectedId ?? ""}|${cfg ? "1" : "0"}|${cfg?.tone ?? ""}|${
+    cfg?.reply_language ?? ""
+  }|${cfg?.dialect ?? ""}`;
   const [seededFor, setSeededFor] = useState<string | null>(null);
-  if (seededFor !== selectedId) {
-    setSeededFor(selectedId);
+  if (seededFor !== seedKey) {
+    setSeededFor(seedKey);
     if (cfg) {
       setTone(cfg.tone ?? "friendly");
       setReplyLang(cfg.reply_language ?? "match");
