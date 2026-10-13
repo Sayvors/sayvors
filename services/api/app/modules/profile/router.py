@@ -11,6 +11,7 @@ from .schemas import (
     ProfileResponse,
     ProfileUpdateRequest,
     ResponseStyleUpdateRequest,
+    TypingIndicatorUpdateRequest,
     UsageResponse,
     VoiceRepliesUpdateRequest,
 )
@@ -79,6 +80,21 @@ async def put_voice_replies(
     try:
         return await service.update_voice_replies(
             user.id, body.voice_replies, db
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/typing-indicator", response_model=ProfileResponse)
+async def put_typing_indicator(
+    body: TypingIndicatorUpdateRequest,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Turn the outbound typing indicator on or off for this tenant."""
+    try:
+        return await service.update_typing_indicator(
+            user.id, body.typing_indicator, db
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

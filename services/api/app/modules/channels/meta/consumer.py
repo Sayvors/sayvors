@@ -37,10 +37,38 @@ logger = logging.getLogger(__name__)
 _STALE_REPLY_MAX_AGE = timedelta(minutes=15)
 
 
+def _report_stale_skip(platform: str, message_id: str, contact: str, age: timedelta) -> None:
+    """Make "the AI silently stopped answering" visible instead of inferred.
+
+    A stale skip is the only path where a customer gets no AI reply and the
+    only trace is a log line plus an unread inbox thread. During an outage or a
+    slow restart that is exactly the failure nobody notices until a customer
+    complains. Reports to GlitchTip so it shows up as an issue; guarded
+    because observability must never break message handling.
+    """
+    try:
+        import sentry_sdk
+
+        sentry_sdk.capture_message(
+            f"AI reply skipped: inbound {platform} message older than "
+            f"{int(_STALE_REPLY_MAX_AGE.total_seconds() // 60)} minutes",
+            level="warning",
+            extra={
+                "platform": platform,
+                "message_id": message_id[:64],
+                "contact": contact[-6:],
+                "age_minutes": int(age.total_seconds() // 60),
+            },
+        )
+    except Exception:
+        pass
+
+
 def _message_age(occurred_at: str | None) -> timedelta | None:
     """Age of the inbound message per Meta's own timestamp (None if unusable)."""
     if not occurred_at:
         return None
+
     try:
         when = datetime.fromisoformat(occurred_at)
     except ValueError:
@@ -87,6 +115,27 @@ async def _publish_message_notification(db, tenant_id: str, row, platform: str) 
             "created_at": row.created_at.isoformat() if row.created_at else None,
         },
     })
+
+
+async def _typing_indicator_enabled(tenant_id: str) -> bool:
+    """Has this tenant left the typing indicator on?
+
+    Defaults to True when the column is missing or unreadable: the indicator is
+    cosmetic, so a lookup failure must never silently suppress it (nor raise
+    into the reply path). Mirrors the send path's best-effort contract.
+    """
+    try:
+        from ...users.models import User
+
+        async with async_session() as s:
+            value = (
+                await s.execute(
+                    select(User.typing_indicator).where(User.id == tenant_id)
+                )
+            ).scalar_one_or_none()
+        return True if value is None else bool(value)
+    except Exception:
+        return True
 
 
 async def _publish_typing(
@@ -530,6 +579,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 "wamid=%s from=+%s",
                 int(age.total_seconds() // 60), wamid[:32], from_wa[-6:],
             )
+            _report_stale_skip("whatsapp", wamid, from_wa, age)
             return
 
         # get_adapter returns a process-level singleton shared with the HTTP
@@ -541,13 +591,20 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         # reply is prepared (classification + generation take seconds). The
         # Cloud API has no "recording audio" variant — text dots are what
         # exists. Best-effort: failure here changes nothing downstream.
-        await adapter.send_typing_indicator(phone_number_id, token, wamid)
+        #
+        # Gated on the tenant's typing_indicator setting, which used to be a
+        # UI-only toggle that persisted nothing. One indexed read, joined with
+        # the row fetched below rather than issuing a second query.
+        show_typing = await _typing_indicator_enabled(tenant_id)
 
-        # Same signal for our own dashboard: the AI reply takes several
-        # seconds (classify + generate + optional split), so show the agent
-        # what the customer already sees on their phone. Cleared on every
-        # exit below; the client expires it too, in case of a hard failure.
-        await _publish_typing(tenant_id, channel.id, from_wa, True)
+        if show_typing:
+            await adapter.send_typing_indicator(phone_number_id, token, wamid)
+
+            # Same signal for our own dashboard: the AI reply takes several
+            # seconds (classify + generate + optional split), so show the agent
+            # what the customer already sees on their phone. Cleared on every
+            # exit below; the client expires it too, on a hard failure.
+            await _publish_typing(tenant_id, channel.id, from_wa, True)
 
         # Conversation stats BEFORE the reply: language + confusion decide
         # whether this reply goes out as a voice note. Failure degrades to
@@ -1403,17 +1460,20 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 "Instagram AI reply skipped (stale event %d min old) mid=%s",
                 int(age.total_seconds() // 60), mid[:32],
             )
+            _report_stale_skip("instagram", mid, igsid, age)
             return
 
         adapter = InstagramAdapter()
 
         # Typing dots while the reply is prepared — best-effort, exactly
-        # like WhatsApp: failure here changes nothing downstream.
-        await adapter.send_typing_indicator(page_id, page_token, igsid)
+        # like WhatsApp: failure here changes nothing downstream. Gated on
+        # the same tenant setting.
+        if await _typing_indicator_enabled(tenant_id):
+            await adapter.send_typing_indicator(page_id, page_token, igsid)
 
-        # Dashboard-side twin of the Meta typing indicator (see the WhatsApp
-        # path for the rationale). Cleared on every exit below.
-        await _publish_typing(tenant_id, channel.id, igsid, True)
+            # Dashboard-side twin of the Meta typing indicator (see the
+            # WhatsApp path for the rationale). Cleared on every exit below.
+            await _publish_typing(tenant_id, channel.id, igsid, True)
 
         # Best-effort contact profile so the inbox shows a person with a
         # face, not a bare IGSID. Cached in contact_profiles; the Graph

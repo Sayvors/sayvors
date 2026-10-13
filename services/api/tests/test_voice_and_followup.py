@@ -618,6 +618,13 @@ async def _seed_lead(db, *, guard_id="wamid-guard-1", attempt=1, language="en",
         id=uid, first_name="L", last_name="E",
         email=f"{uid}@example.com", password_hash="x",
         response_style="concise", voice_replies="off",
+        # Quiet hours OFF (start == end disables the window). These tests
+        # exercise the attempt/send/cancel rules, not the scheduler, and the
+        # default window is 22:00-08:00 tenant time -- so on any CI run
+        # between 22:00 and 08:00 every seeded action was silently rescheduled
+        # to 08:00 and the suite failed on wall-clock time rather than on
+        # logic. Pinned here so the result does not depend on when it runs.
+        lead_settings={"quiet_start_hour": 0, "quiet_end_hour": 0},
     ))
     channel = Channel(
         id=f"lead-channel-{uuid.uuid4().hex[:8]}", user_id=uid,

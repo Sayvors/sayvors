@@ -272,11 +272,19 @@ class WhatsAppAdapter(MetaProviderAdapter):
         """Mark the inbound message read and show the typing dots while we
         prepare the reply (the Cloud API has no 'recording audio' variant).
         Best-effort: False on any failure — cosmetics must never break a
-        reply."""
+        reply.
+
+        Goes through _graph rather than a bare post so a Meta 4xx raises
+        MetaAPIError and is reported as a failure. A raw post returns the 4xx
+        response without raising, which made this return True on every
+        rejection — the caller could not tell a delivered indicator from a
+        silently dropped one.
+        """
         try:
-            await self._http.post(
-                f"{graph_base()}/{phone_number_id}/messages",
-                headers={"Authorization": f"Bearer {token}"},
+            await self._graph(
+                "POST",
+                f"/{phone_number_id}/messages",
+                token,
                 json={
                     "messaging_product": "whatsapp",
                     "status": "read",

@@ -126,6 +126,12 @@ def _serialize(user: User, feedback: dict[str, int]) -> dict:
         "language": user.language or "en",
         "response_style": getattr(user, "response_style", None) or "concise",
         "voice_replies": getattr(user, "voice_replies", None) or "off",
+        # getattr default keeps the response correct on a row written before
+        # the column existed; the migration's server_default covers the rest.
+        "typing_indicator": (
+            True if getattr(user, "typing_indicator", None) is None
+            else bool(user.typing_indicator)
+        ),
         "plan": "pro",
         "member_since": member_since,
         "feedback": feedback,
@@ -243,6 +249,30 @@ async def update_voice_replies(user_id: str, voice_replies: str, db: AsyncSessio
         user_id,
         email=user.email,
         metadata={"voice_replies": voice_replies},
+    )
+
+    return await get_profile(user_id, db)
+
+
+async def update_typing_indicator(user_id: str, enabled: bool, db: AsyncSession) -> dict:
+    """Persist the tenant's typing-indicator preference (same write path as
+    voice replies). The consumer reads this per incoming message, so it takes
+    effect for the next reply without a restart."""
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise ValueError("User not found")
+    user.typing_indicator = enabled
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    await db.commit()
+
+    await _cache_delete(_profile_key(user_id))
+
+    await _emit(
+        "typing_indicator.updated",
+        user_id,
+        email=user.email,
+        metadata={"typing_indicator": enabled},
     )
 
     return await get_profile(user_id, db)
