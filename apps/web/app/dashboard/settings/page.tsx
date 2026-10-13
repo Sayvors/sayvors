@@ -251,6 +251,12 @@ export default function SettingsPage() {
   const isBulk = selectedId === ALL;
   const bulkBranches = isBulk ? channels.map((c) => ({ id: c.id, name: c.display_name || "Location" })) : [];
 
+  // Settings are grouped by what they actually govern. A tenant that only
+  // connected WhatsApp has no Google locations at all, so "all branches" is
+  // meaningless to them -- the Google tab hides itself instead of showing an
+  // empty location picker, and account-wide rules never sit under one.
+  const [tab, setTab] = useState<"account" | "google" | "social" | "leads">("account");
+
   const [tones, setTones] = useState<ToneOpt[]>(FALLBACK_TONES);
 
   // Per-location form state, reset whenever the branch or its config loads.
@@ -367,30 +373,33 @@ export default function SettingsPage() {
 
   const cfg = selectedId ? configs[selectedId] : undefined;
 
-  useEffect(() => {
-    if (!cfg) {
-      if (isBulk) {
-        setTone("friendly");
-        setReplyLang("match");
-        setDialect("auto");
-        setPromoProducts(false);
-        setPromoLinks(false);
-        setPromoRelevant(true);
-        setPromoMax(1);
-        setEditedAutopost(false);
-      }
-      return;
+  // Seed the form from the selected location. Adjusting during render instead
+  // of in an effect: an effect would first paint the previous location's
+  // values, so switching branches flashed the old language and tone before
+  // correcting itself. React re-runs this before committing the new frame.
+  const [seededFor, setSeededFor] = useState<string | null>(null);
+  if (seededFor !== selectedId) {
+    setSeededFor(selectedId);
+    if (cfg) {
+      setTone(cfg.tone ?? "friendly");
+      setReplyLang(cfg.reply_language ?? "match");
+      setDialect(cfg.dialect ?? "auto");
+      setPromoProducts(!!cfg.promo_product_mentions);
+      setPromoLinks(!!cfg.promo_links);
+      setPromoRelevant(cfg.promo_only_relevant ?? true);
+      setPromoMax(Number.isFinite(cfg.promo_max_ctas) ? cfg.promo_max_ctas : 1);
+      setEditedAutopost(!!cfg.edited_review_autopost);
+    } else if (isBulk) {
+      setTone("friendly");
+      setReplyLang("match");
+      setDialect("auto");
+      setPromoProducts(false);
+      setPromoLinks(false);
+      setPromoRelevant(true);
+      setPromoMax(1);
+      setEditedAutopost(false);
     }
-    setTone(cfg.tone ?? "friendly");
-    setReplyLang(cfg.reply_language ?? "match");
-    setDialect(cfg.dialect ?? "auto");
-    setPromoProducts(!!cfg.promo_product_mentions);
-    setPromoLinks(!!cfg.promo_links);
-    setPromoRelevant(cfg.promo_only_relevant ?? true);
-    setPromoMax(Number.isFinite(cfg.promo_max_ctas) ? cfg.promo_max_ctas : 1);
-    setEditedAutopost(!!cfg.edited_review_autopost);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, isBulk, cfg?.tone, cfg?.reply_language, cfg?.dialect]);
+  }
 
   // Per-field "varies across branches" set for bulk mode.
   const bulkVaries = useMemo(() => {
@@ -602,37 +611,54 @@ export default function SettingsPage() {
           while scrolling a page this long. */}
       <div className="sticky top-0 z-10 border-b border-ink/[0.06] bg-white/95 px-6 py-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/95">
         <Breadcrumbs items={[{ label: "Settings" }]} />
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-[20px] font-bold text-ink dark:text-fog">Configuration</h1>
-            <p className="mt-0.5 text-[13px] text-ink/50 dark:text-fog/50">
-              How Sayvors writes for each location. Listings themselves always come from
-              Google — nothing here touches them.
-            </p>
-          </div>
-          {channels.length > 0 && (
-            <label className="block text-[11px] font-bold text-ink/55 dark:text-fog/55">
-              Location
-              <select
-                value={selectedId ?? ""}
-                onChange={(e) => {
-                  setSelectedId(e.target.value || null);
-                  setLastBulkFail(null);
-                }}
-                className="mt-1 block w-56 rounded-[2px] border border-ink/[0.10] bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
-              >
-                {channels.length > 1 && (
-                  <option value={ALL}>All branches ({channels.length})</option>
-                )}
-                {channels.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.display_name || "Location"}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+        <div className="mt-2">
+          <h1 className="text-[20px] font-bold text-ink dark:text-fog">Settings</h1>
+          <p className="mt-0.5 text-[13px] text-ink/50 dark:text-fog/50">
+            Everything Sayvors knows about your business, grouped by what it applies to.
+          </p>
         </div>
+
+        {/* Domain tabs. The Google tab only appears when a Google Business
+            Profile is actually connected -- offering a location picker to a
+            tenant who has none is the confusion this replaces. */}
+        <nav className="mt-4 flex flex-wrap gap-1" aria-label="Settings sections">
+          {(
+            [
+              { key: "account", label: "Account", count: null },
+              {
+                key: "google",
+                label: "Google locations",
+                count: channels.length > 0 ? channels.length : null,
+                hide: channels.length === 0,
+              },
+              {
+                key: "social",
+                label: "Social channels",
+                count: metaConnections.length > 0 ? metaConnections.length : null,
+              },
+              { key: "leads", label: "Lead automation", count: null },
+            ] as const
+          )
+            .filter((t) => !("hide" in t) || !t.hide)
+            .map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                aria-current={tab === t.key ? "page" : undefined}
+                className={`rounded-[2px] border px-3 py-1.5 text-[12px] font-semibold transition focus-visible:outline focus-visible:outline-[2px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--ui-ink)] ${
+                  tab === t.key
+                    ? "border-ink/15 bg-ink/[0.06] text-ink dark:border-fog/20 dark:bg-fog/[0.08] dark:text-fog"
+                    : "border-transparent text-ink/55 hover:bg-ink/[0.04] dark:text-fog/55 dark:hover:bg-fog/[0.06]"
+                }`}
+              >
+                {t.label}
+                {"count" in t && t.count ? (
+                  <span className="ml-1.5 tabular-nums opacity-70">{t.count}</span>
+                ) : null}
+              </button>
+            ))}
+        </nav>
       </div>
 
       <div className="mx-auto max-w-4xl space-y-4 px-6 py-6">
@@ -736,11 +762,13 @@ export default function SettingsPage() {
         </div>
       ) : (
         <>
-          <Section
-            eyebrow="Account"
-            title="Country"
-            subtitle="One for the whole account. Display and defaults only — your Google listings are never modified."
-          >
+          {tab === "account" && (
+            <>
+              <Section
+                eyebrow="Applies to every channel"
+                title="Country"
+                subtitle="Display and defaults only. Your Google listings and channel settings are never modified."
+              >
             <Field label="Business country">
               <select value={country} onChange={(e) => setCountry(e.target.value)} disabled={busy !== null} className={selectCls}>
                 <option value="">Not set</option>
@@ -757,14 +785,14 @@ export default function SettingsPage() {
               className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
               {busy === "country" ? "Saving…" : "Save country"}
-            </button>
-          </Section>
+              </button>
+              </Section>
 
-          <Section
-            eyebrow="Account"
-            title="Business context"
-            subtitle="What your company is. The AI reads this for every reply and post draft — it answers 'do you sell X?' from these facts and declines off-topic questions instead of guessing."
-          >
+              <Section
+                eyebrow="Applies to every channel"
+                title="Business context"
+                subtitle="What your company is. The AI reads this for every reply and post draft — it answers 'do you sell X?' from these facts and declines off-topic questions instead of guessing."
+              >
             <Field label="What do you do?" hint="your domain — restaurant, pharmacy, bank…">
               <select value={bizType} onChange={(e) => setBizType(e.target.value)} disabled={busy !== null} className={selectCls}>
                 <option value="">Not set</option>
@@ -822,10 +850,53 @@ export default function SettingsPage() {
               className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
               {busy === "bizctx" ? "Saving…" : "Save business context"}
-            </button>
-          </Section>
+              </button>
+              </Section>
+            </>
+          )}
 
-          {selectedId ? (
+          {/* ── Google Business Profile only ─────────────────────────── */}
+          {tab === "google" && (
+            <>
+              {/* The location picker lives HERE, not in the page header: it
+                  only ever governed Google-scoped settings, so putting it up
+                  top implied it governed everything. */}
+              <div className="flex flex-wrap items-end justify-between gap-3 rounded-[3px] border border-ink/[0.08] bg-white px-5 py-4 dark:border-fog/[0.08] dark:bg-ink">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-ink/35 dark:text-fog/35">
+                    Configuring
+                  </p>
+                  <p className="mt-1 text-[13px] font-semibold text-ink dark:text-fog">
+                    Google Business Profile locations
+                  </p>
+                </div>
+                {channels.length > 0 && (
+                  <label className="block text-[11px] font-bold text-ink/55 dark:text-fog/55">
+                    Location
+                    <select
+                      value={selectedId ?? ""}
+                      onChange={(e) => {
+                        setSelectedId(e.target.value || null);
+                        setLastBulkFail(null);
+                      }}
+                      className="mt-1 block w-64 rounded-[2px] border border-ink/[0.10] bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                    >
+                      {channels.length > 1 && (
+                        <option value={ALL}>All locations ({channels.length})</option>
+                      )}
+                      {channels.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.display_name || "Location"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            </>
+          )}
+
+          {tab === "google" && (selectedId ? (
             <>
               <Section
                 eyebrow="How the AI writes"
@@ -1060,24 +1131,58 @@ export default function SettingsPage() {
               </p>
             </>
           ) : (
-            <div className="rounded-[3px] border border-ink/[0.06] bg-white/70 p-10 text-center dark:border-fog/[0.06] dark:bg-ink/70">
-              <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">No locations yet</p>
-              <p className="mt-1 text-[12px] text-ink/45 dark:text-fog/45">
-                Connect a location first — language, tone and marketing are configured per location.
+            <div className="rounded-[3px] border border-dashed border-ink/[0.12] bg-white/60 p-10 text-center dark:border-fog/[0.12] dark:bg-ink/60">
+              <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">
+                No Google locations connected
+              </p>
+              <p className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-ink/45 dark:text-fog/45">
+                Language, tone and review marketing are configured per Google Business Profile
+                location. If you only use WhatsApp, Instagram or Facebook you do not need this —
+                everything that applies to you is under Social channels and Lead automation.
               </p>
             </div>
+          ))}
+          </>
           )}
-        </>
-      )}
 
-      {/* Lead automation lives here rather than on the leads board: these are
-          account-wide rules an owner sets once, not per-conversation data to
-          scan past. Near-zero radius and hairline groups to match the
-          operations feel of this section. */}
-      <LeadSettingsSection />
+          {/* ── Social channels ───────────────────────────────────────── */}
+          {tab === "social" && (
+            <Section
+              eyebrow="WhatsApp · Instagram · Facebook"
+              title="Connected channels"
+              subtitle="Messaging channels on this account. Per-channel options — numbering, AI replies, voice, connected pages — live on the Channels page."
+            >
+              {metaConnections.length === 0 ? (
+                <p className="text-[12px] text-ink/45 dark:text-fog/45">
+                  No messaging channels connected yet.
+                </p>
+              ) : (
+                <ul className="divide-y divide-ink/[0.06] dark:divide-fog/[0.06]">
+                  {metaConnections.map((c) => (
+                    <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 first:pt-0 last:pb-0">
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-semibold text-ink dark:text-fog">
+                          {PROVIDER_LABELS[c.provider] ?? c.provider}
+                        </p>
+                        <p className="text-[11px] text-ink/40 dark:text-fog/40">
+                          Connected {new Date(c.created_at).toLocaleDateString()} · status{" "}
+                          {c.status}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+          )}
+
+          {/* ── Lead automation ────────────────────────────────────────── */}
+          {tab === "leads" && <LeadSettingsSection />}
 
       {/* Danger zone — the only place a disconnect also deletes data. The
-          channels-page dialog intentionally disconnects without wiping. */}
+          channels-page dialog intentionally disconnects without wiping.
+          Lives under Social channels because it destroys channel data. */}
+      {tab === "social" && (
       <Section
         tone="danger"
         eyebrow="Destructive"
@@ -1119,6 +1224,7 @@ export default function SettingsPage() {
           )}
         </div>
       </Section>
+      )}
 
       {/* Type-to-confirm modal — one wrong glance should not delete a
           tenant's whole history, so the button stays dead until the exact
