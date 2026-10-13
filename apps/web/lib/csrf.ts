@@ -52,12 +52,18 @@ export function isCsrfFailure(res: Response): boolean {
 /** In-flight mint, so a burst of parallel writes triggers one request. */
 let inFlight: Promise<string | null> | null = null;
 
+/** A mint must never wedge the write it is protecting. */
+const MINT_TIMEOUT_MS = 5000;
+
 /** Fetch a fresh token, which also sets the cookie via Set-Cookie. */
 async function mint(): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MINT_TIMEOUT_MS);
   try {
     const res = await fetch(`${API}/api/v1/auth/csrf-token`, {
       method: "POST",
       credentials: "include",
+      signal: controller.signal,
     });
     if (!res.ok) return null;
     const data = await res.json().catch(() => null);
@@ -65,6 +71,8 @@ async function mint(): Promise<string | null> {
     return getCsrfToken() ?? (data?.csrf_token ?? null);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

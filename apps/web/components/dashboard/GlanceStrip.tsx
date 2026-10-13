@@ -6,6 +6,13 @@ import { apiFetch } from "@/lib/api-rag";
 import { fetchOverview } from "@/lib/api-analytics";
 import { fetchLeads } from "@/lib/api-leads";
 
+interface ChannelRow {
+  id: string;
+  platform: string;
+  name: string;
+  status: string;
+}
+
 interface BizRow {
   id: string;
   name: string;
@@ -43,6 +50,7 @@ function PlatformIcon({ name }: { name: string }) {
 
 export default function GlanceStrip() {
   const [platformMsgs, setPlatformMsgs] = useState<Record<string, number>>({});
+  const [channels, setChannels] = useState<ChannelRow[]>([]);
   const [biz, setBiz] = useState<BizRow[]>([]);
   const [totalReviews, setTotalReviews] = useState<number | null>(null);
   const [avgRating, setAvgRating] = useState<number | null>(null);
@@ -52,7 +60,9 @@ export default function GlanceStrip() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Messages per platform from inbox threads.
+      // Messages per platform from inbox threads. A platform with no threads
+      // and a platform that was never connected both render as 0 here, which
+      // is why the card also reads /channels below and says which it is.
       try {
         const data = await apiFetch("/api/v1/inbox/threads?limit=500");
         const threads = (data?.threads ?? []) as { platform: string | null; message_count: number }[];
@@ -70,8 +80,18 @@ export default function GlanceStrip() {
       try {
         const chans = await apiFetch("/api/v1/channels?limit=100");
         const list = (Array.isArray(chans) ? chans : (chans?.channels ?? [])) as {
-          id: string; display_name: string | null; platform?: string | null;
+          id: string; display_name: string | null; platform?: string | null; status?: string | null;
         }[];
+        if (!cancelled) {
+          setChannels(
+            list.map((c) => ({
+              id: c.id,
+              platform: (c.platform ?? "").toString(),
+              name: c.display_name ?? "",
+              status: (c.status ?? "").toString(),
+            })),
+          );
+        }
         const google = list.filter((c) => (c.platform ?? "").includes("google"));
 
         // Overall totals across every business.
@@ -147,27 +167,45 @@ export default function GlanceStrip() {
 
   return (
     <section aria-label="Glance" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      {/* Messages card — redesigned with icons, colors, and total */}
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
+      {/* Messages card. Distinguishes "connected, nothing received yet" from
+          "not connected" — a bare 0 next to a channel icon reads as the second
+          when it is usually the first. */}
+      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Messages</p>
           <Image src="/meta.png" alt="Meta" width={32} height={32} />
         </div>
         <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalMsgs}</p>
         <div className="mt-3 space-y-2">
-          {platformConfig.map(({ key, label, bg, text, border }) => (
-            <div key={key} className={`flex items-center gap-2 rounded-[2px] border ${border} ${bg} px-2.5 py-1.5`}>
-              <span className={`${text}`}><PlatformIcon name={key} /></span>
-              <span className="flex-1 text-[12px] font-medium text-ink/70 dark:text-fog/70">{label}</span>
-              <span className="text-[12px] font-bold text-ink dark:text-fog">{platformMsgs[key] ?? 0}</span>
-            </div>
-          ))}
+          {platformConfig.map(({ key, label, bg, text, border }) => {
+            const linked = channels.filter((c) => c.platform === key);
+            const count = platformMsgs[key] ?? 0;
+            return (
+              <div key={key} className={`rounded-[2px] border ${linked.length ? `${border} ${bg}` : "border-ink/[0.06] dark:border-fog/[0.06]"} px-2.5 py-1.5`}>
+                <div className="flex items-center gap-2">
+                  <span className={linked.length ? text : "opacity-40"}><PlatformIcon name={key} /></span>
+                  <span className="flex-1 text-[12px] font-medium text-ink/70 dark:text-fog/70">{label}</span>
+                  <span className={`text-[12px] font-bold ${linked.length ? "text-ink dark:text-fog" : "text-ink/35 dark:text-fog/35"}`}>{count}</span>
+                </div>
+                {/* The real state, so a zero is never a guess. */}
+                <p className="mt-0.5 pl-6 text-[11px] leading-snug text-ink/45 dark:text-fog/45">
+                  {linked.length === 0
+                    ? "Not connected"
+                    : count === 0
+                      ? `Connected · ${linked.map((c) => c.name).filter(Boolean).join(", ")} — no messages yet`
+                      : linked.map((c) => c.name).filter(Boolean).join(", ") || label}
+                </p>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Leads card — live from /api/v1/leads, all channels */}
+      {/* Leads card — live from /api/v1/leads, all channels. Leads are captured
+          from inbound messages, so a zero with no messages is an explanation,
+          not a failure. */}
       <Link href="/dashboard/leads" aria-label="Open leads">
-        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-ink/80">
+        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-ink">
           <div className="flex items-center justify-between">
             <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Leads</p>
             <Image src="/leads.png" alt="Leads" width={32} height={32} />
@@ -191,6 +229,12 @@ export default function GlanceStrip() {
           ) : (
             <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">All channels</p>
           )}
+          {leadStats && leadStats.total === 0 && totalMsgs === 0 ? (
+            <p className="mt-2 text-[11px] leading-snug text-ink/45 dark:text-fog/45">
+              Captured from inbound messages. Nothing has come in yet, so there are no leads to
+              show.
+            </p>
+          ) : null}
         </div>
       </Link>
 
