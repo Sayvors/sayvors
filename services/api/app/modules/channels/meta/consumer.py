@@ -516,7 +516,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
 
         await cancel_pending_actions(db, channel.id, from_wa, reason="answered")
         await db.commit()
-        await capture_lead(
+        inbound_lead = await capture_lead(
             db,
             tenant_id=tenant_id,
             channel_id=channel.id,
@@ -527,6 +527,18 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             inbound_text=text,
             occurred_at=row.created_at,
         )
+
+        # Escalation counter. The customer has just written again, so if the
+        # previous voice in this thread was the AI, this is another miss. May
+        # promote the lead to 'important' and email a human; see
+        # lead_escalation.py. Never raises.
+        from .lead_escalation import update_escalation_state
+
+        try:
+            await update_escalation_state(db, inbound_lead)
+            await db.commit()
+        except Exception as e:
+            logger.warning("escalation update failed wamid=%s: %s", wamid[:32], e)
 
         from ...channels.realtime import publish_inbox_event
 
@@ -622,6 +634,22 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             "awaiting=%s", wamid[:32], stats.get("language"),
             stats.get("confused"), stats.get("awaiting_user"),
         )
+
+        # Handover: if the counter above just promoted this thread to
+        # 'important', the AI stops answering it. The holding line goes out
+        # once (guarded by handover_sent_at) and any queued nudges are
+        # cancelled, so nothing fires into a silent thread. The 24h resume
+        # sweep hands it back if no human picks it up.
+        from .lead_escalation import escalate_to_human, should_ai_reply
+
+        if inbound_lead is not None and not should_ai_reply(inbound_lead):
+            await escalate_to_human(db, inbound_lead, adapter, phone_number_id, token)
+            await db.commit()
+            logger.info(
+                "WhatsApp AI handover: thread escalated to a human wamid=%s from=+%s",
+                wamid[:32], from_wa[-6:],
+            )
+            return
 
         try:
             raw_reply = await _generate_reply(db, channel, tenant_id, text)
@@ -723,6 +751,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             content_type="audio",
                             status="sent",
                             contact_phone=from_wa or None,
+                            is_ai=True,  # drives the escalation counter
                         )
                     db.add(row)
                     # The voice note is the remedy for the confusion that
@@ -806,6 +835,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         content=part,
                         status="sent",
                         contact_phone=from_wa or None,
+                        is_ai=True,  # drives the escalation counter
                     )
                 db.add(row)
                 await db.commit()
@@ -1575,6 +1605,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 content=part,
                 status="sent",
                 contact_phone=igsid or None,
+                is_ai=True,  # drives the escalation counter
             )
             db.add(row)
             await db.commit()

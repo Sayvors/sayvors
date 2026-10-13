@@ -198,3 +198,39 @@ async def on_escalate(db, lead) -> None:
 
     lead.escalated_at = _now()
     lead.escalation_reminder_at = _now() + REMINDER_DELAY
+
+
+async def send_handover(db, lead, adapter, phone_number_id: str, token: str) -> None:
+    """Deliver the holding line, once.
+
+    Guarded by handover_sent_at so a re-trigger never repeats it. On failure
+    the column stays NULL: the thread still goes silent (the handover is about
+    the AI stopping, not the message landing) and a failed cosmetic line must
+    not block the escalation itself.
+    """
+    if lead.handover_sent_at is not None:
+        return
+    try:
+        await adapter.send_text_message(
+            phone_number_id, token, lead.contact_id, HANDOVER_TEXT
+        )
+        lead.handover_sent_at = _now()
+    except Exception as e:
+        logger.warning("handover line failed for lead %s: %s", lead.id, e)
+
+
+async def escalate_to_human(db, lead, adapter, phone_number_id: str, token: str) -> None:
+    """Hand a thread to a human: cancel queued nudges, say so once, stop.
+
+    Called by the consumer when a thread is 'important' at reply time. After
+    this the AI stays silent for the thread until the 24h resume sweep.
+    """
+    from .lead_engine import cancel_pending_actions
+
+    try:
+        await cancel_pending_actions(
+            db, lead.channel_id, lead.contact_id, reason="escalated"
+        )
+    except Exception as e:
+        logger.warning("handover cancel failed for lead %s: %s", lead.id, e)
+    await send_handover(db, lead, adapter, phone_number_id, token)

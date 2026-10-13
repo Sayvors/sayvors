@@ -15,6 +15,15 @@ from app.modules.users.models import User
 QUIET_OFF = {"quiet_start_hour": 0, "quiet_end_hour": 0}
 
 
+async def _noop_async(*args, **kwargs):
+    return "msg-id"
+
+
+class _NoAdapter:
+    async def send_text_message(self, *args, **kwargs):
+        return "wamp-x"
+
+
 async def _seed_lead(db, *, stage: str = "qualified", phone: str = "+15550000001"):
     uid = f"gate-user-{uuid.uuid4().hex[:8]}"
     db.add(User(
@@ -254,3 +263,96 @@ async def test_escalation_email_failure_leaves_escalated_at_null(db, monkeypatch
     assert lead.priority == "important"
     assert lead.escalated_at is None
     assert lead.escalation_reminder_at is None
+
+
+def test_should_ai_reply_false_while_important():
+    """The whole point of the handover: the AI stops answering the thread."""
+    from app.modules.channels.meta.lead_escalation import should_ai_reply
+
+    class L:
+        priority = "important"
+    class N:
+        priority = "normal"
+
+    assert should_ai_reply(L()) is False
+    assert should_ai_reply(N()) is True
+
+
+@pytest.mark.asyncio
+async def test_handover_line_sent_exactly_once(db, monkeypatch):
+    """A re-trigger must not text the customer twice."""
+    from app.modules.channels.meta import lead_escalation
+
+    sent: list[str] = []
+
+    class _Adapter:
+        async def send_text_message(self, phone_number_id, token, to, text):
+            sent.append(text)
+            return "wamp-1"
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    await lead_escalation.escalate_to_human(db, lead, _Adapter(), "PHONE", "tok")
+    await db.commit()
+    assert len(sent) == 1
+    assert lead_escalation.HANDOVER_TEXT in sent[0]
+    assert lead.handover_sent_at is not None
+
+    await lead_escalation.escalate_to_human(db, lead, _Adapter(), "PHONE", "tok")
+    await db.commit()
+    assert len(sent) == 1, "handover line must never repeat"
+
+
+@pytest.mark.asyncio
+async def test_handover_cancels_pending_nudges(db, monkeypatch):
+    """Nothing should fire a sales nudge into a thread that went silent."""
+    from sqlalchemy import select as sa_select
+
+    from app.modules.channels.models import LeadAction
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+
+    lead, channel = await _seed_lead(db)
+    db.add(LeadAction(
+        id=str(uuid.uuid4()), tenant_id=lead.tenant_id, lead_id=lead.id,
+        channel_id=channel.id, contact_id=lead.contact_id, platform="whatsapp",
+        attempt=1, question="?", language="en", status="pending",
+        due_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    ))
+    await db.commit()
+
+    await lead_escalation.escalate_to_human(db, lead, _NoAdapter(), "PHONE", "tok")
+    await db.commit()
+
+    action = (await db.execute(
+        sa_select(LeadAction).where(LeadAction.lead_id == lead.id)
+    )).scalars().first()
+    assert action.status == "cancelled"
+    assert action.ineligible_reason == "escalated"
+
+
+@pytest.mark.asyncio
+async def test_handover_line_failure_still_silences_thread(db, monkeypatch):
+    """A failed cosmetic line must not stop the handover itself."""
+    from app.modules.channels.meta import lead_escalation
+
+    class _Boom:
+        async def send_text_message(self, *a, **kw):
+            raise RuntimeError("meta 503")
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    await db.commit()
+    assert lead.priority == "important"
+
+    await lead_escalation.escalate_to_human(db, lead, _Boom(), "PHONE", "tok")
+    await db.commit()
+
+    assert lead.handover_sent_at is None, "failure is recorded as not-sent"
+    assert lead.priority == "important", "but the thread is still handed over"
