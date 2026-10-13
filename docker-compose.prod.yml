@@ -60,13 +60,21 @@ services:
     # /readyz probes DB/Redis/Kafka and returns 503 when any is unreachable,
     # which is the signal to stop routing traffic to this instance. urllib is
     # used because the image has no curl.
+    #
+    # Same `python -m app.healthcheck` probe the worker uses, NOT an HTTP GET
+    # of /readyz: this container only publishes 8000 internally, so a GET would
+    # arrive with Host: 127.0.0.1:8000, which TrustedHostMiddleware rejects with
+    # 400 unless 127.0.0.1 is added to ALLOWED_HOSTS. That produced an unhealthy
+    # api on every deploy and, because the worker waits on service_healthy, kept
+    # the worker from starting at all. Probing dependencies directly also keeps
+    # the two containers on one code path, which is what app/healthcheck.py is
+    # for. Timeout matches the worker's: a cold pool is slower than a loopback
+    # GET.
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5)"]
+      test: ["CMD", "python", "-m", "app.healthcheck"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 3
-      # Generous: the probe opens real connections to Postgres/Redis/Kafka,
-      # and a cold pool after boot should not be mistaken for a failure.
       start_period: 40s
     volumes:
       # Uploaded files (media photos for Google, databank docs) live here —

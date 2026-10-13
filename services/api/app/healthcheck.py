@@ -33,10 +33,17 @@ async def _probe_redis() -> str:
 
 
 async def _probe_kafka() -> str:
-    from .modules.kafka.client import get_kafka_producer
+    from .modules.kafka.client import close_kafka, get_kafka_producer
 
-    await get_kafka_producer()
-    return "ok"
+    try:
+        await get_kafka_producer()
+        return "ok"
+    finally:
+        # This module runs as its own short-lived process, but not just once:
+        # the container healthcheck invokes it every 30s. Without this the
+        # producer is never torn down and aiokafka logs "Unclosed
+        # AIOKafkaProducer" on every single probe.
+        await close_kafka()
 
 
 async def probe_dependencies() -> dict[str, str]:
