@@ -147,7 +147,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     f"mismatch (header {len(csrf_header)} chars, cookie "
                     f"{len(csrf_cookie)} chars)"
                 )
-            log.warning(
+            # Module-level `logging` is imported at the top; the loggers used
+            # elsewhere in this file are function-local, so resolve one here
+            # rather than reaching for a name that does not exist at class scope.
+            logging.getLogger("app.main").warning(
                 "CSRF rejected %s %s from origin=%s: %s",
                 request.method,
                 request.url.path,
