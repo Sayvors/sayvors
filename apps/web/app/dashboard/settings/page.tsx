@@ -90,22 +90,79 @@ const PROVIDER_LABELS: Record<string, string> = {
   instagram: "Instagram",
 };
 
-function Section({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+/*
+ * Section chrome.
+ *
+ * Near-square radii, hairline rules and a tracked eyebrow: this is a dense
+ * operations page full of numbers and switches, so structure comes from rules
+ * and alignment rather than from rounded, floating cards.
+ */
+function Section({
+  title,
+  subtitle,
+  eyebrow,
+  children,
+  tone = "default",
+}: {
+  title: string;
+  subtitle: string;
+  eyebrow?: string;
+  children: React.ReactNode;
+  tone?: "default" | "danger";
+}) {
+  const danger = tone === "danger";
   return (
-    <section className="rounded-2xl border border-ink/[0.06] bg-white p-5 dark:border-fog/[0.06] dark:bg-ink">
-      <h2 className="text-[15px] font-bold text-ink dark:text-fog">{title}</h2>
-      <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">{subtitle}</p>
-      <div className="mt-4 space-y-4">{children}</div>
+    <section
+      className={`rounded-[3px] border bg-white dark:bg-ink ${
+        danger ? "border-red-500/30" : "border-ink/[0.08] dark:border-fog/[0.08]"
+      }`}
+    >
+      <header
+        className={`border-b px-5 py-4 ${
+          danger ? "border-red-500/20" : "border-ink/[0.06] dark:border-fog/[0.06]"
+        }`}
+      >
+        {eyebrow && (
+          <p
+            className={`text-[10px] font-bold uppercase tracking-[0.1em] ${
+              danger ? "text-red-500" : "text-ink/35 dark:text-fog/35"
+            }`}
+          >
+            {eyebrow}
+          </p>
+        )}
+        <h2
+          className={`text-[15px] font-bold ${
+            danger ? "text-red-600 dark:text-red-400" : "text-ink dark:text-fog"
+          }`}
+        >
+          {title}
+        </h2>
+        <p className="mt-1 max-w-3xl text-[12px] leading-relaxed text-ink/50 dark:text-fog/50">
+          {subtitle}
+        </p>
+      </header>
+      <div className="px-5 py-5">{children}</div>
     </section>
   );
 }
 
-function Field({ label, hint, children, varies }: { label: string; hint?: string; children: React.ReactNode; varies?: boolean }) {
+function Field({
+  label,
+  hint,
+  children,
+  varies,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+  varies?: boolean;
+}) {
   return (
     <div>
-      <label className="mb-1 block text-[12px] font-medium text-ink/60 dark:text-fog/60">
-        {label}
-        {hint && <span className="ml-1.5 font-normal text-ink/40 dark:text-fog/40">{hint}</span>}
+      <label className="mb-1.5 flex items-baseline gap-1.5 text-[12px] font-medium text-ink/70 dark:text-fog/70">
+        <span>{label}</span>
+        {hint && <span className="font-normal text-ink/40 dark:text-fog/40">{hint}</span>}
         {varies ? <VariesBadge /> : null}
       </label>
       {children}
@@ -113,10 +170,12 @@ function Field({ label, hint, children, varies }: { label: string; hint?: string
   );
 }
 
-const selectCls =
-  "w-full max-w-md rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none transition focus:border-deep-violet/30 disabled:opacity-50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog";
+const controlCls =
+  "w-full max-w-md rounded-[2px] border border-ink/[0.10] bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none transition focus:border-deep-violet/40 disabled:opacity-50 dark:border-fog/[0.12] dark:bg-ink dark:text-fog";
 
-const inputCls = selectCls;
+const selectCls = controlCls;
+
+const inputCls = controlCls;
 
 // Tenant's own domain — what the company IS. The AI reads this (plus what
 // they sell / don't sell below) to answer "do you sell X?" factually and to
@@ -538,14 +597,17 @@ export default function SettingsPage() {
   const selectedName = channels.find((c) => c.id === selectedId)?.display_name ?? "location";
 
   return (
-    <div className="h-full overflow-y-auto p-6 space-y-5">
-      <div>
+    <div className="h-full overflow-y-auto">
+      {/* Sticky header: the location selector and save state stay reachable
+          while scrolling a page this long. */}
+      <div className="sticky top-0 z-10 border-b border-ink/[0.06] bg-white/95 px-6 py-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/95">
         <Breadcrumbs items={[{ label: "Settings" }]} />
         <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-[20px] font-bold text-ink dark:text-fog">Configuration</h1>
-            <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
-              How Sayvors writes for each location. Listings themselves always come from Google — nothing here touches them.
+            <p className="mt-0.5 text-[13px] text-ink/50 dark:text-fog/50">
+              How Sayvors writes for each location. Listings themselves always come from
+              Google — nothing here touches them.
             </p>
           </div>
           {channels.length > 0 && (
@@ -557,7 +619,7 @@ export default function SettingsPage() {
                   setSelectedId(e.target.value || null);
                   setLastBulkFail(null);
                 }}
-                className="mt-1 block w-56 rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                className="mt-1 block w-56 rounded-[2px] border border-ink/[0.10] bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
               >
                 {channels.length > 1 && (
                   <option value={ALL}>All branches ({channels.length})</option>
@@ -573,27 +635,31 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      <div className="mx-auto max-w-4xl space-y-4 px-6 py-6">
+
       {banner && (
         <div
           role="status"
-          className={`rounded-xl border p-3 text-[13px] ${
+          className={`flex items-center justify-between gap-3 rounded-[2px] border px-3 py-2 text-[13px] ${
             banner.kind === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-              : "border-red-200 bg-red-50 text-red-600"
+              ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300"
+              : "border-red-300 bg-red-50 text-red-600 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300"
           }`}
         >
-          <div className="flex items-center justify-between gap-2">
-            <span>{banner.text}</span>
-            <button className="shrink-0 text-[12px] underline underline-offset-2" onClick={() => setBanner(null)}>
-              dismiss
-            </button>
-          </div>
+          <span>{banner.text}</span>
+          <button
+            type="button"
+            className="shrink-0 text-[12px] underline underline-offset-2"
+            onClick={() => setBanner(null)}
+          >
+            dismiss
+          </button>
         </div>
       )}
 
       {/* Bulk scope banner — unmissable: buttons and receipts repeat it */}
       {isBulk && channels.length > 0 && (
-        <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3 text-[12.5px] dark:border-amber-500/40 dark:bg-amber-500/[0.08]">
+        <div className="rounded-[2px] border-2 border-amber-300 bg-amber-50 p-3 text-[12.5px] dark:border-amber-500/40 dark:bg-amber-500/[0.08]">
           <p className="font-bold text-amber-800 dark:text-amber-200">
             Editing ALL {channels.length} branches — {channels.map((c) => c.display_name || "Location").join(", ")}
           </p>
@@ -605,13 +671,13 @@ export default function SettingsPage() {
 
       {/* Bulk retry — re-runs the same save for failed branches only */}
       {lastBulkFail && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
+        <div className="flex items-center justify-between gap-3 rounded-[2px] border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
           <span>
             {lastBulkFail.label} failed on: {lastBulkFail.failed.map((f) => f.name).join(", ")}.
           </span>
           <button
             onClick={lastBulkFail.onRetry}
-            className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700"
+            className="shrink-0 rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700"
           >
             Retry failed ({lastBulkFail.failed.length})
           </button>
@@ -626,7 +692,7 @@ export default function SettingsPage() {
           aria-label="Confirm bulk edit"
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
         >
-          <div className="w-full max-w-md rounded-2xl border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink">
+          <div className="w-full max-w-md rounded-[3px] border border-ink/[0.06] bg-white p-5 shadow-2xl dark:border-fog/[0.08] dark:bg-ink">
             <h2 className="text-[15px] font-bold text-ink dark:text-fog">
               {confirmBulk.title}
             </h2>
@@ -634,7 +700,7 @@ export default function SettingsPage() {
               Applies to {confirmBulk.branches.length} branches:{" "}
               {confirmBulk.branches.map((b) => b.name).join(", ")}
             </p>
-            <ul className="mt-3 max-h-48 space-y-1.5 overflow-y-auto rounded-xl bg-ink/[0.03] p-3 text-[12.5px] text-ink/70 dark:bg-fog/[0.04] dark:text-fog/70">
+            <ul className="mt-3 max-h-48 space-y-1.5 overflow-y-auto rounded-[2px] bg-ink/[0.03] p-3 text-[12.5px] text-ink/70 dark:bg-fog/[0.04] dark:text-fog/70">
               {confirmBulk.lines.map((line, i) => (
                 <li key={i} className="flex gap-2">
                   <span aria-hidden className="text-deep-violet">•</span>
@@ -646,14 +712,14 @@ export default function SettingsPage() {
               <button
                 onClick={() => setConfirmBulk(null)}
                 disabled={confirmBulk.busy}
-                className="rounded-lg px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:text-fog/60 disabled:opacity-50"
+                className="rounded-[2px] px-3.5 py-2 text-[12px] font-semibold text-ink/60 transition hover:bg-ink/[0.04] dark:text-fog/60 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={confirmBulk.onConfirm}
                 disabled={confirmBulk.busy}
-                className="rounded-lg bg-amber-500 px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-amber-600 disabled:opacity-50"
+                className="rounded-[2px] bg-amber-500 px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-amber-600 disabled:opacity-50"
               >
                 {confirmBulk.busy
                   ? "Applying..."
@@ -671,6 +737,7 @@ export default function SettingsPage() {
       ) : (
         <>
           <Section
+            eyebrow="Account"
             title="Country"
             subtitle="One for the whole account. Display and defaults only — your Google listings are never modified."
           >
@@ -687,13 +754,14 @@ export default function SettingsPage() {
             <button
               onClick={() => void saveCountry()}
               disabled={busy !== null || country === (savedCountry ?? "")}
-              className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+              className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
               {busy === "country" ? "Saving…" : "Save country"}
             </button>
           </Section>
 
           <Section
+            eyebrow="Account"
             title="Business context"
             subtitle="What your company is. The AI reads this for every reply and post draft — it answers 'do you sell X?' from these facts and declines off-topic questions instead of guessing."
           >
@@ -751,7 +819,7 @@ export default function SettingsPage() {
             <button
               onClick={() => void saveBizContext()}
               disabled={busy !== null || !bizDirty}
-              className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+              className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
             >
               {busy === "bizctx" ? "Saving…" : "Save business context"}
             </button>
@@ -760,7 +828,8 @@ export default function SettingsPage() {
           {selectedId ? (
             <>
               <Section
-                title="Language & dialect"
+                eyebrow="How the AI writes"
+            title="Language & dialect"
                 subtitle={isBulk ? `Replies for all ${bulkBranches.length} branches. Dialect applies to Arabic replies.` : `Replies for ${selectedName}. Dialect applies to Arabic replies.`}
               >
                 <div>
@@ -774,7 +843,7 @@ export default function SettingsPage() {
                       { id: "en", label: "Always English", hint: "Every reply in English" },
                       { id: "ar", label: "Always Arabic", hint: "Every reply in Arabic" },
                     ].map((l) => (
-                      <label key={l.id} className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-ink/[0.06] px-3 py-2 transition hover:border-deep-violet/25 dark:border-fog/[0.06]">
+                      <label key={l.id} className="flex cursor-pointer items-start gap-2.5 rounded-[2px] border border-ink/[0.06] px-3 py-2 transition hover:border-deep-violet/25 dark:border-fog/[0.06]">
                         <input
                           type="radio"
                           name="reply-lang"
@@ -822,13 +891,13 @@ export default function SettingsPage() {
                     );
                   }}
                   disabled={busy !== null}
-                  className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "lang" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save language"}
                 </button>
               </Section>
 
-              <Section title="Tone & voice" subtitle={isBulk ? `Personality of replies for all ${bulkBranches.length} branches.` : `Personality of replies for ${selectedName}.`}>
+              <Section eyebrow="How the AI writes" title="Tone & voice" subtitle={isBulk ? `Personality of replies for all ${bulkBranches.length} branches.` : `Personality of replies for ${selectedName}.`}>
                 <Field label="Response tone" varies={bulk?.varies.has("tone") ?? false}>
                   <select value={tone} onChange={(e) => setTone(e.target.value)} disabled={busy !== null} className={selectCls}>
                     {tones.map((t) => (
@@ -856,14 +925,15 @@ export default function SettingsPage() {
                     );
                   }}
                   disabled={busy !== null}
-                  className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "tone" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save tone"}
                 </button>
               </Section>
 
               <Section
-                title="Review reply marketing"
+                eyebrow="Review replies"
+            title="Review reply marketing"
                 subtitle="Off by default. Promotional content can get replies flagged by Google — enable only what you need."
               >
                 {(
@@ -931,14 +1001,15 @@ export default function SettingsPage() {
                     );
                   }}
                   disabled={busy !== null}
-                  className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "marketing" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save marketing"}
                 </button>
               </Section>
 
               <Section
-                title="Edited reviews"
+                eyebrow="Review replies"
+            title="Edited reviews"
                 subtitle="When a customer edits a review you already answered, a fresh reply is drafted for the new content."
               >
                 <label className="flex cursor-pointer items-start gap-2.5">
@@ -975,13 +1046,13 @@ export default function SettingsPage() {
                     );
                   }}
                   disabled={busy !== null}
-                  className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
                 >
                   {busy === "editedReview" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save"}
                 </button>
               </Section>
 
-              <p className="rounded-xl border border-ink/[0.06] bg-white/60 px-4 py-3 text-[12px] text-ink/55 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/55">
+              <p className="rounded-[2px] border border-ink/[0.06] bg-white/60 px-4 py-3 text-[12px] text-ink/55 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/55">
                 Replies in: <strong>{langName}</strong>
                 {langName !== "English" && <> ({dialectName(dialect)})</>} · Tone: <strong className="capitalize">{tone}</strong> · Country:{" "}
                 <strong>{countryName}</strong> · Promo:{" "}
@@ -989,7 +1060,7 @@ export default function SettingsPage() {
               </p>
             </>
           ) : (
-            <div className="rounded-2xl border border-ink/[0.06] bg-white/70 p-10 text-center dark:border-fog/[0.06] dark:bg-ink/70">
+            <div className="rounded-[3px] border border-ink/[0.06] bg-white/70 p-10 text-center dark:border-fog/[0.06] dark:bg-ink/70">
               <p className="text-[14px] font-semibold text-ink/70 dark:text-fog/70">No locations yet</p>
               <p className="mt-1 text-[12px] text-ink/45 dark:text-fog/45">
                 Connect a location first — language, tone and marketing are configured per location.
@@ -1007,20 +1078,20 @@ export default function SettingsPage() {
 
       {/* Danger zone — the only place a disconnect also deletes data. The
           channels-page dialog intentionally disconnects without wiping. */}
-      <div className="rounded-2xl border border-red-500/30 bg-red-500/[0.04] p-5">
-        <h2 className="text-[15px] font-bold text-red-600 dark:text-red-400">Danger zone</h2>
-        <p className="mt-0.5 text-[12px] text-ink/45 dark:text-fog/45">
-          Permanently disconnect a channel and delete everything it stores — conversations,
-          messages, channels and assets. This cannot be undone.
-        </p>
-        <div className="mt-4 space-y-2">
+      <Section
+        tone="danger"
+        eyebrow="Destructive"
+        title="Danger zone"
+        subtitle="Permanently disconnect a channel and delete everything it stores — conversations, messages, channels and assets. This cannot be undone."
+      >
+        <div className="space-y-2">
           {metaConnections.length === 0 ? (
             <p className="text-[12px] text-ink/40 dark:text-fog/40">No connected channels.</p>
           ) : (
             metaConnections.map((c) => (
               <div
                 key={c.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ink/[0.06] bg-white px-3 py-2.5 dark:border-fog/[0.08] dark:bg-ink"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-[2px] border border-ink/[0.06] bg-white px-3 py-2.5 dark:border-fog/[0.08] dark:bg-ink"
               >
                 <div className="min-w-0">
                   <p className="text-[13px] font-semibold text-ink dark:text-fog">
@@ -1039,7 +1110,7 @@ export default function SettingsPage() {
                     setDangerTarget(c);
                   }}
                   disabled={dangerBusy !== null}
-                  className="rounded-lg border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+                  className="rounded-[2px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
                 >
                   Disconnect &amp; delete all data
                 </button>
@@ -1047,7 +1118,7 @@ export default function SettingsPage() {
             ))
           )}
         </div>
-      </div>
+      </Section>
 
       {/* Type-to-confirm modal — one wrong glance should not delete a
           tenant's whole history, so the button stays dead until the exact
@@ -1064,7 +1135,7 @@ export default function SettingsPage() {
             }
           }}
         >
-          <div className="w-full max-w-md rounded-2xl border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
+          <div className="w-full max-w-md rounded-[3px] border border-red-500/30 bg-white p-5 shadow-xl dark:border-fog/[0.08] dark:bg-ink">
             <p className="text-[15px] font-bold text-red-600 dark:text-red-400">
               Delete all {PROVIDER_LABELS[dangerTarget.provider] ?? dangerTarget.provider} data?
             </p>
@@ -1082,7 +1153,7 @@ export default function SettingsPage() {
                 onChange={(e) => setDangerPhrase(e.target.value)}
                 placeholder="DELETE MY DATA"
                 disabled={dangerBusy !== null}
-                className="mt-1.5 w-full rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-red-500/50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+                className="mt-1.5 w-full rounded-[2px] border border-ink/[0.08] bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-red-500/50 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
               />
             </label>
             <div className="mt-4 flex justify-end gap-2">
@@ -1092,14 +1163,14 @@ export default function SettingsPage() {
                   setDangerPhrase("");
                 }}
                 disabled={dangerBusy !== null}
-                className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/50"
+                className="rounded-[2px] px-3 py-1.5 text-[12px] font-semibold text-ink/50 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/50"
               >
                 Cancel
               </button>
               <button
                 onClick={() => void deleteMetaConnection(dangerTarget)}
                 disabled={dangerPhrase !== "DELETE MY DATA" || dangerBusy !== null}
-                className="rounded-lg bg-red-600 px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700 disabled:opacity-40"
+                className="rounded-[2px] bg-red-600 px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:bg-red-700 disabled:opacity-40"
               >
                 {dangerBusy === dangerTarget.id ? "Deleting…" : "Delete everything"}
               </button>
@@ -1107,6 +1178,7 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
