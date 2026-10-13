@@ -692,20 +692,23 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Bulk scope banner — unmissable: buttons and receipts repeat it */}
-      {isBulk && channels.length > 0 && (
+      {/* Bulk scope banner — unmissable: buttons and receipts repeat it. Google
+          tab only: it describes per-location saves, and lead/account settings
+          are account-wide, so leaving it above every tab told people their
+          lead cadence was about to be written to two branches. */}
+      {tab === "google" && isBulk && channels.length > 0 && (
         <div className="rounded-[2px] border-2 border-amber-300 bg-amber-50 p-3 text-[12.5px] dark:border-amber-500/40 dark:bg-amber-500/[0.08]">
           <p className="font-bold text-amber-800 dark:text-amber-200">
             Editing ALL {channels.length} branches — {channels.map((c) => c.display_name || "Location").join(", ")}
           </p>
           <p className="mt-0.5 text-amber-700/80 dark:text-amber-200/70">
-            Every save below applies to each branch listed. Country above is already account-wide.
+            Every save in this tab applies to each branch listed.
           </p>
         </div>
       )}
 
       {/* Bulk retry — re-runs the same save for failed branches only */}
-      {lastBulkFail && (
+      {tab === "google" && lastBulkFail && (
         <div className="flex items-center justify-between gap-3 rounded-[2px] border border-red-200 bg-red-50 p-3 text-[13px] text-red-700">
           <span>
             {lastBulkFail.label} failed on: {lastBulkFail.failed.map((f) => f.name).join(", ")}.

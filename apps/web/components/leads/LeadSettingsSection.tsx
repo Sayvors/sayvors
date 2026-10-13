@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchLeadSettings, updateLeadSettings, type LeadSettings } from "@/lib/api-leads";
 
 /*
@@ -70,7 +70,7 @@ function Num({
   max: number;
   suffix: string;
   disabled: boolean;
-  onChange: (n: number, commit?: boolean) => void;
+  onChange: (n: number) => void;
 }) {
   return (
     <label className="block">
@@ -85,10 +85,6 @@ function Num({
           onChange={(e) => {
             const n = Number(e.target.value);
             if (Number.isFinite(n)) onChange(n);
-          }}
-          onBlur={(e) => {
-            const n = Number(e.target.value);
-            if (Number.isFinite(n) && n !== value) onChange(n, true);
           }}
           className={inputCls}
         />
@@ -112,10 +108,17 @@ export default function LeadSettingsSection() {
   const [error, setError] = useState<string | null>(null);
   const [emailsText, setEmailsText] = useState("");
 
+  // Server truth vs the form. Everything the user edits lands in `draft` and is
+  // only persisted by the Save button — these fields previously saved on blur,
+  // so a number changed while clicking elsewhere committed with no visible
+  // confirmation and no way to cancel it.
+  const [draft, setDraft] = useState<LeadSettings | null>(null);
+
   const load = useCallback(() => {
     fetchLeadSettings()
       .then((s) => {
         setSettings(s);
+        setDraft(s);
         setEmailsText((s.escalation_emails ?? []).join(", "));
         setStatus("idle");
       })
@@ -135,13 +138,44 @@ export default function LeadSettingsSection() {
     load();
   }, [load]);
 
-  const save = async (patch: Partial<LeadSettings>) => {
-    if (status === "saving") return;
+  const emailsList = useMemo(
+    () => emailsText.split(/[,\s]+/).map((e) => e.trim()).filter(Boolean),
+    [emailsText]
+  );
+
+  const dirty = useMemo(() => {
+    if (!settings || !draft) return false;
+    if (settings.first_nudge_minutes !== draft.first_nudge_minutes) return true;
+    if (settings.second_followup_hours !== draft.second_followup_hours) return true;
+    if (settings.final_followup_hours !== draft.final_followup_hours) return true;
+    if (settings.max_attempts !== draft.max_attempts) return true;
+    if (settings.quiet_start_hour !== draft.quiet_start_hour) return true;
+    if (settings.quiet_end_hour !== draft.quiet_end_hour) return true;
+    if (settings.timezone !== draft.timezone) return true;
+    if (settings.escalation_threshold !== draft.escalation_threshold) return true;
+    if (settings.escalation_resume_hours !== draft.escalation_resume_hours) return true;
+    if (settings.escalation_reminder_hours !== draft.escalation_reminder_hours) return true;
+    const a = [...emailsList].sort();
+    const b = [...(settings.escalation_emails ?? [])].sort();
+    return a.length !== b.length || !a.every((e, i) => e === b[i]);
+  }, [settings, draft, emailsList]);
+
+  const discard = useCallback(() => {
+    if (!settings) return;
+    setDraft(settings);
+    setEmailsText((settings.escalation_emails ?? []).join(", "));
+    setStatus("idle");
+    setError(null);
+  }, [settings]);
+
+  const save = async () => {
+    if (status === "saving" || !draft) return;
     setStatus("saving");
     setError(null);
     try {
-      const saved = await updateLeadSettings(patch);
+      const saved = await updateLeadSettings({ ...draft, escalation_emails: emailsList });
       setSettings(saved);
+      setDraft(saved);
       setEmailsText((saved.escalation_emails ?? []).join(", "));
       setStatus("saved");
     } catch (e) {
@@ -156,7 +190,7 @@ export default function LeadSettingsSection() {
     return <p className={`text-[13px] ${INK2}`}>Loading lead settings…</p>;
   }
 
-  if (!settings) {
+  if (!settings || !draft) {
     return (
       <div className={`rounded-[3px] border ${HAIRLINE} bg-white p-5 dark:bg-ink`}>
         <p className="text-[13px] font-semibold text-coral">{error ?? "Could not load settings."}</p>
@@ -171,12 +205,10 @@ export default function LeadSettingsSection() {
     );
   }
 
-  const set =
-    (key: keyof LeadSettings) =>
-    (n: number, commit = false) => {
-      setSettings((s) => (s ? { ...s, [key]: n } : s));
-      if (commit) void save({ [key]: n } as Partial<LeadSettings>);
-    };
+  const set = (key: keyof LeadSettings) => (n: number) => {
+    setDraft((d) => (d ? { ...d, [key]: n } : d));
+    if (status === "saved") setStatus("idle");
+  };
 
   return (
     <section className={`rounded-[3px] border ${HAIRLINE} bg-white dark:bg-ink`}>
@@ -215,7 +247,7 @@ export default function LeadSettingsSection() {
             <Num
               label="First nudge"
               hint="After the reply that asks a question"
-              value={settings.first_nudge_minutes}
+              value={draft.first_nudge_minutes}
               min={5}
               max={60}
               suffix="min"
@@ -225,7 +257,7 @@ export default function LeadSettingsSection() {
             <Num
               label="Second follow-up"
               hint="After the first nudge goes out"
-              value={settings.second_followup_hours}
+              value={draft.second_followup_hours}
               min={2}
               max={168}
               suffix="h"
@@ -235,7 +267,7 @@ export default function LeadSettingsSection() {
             <Num
               label="Final follow-up"
               hint="After the second goes out"
-              value={settings.final_followup_hours}
+              value={draft.final_followup_hours}
               min={12}
               max={336}
               suffix="h"
@@ -245,7 +277,7 @@ export default function LeadSettingsSection() {
             <Num
               label="Attempt cap"
               hint="0 switches the whole sequence off"
-              value={settings.max_attempts}
+              value={draft.max_attempts}
               min={0}
               max={4}
               suffix="max"
@@ -263,7 +295,7 @@ export default function LeadSettingsSection() {
             <Num
               label="Quiet starts"
               hint="Hour, 24h clock"
-              value={settings.quiet_start_hour}
+              value={draft.quiet_start_hour}
               min={0}
               max={23}
               suffix=":00"
@@ -273,7 +305,7 @@ export default function LeadSettingsSection() {
             <Num
               label="Quiet ends"
               hint="Hour, 24h clock"
-              value={settings.quiet_end_hour}
+              value={draft.quiet_end_hour}
               min={0}
               max={23}
               suffix=":00"
@@ -284,13 +316,12 @@ export default function LeadSettingsSection() {
               <span className={`block text-[12px] font-medium ${LABEL}`}>Timezone</span>
               <input
                 type="text"
-                value={settings.timezone}
+                value={draft.timezone}
                 disabled={busy}
                 placeholder="UTC"
-                onChange={(e) => setSettings((s) => (s ? { ...s, timezone: e.target.value } : s))}
-                onBlur={(e) => {
-                  const v = e.target.value.trim();
-                  if (v && v !== settings.timezone) void save({ timezone: v });
+                onChange={(e) => {
+                  setDraft((d) => (d ? { ...d, timezone: e.target.value } : d));
+                  if (status === "saved") setStatus("idle");
                 }}
                 className={`mt-1 ${inputCls.replace("tabular-nums", "")}`}
               />
@@ -309,7 +340,7 @@ export default function LeadSettingsSection() {
             <Num
               label="Escalate after"
               hint="Unanswered AI replies in a row"
-              value={settings.escalation_threshold}
+              value={draft.escalation_threshold}
               min={1}
               max={10}
               suffix="cycles"
@@ -319,7 +350,7 @@ export default function LeadSettingsSection() {
             <Num
               label="AI resumes after"
               hint="With no human action"
-              value={settings.escalation_resume_hours}
+              value={draft.escalation_resume_hours}
               min={1}
               max={336}
               suffix="h"
@@ -329,7 +360,7 @@ export default function LeadSettingsSection() {
             <Num
               label="Remind after"
               hint="One reminder only, then never"
-              value={settings.escalation_reminder_hours}
+              value={draft.escalation_reminder_hours}
               min={1}
               max={72}
               suffix="h"
@@ -347,15 +378,9 @@ export default function LeadSettingsSection() {
               value={emailsText}
               disabled={busy}
               placeholder="Empty = email the account owner's signup address"
-              onChange={(e) => setEmailsText(e.target.value)}
-              onBlur={() => {
-                const list = emailsText.split(/[,\s]+/).map((e) => e.trim()).filter(Boolean);
-                const current = settings.escalation_emails ?? [];
-                const a = [...list].sort();
-                const b = [...current].sort();
-                if (a.length !== b.length || !a.every((e, i) => e === b[i])) {
-                  void save({ escalation_emails: list });
-                }
+              onChange={(e) => {
+                setEmailsText(e.target.value);
+                if (status === "saved") setStatus("idle");
               }}
               className={`mt-1 ${inputCls.replace("tabular-nums", "")}`}
             />
@@ -366,6 +391,37 @@ export default function LeadSettingsSection() {
           </div>
         </Group>
       </div>
+
+      {/* Account-wide: one save for the whole card. These settings are not per
+          branch, so the button says so rather than inheriting the Google tab's
+          "apply to all branches" language. */}
+      <footer
+        className={`flex flex-wrap items-center justify-between gap-3 border-t ${RULE} px-5 py-4`}
+      >
+        <p className={`text-[11px] ${INK2}`}>
+          {dirty
+            ? "Unsaved changes — nothing is stored until you save."
+            : "These settings apply to the whole account, not per branch."}
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={discard}
+            disabled={!dirty || busy}
+            className={`rounded-[2px] border ${HAIRLINE} bg-white px-3.5 py-2 text-[12px] font-bold ${INK} transition hover:bg-ink/[0.03] disabled:opacity-40 dark:bg-ink dark:hover:bg-fog/[0.06] ${FOCUS}`}
+          >
+            Discard
+          </button>
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={!dirty || busy}
+            className={`rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40 ${FOCUS}`}
+          >
+            {status === "saving" ? "Saving…" : "Save lead settings"}
+          </button>
+        </div>
+      </footer>
     </section>
   );
 }
