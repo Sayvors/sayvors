@@ -89,6 +89,31 @@ async def _publish_message_notification(db, tenant_id: str, row, platform: str) 
     })
 
 
+async def _publish_typing(
+    tenant_id: str,
+    channel_id: str,
+    contact_phone: str | None,
+    typing: bool,
+    source: str = "ai",
+) -> None:
+    """Tell the dashboard that the AI is composing a reply in this thread.
+
+    Cosmetics only: the dashboard shows an animated indicator, and the client
+    expires it on a timer so a crashed worker cannot leave dots on screen
+    forever. Never raises — publish_inbox_event already swallows, and this must
+    not be able to interrupt a reply.
+    """
+    from ...channels.realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "typing",
+        "channel_id": channel_id,
+        "contact_phone": contact_phone,
+        "typing": typing,
+        "typing_source": source,
+    })
+
+
 async def _upsert_whatsapp_profile_name(
     db, tenant_id: str, phone: str, name: str | None
 ) -> None:
@@ -518,6 +543,12 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         # exists. Best-effort: failure here changes nothing downstream.
         await adapter.send_typing_indicator(phone_number_id, token, wamid)
 
+        # Same signal for our own dashboard: the AI reply takes several
+        # seconds (classify + generate + optional split), so show the agent
+        # what the customer already sees on their phone. Cleared on every
+        # exit below; the client expires it too, in case of a hard failure.
+        await _publish_typing(tenant_id, channel.id, from_wa, True)
+
         # Conversation stats BEFORE the reply: language + confusion decide
         # whether this reply goes out as a voice note. Failure degrades to
         # the script heuristic — the text reply always still goes.
@@ -542,6 +573,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 "WhatsApp AI reply generation failed wamid=%s: %s: %s",
                 wamid[:32], type(e).__name__, str(e)[:200],
             )
+            await _publish_typing(tenant_id, channel.id, from_wa, False)
             return
 
         # The reply call may carry a silent LEAD extraction line — split it
@@ -556,6 +588,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 "WhatsApp AI reply was empty — skipping send wamid=%s from=+%s",
                 wamid[:32], from_wa[-6:],
             )
+            await _publish_typing(tenant_id, channel.id, from_wa, False)
             return
 
         # Tenant delivery config — one indexed read for both knobs: response
@@ -774,6 +807,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             1 if voice_sent else len(messages),
             " (voice)" if voice_sent else "",
         )
+
+        await _publish_typing(tenant_id, channel.id, from_wa, False)
 
 
 async def _handle_message_history(event: dict, data: dict) -> None:
@@ -1376,6 +1411,10 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         # like WhatsApp: failure here changes nothing downstream.
         await adapter.send_typing_indicator(page_id, page_token, igsid)
 
+        # Dashboard-side twin of the Meta typing indicator (see the WhatsApp
+        # path for the rationale). Cleared on every exit below.
+        await _publish_typing(tenant_id, channel.id, igsid, True)
+
         # Best-effort contact profile so the inbox shows a person with a
         # face, not a bare IGSID. Cached in contact_profiles; the Graph
         # read happens only when the row is missing or stale (avatar URLs
@@ -1406,6 +1445,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 "Instagram AI reply generation failed mid=%s: %s: %s",
                 mid[:32], type(e).__name__, str(e)[:200],
             )
+            await _publish_typing(tenant_id, channel.id, igsid, False)
             return
 
         # The reply call may carry a silent LEAD extraction line — split it
@@ -1419,6 +1459,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             logger.warning(
                 "Instagram AI reply was empty — skipping send mid=%s", mid[:32],
             )
+            await _publish_typing(tenant_id, channel.id, igsid, False)
             return
 
         # Same response-style rendering as WhatsApp: default "concise" is a
@@ -1501,6 +1542,8 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             "Instagram AI reply sent to=+%s mid=%s parts=%d",
             igsid[-6:], mid[:32], len(messages),
         )
+
+        await _publish_typing(tenant_id, channel.id, igsid, False)
 
         # Lead engine, send side: merge whatever the reply call extracted,
         # then arm the durable follow-up when the reply ended with a

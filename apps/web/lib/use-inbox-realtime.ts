@@ -25,6 +25,7 @@ export interface InboxRealtimeEvent {
     | "comment_updated"
     | "comment_deleted"
     | "notification"
+    | "typing"
     | "ping";
   notification?: NotificationPayload;
   id?: string;
@@ -39,6 +40,9 @@ export interface InboxRealtimeEvent {
   contact_phone?: string | null;
   contact_name?: string | null;
   created_at?: string;
+  /* typing events — who is composing in this thread right now */
+  typing?: boolean;
+  typing_source?: "ai" | "agent";
   /* comment events */
   comment_id?: string | null;
   parent_comment_id?: string | null;
