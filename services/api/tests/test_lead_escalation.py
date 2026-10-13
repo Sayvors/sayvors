@@ -174,3 +174,83 @@ async def test_priority_deescalates_and_clears_state(db):
     assert lead.escalated_at is None
     assert lead.escalation_reminder_at is None
     assert lead.handover_sent_at is None
+
+
+@pytest.mark.asyncio
+async def test_recipients_default_to_owner_signup_email(db):
+    """With no configured list, escalation goes to whoever signed up.
+
+    Lead.tenant_id IS the owner's User.id, so this is a guaranteed-existing
+    row -- escalation works on day one with zero configuration.
+    """
+    from app.modules.channels.meta import lead_escalation
+
+    lead, _ = await _seed_lead(db)
+    recipients = await lead_escalation.resolve_recipients(db, lead)
+    assert recipients == [f"{lead.tenant_id}@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_recipients_prefer_configured_list(db):
+    from app.modules.channels.meta import lead_escalation
+
+    lead, _ = await _seed_lead(db)
+    u = await db.get(User, lead.tenant_id)
+    u.lead_settings = {"escalation_emails": ["Sales@Example.com", " owner@x.com "]}
+    await db.commit()
+
+    recipients = await lead_escalation.resolve_recipients(db, lead)
+    # Sorted + de-duplicated for determinism, matching normalize_lead_settings.
+    assert recipients == ["owner@x.com", "sales@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_escalation_email_sends_once_and_arms_reminder(db, monkeypatch):
+    from app.modules.channels.meta import lead_escalation
+
+    sent: list[dict] = []
+
+    async def _fake(to, subject, message, cta_url=None):
+        sent.append({"to": to, "subject": subject, "cta": cta_url})
+        return "msg-1"
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _fake)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    await db.commit()
+
+    assert len(sent) == 1
+    assert sent[0]["to"] == [f"{lead.tenant_id}@example.com"]
+    assert lead.escalated_at is not None
+    assert lead.escalation_reminder_at is not None
+    assert "channel=" in (sent[0]["cta"] or "")
+
+    # A second update at the same count must not re-send: already important.
+    await lead_escalation.update_escalation_state(db, lead)
+    await db.commit()
+    assert len(sent) == 1, "must not re-send while already escalated"
+
+
+@pytest.mark.asyncio
+async def test_escalation_email_failure_leaves_escalated_at_null(db, monkeypatch):
+    """If the provider rejects, the sweep must retry rather than assume a
+    human was told."""
+    from app.modules.channels.meta import lead_escalation
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("resend 429")
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _boom)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    await db.commit()
+
+    assert lead.priority == "important"
+    assert lead.escalated_at is None
+    assert lead.escalation_reminder_at is None

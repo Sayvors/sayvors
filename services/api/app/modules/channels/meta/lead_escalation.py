@@ -102,6 +102,51 @@ def should_ai_reply(lead) -> bool:
     return (lead.priority or "normal") != "important"
 
 
+def _lead_label(lead) -> str:
+    return lead.contact_name or lead.contact_id or "A customer"
+
+
+HANDOVER_TEXT = "Let me get my colleague to help you with this."
+ESCALATION_SUBJECT = "A lead needs you: {name}"
+
+
+async def _send_email(to, subject, message, cta_url: str | None = None) -> str:
+    """Indirection so tests can intercept without patching Resend internals."""
+    from ...email.service import send_notification_email
+
+    return await send_notification_email(to, subject, message, cta_url)
+
+
+async def resolve_recipients(db, lead) -> list[str]:
+    """Where the escalation goes.
+
+    lead_settings.escalation_emails when set, otherwise the tenant owner's
+    signup email. The fallback is a guaranteed-existing row -- Lead.tenant_id
+    IS User.id, which the consumer already relies on for response_style -- so
+    escalation works with zero configuration and a tenant that adds recipients
+    keeps the owner only if they leave the list empty.
+    """
+    from ...users.models import User
+
+    row = (
+        await db.execute(
+            select(User.lead_settings).where(User.id == lead.tenant_id)
+        )
+    ).scalar_one_or_none()
+    configured = (row or {}).get("escalation_emails")
+    cleaned = (
+        [e.strip().lower() for e in configured if isinstance(e, str) and e.strip()]
+        if isinstance(configured, list) else []
+    )
+    if cleaned:
+        return sorted(set(cleaned))
+
+    owner_email = (
+        await db.execute(select(User.email).where(User.id == lead.tenant_id))
+    ).scalar_one_or_none()
+    return [owner_email] if owner_email else []
+
+
 async def on_escalate(db, lead) -> None:
     """Side effects on entering 'important'. Never raises.
 
@@ -123,3 +168,33 @@ async def on_escalate(db, lead) -> None:
         })
     except Exception as e:
         logger.warning("escalation inbox event failed for lead %s: %s", lead.id, e)
+
+    try:
+        recipients = await resolve_recipients(db, lead)
+    except Exception as e:
+        logger.warning("escalation recipient lookup failed for lead %s: %s", lead.id, e)
+        return
+
+    if not recipients:
+        logger.warning("lead %s escalated with no recipient", lead.id)
+        return
+
+    try:
+        await _send_email(
+            recipients,
+            ESCALATION_SUBJECT.format(name=_lead_label(lead)),
+            (
+                f"{_lead_label(lead)} kept writing after the AI replied "
+                f"{lead.ai_miss_count} times. The AI has stopped replying so "
+                f"someone can take over."
+            ),
+            cta_url=f"/dashboard/inbox?channel={lead.channel_id}&key={lead.contact_id}",
+        )
+    except Exception as e:
+        # escalated_at stays NULL and no reminder is armed: we cannot claim a
+        # human was told. Re-entering 'important' retries from scratch.
+        logger.warning("escalation email failed for lead %s: %s", lead.id, e)
+        return
+
+    lead.escalated_at = _now()
+    lead.escalation_reminder_at = _now() + REMINDER_DELAY
