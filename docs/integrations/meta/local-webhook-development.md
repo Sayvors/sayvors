@@ -3,6 +3,11 @@
 Forward real Meta (WhatsApp / Facebook / Instagram) webhook events to your
 local Sayvors backend during development using an HTTPS tunnel.
 
+> **Want to skip Meta entirely?** [local-message-replay.md](./local-message-replay.md)
+> POSTs a synthetic WhatsApp event straight at the ingress with a valid
+> signature. Same consumer, same code path, no tunnel or Meta app — use it to
+> verify per-conversation context and the review→WhatsApp handoff.
+
 > Requires an existing Meta app (App Dashboard → Meta for Developers) with
 > `META_APP_ID`, `META_APP_SECRET`, webhook subscription, and — for WhatsApp —
 > a test number or a connected WABA.
