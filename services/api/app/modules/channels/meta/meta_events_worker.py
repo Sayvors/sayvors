@@ -157,31 +157,40 @@ async def _process_event(db, event_data: Dict[str, Any]) -> bool:
             await _mark_event_sent(db, event_id)
             return True
 
+        # Every handler in consumer.py takes (event, data): the normalized
+        # envelope, then the provider payload nested inside it under
+        # "payload". Passing the envelope alone raised TypeError on every
+        # event, so no inbound message was ever stored, captioned or answered.
+        # Same split _process_message makes.
+        data = payload.get("payload") or {}
+
         # Route to appropriate handler
         if provider == "whatsapp":
             if event_type == "message.received":
-                await _handle_message_received(payload)
+                await _handle_message_received(payload, data)
             elif event_type == "message.status":
-                await _handle_message_status(payload)
+                await _handle_message_status(payload, data)
             elif event_type == "message.history":
-                await _handle_message_history(payload)
+                await _handle_message_history(payload, data)
             elif event_type == "message.echo":
-                await _handle_message_echo(payload)
+                await _handle_message_echo(payload, data)
             elif event_type == "smb.contacts":
-                await _handle_smb_contacts(payload)
+                await _handle_smb_contacts(payload, data)
             elif event_type == "connection.disconnect":
-                await _handle_connection_disconnect(payload)
+                await _handle_connection_disconnect(payload, data)
         elif provider == "instagram":
             if event_type == "message.received":
-                if ((payload.get("raw") or {}).get("message") or {}).get("is_echo"):
-                    await _handle_instagram_echo(payload)
+                # Merchant replies from Meta's inbox arrive as an echo --
+                # history, not something to auto-answer.
+                if ((data.get("raw") or {}).get("message") or {}).get("is_echo"):
+                    await _handle_instagram_echo(payload, data)
                 else:
-                    await _handle_instagram_message(payload)
+                    await _handle_instagram_message(payload, data)
             elif event_type == "comment.received":
-                await _handle_instagram_comment(payload)
+                await _handle_instagram_comment(payload, data)
         elif provider == "facebook":
             if event_type == "comment.received":
-                await _handle_facebook_comment(payload)
+                await _handle_facebook_comment(payload, data)
 
         # Mark as sent
         await _mark_event_sent(db, event_id)
