@@ -80,14 +80,20 @@ export function Panel({
  * The KPI tile. The number carries the weight (24px, tabular); the label is
  * deliberately quiet. This inverts the old layout, where a 10px bold
  * uppercase label shouted over a 24px number that should have led.
+ *
+ * `rows` exists because "AI calls / tokens -> 812,345 / 41,203,456" is not
+ * readable: nothing tells you which number is which. Labelled rows are
+ * unambiguous; a slash is a guess.
  */
 export function Tile({
   label,
   value,
+  rows,
   broken = false,
 }: {
   label: string;
-  value: ReactNode;
+  value?: ReactNode;
+  rows?: { label: string; value: ReactNode }[];
   broken?: boolean;
 }) {
   return (
@@ -99,14 +105,50 @@ export function Tile({
       <div className="text-admin-micro font-bold uppercase tracking-[0.12em] text-ink/50">
         {label}
       </div>
-      <div
-        className={`mt-[var(--ad-2xs)] text-admin-read font-bold tabular-nums leading-none ${
-          broken ? "text-coral" : "text-ink"
-        }`}
-      >
-        {value}
-      </div>
+      {value !== undefined && (
+        <div
+          className={`mt-[var(--ad-2xs)] text-admin-read font-bold tabular-nums leading-none ${
+            broken ? "text-coral" : "text-ink"
+          }`}
+        >
+          {value}
+        </div>
+      )}
+      {rows && rows.length > 0 && (
+        <dl className="mt-[var(--ad-2xs)] space-y-[var(--ad-3xs)]">
+          {rows.map((r) => (
+            <div key={r.label} className="flex items-baseline justify-between gap-[var(--ad-2xs)]">
+              <dt className="text-admin-base text-ink/50">{r.label}</dt>
+              <dd
+                className={`text-admin-base font-bold tabular-nums ${
+                  broken ? "text-coral" : "text-ink"
+                }`}
+              >
+                {r.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
     </div>
+  );
+}
+
+/**
+ * When this data was measured. A number without a timestamp is an assertion,
+ * not a fact — and on an ops panel the reader is usually deciding whether to
+ * trust it right now.
+ */
+export function Freshness({ at, prefix = "Updated" }: { at?: string | null; prefix?: string }) {
+  const parsed = at ? new Date(at) : null;
+  const valid = parsed && !Number.isNaN(parsed.getTime());
+  return (
+    <p className="text-admin-micro text-ink/45">
+      {prefix}{" "}
+      <span className="tabular-nums">
+        {valid ? parsed!.toLocaleString() : "never"}
+      </span>
+    </p>
   );
 }
 

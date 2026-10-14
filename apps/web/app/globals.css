@@ -407,6 +407,7 @@ html[lang="ar"] {
   --radius-admin-ctl:  0.75rem;   /* 12px - buttons, inputs       */
 }
 
+@layer components {
 .admin-ui {
   /* SPACE - one base unit and its multiples. */
   --ad-3xs: 0.25rem;
@@ -463,4 +464,5 @@ html[lang="ar"] {
   .admin-ui .admin-btn:active:not(:disabled) {
     transform: none;
   }
+}
 }

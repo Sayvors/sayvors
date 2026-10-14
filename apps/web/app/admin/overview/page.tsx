@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { adminFetch } from "@/lib/admin-api";
 import LogoLoader from "@/components/LogoLoader";
-import { ErrorState, PageHeader, Panel, SectionTitle, Tile } from "../admin-ui";
+import { ErrorState, Freshness, PageHeader, Panel, SectionTitle, Tile } from "../admin-ui";
 
 interface Overview {
   users_total: number;
@@ -41,15 +41,15 @@ const STATUS_ORDER = [
 ];
 
 /**
- * Counts arrive from an API we do not control. Formatting defensively is not
- * paranoia: a missing field once crashed the page with "Cannot read
- * properties of undefined", which is exactly the raw-error leak the audit
- * flagged. A dash reads as "not reported"; a crash reads as "broken".
+ * Counts arrive from an API we do not control, so formatting is defensive.
+ * But it is also FACTUAL: a real 0 and a field the API never sent are
+ * different facts, and rendering both as "0" is a lie the operator cannot
+ * see through. A missing value says so; it never borrows a number's meaning.
  */
 function n(value: number | undefined | null): string {
   return typeof value === "number" && Number.isFinite(value)
     ? value.toLocaleString()
-    : "—";
+    : "not reported";
 }
 
 /**
@@ -132,10 +132,10 @@ export default function AdminOverviewPage() {
 
   return (
     <div className="admin-ui">
-      <PageHeader
-        title="Overview"
-        lede="Platform health first, then volume."
-      />
+      {/* No editorial lede. "Platform health first, then volume" was a caption
+          written for a reader, not a fact about the platform. What an operator
+          needs first is WHEN the numbers were measured. */}
+      <PageHeader title="Overview" actions={<Freshness at={overview?.last_synced_at} />} />
 
       {error && (
         <div className="mb-[var(--ad-m)]">
@@ -180,21 +180,23 @@ export default function AdminOverviewPage() {
             <div className="grid gap-[var(--ad-xs)] sm:grid-cols-3 lg:grid-cols-4">
               <Tile label="Tenants" value={n(overview.users_total)} />
               <Tile label="Verified" value={n(overview.users_verified)} />
-              <Tile label="Signups 7d" value={n(overview.signups_last_7d)} />
+              <Tile label="Signed up (7d)" value={n(overview.signups_last_7d)} />
               <Tile label="Connected listings" value={n(overview.connections)} />
               <Tile label="Reviews" value={n(overview.reviews_total)} />
               <Tile label="Posts" value={n(overview.posts_total)} />
               <Tile
-                label="Databanks / docs"
-                value={`${n(overview.databanks_total)} / ${n(overview.documents_total)}`}
+                label="Databanks"
+                rows={[
+                  { label: "databanks", value: n(overview.databanks_total) },
+                  { label: "documents", value: n(overview.documents_total) },
+                ]}
               />
               <Tile
-                label="AI calls / tokens"
-                value={
-                  totals
-                    ? `${n(totals.calls)} / ${n(totals.total_tokens)}`
-                    : "—"
-                }
+                label="AI usage"
+                rows={[
+                  { label: "calls", value: n(totals?.calls) },
+                  { label: "tokens", value: n(totals?.total_tokens) },
+                ]}
               />
             </div>
           </section>

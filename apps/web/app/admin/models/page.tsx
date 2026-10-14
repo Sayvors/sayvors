@@ -169,10 +169,7 @@ export default function AdminModelsPage() {
 
   return (
     <div className="admin-ui">
-      <PageHeader
-        title="AI Models"
-        lede="Keys and models here drive every AI feature tenants use. A provider without a working key = broken AI for tenants on it."
-      />
+      <PageHeader title="AI Models" />
       {error && (
         <div className="mb-[var(--ad-m)]">
           <ErrorState title="Model registry unavailable" detail={error} />

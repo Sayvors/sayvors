@@ -135,16 +135,12 @@ export default function AdminCatalogsPage() {
 
   return (
     <div className="admin-ui">
-      <PageHeader
-        title="Catalogs"
-        lede="The dialect and tone vocabularies every AI reply is drawn from."
-      />
+      <PageHeader title="Catalogs" />
       {error && (
         <div className="mb-[var(--ad-m)]">
           <ErrorState title="Catalogs unavailable" detail={error} />
         </div>
       )}
-      <p className="text-admin-base text-ink/50">Reply engine catalogs — what the AI can sound like (tones) and which Arabic dialect it speaks (dialects). Changes apply to every tenant instantly.</p>
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* Dialects */}

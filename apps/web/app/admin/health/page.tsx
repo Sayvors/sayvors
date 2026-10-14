@@ -5,6 +5,7 @@ import { adminFetch } from "@/lib/admin-api";
 import LogoLoader from "@/components/LogoLoader";
 import {
   ErrorState,
+  Freshness,
   PageHeader,
   Panel,
   Pill,
@@ -64,16 +65,18 @@ export default function AdminHealthPage() {
     <div className="admin-ui">
       <PageHeader
         title="Health"
-        lede="Live dependency checks."
         actions={
-          <button
-            onClick={() => void load()}
-            disabled={loading}
-            aria-busy={loading}
-            className="admin-btn border border-ink/10 text-ink/65 hover:bg-ink/[0.04]"
-          >
-            {loading ? "Checking…" : "Re-check now"}
-          </button>
+          <>
+            <Freshness at={health?.checked_at} prefix="Checked" />
+            <button
+              onClick={() => void load()}
+              disabled={loading}
+              aria-busy={loading}
+              className="admin-btn border border-ink/10 text-ink/65 hover:bg-ink/[0.04]"
+            >
+              {loading ? "Checking…" : "Re-check now"}
+            </button>
+          </>
         }
       />
       <div className="mb-[var(--ad-m)] flex flex-wrap items-center gap-[var(--ad-xs)]">

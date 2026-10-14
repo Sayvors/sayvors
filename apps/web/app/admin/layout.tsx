@@ -5,75 +5,172 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { adminClearSession, adminHasSession, adminLogout } from "@/lib/admin-api";
 
-const TABS = [
+/**
+ * Sections, in the order an operator actually works them: is it broken, then
+ * who is affected, then why. Order is information, so it is not alphabetical.
+ */
+const SECTIONS = [
   { href: "/admin/overview", label: "Overview" },
   { href: "/admin/tenants", label: "Tenants" },
   { href: "/admin/models", label: "AI Models" },
-  { href: "/admin/health", label: "Health" },
   { href: "/admin/catalogs", label: "Catalogs" },
+  { href: "/admin/health", label: "Health" },
 ];
+
+function isActive(pathname: string, href: string): boolean {
+  // Exact for the section itself; prefix for anything nested beneath it.
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [hasSession, setHasSession] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     setHasSession(adminHasSession());
     setReady(true);
   }, []);
 
-  // Re-check on every navigation (login page sets the session).
+  // Re-check on every navigation (login page sets the session), and close the
+  // mobile drawer behind the page that was just chosen.
   useEffect(() => {
     setHasSession(adminHasSession());
+    setNavOpen(false);
   }, [pathname]);
 
   if (!ready) {
-    return <div className="flex min-h-screen items-center justify-center bg-[#f4f1ff] text-[13px] text-ink/40">Loading…</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-fog text-admin-base text-ink/40">
+        Loading…
+      </div>
+    );
   }
 
   if (!hasSession) {
     // The login form lives at /admin; every other admin page redirects there.
     if (pathname === "/admin") return <>{children}</>;
     router.replace("/admin");
-    return <div className="flex min-h-screen items-center justify-center bg-[#f4f1ff] text-[13px] text-ink/40">Redirecting to login…</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-fog text-admin-base text-ink/40">
+        Redirecting to login…
+      </div>
+    );
   }
 
+  const nav = (
+    <nav aria-label="Admin sections" className="flex flex-col gap-[var(--ad-3xs)]">
+      {SECTIONS.map((s) => {
+        const active = isActive(pathname, s.href);
+        return (
+          <Link
+            key={s.href}
+            href={s.href}
+            aria-current={active ? "page" : undefined}
+            className={`relative flex items-center rounded-admin-ctl px-[var(--ad-xs)] py-[var(--ad-2xs)] text-admin-base font-semibold transition-colors ${
+              active
+                ? "bg-deep-violet/[0.08] text-deep-violet"
+                : "text-ink/60 hover:bg-ink/[0.04] hover:text-ink"
+            }`}
+          >
+            {/* The active marker is a rail, not a fill: it survives a colour
+                change and does not shift the label. */}
+            <span
+              aria-hidden
+              className={`absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-deep-violet transition-opacity ${
+                active ? "opacity-100" : "opacity-0"
+              }`}
+            />
+            {s.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+
   return (
-    <div className="min-h-screen bg-[#f4f1ff]">
-      <header className="border-b border-deep-violet/10 bg-white">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-          <span className="text-[15px] font-bold text-ink">
-            Sayvors <span className="text-deep-violet">Admin</span>
-          </span>
-          <nav className="flex flex-wrap items-center gap-1">
-            {TABS.map((t) => {
-              const active = pathname.startsWith(t.href);
-              return (
-                <Link
-                  key={t.href}
-                  href={t.href}
-                  className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 ${active ? "bg-deep-violet/[0.08] text-deep-violet" : "text-ink/50 hover:bg-ink/[0.04] hover:text-ink"}`}
-                >
-                  {t.label}
-                </Link>
-              );
-            })}
-          </nav>
+    <div className="admin-ui min-h-screen bg-fog">
+      <a
+        href="#admin-main"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-[var(--ad-s)] focus:top-[var(--ad-s)] focus:z-50 focus:rounded-admin-ctl focus:bg-card focus:px-[var(--ad-s)] focus:py-[var(--ad-2xs)] focus:text-admin-base focus:font-bold"
+      >
+        Skip to content
+      </a>
+
+      {/* Sidebar — fixed on desktop, a drawer on narrow screens. Same DOM in
+          both, so there is no second nav to keep in sync. */}
+      <div className="lg:flex">
+        <aside
+          aria-label="Admin"
+          className={`fixed inset-y-0 left-0 z-40 w-60 border-r border-card-border bg-card px-[var(--ad-s)] py-[var(--ad-m)] transition-transform duration-200 lg:static lg:translate-x-0 ${
+            navOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          <div className="mb-[var(--ad-l)] flex items-center justify-between">
+            <span className="text-admin-md font-bold tracking-tight text-ink">
+              Sayvors <span className="text-deep-violet">Admin</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setNavOpen(false)}
+              aria-label="Close navigation"
+              className="admin-btn border border-ink/10 px-[var(--ad-2xs)] py-1 text-admin-base text-ink/60 lg:hidden"
+            >
+              Close
+            </button>
+          </div>
+
+          {nav}
+
           <button
+            type="button"
             onClick={async () => {
               await adminLogout();
               setHasSession(false);
               router.replace("/admin");
             }}
-            className="ml-auto rounded-lg border border-ink/10 px-3 py-1.5 text-[12px] font-semibold text-ink/50 outline-none transition hover:border-coral/40 hover:text-coral focus-visible:ring-2 focus-visible:ring-coral/30"
+            className="admin-btn mt-[var(--ad-l)] w-full border border-ink/10 text-ink/60 hover:border-coral/40 hover:text-coral"
           >
             Log out
           </button>
+        </aside>
+
+        {navOpen && (
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={() => setNavOpen(false)}
+            className="fixed inset-0 z-30 bg-ink/30 lg:hidden"
+          />
+        )}
+
+        <div className="min-w-0 flex-1">
+          {/* The mobile bar exists only under lg; the desktop sidebar is always
+              present, so this is not a duplicate of the nav. */}
+          <div className="sticky top-0 z-20 flex items-center justify-between gap-[var(--ad-s)] border-b border-card-border bg-card px-[var(--ad-s)] py-[var(--ad-xs)] lg:hidden">
+            <span className="text-admin-base font-bold text-ink">
+              Sayvors <span className="text-deep-violet">Admin</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setNavOpen(true)}
+              aria-expanded={navOpen}
+              className="admin-btn border border-ink/10 px-[var(--ad-2xs)] py-1 text-admin-base text-ink/70"
+            >
+              Menu
+            </button>
+          </div>
+
+          <main
+            id="admin-main"
+            className="mx-auto w-full max-w-6xl px-[var(--ad-s)] py-[var(--ad-m)] lg:px-[var(--ad-l)]"
+          >
+            {children}
+          </main>
         </div>
-      </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      </div>
     </div>
   );
 }

@@ -91,16 +91,27 @@ export default function AdminTenantsPage() {
     <div className="admin-ui">
       <PageHeader
         title="Tenants"
-        lede={`${tenants.length} on the platform`}
         actions={
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search email / name / listing"
-            aria-label="Search tenants"
-            type="search"
-            className="input-field w-full max-w-64"
-          />
+          <>
+            {/* Only meaningful once a filter is active. "12 of 12 shown"
+                unfiltered is noise that looks like a fact. */}
+            {q && (
+              <span className="text-admin-base text-ink/55">
+                <span className="font-bold tabular-nums text-ink">
+                  {filtered.length}
+                </span>{" "}
+                of <span className="tabular-nums">{tenants.length}</span> match
+              </span>
+            )}
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search email / name / listing"
+              aria-label="Search tenants"
+              type="search"
+              className="input-field w-full max-w-64"
+            />
+          </>
         }
       />
       {error && (
