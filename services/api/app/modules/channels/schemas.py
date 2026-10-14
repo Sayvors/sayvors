@@ -279,6 +279,10 @@ class LeadSettingsOut(BaseModel):
     escalation_resume_hours: int
     escalation_reminder_hours: int
     escalation_emails: list[str]
+    # Pending-leads digest (optional, account-wide).
+    digest_enabled: bool
+    digest_hour: int
+    digest_max_leads: int
 
 
 class LeadSettingsUpdate(BaseModel):
@@ -298,3 +302,6 @@ class LeadSettingsUpdate(BaseModel):
     escalation_resume_hours: int | None = None
     escalation_reminder_hours: int | None = None
     escalation_emails: list[str] | None = Field(None, max_length=10)
+    digest_enabled: bool | None = None
+    digest_hour: int | None = None
+    digest_max_leads: int | None = None

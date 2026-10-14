@@ -145,11 +145,36 @@ HANDOVER_TEXT = "Let me get my colleague to help you with this."
 ESCALATION_SUBJECT = "A lead needs you: {name}"
 
 
+def _absolute(path: str | None) -> str | None:
+    """Turn an in-app path into the absolute URL an email CTA has to be.
+
+    send_notification_email rejects anything that is not http(s), and every
+    escalation and reminder was passing `/dashboard/inbox?...` straight in.
+    That raised ValueError on every send, the caller caught it and logged a
+    warning, and the escalation email -- the thing that tells a human the AI
+    has stopped replying -- never arrived. Re-entering 'important' retried and
+    failed identically, so it was silent and permanent.
+
+    Returns None rather than a broken link when FRONTEND_URL is unset, so a
+    misconfigured environment loses the button and not the whole email.
+    """
+    if not path:
+        return None
+    if path.startswith(("http://", "https://")):
+        return path
+    from ....config import settings
+
+    base = (settings.FRONTEND_URL or "").rstrip("/")
+    if not base:
+        return None
+    return f"{base}/{path.lstrip('/')}"
+
+
 async def _send_email(to, subject, message, cta_url: str | None = None) -> str:
     """Indirection so tests can intercept without patching Resend internals."""
     from ...email.service import send_notification_email
 
-    return await send_notification_email(to, subject, message, cta_url)
+    return await send_notification_email(to, subject, message, _absolute(cta_url))
 
 
 async def resolve_recipients(db, lead) -> list[str]:

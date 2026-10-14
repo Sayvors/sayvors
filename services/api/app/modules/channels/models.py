@@ -1,9 +1,10 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -394,6 +395,35 @@ class LeadAction(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class LeadDigestSend(Base):
+    """One pending-leads digest, per tenant, per local calendar day.
+
+    Exists so "email this tenant once a day" is enforced by the database rather
+    than by a check-then-insert. Several workers can run the sweep and one can
+    restart mid-send; with UNIQUE (tenant_id, digest_date) a second send is not
+    a race to be guarded but an insert that cannot happen.
+
+    digest_date is the tenant's LOCAL date. A tenant in Riyadh gets theirs on
+    their morning, and "already sent today" stays one indexed lookup.
+    """
+
+    __tablename__ = "lead_digest_sends"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "digest_date", name="uq_lead_digest_sends_tenant_date"),
+        Index("ix_lead_digest_sends_tenant_date", "tenant_id", "digest_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    digest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # How many leads the email listed. Retained so a 0-lead send is visibly
+    # wrong rather than a silent no-op.
+    lead_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
 

@@ -57,6 +57,10 @@ export type LeadSettings = {
   escalation_reminder_hours: number;
   /** Empty = escalate to the tenant owner's own signup email. */
   escalation_emails: string[];
+  /** Daily pending-leads digest, opt-in, max once per local day. */
+  digest_enabled: boolean;
+  digest_hour: number;
+  digest_max_leads: number;
 };
 
 export async function fetchLeads(

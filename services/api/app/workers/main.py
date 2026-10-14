@@ -91,6 +91,7 @@ async def _amain() -> None:
     from ..modules.analytics.performance import run_performance_sync_worker
     from ..modules.channels.meta.meta_events_worker import run_meta_events_worker
     from ..modules.channels.meta.lead_action_worker import run_lead_action_worker
+    from ..modules.channels.meta.digest_worker import run_lead_digest_sweeps
     from ..modules.channels.meta.escalation_worker import run_escalation_sweeps
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.localith.worker import run_localith_sync_worker
@@ -109,6 +110,9 @@ async def _amain() -> None:
         # everywhere; an AI-only deployment still wants the 24h resume, since
         # that is what stops a misrouted escalation silencing a customer.
         "escalation-sweeps": run_escalation_sweeps,
+        # Daily pending-leads summary, hourly poll, one send per tenant per
+        # local day. Opt-in per tenant, so it is inert until enabled.
+        "lead-digest": run_lead_digest_sweeps,
     }
     # Deployment-only split by role, no code changes: WORKER_LOOPS is a
     # comma-separated allowlist of loop names ("meta-events-ai-replies,
