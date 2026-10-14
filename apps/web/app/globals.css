@@ -376,3 +376,91 @@ html[lang="ar"] {
     animation: none;
   }
 }
+
+/* ======================================================================
+   ADMIN - "instrument panel"
+
+   Locked by the audit: font sizes were picked per page (5-8 distinct
+   values including 10px and 12.5px), and border-radius drifted 2-5 values
+   depending on which page you loaded. Every value below now traces here.
+
+   Palette, depth and surface rules are NOT ours to change - AGENTS.md bans
+   gradients and glassmorphism, fixes the single top-left light source, and
+   pins white surfaces with the Sayvors tokens. What was free was the scale.
+   ====================================================================== */
+
+@theme {
+  /* TYPE - one ratio (1.200 minor third) off an 11px floor.
+     11 -> 13.2 -> 15.8 -> 19.0, then a deliberate jump for the readout.
+     10px is gone: it was below the legibility floor and was used for
+     every table header and tile label. */
+  --text-admin-micro: 0.6875rem;  /* 11px - table heads, tile labels   */
+  --text-admin-base:  0.8125rem;  /* 13px - body, table cells          */
+  --text-admin-md:    1rem;       /* 16px - section headings           */
+  --text-admin-lg:    1.1875rem;  /* 19px - page h1                    */
+  --text-admin-read:  1.5rem;     /* 24px - the KPI readout, tabular   */
+
+  /* RADIUS - two values plus a pill for status only. Mixed radii was the
+     loudest amateur signal the audit found. Sized ~25% of element height
+     per AGENTS.md, for these shorter admin elements. */
+  --radius-admin-card: 1rem;      /* 16px - panels, tiles, tables */
+  --radius-admin-ctl:  0.75rem;   /* 12px - buttons, inputs       */
+}
+
+.admin-ui {
+  /* SPACE - one base unit and its multiples. */
+  --ad-3xs: 0.25rem;
+  --ad-2xs: 0.5rem;
+  --ad-xs:  0.75rem;
+  --ad-s:   1rem;
+  --ad-m:   1.5rem;
+  --ad-l:   2rem;
+
+  color: var(--color-ink);
+}
+
+/* Every interactive element gets all five states. Press feedback is the
+ * house transform - never an animated box-shadow. */
+.admin-ui .admin-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ad-2xs);
+  border-radius: var(--radius-admin-ctl);
+  font-size: var(--text-admin-base);
+  font-weight: 700;
+  padding: 0.5rem 0.875rem;
+  transition: background-color 120ms cubic-bezier(0.2, 0, 0, 1),
+              color 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+.admin-ui .admin-btn:active:not(:disabled) {
+  transform: translateY(2px) scale(0.98);
+}
+.admin-ui .admin-btn:focus-visible {
+  outline: 3px solid var(--color-deep-violet);
+  outline-offset: 2px;
+}
+.admin-ui .admin-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.admin-ui .admin-btn[aria-busy='true'] {
+  /* Reserve the width - a loading button must not collapse the row. */
+  cursor: progress;
+}
+
+.admin-ui :focus-visible {
+  outline: 3px solid var(--color-deep-violet);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-ui .admin-btn,
+  .admin-ui .animate-spin {
+    transition: none;
+    animation: none;
+  }
+  .admin-ui .admin-btn:active:not(:disabled) {
+    transform: none;
+  }
+}

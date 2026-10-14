@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/admin-api";
 import LogoLoader from "@/components/LogoLoader";
+import { EmptyState, ErrorState, PageHeader, Panel } from "../admin-ui";
 
 interface Provider {
   provider: string;
@@ -167,17 +168,28 @@ export default function AdminModelsPage() {
   if (loading) return <div className="flex justify-center py-24"><LogoLoader size={30} /></div>;
 
   return (
-    <div className="space-y-5">
-      {error && <p className="rounded-xl bg-coral/10 px-4 py-3 text-[12px] font-medium text-coral">{error}</p>}
-      <p className="text-[12px] text-ink/50">
-        Keys and models here drive every AI feature tenants use. A provider without a working key = broken AI for tenants on it. Facts only: save, test, read the result.
-      </p>
+    <div className="admin-ui">
+      <PageHeader
+        title="AI Models"
+        lede="Keys and models here drive every AI feature tenants use. A provider without a working key = broken AI for tenants on it."
+      />
+      {error && (
+        <div className="mb-[var(--ad-m)]">
+          <ErrorState title="Model registry unavailable" detail={error} />
+        </div>
+      )}
+      {providers.length === 0 && !error && (
+        <Panel>
+          <EmptyState message="No providers configured." />
+        </Panel>
+      )}
+      <div className="space-y-[var(--ad-m)]">
       {providers.map((p) => (
-        <section key={p.provider} className="rounded-2xl border border-white bg-white/80 p-5">
+        <section key={p.provider} className="rounded-admin-card border border-card-border bg-card p-[var(--ad-m)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-[15px] font-bold capitalize text-ink">{p.provider}</h2>
-              <p className="mt-0.5 text-[11px] text-ink/45">
+              <h2 className="text-admin-md font-bold capitalize text-ink">{p.provider}</h2>
+              <p className="mt-0.5 text-admin-base text-ink/45">
                 Key: <span className={`font-bold ${p.has_key ? "text-emerald-600" : "text-coral"}`}>{p.has_key ? `present (${p.key_source})` : "MISSING"}</span>
                 {" · "}
                 <span className={`font-bold ${p.enabled ? "text-emerald-600" : "text-coral"}`}>{p.enabled ? "enabled" : "disabled"}</span>
@@ -195,38 +207,38 @@ export default function AdminModelsPage() {
               <button
                 onClick={() => void saveKey(p.provider)}
                 disabled={busy !== null || !(keyDrafts[p.provider] ?? "").trim()}
-                className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-40"
+                className="rounded-lg bg-deep-violet px-3 py-1.5 text-admin-base font-bold text-white disabled:opacity-40"
               >
                 {busy === `${p.provider}:key` ? "Saving…" : "Save key"}
               </button>
               <button
                 onClick={() => void testProvider(p.provider)}
                 disabled={busy !== null}
-                className="rounded-lg border border-ink/10 px-3 py-1.5 text-[11px] font-bold text-ink/60 disabled:opacity-40"
+                className="rounded-lg border border-ink/10 px-3 py-1.5 text-admin-base font-bold text-ink/60 disabled:opacity-40"
               >
                 {busy === `${p.provider}:test` ? "Testing…" : "Test"}
               </button>
               <button
                 onClick={() => void fetchRemote(p.provider)}
                 disabled={busy !== null}
-                className="rounded-lg border border-ink/10 px-3 py-1.5 text-[11px] font-bold text-ink/60 disabled:opacity-40"
+                className="rounded-lg border border-ink/10 px-3 py-1.5 text-admin-base font-bold text-ink/60 disabled:opacity-40"
               >
                 {busy === `${p.provider}:remote` ? "Loading…" : "List remote models"}
               </button>
             </div>
           </div>
           {testResults[p.provider] && (
-            <p className={`mt-2 rounded-lg px-3 py-2 text-[12px] font-medium ${testResults[p.provider].ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+            <p className={`mt-2 rounded-lg px-3 py-2 text-admin-base font-medium ${testResults[p.provider].ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
               {testResults[p.provider].ok ? "Provider OK" : "Provider FAILED"}
               {testResults[p.provider].latency_ms ? ` — ${testResults[p.provider].latency_ms}ms` : ""}
               {testResults[p.provider].detail ? ` — ${testResults[p.provider].detail}` : ""}
             </p>
           )}
 
-          <div className="mt-4 overflow-hidden rounded-xl border border-ink/[0.05]">
-            <table className="w-full text-left text-[12.5px]">
+          <div className="mt-[var(--ad-s)] overflow-x-auto overflow-y-hidden rounded-admin-card border border-card-border">
+            <table className="w-full text-left text-admin-base">
               <thead>
-                <tr className="bg-ink/[0.02] text-[10px] font-bold uppercase tracking-[0.1em] text-ink/40">
+                <tr className="bg-ink/[0.02] text-admin-micro font-bold uppercase tracking-[0.1em] text-ink/40">
                   <th className="px-3 py-2">Model</th>
                   <th className="px-3 py-2">Enabled</th>
                   <th className="px-3 py-2">Test</th>
@@ -238,7 +250,7 @@ export default function AdminModelsPage() {
                   <tr key={m.id} className="border-t border-ink/[0.04]">
                     <td className="px-3 py-2">
                       <div className="font-semibold text-ink">{m.name}</div>
-                      <div className="text-[10px] text-ink/40">{m.id}</div>
+                      <div className="text-admin-micro text-ink/40">{m.id}</div>
                     </td>
                     <td className="px-3 py-2">
                       <button
@@ -265,11 +277,11 @@ export default function AdminModelsPage() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <button onClick={() => void testModel(p.provider, m.id)} disabled={busy !== null} className="mr-2 text-[11px] font-semibold text-deep-violet hover:underline disabled:opacity-40">
+                      <button onClick={() => void testModel(p.provider, m.id)} disabled={busy !== null} className="mr-2 text-admin-base font-semibold text-deep-violet hover:underline disabled:opacity-40">
                         Test
                       </button>
                       {m.custom && (
-                        <button onClick={() => void deleteModel(p.provider, m.id)} disabled={busy !== null} className="text-[11px] font-semibold text-coral hover:underline disabled:opacity-40">
+                        <button onClick={() => void deleteModel(p.provider, m.id)} disabled={busy !== null} className="text-admin-base font-semibold text-coral hover:underline disabled:opacity-40">
                           Delete
                         </button>
                       )}
@@ -288,10 +300,10 @@ export default function AdminModelsPage() {
                   <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Display name" className="input-field" />
                   <input value={form.api_model} onChange={(e) => setForm({ ...form, api_model: e.target.value })} placeholder="Provider model name" className="input-field" />
                   <div className="flex gap-2">
-                    <button onClick={() => void addModel(p.provider)} disabled={busy !== null || !form.id.trim() || !form.name.trim() || !form.api_model.trim()} className="flex-1 rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-40">
+                    <button onClick={() => void addModel(p.provider)} disabled={busy !== null || !form.id.trim() || !form.name.trim() || !form.api_model.trim()} className="flex-1 rounded-lg bg-deep-violet px-3 py-1.5 text-admin-base font-bold text-white disabled:opacity-40">
                       Add
                     </button>
-                    <button onClick={() => setShowAdd(null)} className="rounded-lg border border-ink/10 px-3 py-1.5 text-[11px] font-bold text-ink/50">
+                    <button onClick={() => setShowAdd(null)} className="rounded-lg border border-ink/10 px-3 py-1.5 text-admin-base font-bold text-ink/50">
                       Cancel
                     </button>
                   </div>
@@ -304,7 +316,7 @@ export default function AdminModelsPage() {
                         type="button"
                         title="Click to prefill from this remote model"
                         onClick={() => setForm({ ...form, id: r.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase(), name: r.name, api_model: r.id })}
-                        className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-ink/60 ring-1 ring-ink/10 hover:ring-deep-violet/40"
+                        className="rounded-full bg-white px-2 py-0.5 text-admin-micro font-medium text-ink/60 ring-1 ring-ink/10 hover:ring-deep-violet/40"
                       >
                         {r.name || r.id}
                       </button>
@@ -313,13 +325,14 @@ export default function AdminModelsPage() {
                 )}
               </div>
             ) : (
-              <button onClick={() => { setShowAdd(p.provider); if (!(remote[p.provider] ?? []).length) void fetchRemote(p.provider); }} disabled={busy !== null} className="text-[12px] font-semibold text-deep-violet hover:underline disabled:opacity-40">
+              <button onClick={() => { setShowAdd(p.provider); if (!(remote[p.provider] ?? []).length) void fetchRemote(p.provider); }} disabled={busy !== null} className="text-admin-base font-semibold text-deep-violet hover:underline disabled:opacity-40">
                 + Add custom model
               </button>
             )}
           </div>
         </section>
       ))}
+      </div>
     </div>
   );
 }

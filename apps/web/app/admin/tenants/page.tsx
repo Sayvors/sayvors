@@ -2,6 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { adminFetch } from "@/lib/admin-api";
+import {
+  ErrorState,
+  PageHeader,
+  Pill,
+  Table,
+  TableScroll,
+  Td,
+  Th,
+} from "../admin-ui";
 import LogoLoader from "@/components/LogoLoader";
 
 interface Tenant {
@@ -33,11 +42,21 @@ export default function AdminTenantsPage() {
   const [detail, setDetail] = useState<TenantDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const d = await adminFetch<{ items: Tenant[] }>("/api/v1/admin/tenants?limit=200");
+      setTenants(d.items ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load tenants.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    adminFetch<{ items: Tenant[] }>("/api/v1/admin/tenants?limit=200")
-      .then((d) => setTenants(d.items ?? []))
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not load tenants."))
-      .finally(() => setLoading(false));
+    void load();
   }, []);
 
   async function toggleOpen(id: string) {
@@ -69,30 +88,50 @@ export default function AdminTenantsPage() {
   if (loading) return <div className="flex justify-center py-24"><LogoLoader size={30} /></div>;
 
   return (
-    <div className="space-y-4">
-      {error && <p className="rounded-xl bg-coral/10 px-4 py-3 text-[12px] font-medium text-coral">{error}</p>}
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] text-ink/60">{tenants.length} tenants</p>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search email / name / listing…"
-          className="input-field w-64"
-        />
-      </div>
-      <div className="overflow-hidden rounded-2xl border border-white bg-white/80">
-        <table className="w-full text-left text-[12.5px]">
+    <div className="admin-ui">
+      <PageHeader
+        title="Tenants"
+        lede={`${tenants.length} on the platform`}
+        actions={
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search email / name / listing"
+            aria-label="Search tenants"
+            type="search"
+            className="input-field w-full max-w-64"
+          />
+        }
+      />
+      {error && (
+        <div className="mb-[var(--ad-m)]">
+          <ErrorState title="Tenants unavailable" detail={error} onRetry={() => void load()} />
+        </div>
+      )}
+
+      {/* TableScroll: overflow-x-auto, not overflow-hidden. Hidden CLIPPED the
+          Posts / Databanks / Last sync columns at 390px, leaving them
+          unreachable. overflow-y-hidden still holds the rounded corners. */}
+      <TableScroll>
+        <Table minWidth={760}>
           <thead>
-            <tr className="border-b border-ink/[0.06] text-[10px] font-bold uppercase tracking-[0.1em] text-ink/40">
-              <th className="px-4 py-3">Tenant</th>
-              <th className="px-4 py-3">Listing</th>
-              <th className="px-4 py-3 text-right">Reviews</th>
-              <th className="px-4 py-3 text-right">Posts</th>
-              <th className="px-4 py-3">Last sync</th>
-              <th className="px-4 py-3">Status</th>
+            <tr className="border-b border-ink/[0.06]">
+              <Th>Tenant</Th>
+              <Th>Listing</Th>
+              <Th align="right">Reviews</Th>
+              <Th align="right">Posts</Th>
+              <Th>Last sync</Th>
+              <Th>Status</Th>
             </tr>
           </thead>
           <tbody>
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-[var(--ad-s)] py-[var(--ad-m)] text-center text-admin-base text-ink/45">
+                  {q ? `No tenant matches "${search}".` : "No tenants yet."}
+                </td>
+              </tr>
+            )}
             {filtered.map((t) => (
               <>
                 <tr
@@ -100,19 +139,19 @@ export default function AdminTenantsPage() {
                   onClick={() => void toggleOpen(t.id)}
                   className="cursor-pointer border-b border-ink/[0.04] transition hover:bg-deep-violet/[0.03]"
                 >
-                  <td className="px-4 py-3">
+                  <Td>
                     <div className="font-semibold text-ink">{t.email}</div>
-                    <div className="text-[11px] text-ink/45">{[t.first_name, t.last_name].filter(Boolean).join(" ") || "—"}</div>
-                  </td>
-                  <td className="px-4 py-3 text-ink/70">{t.has_connection ? t.listing_name ?? "connected" : <span className="text-ink/35">not connected</span>}</td>
-                  <td className="px-4 py-3 text-right font-bold text-ink">{t.reviews}</td>
-                  <td className="px-4 py-3 text-right font-bold text-ink">{t.posts}</td>
-                  <td className="px-4 py-3 text-ink/55">{t.last_synced_at ? new Date(t.last_synced_at).toLocaleDateString() : "never"}</td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${t.email_verified ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                    <div className="text-admin-micro text-ink/50">{[t.first_name, t.last_name].filter(Boolean).join(" ") || "—"}</div>
+                  </Td>
+                  <Td className="text-ink/70">{t.has_connection ? t.listing_name ?? "connected" : <span className="text-ink/35">not connected</span>}</Td>
+                  <Td align="right" className="font-bold text-ink">{t.reviews.toLocaleString()}</Td>
+                  <Td align="right" className="font-bold text-ink">{t.posts.toLocaleString()}</Td>
+                  <Td className="text-ink/55">{t.last_synced_at ? new Date(t.last_synced_at).toLocaleDateString() : "never"}</Td>
+                  <Td>
+                    <Pill tone={t.email_verified ? "ok" : "warn"}>
                       {t.email_verified ? "Verified" : "Unverified"}
-                    </span>
-                  </td>
+                    </Pill>
+                  </Td>
                 </tr>
                 {openId === t.id && (
                   <tr key={`${t.id}-detail`} className="border-b border-ink/[0.04] bg-deep-violet/[0.02]">
@@ -162,8 +201,8 @@ export default function AdminTenantsPage() {
               <tr><td colSpan={6} className="px-4 py-8 text-center text-[12px] text-ink/35">No tenants match.</td></tr>
             )}
           </tbody>
-        </table>
-      </div>
+        </Table>
+      </TableScroll>
     </div>
   );
 }

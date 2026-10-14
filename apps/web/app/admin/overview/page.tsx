@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { adminFetch } from "@/lib/admin-api";
 import LogoLoader from "@/components/LogoLoader";
+import { ErrorState, PageHeader, Panel, SectionTitle, Tile } from "../admin-ui";
 
 interface Overview {
   users_total: number;
@@ -34,35 +35,54 @@ interface HealthLite {
   services: { name: string; kind: string; ok: boolean; detail: string }[];
 }
 
-function Tile({ label, value, broken }: { label: string; value: number | string; broken?: boolean }) {
-  return (
-    <div className={`rounded-2xl border p-4 ${broken ? "border-coral/30 bg-coral/[0.04]" : "border-white bg-white/80"}`}>
-      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{label}</div>
-      <div className={`mt-2 text-[24px] font-bold ${broken ? "text-coral" : "text-ink"}`}>{value}</div>
-    </div>
-  );
+const STATUS_ORDER = [
+  "published", "scheduled", "pending_approval", "draft", "posted",
+  "failed", "rejected", "approved", "archived", "sent",
+];
+
+/**
+ * Counts arrive from an API we do not control. Formatting defensively is not
+ * paranoia: a missing field once crashed the page with "Cannot read
+ * properties of undefined", which is exactly the raw-error leak the audit
+ * flagged. A dash reads as "not reported"; a crash reads as "broken".
+ */
+function n(value: number | undefined | null): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value.toLocaleString()
+    : "—";
 }
 
+/**
+ * Status breakdown. `failed` is the only count that earns colour — every
+ * other state is ink, because colour here means "something is wrong", not
+ * "this is a category".
+ */
 function StatusCounts({ title, map }: { title: string; map: Record<string, number> }) {
-  const order = ["published", "scheduled", "pending_approval", "draft", "posted", "failed", "rejected", "approved", "archived", "sent"];
-  const keys = Object.keys(map).sort((a, b) => {
-    const ia = order.indexOf(a);
-    const ib = order.indexOf(b);
+  const safe = map ?? {};
+  const keys = Object.keys(safe).sort((a, b) => {
+    const ia = STATUS_ORDER.indexOf(a);
+    const ib = STATUS_ORDER.indexOf(b);
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });
   return (
-    <div className="rounded-2xl border border-white bg-white/80 p-4">
-      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{title}</div>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-        {keys.length === 0 && <span className="text-[13px] text-ink/30">none</span>}
+    <Panel>
+      <SectionTitle>{title}</SectionTitle>
+      <div className="flex flex-wrap gap-x-[var(--ad-s)] gap-y-[var(--ad-3xs)]">
+        {keys.length === 0 && <span className="text-admin-base text-ink/40">none</span>}
         {keys.map((k) => (
-          <span key={k} className="text-[13px]">
-            <span className={k === "failed" ? "font-bold text-coral" : "font-bold text-ink"}>{map[k]}</span>
-            <span className="ml-1 text-ink/45">{k}</span>
+          <span key={k} className="text-admin-base">
+            <span
+              className={`font-bold tabular-nums ${
+                k === "failed" ? "text-coral" : "text-ink"
+              }`}
+            >
+              {n(safe[k])}
+            </span>{" "}
+            <span className="text-ink/50">{k.replace(/_/g, " ")}</span>
           </span>
         ))}
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -73,92 +93,135 @@ export default function AdminOverviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  async function load() {
+    setLoading(true);
+    setError(null);
+    // Each source degrades on its own: a failing health probe must not blank
+    // the tenant counts an operator came here to read.
+    const [o, t, h] = await Promise.allSettled([
+      adminFetch<Overview>("/api/v1/admin/overview"),
+      adminFetch<{ totals?: UsageTotals }>("/api/v1/admin/usage/overview"),
+      adminFetch<HealthLite>("/api/v1/admin/health"),
+    ]);
+    if (o.status === "fulfilled") setOverview(o.value);
+    else setError("Could not load the overview.");
+    setTotals(t.status === "fulfilled" ? t.value?.totals ?? null : null);
+    setHealth(h.status === "fulfilled" ? h.value : null);
+    setLoading(false);
+  }
+
   useEffect(() => {
-    (async () => {
-      const [o, u, h] = await Promise.all([
-        adminFetch<Overview>("/api/v1/admin/overview").catch(() => null),
-        adminFetch<{ totals?: UsageTotals }>("/api/v1/admin/usage/overview").then((r) => r?.totals ?? null).catch(() => null),
-        adminFetch<HealthLite>("/api/v1/admin/health").catch(() => null),
-      ]);
-      if (o) setOverview(o);
-      if (u) setTotals(u);
-      if (h) setHealth(h);
-      if (!o && !h) setError("Could not load admin data — is the API running?");
-      setLoading(false);
-    })();
+    void load();
   }, []);
 
+  if (loading && !overview) return <div className="flex justify-center py-24"><LogoLoader size={30} /></div>;
+
   const broken: string[] = [];
+  const posts = overview?.posts_by_status ?? {};
+  const replies = overview?.replies_by_status ?? {};
+  const media = overview?.media_by_status ?? {};
   if (overview) {
-    if (overview.outbox_failed > 0) broken.push(`${overview.outbox_failed} outbox events failed`);
-    if (overview.ingest_failed > 0) broken.push(`${overview.ingest_failed} databank ingests failed`);
-    if ((overview.posts_by_status.failed ?? 0) > 0) broken.push(`${overview.posts_by_status.failed} posts failed to publish`);
-    if ((overview.replies_by_status.failed ?? 0) > 0) broken.push(`${overview.replies_by_status.failed} replies failed`);
-    if ((overview.media_by_status.failed ?? 0) > 0) broken.push(`${overview.media_by_status.failed} photos failed`);
+    if ((overview.outbox_failed ?? 0) > 0) broken.push(`${overview.outbox_failed} outbox events failed`);
+    if ((overview.ingest_failed ?? 0) > 0) broken.push(`${overview.ingest_failed} databank ingests failed`);
+    if ((posts.failed ?? 0) > 0) broken.push(`${posts.failed} posts failed to publish`);
+    if ((replies.failed ?? 0) > 0) broken.push(`${replies.failed} replies failed`);
+    if ((media.failed ?? 0) > 0) broken.push(`${media.failed} photos failed`);
     if ((overview.connections ?? 0) === 0) broken.push("No Localith listings connected");
   }
   const downServices = (health?.services ?? []).filter((s) => !s.ok);
 
-  if (loading) return <div className="flex justify-center py-24"><LogoLoader size={30} /></div>;
-
   return (
-    <div className="space-y-5">
-      {error && <p className="rounded-xl bg-coral/10 px-4 py-3 text-[12px] font-medium text-coral">{error}</p>}
+    <div className="admin-ui">
+      <PageHeader
+        title="Overview"
+        lede="Platform health first, then volume."
+      />
+
+      {error && (
+        <div className="mb-[var(--ad-m)]">
+          <ErrorState title="Overview unavailable" detail={error} onRetry={() => void load()} />
+        </div>
+      )}
+
       {overview && (
-        <>
-          {/* What's broken first — admin opens this page to see problems */}
+        <div className="space-y-[var(--ad-m)]">
+          {/* The memorable moment: one coral rail owns the top of the page
+              whenever anything is failing, and disappears entirely when
+              nothing is. No competing "everything is fine" badge. */}
           {(broken.length > 0 || downServices.length > 0) && (
-            <section className="rounded-2xl border border-coral/30 bg-coral/[0.04] p-4">
-              <h2 className="text-[13px] font-bold uppercase tracking-wide text-coral">Broken right now</h2>
-              <ul className="mt-2 space-y-1">
+            <section
+              aria-labelledby="broken-now"
+              className="rounded-admin-card border border-coral/40 bg-coral/[0.05] p-[var(--ad-s)]"
+            >
+              <h2 id="broken-now" className="text-admin-base font-bold uppercase tracking-wide text-coral">
+                Broken right now
+              </h2>
+              <ul className="mt-[var(--ad-xs)] space-y-[var(--ad-3xs)]">
                 {broken.map((b) => (
-                  <li key={b} className="flex items-center gap-2 text-[13px] text-ink">
-                    <span className="h-1.5 w-1.5 rounded-full bg-coral" aria-hidden /> {b}
+                  <li key={b} className="flex items-start gap-[var(--ad-2xs)] text-admin-base text-ink">
+                    <span className="mt-[0.45em] h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
+                    {b}
                   </li>
                 ))}
                 {downServices.map((s) => (
-                  <li key={s.name} className="flex items-center gap-2 text-[13px] text-ink">
-                    <span className="h-1.5 w-1.5 rounded-full bg-coral" aria-hidden /> {s.name} down{s.detail ? ` — ${s.detail}` : ""}
+                  <li key={s.name} className="flex items-start gap-[var(--ad-2xs)] text-admin-base text-ink">
+                    <span className="mt-[0.45em] h-1.5 w-1.5 shrink-0 rounded-full bg-coral" aria-hidden />
+                    {s.name} down{s.detail ? ` — ${s.detail}` : ""}
                   </li>
                 ))}
               </ul>
             </section>
           )}
 
-          <section>
-            <h2 className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40">The business</h2>
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              <Tile label="Tenants" value={overview.users_total} />
-              <Tile label="Verified" value={overview.users_verified} />
-              <Tile label="Signups 7d" value={overview.signups_last_7d} />
-              <Tile label="Connected listings" value={overview.connections} />
-              <Tile label="Reviews" value={overview.reviews_total} />
-              <Tile label="Posts" value={overview.posts_total} />
-              <Tile label="Databanks / docs" value={`${overview.databanks_total} / ${overview.documents_total}`} />
-              <Tile label="AI calls / tokens" value={totals ? `${totals.calls} / ${totals.total_tokens.toLocaleString()}` : "—"} />
+          <section aria-labelledby="the-business">
+            <h2 id="the-business">
+              <SectionTitle>The business</SectionTitle>
+            </h2>
+            <div className="grid gap-[var(--ad-xs)] sm:grid-cols-3 lg:grid-cols-4">
+              <Tile label="Tenants" value={n(overview.users_total)} />
+              <Tile label="Verified" value={n(overview.users_verified)} />
+              <Tile label="Signups 7d" value={n(overview.signups_last_7d)} />
+              <Tile label="Connected listings" value={n(overview.connections)} />
+              <Tile label="Reviews" value={n(overview.reviews_total)} />
+              <Tile label="Posts" value={n(overview.posts_total)} />
+              <Tile
+                label="Databanks / docs"
+                value={`${n(overview.databanks_total)} / ${n(overview.documents_total)}`}
+              />
+              <Tile
+                label="AI calls / tokens"
+                value={
+                  totals
+                    ? `${n(totals.calls)} / ${n(totals.total_tokens)}`
+                    : "—"
+                }
+              />
             </div>
           </section>
 
-          <section className="grid gap-3 sm:grid-cols-2">
+          <section className="grid gap-[var(--ad-xs)] sm:grid-cols-2">
             <StatusCounts title="Replies by status" map={overview.replies_by_status} />
             <StatusCounts title="Posts by status" map={overview.posts_by_status} />
             <StatusCounts title="Media by status" map={overview.media_by_status} />
-            <div className="rounded-2xl border border-white bg-white/80 p-4">
-              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">Pipeline</div>
-              <div className="mt-2 space-y-1 text-[13px]">
-                <div><span className="font-bold text-ink">{overview.outbox_pending}</span> <span className="text-ink/45">outbox pending</span></div>
-                <div><span className={`font-bold ${overview.outbox_failed ? "text-coral" : "text-ink"}`}>{overview.outbox_failed}</span> <span className="text-ink/45">outbox failed</span></div>
-                <div><span className={`font-bold ${overview.ingest_failed ? "text-coral" : "text-ink"}`}>{overview.ingest_failed}</span> <span className="text-ink/45">ingests failed</span></div>
+            <Panel>
+              <SectionTitle>Pipeline</SectionTitle>
+              <div className="space-y-[var(--ad-3xs)] text-admin-base">
+                <div><span className="font-bold tabular-nums text-ink">{n(overview.outbox_pending)}</span> <span className="text-ink/50">outbox pending</span></div>
+                <div><span className={`font-bold tabular-nums ${overview.outbox_failed ? "text-coral" : "text-ink"}`}>{n(overview.outbox_failed)}</span> <span className="text-ink/50">outbox failed</span></div>
+                <div><span className={`font-bold tabular-nums ${overview.ingest_failed ? "text-coral" : "text-ink"}`}>{n(overview.ingest_failed)}</span> <span className="text-ink/50">ingests failed</span></div>
               </div>
-            </div>
+            </Panel>
           </section>
 
-          <p className="text-[11px] text-ink/40">
-            Last Localith sync: {overview.last_synced_at ? new Date(overview.last_synced_at).toLocaleString() : "never"} ·{" "}
-            <Link href="/admin/tenants" className="font-semibold text-deep-violet hover:underline">Tenants →</Link>{" "}
-            <Link href="/admin/health" className="ml-3 font-semibold text-deep-violet hover:underline">Health →</Link>
+          <p className="text-admin-micro text-ink/45">
+            Last Localith sync:{" "}
+            {overview.last_synced_at ? new Date(overview.last_synced_at).toLocaleString() : "never"}
+            {" · "}
+            <Link href="/admin/tenants" className="font-semibold text-deep-violet hover:underline">Tenants →</Link>
+            {" · "}
+            <Link href="/admin/health" className="font-semibold text-deep-violet hover:underline">Health →</Link>
           </p>
-        </>
+        </div>
       )}
     </div>
   );

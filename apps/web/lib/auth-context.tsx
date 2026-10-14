@@ -91,7 +91,25 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
     setAccessToken(null);
     // Public pages must not bounce: auth pages would reload-loop, and /invite
     // visitors are anonymous by definition (they have no session yet).
-    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp") && !window.location.pathname.startsWith("/invite")) {
+    //
+    // /admin must not bounce either. Admin auth is a separate cookie set by
+    // POST /api/v1/admin/login ("password only — separate from tenant
+    // accounts"), and an operator has no tenant session. Without this carve-out
+    // every /admin/* request bounced to /login, so the panel was only reachable
+    // by someone who also happened to hold a customer login. Admin's own layout
+    // gates on its own session and 401s clear it; this guard is for tenants and
+    // must not claim authority over it.
+    const path = typeof window !== "undefined" ? window.location.pathname : "";
+    const publicPath =
+      path.startsWith("/login") ||
+      path.startsWith("/signup") ||
+      path.startsWith("/forgot-password") ||
+      path.startsWith("/reset-password") ||
+      path.startsWith("/verify-email") ||
+      path.startsWith("/verify-otp") ||
+      path.startsWith("/invite") ||
+      path.startsWith("/admin");
+    if (typeof window !== "undefined" && !publicPath) {
       window.location.href = "/login";
     }
   }
