@@ -409,6 +409,35 @@ html[lang="ar"] {
 
 @layer components {
 .admin-ui {
+  /* COLOR - the Sayvors brand, re-pinned to Sayvors Brand Guidelines V1.0.
+
+     --color-deep-violet had drifted to #5b2d8e; the brand doc says #3D1D6E.
+     --color-fog is a LAVENDER tint (#f8f6ff) and every card was sitting on
+     it, which washed the whole panel out. AGENTS.md is explicit that the page
+     background is the only tint and it is neutral #f1f2f5 -- so the admin uses
+     that and keeps white for every surface.
+
+     These are CSS custom properties, so redefining them here re-points every
+     text-deep-violet / bg-coral utility inside .admin-ui without touching the
+     customer-facing app. */
+  --color-deep-violet: #3d1d6e;
+  --color-violet-light: #6b4a9e;
+  --color-violet-soft: #ede9f6;
+  --color-magenta: #b0338a;
+  --color-ink: #14101f;
+  --color-fog: #f1f2f5;
+  /* Coral deepened. #FF4F6E is a brand LOGO colour; it reads weak as body
+     text on white. Same hue family, enough contrast to act on. */
+  --color-coral: #d92d3f;
+  --color-emerald: #15803d;
+  /* Card borders and accent fills were lavender too (#e8e0f5 / #f0eaff), so
+     every panel edge was drawing the purple, not just the background. */
+  --card-border: #e2e5ea;
+  --accent-soft: #f3f0f9;
+
+  background: var(--color-fog);
+  color: var(--color-ink);
+
   /* SPACE - one base unit and its multiples. */
   --ad-3xs: 0.25rem;
   --ad-2xs: 0.5rem;
@@ -416,8 +445,6 @@ html[lang="ar"] {
   --ad-s:   1rem;
   --ad-m:   1.5rem;
   --ad-l:   2rem;
-
-  color: var(--color-ink);
 }
 
 /* Every interactive element gets all five states. Press feedback is the
