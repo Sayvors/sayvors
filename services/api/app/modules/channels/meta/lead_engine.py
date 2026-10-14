@@ -76,6 +76,7 @@ SETTINGS_DEFAULTS = {
     # How many leads one digest may list, so a large tenant gets a summary
     # rather than a wall of names.
     "digest_max_leads": 20,
+    "review_issue_subcategories": [],
 }
 
 _INT_KEYS = (
@@ -142,6 +143,20 @@ def normalize_lead_settings(raw: dict | None) -> dict:
         settings["timezone"] = tz
     except Exception:
         pass
+    # Review-issue subcategories the tenant cares about (used to classify
+    # Google reviews and to scope WhatsApp handoff context). Stick to a small
+    # list and deduplicate so a tenant cannot bloat storage indefinitely.
+    raw_subs = raw.get("review_issue_subcategories")
+    if isinstance(raw_subs, list):
+        cleaned_subs = []
+        seen = set()
+        for e in raw_subs:
+            if isinstance(e, str) and e.strip():
+                k = e.strip().lower()
+                if k not in seen:
+                    seen.add(k)
+                    cleaned_subs.append(k)
+        settings["review_issue_subcategories"] = cleaned_subs[:40]
     raw_emails = raw.get("escalation_emails")
     if isinstance(raw_emails, list):
         cleaned = [

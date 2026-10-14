@@ -61,6 +61,7 @@ export type LeadSettings = {
   digest_enabled: boolean;
   digest_hour: number;
   digest_max_leads: number;
+  review_issue_subcategories?: string[];
 };
 
 export async function fetchLeads(
