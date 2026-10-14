@@ -485,6 +485,73 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             except Exception as e:
                 # Analytics events must never break auto-reply
                 logger.warning("review.discovered enqueue failed for %s: %s", review.review_id, e)
+            # Persist the structured classification so the WhatsApp handoff and
+            # the "Status: Review" surface have facts to look up. Orchestrated by
+            # the review pipeline graph (classify -> ticket -> handoff); it falls
+            # back to running the same nodes inline if langgraph is unavailable.
+            # Never break the auto-reply pipeline if classification fails (no
+            # model, no network, unreachable provider) -- retried next poll.
+            try:
+                from ..channels.models import ReviewIssue
+                from ..users.models import User
+                from ..review_engine.graph import run_review_pipeline
+                from ..channels.meta.lead_engine import normalize_lead_settings
+
+                existing = await db.execute(
+                    select(ReviewIssue).where(
+                        ReviewIssue.channel_id == channel.id,
+                        ReviewIssue.review_id == review.review_id,
+                    ).limit(1)
+                )
+                if existing.scalar_one_or_none() is None:
+                    model = getattr(config, "model", None)
+                    if not model:
+                        try:
+                            from ..review_engine.service import _resolve_engine_model
+                            from ..review_engine.schemas import ReviewEngineRequest
+                            req = ReviewEngineRequest(channel_id=channel.id)
+                            # Best-effort; ignored on failure.
+                            model, _ = await _resolve_engine_model(
+                                req,
+                                channel.user_id,
+                                db,
+                            )
+                        except Exception:
+                            model = None
+                    try:
+                        urow = (await db.execute(
+                            select(User.lead_settings).where(User.id == channel.user_id)
+                        )).scalar_one_or_none()
+                        subcats = normalize_lead_settings(urow).get(
+                            "review_issue_subcategories"
+                        ) or []
+                    except Exception:
+                        subcats = []
+                    outcome = await run_review_pipeline(
+                        db,
+                        tenant_id=channel.user_id,
+                        channel_id=channel.id,
+                        review_id=review.review_id,
+                        rating=review.rating,
+                        review_text=review.text,
+                        reviewer_name=review.reviewer_name,
+                        model=model,
+                        tenant_subcategories=subcats,
+                    )
+                    if outcome.get("classification_error"):
+                        logger.warning(
+                            "review issue classification failed for %s: %s",
+                            review.review_id, outcome["classification_error"],
+                        )
+                    elif outcome.get("issue_created"):
+                        logger.info(
+                            "review issue %s -> ticket=%s handoff=%s code=%s",
+                            review.review_id, outcome.get("ticket_number"),
+                            outcome.get("handoff_eligible"),
+                            outcome.get("handoff_code"),
+                        )
+            except Exception as e:
+                logger.warning("review issue classification failed for %s: %s", review.review_id, e)
             if await _already_replied(db, review.review_id):
                 # Idempotency: a draft is already queued (or posted) for
                 # this review — polling it again must not create a duplicate.

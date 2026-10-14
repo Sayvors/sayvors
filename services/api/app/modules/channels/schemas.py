@@ -283,6 +283,7 @@ class LeadSettingsOut(BaseModel):
     digest_enabled: bool
     digest_hour: int
     digest_max_leads: int
+    review_issue_subcategories: list[str] = []
 
 
 class LeadSettingsUpdate(BaseModel):
@@ -305,3 +306,4 @@ class LeadSettingsUpdate(BaseModel):
     digest_enabled: bool | None = None
     digest_hour: int | None = None
     digest_max_leads: int | None = None
+    review_issue_subcategories: list[str] | None = Field(None, max_length=40)
