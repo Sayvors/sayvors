@@ -969,7 +969,9 @@ def _wire_voice_consumer(monkeypatch, adapter, *, reply, confused, language,
 
     monkeypatch.setattr(vo_mod, "synthesize_voice_note", _synth)
 
-    async def _gen(db, channel, tenant_id, text):
+    async def _gen(db, channel, tenant_id, text, **kw):
+        # **kwargs absorbs `context` (review handoff) and `contact`
+        # (per-conversation scoping), both passed by the consumer.
         return reply
 
     monkeypatch.setattr(meta_consumer, "_generate_reply", _gen)

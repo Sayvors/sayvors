@@ -533,10 +533,24 @@ def test_adapter_body_uses_localith_field_names(monkeypatch):
         voucher_code="SAVE20", start_date="2026-10-01T10:00:00Z",
         end_date="2026-10-31T10:00:00Z",
     )
-    assert seen["type"] == "offer"
+    # `offer` is downgraded to `update` on purpose: Localith's
+    # content_publishing_media endpoint 400s on offer/event for this account
+    # regardless of field combination, and publishing as an update beats
+    # failing a post the merchant could otherwise publish. The caller's intent
+    # ("offer") is NOT what goes on the wire.
+    assert seen["type"] == "update"
     assert seen["voucherCode"] == "SAVE20"
     assert seen["startDate"] == "2026-10-01T10:00:00Z"
     assert seen["endDate"] == "2026-10-31T10:00:00Z"
+
+
+def test_adapter_rejects_unknown_post_type(monkeypatch):
+    """The offer->update downgrade must not become a silent catch-all."""
+    from integrations.channels import embedsocial
+
+    monkeypatch.setenv("LOCALITH_API_KEY", "test-key")
+    with pytest.raises(ValueError, match="Unsupported post type"):
+        embedsocial.publish_media_post("loc-1", post_type="livestream")
 
 
 def _fake_llm_provider(content: str, fail_first: bool = False):

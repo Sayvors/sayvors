@@ -231,7 +231,10 @@ def _wire_consumer(monkeypatch, adapter, split_return=None, logical_reply=None):
     monkeypatch.setattr(
         meta_consumer,
         "_generate_reply",
-        lambda db, channel, tenant_id, text: _async_of(
+        # **kwargs: the consumer passes `context` (review handoff) and
+        # `contact` (per-conversation scoping). This suite is about response
+        # shape, not prompt content, so both are ignored.
+        lambda db, channel, tenant_id, text, **kw: _async_of(
             logical_reply or "Hey there! Yes we can help. Want pricing?"
         ),
     )
