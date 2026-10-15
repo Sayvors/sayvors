@@ -8,6 +8,7 @@ import { approveReply, editReply, fetchInsights, fetchOverview, generateReply, r
 import { dedupeBusinesses } from "@/lib/channel-identity";
 import GlanceStrip from "@/components/dashboard/GlanceStrip";
 import GlanceCharts from "@/components/dashboard/GlanceCharts";
+import ReviewTicketsCard from "@/components/dashboard/ReviewTicketsCard";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
 
@@ -1327,6 +1328,8 @@ export default function DashboardPage() {
 
       {/* Needs attention â€” the daily driver */}
       <AttentionQueue />
+
+      <ReviewTicketsCard />
 
       <GlanceStrip />
 
