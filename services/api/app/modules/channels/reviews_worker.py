@@ -524,7 +524,7 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                         try:
                             from ..review_engine.service import _resolve_engine_model
                             from ..review_engine.schemas import ReviewEngineRequest
-                            req = ReviewEngineRequest(channel_id=channel.id)
+                            req = ReviewEngineRequest(rating=review.rating, channel_id=channel.id)
                             # Best-effort; ignored on failure.
                             model, _ = await _resolve_engine_model(
                                 req,

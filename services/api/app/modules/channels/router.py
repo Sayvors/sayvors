@@ -1873,7 +1873,9 @@ async def test_review_pipeline(
                 )
             )
         ).scalar_one_or_none()
-        req = ReviewEngineRequest(channel_id=channel_id, model=configured_model)
+        req = ReviewEngineRequest(
+            rating=body.rating, channel_id=channel_id, model=configured_model
+        )
         model, _ = await _resolve_engine_model(req, ctx.tenant_id, db)
     except Exception:
         model = None
