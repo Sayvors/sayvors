@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { adminFetch } from "@/lib/admin-api";
 import LogoLoader from "@/components/LogoLoader";
-import { ErrorState, Freshness, PageHeader, Panel, SectionTitle, Tile } from "../admin-ui";
+import { ErrorState, Freshness, PageHeader, Panel, SectionTitle, Table, Td, Th, Tile } from "../admin-ui";
 
 interface Overview {
   users_total: number;
@@ -28,6 +28,14 @@ interface UsageTotals {
   calls: number;
   total_tokens: number;
   tenants: number;
+}
+
+interface UsageBreakdown {
+  days: number;
+  totals: UsageTotals;
+  per_tenant: { tenant_id: string | null; email: string; calls: number; total_tokens: number; avg_latency_ms: number; last_seen: string | null }[];
+  per_model: { model: string; api_model: string; calls: number; total_tokens: number }[];
+  daily: { day: string; total_tokens: number; calls: number }[];
 }
 
 interface HealthLite {
@@ -88,7 +96,7 @@ function StatusCounts({ title, map }: { title: string; map: Record<string, numbe
 
 export default function AdminOverviewPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [totals, setTotals] = useState<UsageTotals | null>(null);
+  const [totals, setTotals] = useState<UsageBreakdown | null>(null);
   const [health, setHealth] = useState<HealthLite | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -100,12 +108,12 @@ export default function AdminOverviewPage() {
     // the tenant counts an operator came here to read.
     const [o, t, h] = await Promise.allSettled([
       adminFetch<Overview>("/api/v1/admin/overview"),
-      adminFetch<{ totals?: UsageTotals }>("/api/v1/admin/usage/overview"),
+      adminFetch<UsageBreakdown>("/api/v1/admin/usage/overview"),
       adminFetch<HealthLite>("/api/v1/admin/health"),
     ]);
     if (o.status === "fulfilled") setOverview(o.value);
     else setError("Could not load the overview.");
-    setTotals(t.status === "fulfilled" ? t.value?.totals ?? null : null);
+    setTotals(t.status === "fulfilled" ? t.value ?? null : null);
     setHealth(h.status === "fulfilled" ? h.value : null);
     setLoading(false);
   }
@@ -194,8 +202,8 @@ export default function AdminOverviewPage() {
               <Tile
                 label="AI usage"
                 rows={[
-                  { label: "calls", value: n(totals?.calls) },
-                  { label: "tokens", value: n(totals?.total_tokens) },
+                  { label: "calls", value: n(totals?.totals?.calls) },
+                  { label: "tokens", value: n(totals?.totals?.total_tokens) },
                 ]}
               />
             </div>
@@ -214,6 +222,115 @@ export default function AdminOverviewPage() {
               </div>
             </Panel>
           </section>
+
+          {/* Usage breakdown: the totals tile above says how much; these tables
+              say where it went. Without them a spike is undiagnosable. */}
+          {totals && (totals.per_model.length > 0 || totals.per_tenant.length > 0) && (
+            <section className="grid gap-[var(--ad-xs)] lg:grid-cols-2">
+              <Panel>
+                <SectionTitle>AI usage by model ({totals.days}d)</SectionTitle>
+                {totals.per_model.length === 0 ? (
+                  <p className="text-admin-base text-ink/40">No model usage.</p>
+                ) : (
+                  <Table minWidth={480}>
+                    <thead>
+                      <tr className="border-b border-ink/[0.06]">
+                        <Th>Model</Th>
+                        <Th align="right">Calls</Th>
+                        <Th align="right">Tokens</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {totals.per_model.map((m) => (
+                        <tr key={m.model} className="border-b border-ink/[0.04]">
+                          <Td className="text-ink/75">{m.model}</Td>
+                          <Td align="right" className="tabular-nums text-ink">
+                            {n(m.calls)}
+                          </Td>
+                          <Td align="right" className="tabular-nums text-ink">
+                            {n(m.total_tokens)}
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                )}
+              </Panel>
+
+              <Panel>
+                <SectionTitle>AI usage by tenant ({totals.days}d)</SectionTitle>
+                {totals.per_tenant.length === 0 ? (
+                  <p className="text-admin-base text-ink/40">No tenant usage.</p>
+                ) : (
+                  <Table minWidth={560}>
+                    <thead>
+                      <tr className="border-b border-ink/[0.06]">
+                        <Th>Tenant</Th>
+                        <Th align="right">Calls</Th>
+                        <Th align="right">Tokens</Th>
+                        <Th>Last seen</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {totals.per_tenant
+                        .slice()
+                        .sort((a, b) => b.calls - a.calls)
+                        .slice(0, 10)
+                        .map((t) => (
+                          <tr key={t.tenant_id} className="border-b border-ink/[0.04]">
+                            <Td className="text-ink/75">{t.email}</Td>
+                            <Td align="right" className="tabular-nums text-ink">
+                              {n(t.calls)}
+                            </Td>
+                            <Td align="right" className="tabular-nums text-ink">
+                              {n(t.total_tokens)}
+                            </Td>
+                            <Td className="text-ink/55">
+                              {t.last_seen
+                                ? new Date(t.last_seen).toLocaleDateString()
+                                : "never"}
+                            </Td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </Table>
+                )}
+                {totals.per_tenant.length > 10 && (
+                  <p className="mt-[var(--ad-2xs)] text-admin-micro text-ink/45">
+                    Top 10 of {totals.per_tenant.length} by calls.
+                  </p>
+                )}
+              </Panel>
+            </section>
+          )}
+
+          {totals && totals.daily.length > 0 && (
+            <section>
+              <Panel>
+                <SectionTitle>Daily tokens ({totals.days}d)</SectionTitle>
+                <div className="flex h-24 items-end gap-[2px]">
+                  {totals.daily.map((d) => {
+                    const max = Math.max(...totals.daily.map((x) => x.total_tokens), 1);
+                    const pct = Math.max(4, Math.round((d.total_tokens / max) * 100));
+                    return (
+                      <div
+                        key={d.day}
+                        className="group relative flex-1 rounded-t bg-deep-violet/70 transition-colors hover:bg-deep-violet"
+                        style={{ height: `${pct}%` }}
+                      >
+                        <span className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-admin-ctl bg-ink px-2 py-1 text-admin-micro font-bold text-white opacity-0 transition-opacity group-hover:opacity-100">
+                          {d.day}: {d.total_tokens.toLocaleString()} tok
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-[var(--ad-2xs)] text-admin-micro text-ink/45">
+                  {totals.daily.length} days. Hover a bar for exact figures.
+                </p>
+              </Panel>
+            </section>
+          )}
 
           <p className="text-admin-micro text-ink/45">
             Last Localith sync:{" "}
