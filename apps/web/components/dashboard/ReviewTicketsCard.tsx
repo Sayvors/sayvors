@@ -168,26 +168,32 @@ export default function ReviewTicketsCard() {
               {issues.map((issue) => {
                 const { needsAttention } = classifyDemand(issue);
                 return (
-                  <li key={issue.id} className="px-3 py-2.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-[11px] font-bold text-deep-violet">
-                        {ticketNo(issue)}
-                      </span>
-                      <span className="text-[11px] font-medium text-ink/60">
-                        {label(issue.subcategory)}
-                      </span>
-                      {needsAttention && (
-                        <span className="rounded-[2px] bg-coral/10 px-2 py-0.5 text-[10px] font-bold text-coral">
-                          needs attention
+                  <li key={issue.id}>
+                    <Link
+                      href="/dashboard/reviews/issues"
+                      aria-label={`Open review ticket queue for ${ticketNo(issue)}`}
+                      className="block px-3 py-2.5 outline-none transition hover:bg-ink/[0.03] focus-visible:bg-ink/[0.05]"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-[11px] font-bold text-deep-violet">
+                          {ticketNo(issue)}
                         </span>
-                      )}
-                      <span className="ml-auto text-[10px] font-medium uppercase tracking-wide text-ink/40">
-                        {label(issue.status)}
-                      </span>
-                    </div>
-                    <p className="mt-1 line-clamp-1 text-[12px] text-ink/70">
-                      {issue.summary || issue.review_text || "No summary yet."}
-                    </p>
+                        <span className="text-[11px] font-medium text-ink/60">
+                          {label(issue.subcategory)}
+                        </span>
+                        {needsAttention && (
+                          <span className="rounded-[2px] bg-coral/10 px-2 py-0.5 text-[10px] font-bold text-coral">
+                            needs attention
+                          </span>
+                        )}
+                        <span className="ml-auto text-[10px] font-medium uppercase tracking-wide text-ink/40">
+                          {label(issue.status)}
+                        </span>
+                      </div>
+                      <p className="mt-1 line-clamp-1 text-[12px] text-ink/70">
+                        {issue.summary || issue.review_text || "No summary yet."}
+                      </p>
+                    </Link>
                   </li>
                 );
               })}
