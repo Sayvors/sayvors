@@ -92,6 +92,35 @@ async def test_classify_review_uses_the_llm_result(monkeypatch):
     assert out.priority == "urgent"
 
 
+async def test_question_beats_praise_opener(monkeypatch):
+    """'Great service, what does premium cost?' is a question, not praise."""
+    from app.modules.review_engine import classifier
+
+    analysis = SimpleNamespace(
+        issue_type="pricing",
+        intent=["praise"],
+        customer_request="tell me about the premium deal",
+        sentiment="positive",
+        urgency="low",
+    )
+
+    async def fake_analyze(text, rating, reviewer_name, model, **kwargs):
+        return analysis, {"stub": True}
+
+    monkeypatch.setattr(classifier, "analyze_review", fake_analyze)
+    out = await classifier.classify_review(
+        "Great service, can you tell me about the premium deal?",
+        5,
+        "Sara Ali",
+        model="db:selected-model",
+    )
+
+    assert out.intent in {"ask_question", "information_request"}
+    assert out.sentiment == "positive"
+    assert out.priority == "low"
+    assert out.needs_attention is False
+
+
 def test_clamp_classification_uses_tenant_subcategories():
     raw = {
         "primary_category": "billing_payments",

@@ -32,19 +32,18 @@ def _map_intent(raw: list, customer_request: str | None, looks_question: bool) -
         return "request_refund"
     if any("complaint" in x for x in lowered):
         return "complaint"
-    if any(x in ("praise", "recommendation") for x in lowered):
-        return "praise"
-    if any("question" in x for x in lowered):
-        return "ask_question"
-    if any("suggestion" in x for x in lowered):
-        return "request_change"
-    if any("inquiry" in x or "question" in x for x in lowered):
-        return "information_request"
-    # any trailing request text -> information_request
+    # A concrete question outranks a praise opener. "Great service, what does
+    # premium cost?" is an information request, not a praise-only review.
+    if any(x in ("question", "inquiry") for x in lowered):
+        return "ask_question" if "question" in lowered else "information_request"
     if customer_request and customer_request.strip():
         return "information_request"
     if looks_question:
         return "ask_question"
+    if any(x in ("praise", "recommendation") for x in lowered):
+        return "praise"
+    if any("suggestion" in x for x in lowered):
+        return "request_change"
     # "question" is not in INTENTS; ask_question is the catch-all there.
     return "ask_question"
 
