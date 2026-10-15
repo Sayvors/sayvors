@@ -299,6 +299,42 @@ async def _enqueue_review_replied(channel: Channel, review, status: str) -> None
     )
 
 
+async def _announce_new_issue(
+    db: AsyncSession, *, tenant_id: str, outcome: dict
+) -> None:
+    """Tell the merchant a ticket just appeared, and ring the bell once.
+
+    Only ticketed issues are announced. A classified review with nothing to
+    act on (praise, a passing question) is still stored, but pinging about it
+    would train merchants to ignore ticket alerts — and the earlier decision
+    is explicit: praise never becomes a ticket.
+
+    Commits so the notification row survives: the poll loop's `continue`
+    paths below skip the reply work entirely, and without this commit the
+    insert would be rolled back with the session. Failures are swallowed —
+    an unannounced ticket is a missed alert, not a failed poll.
+    """
+    from .models import ReviewIssue
+    from .review_issue_events import notify_review_issue, publish_review_issue_event
+
+    issue_id = outcome.get("issue_id")
+    if not issue_id:
+        return
+    try:
+        issue = (
+            await db.execute(
+                select(ReviewIssue).where(ReviewIssue.id == issue_id)
+            )
+        ).scalar_one_or_none()
+        if issue is None or not issue.ticket_number:
+            return
+        await publish_review_issue_event(tenant_id, issue, "created")
+        await notify_review_issue(db, tenant_id=tenant_id, issue=issue, action="created")
+        await db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("review ticket announcement failed for %s: %s", issue_id, e)
+
+
 async def _refresh_edited_review_reply(
     db: AsyncSession, channel: Channel, config: AutoReplyConfig, review, client=None
 ) -> None:
@@ -564,6 +600,9 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                             review.review_id, outcome.get("ticket_number"),
                             outcome.get("handoff_eligible"),
                             outcome.get("handoff_code"),
+                        )
+                        await _announce_new_issue(
+                            db, tenant_id=channel.user_id, outcome=outcome,
                         )
             except Exception as e:
                 logger.warning("review issue classification failed for %s: %s", review.review_id, e)

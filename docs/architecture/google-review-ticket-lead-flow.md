@@ -239,7 +239,60 @@ They may be linked operationally when a complaint later becomes a purchase
 enquiry, but they are not merged: their owners, lifecycles, and identifiers are
 different.
 
-## 8. Safety and data boundaries
+## 8. Live ticket updates and notifications
+
+A ticket's life happens where nobody is watching: the poll loop classifies a
+review and opens a ticket, and the customer walks back in on WhatsApp minutes
+or hours later. Two channels, deliberately different.
+
+```mermaid
+flowchart LR
+    A[Ticket lifecycle change] --> B{publish_review_issue_event}
+
+    B -- every change --> C[Redis inbox channel]
+    C --> D[Open ticket queue refetches]
+    C --> E[Dashboard ticket card refetches]
+
+    B --> F{notify_review_issue}
+
+    F -- created --> G[Bell: new ticket]
+    F -- customer_returned --> H[Bell: customer came back]
+    F -- updated: status or attention moved --> I[Bell: ticket updated]
+    F -- updated: re-categorised --> J[Silent]
+    F -- owner changed own ticket --> K[Silent]
+    F -- tickets preference off --> L[Silent]
+    F -- handoff code minted --> M[Realtime only]
+```
+
+| Event | Realtime | Bell entry |
+| --- | --- | --- |
+| `created` — review needs attention, ticket opened | yes | yes |
+| `handoff_minted` — customer got a code to quote | yes | no |
+| `customer_returned` — customer messaged the code on WhatsApp | yes | yes |
+| `updated` — ticket edited | yes | only when status or `needs_attention` moved |
+| classified review with nothing to action (praise, question) | no | no |
+
+Rules the implementation holds to:
+
+- **Praise is never a ticket**, so it is never announced — otherwise merchants
+  learn to ignore ticket alerts.
+- **A handoff code is realtime-only.** It is minted seconds after the ticket is
+  created, so a second bell entry would be the same news twice.
+- **The owner never notifies themselves.** An employee editing a ticket does
+  alert the workspace; the owner who clicked the button does not.
+- **Events are published after the commit** (the customer-return path after the
+  flush the caller owns), so a queue never redraws from a rolled-back change.
+- **Publishes are best-effort.** Redis down costs a refresh; `notify()` writes
+  in a savepoint, so a failed bell entry cannot roll back a review pipeline or a
+  customer's reply.
+- **The browser refetches on the event** rather than rendering the event
+  payload — it carries the ticket's identity only, never the review text.
+- **Event bursts are coalesced** (400 ms): one new ticket arrives as `created`
+  plus `handoff_minted`, and a customer returning chains further updates.
+- **The bell's 45 s poll stays** as the fallback for a dropped socket; realtime
+  is the fast path, not the only path.
+
+## 9. Safety and data boundaries
 
 ```mermaid
 flowchart LR
@@ -260,3 +313,4 @@ flowchart LR
 - Handoff codes use a 30-character alphabet with no ambiguous `0/O` or `1/I`.
 - WhatsApp history is per conversation, never shared across customers.
 - Synthetic dashboard tests never publish to Google or send a WhatsApp message.
+- Ticket events and notifications are tenant-scoped, like the ticket itself.

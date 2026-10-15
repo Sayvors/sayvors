@@ -21,7 +21,7 @@ MAX_PER_SYNC = 20
 # JSON are dropped, junk values fall back to the default, and a NULL
 # column means every toggle is at its default (on). New toggles must land
 # here first — the API and the publishers read only what this returns.
-NOTIFICATION_DEFAULTS = {"messages": True, "leads": True}
+NOTIFICATION_DEFAULTS = {"messages": True, "leads": True, "tickets": True}
 
 
 def normalize_notification_settings(raw: dict | None) -> dict[str, bool]:

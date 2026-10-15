@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchReviewIssues,
   type ReviewIssue,
 } from "@/lib/api-review-issues";
+import { useInboxRealtime } from "@/lib/use-inbox-realtime";
 
 const STATUSES = ["new", "open", "in_progress", "resolved", "closed"] as const;
 const UNRESOLVED = new Set(["new", "open", "in_progress"]);
@@ -39,52 +40,70 @@ export default function ReviewTicketsCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const responses = await Promise.all(
-          STATUSES.map((status) =>
-            fetchReviewIssues({ status, ticketed: true, limit: 200 })
-          )
-        );
-        if (cancelled) return;
-        const byStatus = Object.fromEntries(
-          STATUSES.map((status, index) => [status, responses[index]])
-        ) as Record<string, { issues: ReviewIssue[]; total: number }>;
-        const unresolved = STATUSES.filter((status) => UNRESOLVED.has(status))
-          .map((status) => byStatus[status].total)
-          .reduce((sum, value) => sum + value, 0);
-        const resolved = (byStatus.resolved?.total ?? 0) + (byStatus.closed?.total ?? 0);
-        const waiting = STATUSES.filter((status) => UNRESOLVED.has(status))
-          .flatMap((status) => byStatus[status].issues)
-          .filter((issue) => issue.needs_attention).length;
-        const recent = STATUSES.filter((status) => UNRESOLVED.has(status))
-          .flatMap((status) => byStatus[status].issues)
-          .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-          .slice(0, 4);
-        if (cancelled) return;
-        setIssues(recent);
-        setCounts({
-          total: Object.values(byStatus).reduce((sum, value) => sum + value.total, 0),
-          unresolved,
-          waiting,
-          resolved,
-        });
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load review tickets.");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  // `silent` refreshes keep the card mounted: this sits on the dashboard
+  // next to the rest of the day's numbers, and a ticket opening must not
+  // make them flash placeholders. The request id guards against a slow
+  // first load landing after a newer realtime refresh and overwriting it.
+  const requestId = useRef(0);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const id = ++requestId.current;
+    if (!opts?.silent) setLoading(true);
+    setError(null);
+    try {
+      const responses = await Promise.all(
+        STATUSES.map((status) =>
+          fetchReviewIssues({ status, ticketed: true, limit: 200 })
+        )
+      );
+      if (id !== requestId.current) return;
+      const byStatus = Object.fromEntries(
+        STATUSES.map((status, index) => [status, responses[index]])
+      ) as Record<string, { issues: ReviewIssue[]; total: number }>;
+      const unresolved = STATUSES.filter((status) => UNRESOLVED.has(status))
+        .map((status) => byStatus[status].total)
+        .reduce((sum, value) => sum + value, 0);
+      const resolved = (byStatus.resolved?.total ?? 0) + (byStatus.closed?.total ?? 0);
+      const waiting = STATUSES.filter((status) => UNRESOLVED.has(status))
+        .flatMap((status) => byStatus[status].issues)
+        .filter((issue) => issue.needs_attention).length;
+      const recent = STATUSES.filter((status) => UNRESOLVED.has(status))
+        .flatMap((status) => byStatus[status].issues)
+        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+        .slice(0, 4);
+      setIssues(recent);
+      setCounts({
+        total: Object.values(byStatus).reduce((sum, value) => sum + value.total, 0),
+        unresolved,
+        waiting,
+        resolved,
+      });
+    } catch (e) {
+      if (id !== requestId.current) return;
+      setError(e instanceof Error ? e.message : "Could not load review tickets.");
+    } finally {
+      if (id === requestId.current && !opts?.silent) setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Counts a merchant acts on, refreshed the moment a ticket appears or
+  // moves. Coalesced because one new ticket arrives as several events.
+  const burst = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshQuietly = useCallback(() => {
+    if (burst.current) clearTimeout(burst.current);
+    burst.current = setTimeout(() => void load({ silent: true }), 400);
+  }, [load]);
+
+  useEffect(() => () => {
+    if (burst.current) clearTimeout(burst.current);
+  }, []);
+
+  useInboxRealtime(useCallback((e) => {
+    if (e.type === "review_issue") refreshQuietly();
+  }, [refreshQuietly]));
 
   const allClear = counts.unresolved === 0;
 

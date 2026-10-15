@@ -12,6 +12,7 @@ from ..review_engine.classification import (
 )
 from ..team.context import TenantContext, require_perm
 from .models import ReviewIssue
+from .review_issue_events import notify_review_issue, publish_review_issue_event
 
 router = APIRouter(prefix="/api/v1/reviews/issues", tags=["review-issues"])
 
@@ -194,6 +195,9 @@ async def update_review_issue(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Issue not found")
 
+    prev_status = row.status
+    prev_attention = bool(row.needs_attention)
+
     if body.status is not None:
         if body.status not in VALID_STATUSES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad status")
@@ -216,4 +220,18 @@ async def update_review_issue(
     db.add(row)
     await db.commit()
     await db.refresh(row)
+
+    # Post-commit: a queue must never redraw from a change the database
+    # rejected. Every edit is broadcast (the queue must stay honest), but
+    # only a status or attention flip earns a bell entry — re-categorising a
+    # ticket is bookkeeping, not news.
+    await publish_review_issue_event(ctx.tenant_id, row, "updated")
+    if row.status != prev_status or bool(row.needs_attention) != prev_attention:
+        await notify_review_issue(
+            db,
+            tenant_id=ctx.tenant_id,
+            issue=row,
+            action="updated",
+            actor_user_id=getattr(ctx.user, "id", None),
+        )
     return _to_out(row)

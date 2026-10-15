@@ -15,6 +15,9 @@ const TYPE_META: Record<string, { icon: string; tint: string; label: string }> =
   reply_posted: { icon: "✓", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", label: "Reply posted" },
   reply_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Reply failed" },
   review_edited: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300", label: "Review edited" },
+  review_ticket_created: { icon: "🎫", tint: "bg-coral/10 text-coral dark:text-coral", label: "New ticket" },
+  review_ticket_updated: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300", label: "Ticket updated" },
+  review_ticket_customer: { icon: "↩", tint: "bg-amber-500/10 text-amber-600 dark:text-amber-300", label: "Customer returned" },
   post_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300", label: "Post scheduled" },
   post_published: { icon: "📝", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", label: "Post published" },
   post_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400", label: "Post failed" },
@@ -65,6 +68,11 @@ const PREF_META = [
     label: "Qualified leads",
     hint: "Alert the team the moment the AI qualifies a lead.",
   },
+  {
+    key: "tickets",
+    label: "Review tickets",
+    hint: "Tell me when a Google review opens a ticket, a ticket moves, or the customer comes back on WhatsApp.",
+  },
 ] as const;
 type PrefKey = (typeof PREF_META)[number]["key"];
 
@@ -79,10 +87,15 @@ function NotificationPrefs() {
     let cancelled = false;
     apiFetch("/api/v1/notifications/settings").then(
       (r) => {
-        if (!cancelled) setPrefs({ messages: !!r?.messages, leads: !!r?.leads });
+        if (cancelled) return;
+        setPrefs({
+          messages: !!r?.messages,
+          leads: !!r?.leads,
+          tickets: !!r?.tickets,
+        });
       },
       () => {
-        if (!cancelled) setPrefs({ messages: true, leads: true });
+        if (!cancelled) setPrefs({ messages: true, leads: true, tickets: true });
       },
     );
     return () => {

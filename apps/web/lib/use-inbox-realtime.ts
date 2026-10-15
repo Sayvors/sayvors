@@ -18,6 +18,27 @@ export interface NotificationPayload {
   created_at?: string | null;
 }
 
+/** Ticket lifecycle changes. The payload identifies the row, not its
+ *  contents — subscribers refetch rather than render from it, so a stale
+ *  field can never render a wrong ticket. */
+export type ReviewIssueAction =
+  | "created"
+  | "updated"
+  | "customer_returned"
+  | "handoff_minted";
+
+export interface ReviewIssueEvent {
+  id?: string | null;
+  ticket_number?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  needs_attention?: boolean;
+  primary_category?: string | null;
+  subcategory?: string | null;
+  rating?: number | null;
+  has_handoff_code?: boolean;
+}
+
 export interface InboxRealtimeEvent {
   type:
     | "message"
@@ -26,6 +47,7 @@ export interface InboxRealtimeEvent {
     | "comment_updated"
     | "comment_deleted"
     | "notification"
+    | "review_issue"
     | "typing"
     | "ping";
   notification?: NotificationPayload;
@@ -51,6 +73,9 @@ export interface InboxRealtimeEvent {
   author_id?: string | null;
   author_name?: string | null;
   hidden?: boolean;
+  /* review ticket lifecycle: one ticket changed, refetch to see it */
+  action?: ReviewIssueAction;
+  issue?: ReviewIssueEvent;
 }
 
 /** Subscribe to live inbox events; auto-reconnects with backoff. */

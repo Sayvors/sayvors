@@ -1067,3 +1067,229 @@ async def test_generate_auto_reply_honors_the_toggle(db, user_id, monkeypatch):
     )
     assert out == "Sorry about the cold food."
     assert "wa.me/" not in out
+
+
+# --- ticket realtime + notifications ---------------------------------------
+
+
+def _capture_events(monkeypatch):
+    """Record every review_issue publish instead of hitting Redis.
+
+    Patched on the events module (the lazy callers) *and* on the router
+    (which binds it at import), so one capture covers every publisher.
+    """
+    import app.modules.channels.review_issue_events as ev
+    import app.modules.channels.review_issues as ri
+
+    seen: list[tuple[str, str, str]] = []
+
+    async def fake_publish(tenant_id, issue, action):
+        seen.append((tenant_id, getattr(issue, "id", None), action))
+
+    monkeypatch.setattr(ev, "publish_review_issue_event", fake_publish)
+    if hasattr(ri, "publish_review_issue_event"):
+        monkeypatch.setattr(ri, "publish_review_issue_event", fake_publish)
+    return seen
+
+
+def _capture_notifications(monkeypatch):
+    import app.modules.channels.review_issue_events as ev
+    import app.modules.channels.review_issues as ri
+
+    seen: list[tuple[str, str, str | None]] = []
+
+    async def fake_notify(db_, *, tenant_id, issue, action, actor_user_id=None):
+        seen.append((tenant_id, action, actor_user_id))
+        return "nid"
+
+    monkeypatch.setattr(ev, "notify_review_issue", fake_notify)
+    if hasattr(ri, "notify_review_issue"):
+        monkeypatch.setattr(ri, "notify_review_issue", fake_notify)
+    return seen
+
+
+async def _user(db, uid, prefs=None):
+    """A real users row — notification prefs are read off it, so the notify
+    path needs one to exist (the API's own auth fixture does not write one)."""
+    from app.modules.users.models import User
+
+    db.add(User(
+        id=uid, email=f"{uid}@sayvors.test", password_hash="x",
+        first_name="Test", last_name="Owner", notification_settings=prefs,
+    ))
+    await db.commit()
+
+
+async def test_handoff_mint_publishes_one_event(db, channel_id, user_id, monkeypatch):
+    """The queue must show the code the instant it exists."""
+    seen = _capture_events(monkeypatch)
+    issue = await _issue(db, channel_id, user_id, "rid-mint")
+
+    await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    assert seen == [(user_id, issue.id, "handoff_minted")]
+
+    # Idempotent re-read: the code already exists, so nothing new happened.
+    seen.clear()
+    await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    assert seen == []
+
+
+async def test_praise_mint_stays_silent(db, channel_id, user_id, monkeypatch):
+    seen = _capture_events(monkeypatch)
+    issue = await _issue(db, channel_id, user_id, "rid-praise",
+                         intent="praise", sentiment="positive", priority="low",
+                         needs_attention=False)
+    assert await ensure_handoff_code(db, tenant_id=user_id, issue=issue) is None
+    assert seen == []
+
+
+async def test_customer_returning_announces_the_ticket(
+    db, channel_id, user_id, monkeypatch
+):
+    """The one event a merchant cannot get from polling: the customer came back."""
+    events = _capture_events(monkeypatch)
+    notices = _capture_notifications(monkeypatch)
+    issue = await _issue(db, channel_id, user_id, "rid-return")
+
+    await resolve_and_advance(db, tenant_id=user_id, channel_id=channel_id,
+                              text="any update on TK-000001?")
+    assert events == [(user_id, issue.id, "customer_returned")]
+    assert notices == [(user_id, "customer_returned", None)]
+
+    # Already open: the customer is back again, but nothing moved.
+    events.clear()
+    notices.clear()
+    await resolve_and_advance(db, tenant_id=user_id, channel_id=channel_id,
+                              text="still waiting on TK-000001")
+    assert events == [] and notices == []
+
+
+async def test_no_announcement_without_a_match(db, channel_id, user_id, monkeypatch):
+    events = _capture_events(monkeypatch)
+    await _issue(db, channel_id, user_id, "rid-quiet")
+    assert await resolve_and_advance(
+        db, tenant_id=user_id, channel_id=channel_id, text="hello there"
+    ) is None
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_patch_emits_update_and_notifies(
+    client, db, channel_id, user_id, monkeypatch
+):
+    events = _capture_events(monkeypatch)
+    notices = _capture_notifications(monkeypatch)
+    issue = await _issue(db, channel_id, user_id, "rid-patch")
+
+    r = client.patch(f"/api/v1/reviews/issues/{issue.id}", json={"status": "resolved"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "resolved"
+    assert events == [(user_id, issue.id, "updated")]
+    assert notices == [(user_id, "updated", user_id)]
+
+
+@pytest.mark.asyncio
+async def test_patch_of_a_cosmetic_field_stays_quiet(
+    client, db, channel_id, user_id, monkeypatch
+):
+    """Re-categorising a ticket is not news; it must not ping the bell."""
+    events = _capture_events(monkeypatch)
+    notices = _capture_notifications(monkeypatch)
+    issue = await _issue(db, channel_id, user_id, "rid-cosmetic")
+
+    r = client.patch(
+        f"/api/v1/reviews/issues/{issue.id}", json={"subcategory": "cleanliness"}
+    )
+    assert r.status_code == 200
+    assert events == [(user_id, issue.id, "updated")]
+    assert notices == []
+
+
+async def test_notify_writes_one_row_and_announces_it(db, channel_id, user_id, monkeypatch):
+    import app.modules.channels.realtime as realtime
+    import app.modules.channels.review_issue_events as ev
+    from app.modules.notifications.models import Notification
+
+    published = []
+
+    async def fake_publish(tenant_id, event):
+        published.append((tenant_id, event))
+
+    monkeypatch.setattr(realtime, "publish_inbox_event", fake_publish)
+    await _user(db, user_id)
+    issue = await _issue(db, channel_id, user_id, "rid-notify")
+
+    nid = await ev.notify_review_issue(
+        db, tenant_id=user_id, issue=issue, action=ev.CREATED
+    )
+    await db.commit()
+    assert nid is not None
+
+    row = (await db.execute(
+        sa_select(Notification).where(Notification.id == nid)
+    )).scalar_one()
+    assert row.user_id == user_id
+    assert row.type == "review_ticket_created"
+    assert "TK-000001" in row.title
+    assert row.href == "/dashboard/reviews/issues"
+    assert published and published[0][1]["notification"]["kind"] == "review_ticket"
+
+
+async def test_notify_skips_the_owner_who_clicked(db, channel_id, user_id, monkeypatch):
+    import app.modules.channels.review_issue_events as ev
+
+    published = []
+
+    async def fake_publish(tenant_id, event):
+        published.append(event)
+
+    monkeypatch.setattr("app.modules.channels.realtime.publish_inbox_event", fake_publish)
+    issue = await _issue(db, channel_id, user_id, "rid-owner")
+
+    assert await ev.notify_review_issue(
+        db, tenant_id=user_id, issue=issue, action=ev.UPDATED,
+        actor_user_id=user_id,
+    ) is None
+    assert published == []
+
+
+async def test_notify_honours_the_tickets_preference(
+    db, channel_id, user_id, monkeypatch
+):
+    published = []
+
+    async def fake_publish(tenant_id, event):
+        published.append(event)
+
+    monkeypatch.setattr("app.modules.channels.realtime.publish_inbox_event", fake_publish)
+    await _user(db, user_id, prefs={"tickets": False})
+    issue = await _issue(db, channel_id, user_id, "rid-pref")
+
+    import app.modules.channels.review_issue_events as ev
+
+    assert await ev.notify_review_issue(
+        db, tenant_id=user_id, issue=issue, action=ev.CREATED
+    ) is None
+    assert published == []
+
+
+async def test_minted_code_is_never_a_bell_entry(db, channel_id, user_id):
+    """Realtime only: the code arrives seconds after the ticket exists."""
+    import app.modules.channels.review_issue_events as ev
+
+    issue = await _issue(db, channel_id, user_id, "rid-quiet-notify")
+    assert await ev.notify_review_issue(
+        db, tenant_id=user_id, issue=issue, action=ev.HANDOFF_MINTED
+    ) is None
+
+
+async def test_ticket_notifications_default_on_and_are_whitelisted():
+    from app.modules.notifications.service import (
+        NOTIFICATION_DEFAULTS,
+        normalize_notification_settings,
+    )
+
+    assert NOTIFICATION_DEFAULTS["tickets"] is True
+    assert normalize_notification_settings(None)["tickets"] is True
+    assert normalize_notification_settings({"tickets": False})["tickets"] is False
+    assert normalize_notification_settings({"nonsense": True})["tickets"] is True

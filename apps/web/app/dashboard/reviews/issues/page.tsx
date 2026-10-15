@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LogoLoader from "@/components/LogoLoader";
 import { fetchMetaAssets } from "@/lib/api-meta";
 import {
@@ -10,6 +10,7 @@ import {
   waMeLink,
   type ReviewIssue,
 } from "@/lib/api-review-issues";
+import { useInboxRealtime } from "@/lib/use-inbox-realtime";
 
 /**
  * Review tickets — one row per classified Google review that opened a ticket.
@@ -51,8 +52,10 @@ export default function ReviewTicketsPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [waPhone, setWaPhone] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // `silent` keeps the list mounted during a realtime refresh: a ticket
+  // appearing must not blank the page the merchant is reading.
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       // 200 is the API ceiling; like the admin queue, slice in memory.
@@ -62,13 +65,33 @@ export default function ReviewTicketsPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load review tickets.");
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Live tickets. One poll loop classified a review and opened a ticket while
+  // nobody was on this page — a customer complaining, then walking in on
+  // WhatsApp — so the queue refetches itself on every lifecycle change.
+  // Coalesced: a new ticket arrives as `created` plus `handoff_minted`, and
+  // a customer returning can chain further updates; without the window that
+  // is several redundant fetches for one row.
+  const burst = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshQuietly = useCallback(() => {
+    if (burst.current) clearTimeout(burst.current);
+    burst.current = setTimeout(() => void load({ silent: true }), 400);
+  }, [load]);
+
+  useEffect(() => () => {
+    if (burst.current) clearTimeout(burst.current);
+  }, []);
+
+  useInboxRealtime(useCallback((e) => {
+    if (e.type === "review_issue") refreshQuietly();
+  }, [refreshQuietly]));
 
   // The connected WhatsApp business number turns a code into a tappable
   // link. Absent (never connected) the drawer falls back to the bare code.

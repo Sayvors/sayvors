@@ -205,18 +205,19 @@ async def test_category_summary_counts(db, user_id):
 
 def test_normalize_notification_settings():
     norm = notif_service.normalize_notification_settings
+    all_on = {"messages": True, "leads": True, "tickets": True}
     # NULL column = every toggle on.
-    assert norm(None) == {"messages": True, "leads": True}
+    assert norm(None) == all_on
     # Non-dict junk degrades to defaults.
-    assert norm("junk") == {"messages": True, "leads": True}
+    assert norm("junk") == all_on
     # Whitelist: unknown keys dropped, values bool-coerced.
     assert norm({"messages": False, "bogus": False}) == {
-        "messages": False, "leads": True,
+        "messages": False, "leads": True, "tickets": True,
     }
     assert norm({"messages": "", "leads": 0}) == {
-        "messages": False, "leads": False,
+        "messages": False, "leads": False, "tickets": True,
     }
-    assert norm({"messages": "yes"}) == {"messages": True, "leads": True}
+    assert norm({"messages": "yes"}) == all_on
 
 
 @pytest.mark.asyncio
@@ -224,7 +225,7 @@ async def test_settings_defaults_without_stored_row(db, user_id):
     out = await notif_router.get_notification_settings(
         user=_user(user_id), db=db,
     )
-    assert (out.messages, out.leads) == (True, True)
+    assert (out.messages, out.leads, out.tickets) == (True, True, True)
 
 
 @pytest.mark.asyncio
@@ -237,28 +238,30 @@ async def test_settings_patch_roundtrip(db, user_id):
         payload=notif_router.NotificationSettingsIn(messages=False),
         user=user, db=db,
     )
-    assert (out.messages, out.leads) == (False, True)
+    assert (out.messages, out.leads, out.tickets) == (False, True, True)
 
     # PATCH persisted — a fresh read sees it, and the stored JSON is
     # the normalized whitelist, not the raw payload.
     stored = await db.get(User, user_id)
     assert notif_service.normalize_notification_settings(
         stored.notification_settings
-    ) == {"messages": False, "leads": True}
+    ) == {"messages": False, "leads": True, "tickets": True}
 
     # Partial PATCH leaves the other toggle untouched.
     out = await notif_router.update_notification_settings(
         payload=notif_router.NotificationSettingsIn(leads=False),
         user=user, db=db,
     )
-    assert (out.messages, out.leads) == (False, False)
+    assert (out.messages, out.leads, out.tickets) == (False, False, True)
 
     # Flip back on.
     out = await notif_router.update_notification_settings(
-        payload=notif_router.NotificationSettingsIn(messages=True, leads=True),
+        payload=notif_router.NotificationSettingsIn(
+            messages=True, leads=True, tickets=True,
+        ),
         user=user, db=db,
     )
-    assert (out.messages, out.leads) == (True, True)
+    assert (out.messages, out.leads, out.tickets) == (True, True, True)
 
 
 @pytest.mark.asyncio

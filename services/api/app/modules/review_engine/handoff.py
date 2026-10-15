@@ -205,6 +205,34 @@ def _random_code() -> str:
     return "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
 
 
+async def _announce(issue, tenant_id: str, action: str) -> None:
+    """Push one ticket lifecycle change to the merchant's open queue.
+
+    Best-effort by construction: review_engine must not depend on the
+    channels layer, so this imports lazily, and a failure here is a lost
+    realtime event (the queue refetches) rather than a failed mint or a
+    failed reply. Import guarded for the same reason.
+    """
+    try:
+        from ..channels.review_issue_events import publish_review_issue_event
+
+        await publish_review_issue_event(tenant_id, issue, action)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("review issue %s announce skipped: %s", action, e)
+
+
+async def _notify_return(db: AsyncSession, *, tenant_id: str, issue) -> None:
+    """Bell entry for "your customer came back". See _announce for the guards."""
+    try:
+        from ..channels.review_issue_events import notify_review_issue
+
+        await notify_review_issue(
+            db, tenant_id=tenant_id, issue=issue, action="customer_returned"
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("customer-returned notification skipped: %s", e)
+
+
 async def ensure_handoff_code(
     db: AsyncSession, *, tenant_id: str, issue
 ) -> str | None:
@@ -232,6 +260,10 @@ async def ensure_handoff_code(
             db.add(issue)
             await db.commit()
             await db.refresh(issue)
+            # Post-commit on purpose: the queue must never show a code the
+            # database does not have. Realtime only — the ticket's own bell
+            # entry already told the merchant it exists.
+            await _announce(issue, tenant_id, "handoff_minted")
             return code
         except IntegrityError:
             # The unique index is the arbiter: a concurrent mint won this race.
@@ -362,4 +394,11 @@ async def resolve_and_advance(
         issue.status = "open"
         db.add(issue)
         await db.flush()
+        # The merchant cannot poll their way to this: the customer walking
+        # back in is the signal, and it happens in a WhatsApp thread nobody
+        # has open. Announced after the flush because that is the only point
+        # the change is known to be real — if the caller unwinds its savepoint
+        # the queue simply refetches and sees the old status.
+        await _announce(issue, tenant_id, "customer_returned")
+        await _notify_return(db, tenant_id=tenant_id, issue=issue)
     return match
