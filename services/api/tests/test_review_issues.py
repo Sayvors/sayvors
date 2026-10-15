@@ -477,6 +477,27 @@ async def _issue(db, channel_id, tenant, rid="r", **over):
                                classification=_cls(**over))
 
 
+@pytest.mark.asyncio
+async def test_issue_list_defaults_to_ticketed_only(
+    client, db, channel_id, user_id
+):
+    """Old clients that omit ?ticketed must not resurrect praise rows."""
+    await _issue(db, channel_id, user_id, "ticket-1")
+    await _issue(
+        db, channel_id, user_id, "praise-1",
+        intent="praise", sentiment="positive", priority="low",
+        needs_attention=False,
+    )
+
+    ticketed = client.get("/api/v1/reviews/issues").json()
+    assert [i["review_id"] for i in ticketed["issues"]] == ["ticket-1"]
+
+    unticketed = client.get(
+        "/api/v1/reviews/issues", params={"ticketed": "false"}
+    ).json()
+    assert [i["review_id"] for i in unticketed["issues"]] == ["praise-1"]
+
+
 async def test_mint_is_idempotent(db, channel_id, user_id):
     """A customer who saved yesterday's code must not find it dead today."""
     from app.modules.review_engine.handoff import ensure_handoff_code

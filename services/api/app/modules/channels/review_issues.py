@@ -79,7 +79,7 @@ async def list_review_issues(
     status_filter: str | None = Query(None, alias="status"),
     priority_filter: str | None = Query(None, alias="priority"),
     channel_id: str | None = Query(None, alias="channel_id"),
-    ticketed: bool | None = Query(None),
+    ticketed: bool = Query(True),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     ctx: TenantContext = Depends(require_perm("channels.view")),
