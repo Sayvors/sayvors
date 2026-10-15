@@ -22,6 +22,90 @@ logger = logging.getLogger(__name__)
 # the review language (Arabic review → Arabic reply).
 _ARABIC_SCRIPT = re.compile(r"[؀-ۿ]")
 
+# The one line added to needs-attention replies: an invitation to continue
+# privately, with the wa.me deep link that prefills the handoff code. Both
+# stay inside the validator's bans by construction — no em dash (strip_em_dashes
+# would mangle it), no promo vocabulary ("code", "offer", "discount" never
+# appear).
+_HANDOFF_LINE_EN = "To sort this out quickly, message us on WhatsApp:"
+_HANDOFF_LINE_AR = "لحل الأمر سريعاً، راسلنا على واتساب:"
+
+# Google caps the public review reply at 4000 characters. Engine replies
+# target <=90 words, so this is belt-and-braces — but the guard is one
+# comparison and the API error otherwise costs a "failed" row.
+_REPLY_MAX_CHARS = 4000
+
+
+async def _append_handoff_link(
+    text: str,
+    db: AsyncSession,
+    channel,
+    review_id: str | None,
+    review_text: str | None,
+    config=None,
+) -> str:
+    """Offer a private WhatsApp continuation on needs-attention reviews.
+
+    The link prefills the handoff code, so the customer taps, hits send, and
+    the WhatsApp assistant already holds the ticket (consumer.py resolves it
+    and injects the classification into the reply prompt).
+
+    Read-only by design: it USES a code the classification pipeline minted and
+    never commits. A commit here would expire the caller's ORM objects
+    mid-flow — the exact MissingGreenlet hazard scheduling.take_lock documents
+    (the poll loop touches `failed_row` immediately after this returns). An
+    issue without a code (praise, or classification not finished yet) simply
+    gets no link; the next regeneration picks it up.
+
+    Any failure degrades to the un-appended reply: a missing link must never
+    cost the merchant their reply.
+    """
+    if not text or not review_id or "wa.me/" in text:
+        return text
+    # Tenant opt-out (auto_reply_configs.handoff_link_enabled, default ON):
+    # the link publishes the WhatsApp number on a public listing, so the
+    # tenant gets the final say. getattr-default keeps direct callers and
+    # pre-migration objects on the enabled default.
+    if config is not None and not getattr(config, "handoff_link_enabled", True):
+        return text
+    try:
+        from sqlalchemy import select
+
+        from ..review_engine.handoff import tenant_whatsapp_number, wa_me_link
+        from .models import ReviewIssue
+
+        code = (await db.execute(
+            select(ReviewIssue.handoff_code)
+            .where(
+                ReviewIssue.channel_id == getattr(channel, "id", None),
+                ReviewIssue.review_id == review_id,
+                ReviewIssue.needs_attention.is_(True),
+                ReviewIssue.handoff_code.isnot(None),
+            )
+            .order_by(ReviewIssue.created_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if not code:
+            return text
+        number = await tenant_whatsapp_number(
+            db, tenant_id=getattr(channel, "user_id", None)
+        )
+        link = wa_me_link(number or "", code)
+        if not link:
+            return text
+        line = (
+            _HANDOFF_LINE_AR
+            if review_text and _ARABIC_SCRIPT.search(review_text)
+            else _HANDOFF_LINE_EN
+        )
+        addition = f"{line} {link}"
+        if len(text) + len(addition) + 1 > _REPLY_MAX_CHARS:
+            return text
+        return f"{text}\n{addition}"
+    except Exception as e:
+        logger.warning("handoff link append failed for %s: %s", review_id, e)
+        return text
+
 
 def _mock_reply(rating: int, review_text: str | None,
                 reviewer_name: str | None) -> str:
@@ -126,4 +210,4 @@ async def generate_auto_reply(
     cleaned = strip_em_dashes(text)
     if cleaned != text:
         logger.warning("Stripped em dash(es) from engine reply")
-    return cleaned
+    return await _append_handoff_link(cleaned, db, channel, review_id, review_text, config=config)

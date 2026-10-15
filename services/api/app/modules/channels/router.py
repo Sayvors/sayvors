@@ -1041,6 +1041,7 @@ def _config_response(config: AutoReplyConfig) -> AutoReplyConfigResponse:
         if config.promo_only_relevant is not None else True,
         promo_max_ctas=config.promo_max_ctas
         if config.promo_max_ctas is not None else 1,
+        handoff_link_enabled=bool(getattr(config, "handoff_link_enabled", True)),
     )
 
 
@@ -1133,6 +1134,8 @@ async def update_autoreply_config(
         config.promo_only_relevant = body.promo_only_relevant
     if body.promo_max_ctas is not None:
         config.promo_max_ctas = body.promo_max_ctas
+    if body.handoff_link_enabled is not None:
+        config.handoff_link_enabled = body.handoff_link_enabled
 
     await db.commit()
     await db.refresh(config)

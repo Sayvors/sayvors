@@ -470,6 +470,15 @@ class AutoReplyConfig(Base):
     promo_links: Mapped[bool] = mapped_column(Boolean, default=False)
     promo_only_relevant: Mapped[bool] = mapped_column(Boolean, default=True)
     promo_max_ctas: Mapped[int] = mapped_column(Integer, default=1)
+    # Offer needs-attention reviewers a wa.me deep link (prefilled with the
+    # issue's handoff code) in the public reply, so the WhatsApp assistant
+    # greets them with the ticket already known. The link publishes the
+    # tenant's WhatsApp number on the listing, so this is opt-out — default ON
+    # because the recovery loop is the point, OFF for tenants who must not
+    # publish the line.
+    handoff_link_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
     # Polling lease (atomic claim across worker instances)
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     polling_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -24,6 +24,7 @@ interface ChannelCfg {
   promo_links: boolean;
   promo_only_relevant: boolean;
   promo_max_ctas: number;
+  handoff_link_enabled: boolean;
 }
 
 interface GoogleChannel {
@@ -265,6 +266,7 @@ export default function SettingsPage() {
   const [dialect, setDialect] = useState("auto");
   const [promoProducts, setPromoProducts] = useState(false);
   const [promoLinks, setPromoLinks] = useState(false);
+  const [handoffLink, setHandoffLink] = useState(true);
   const [promoRelevant, setPromoRelevant] = useState(true);
   const [promoMax, setPromoMax] = useState(1);
   const [editedAutopost, setEditedAutopost] = useState(false);
@@ -398,6 +400,7 @@ export default function SettingsPage() {
       setPromoRelevant(cfg.promo_only_relevant ?? true);
       setPromoMax(Number.isFinite(cfg.promo_max_ctas) ? cfg.promo_max_ctas : 1);
       setEditedAutopost(!!cfg.edited_review_autopost);
+      setHandoffLink(cfg.handoff_link_enabled ?? true);
     } else if (isBulk) {
       setTone("friendly");
       setReplyLang("match");
@@ -407,6 +410,7 @@ export default function SettingsPage() {
       setPromoRelevant(true);
       setPromoMax(1);
       setEditedAutopost(false);
+      setHandoffLink(true);
     }
   }
 
@@ -424,6 +428,7 @@ export default function SettingsPage() {
     if (differs((id) => configs[id]?.dialect ?? "auto")) set.add("dialect");
     if (differs((id) => !!configs[id]?.promo_product_mentions)) set.add("promoProducts");
     if (differs((id) => !!configs[id]?.promo_links)) set.add("promoLinks");
+    if (differs((id) => configs[id]?.handoff_link_enabled ?? true)) set.add("handoffLink");
     if (differs((id) => configs[id]?.promo_only_relevant ?? true)) set.add("promoRelevant");
     if (differs((id) => configs[id]?.promo_max_ctas ?? 1)) set.add("promoMax");
     if (differs((id) => !!configs[id]?.edited_review_autopost)) set.add("editedAutopost");
@@ -1135,11 +1140,57 @@ export default function SettingsPage() {
                 </button>
               </Section>
 
+              <Section
+                eyebrow="Review replies"
+                title="WhatsApp recovery link"
+                subtitle="When a review needs attention, the public reply offers the customer a WhatsApp link with their ticket code prefilled — the assistant already knows the issue when they message. Note: the link makes your WhatsApp number publicly visible on Google."
+              >
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={handoffLink}
+                    onChange={(e) => setHandoffLink(e.target.checked)}
+                    disabled={busy !== null}
+                    className="mt-0.5 h-4 w-4 rounded text-deep-violet focus:ring-deep-violet/40"
+                  />
+                  <span>
+                    <span className="block text-[13px] font-semibold text-ink dark:text-fog">
+                      Offer reviewers the WhatsApp link
+                      {bulk?.varies.has("handoffLink") ? <VariesBadge /> : null}
+                    </span>
+                    <span className="block text-[11px] text-ink/45 dark:text-fog/45">
+                      Only on reviews that need attention — never on praise. Off keeps your number off the listing entirely.
+                    </span>
+                  </span>
+                </label>
+                <button
+                  onClick={() => {
+                    const patch = { handoff_link_enabled: handoffLink };
+                    if (!isBulk) {
+                      void saveCfg(patch, "WhatsApp link preference saved.", "handoffLink");
+                      return;
+                    }
+                    requestBulkSave(
+                      "Apply WhatsApp link preference to all branches?",
+                      [`Recovery link → ${handoffLink ? "offered" : "hidden"}`],
+                      () => runBulkCfg("WhatsApp link", patch),
+                      "handoffLink",
+                      (ids) => runBulkCfg("WhatsApp link", patch, ids),
+                    );
+                  }}
+                  disabled={busy !== null}
+                  className="rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                >
+                  {busy === "handoffLink" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save"}
+                </button>
+              </Section>
+
               <p className="rounded-[2px] border border-ink/[0.06] bg-white/60 px-4 py-3 text-[12px] text-ink/55 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/55">
                 Replies in: <strong>{langName}</strong>
                 {langName !== "English" && <> ({dialectName(dialect)})</>} · Tone: <strong className="capitalize">{tone}</strong> · Country:{" "}
                 <strong>{countryName}</strong> · Promo:{" "}
                 <strong>{promoProducts || promoLinks ? `on (max ${promoMax} CTA${promoMax === 1 ? "" : "s"})` : "off"}</strong>
+                {" "}· WhatsApp link: <strong>{handoffLink ? "on" : "off"}</strong>
               </p>
             </>
           ) : (

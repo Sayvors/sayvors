@@ -606,3 +606,262 @@ async def test_advance_runs_inside_a_savepoint(db, channel_id, user_id):
     assert (await db.execute(
         sa_select(Channel).where(Channel.id == channel_id)
     )).scalar_one().id == channel_id
+
+# --- the outbound half: the tenant's wa.me number --------------------------
+
+
+async def _wa_asset(db, tenant, *, phone="+1555 625 9436", active=True,
+                    provider="whatsapp", asset_type="phone_number", ext="pn-1"):
+    from app.modules.channels.meta.models import MetaAsset, MetaConnection
+
+    conn = MetaConnection(
+        id=f"conn-{provider}-{ext}", tenant_id=tenant, provider=provider,
+        access_token_encrypted="x", status="active",
+    )
+    db.add(conn)
+    db.add(MetaAsset(
+        id=f"asset-{provider}-{ext}", tenant_id=tenant, connection_id=conn.id,
+        provider=provider, asset_type=asset_type,
+        external_asset_id=ext, name="Business", phone=phone, active=active,
+    ))
+    await db.commit()
+
+
+async def test_tenant_whatsapp_number_digits_only(db, user_id):
+    """+ and spaces are storage artifacts; wa.me wants bare digits."""
+    from app.modules.review_engine.handoff import tenant_whatsapp_number
+
+    await _wa_asset(db, user_id)
+    assert await tenant_whatsapp_number(db, tenant_id=user_id) == "15556259436"
+
+
+async def test_tenant_whatsapp_number_none_without_whatsapp(db, user_id):
+    from app.modules.review_engine.handoff import tenant_whatsapp_number
+
+    assert await tenant_whatsapp_number(db, tenant_id=user_id) is None
+
+
+async def test_tenant_whatsapp_number_skips_deselected_asset(db, user_id):
+    """active=False is the deselect contract; a deselected number is not ours to publish."""
+    from app.modules.review_engine.handoff import tenant_whatsapp_number
+
+    await _wa_asset(db, user_id, active=False)
+    assert await tenant_whatsapp_number(db, tenant_id=user_id) is None
+
+
+async def test_tenant_whatsapp_number_ignores_other_providers(db, user_id):
+    """A Facebook Page asset is not a WhatsApp line, whatever it stores."""
+    from app.modules.review_engine.handoff import tenant_whatsapp_number
+
+    await _wa_asset(db, user_id, provider="facebook", asset_type="page", ext="pg-1")
+    assert await tenant_whatsapp_number(db, tenant_id=user_id) is None
+
+
+async def test_tenant_whatsapp_number_none_when_phone_missing(db, user_id):
+    from app.modules.review_engine.handoff import tenant_whatsapp_number
+
+    await _wa_asset(db, user_id, phone=None)
+    assert await tenant_whatsapp_number(db, tenant_id=user_id) is None
+
+
+async def test_tenant_whatsapp_number_is_tenant_scoped(db, user_id):
+    """Another tenant's number must never leak into this tenant's reply."""
+    from app.modules.review_engine.handoff import tenant_whatsapp_number
+
+    other = "test-user-0000-0000-0000-000000000010"
+    await _wa_asset(db, other)
+    assert await tenant_whatsapp_number(db, tenant_id=user_id) is None
+    assert await tenant_whatsapp_number(db, tenant_id=other) == "15556259436"
+
+
+# --- the outbound half: the link itself ------------------------------------
+
+
+def test_wa_me_link_shape():
+    from app.modules.review_engine.handoff import wa_me_link
+
+    assert wa_me_link("+1555 625 9436", "K7M2QX") == "https://wa.me/15556259436?text=K7M2QX"
+    assert wa_me_link("junk", "K7M2QX") == ""
+
+
+async def _linked_reply(db, channel_id, user_id):
+    """Mint a code for issue 'r' and connect a WhatsApp number; return (code, ch)."""
+    from types import SimpleNamespace
+
+    from app.modules.review_engine.handoff import ensure_handoff_code
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    await _wa_asset(db, user_id)
+    return code, SimpleNamespace(id=channel_id, user_id=user_id)
+
+
+async def test_append_adds_link_for_needs_attention(db, channel_id, user_id):
+    from app.modules.channels.review_reply import _append_handoff_link
+
+    code, ch = await _linked_reply(db, channel_id, user_id)
+    out = await _append_handoff_link(
+        "We are sorry about the cold food.", db, ch, "r", "The food was cold"
+    )
+    assert "wa.me/15556259436" in out
+    assert f"text={code}" in out
+    # The base reply survives untouched, on its own line.
+    assert out.startswith("We are sorry about the cold food.\n")
+
+
+async def test_append_skips_praise(db, channel_id, user_id):
+    """Praise has no code, so nothing to hand off."""
+    from types import SimpleNamespace
+
+    from app.modules.channels.review_reply import _append_handoff_link
+
+    await _issue(db, channel_id, user_id, "p", intent="praise",
+                 sentiment="positive", priority="low", needs_attention=False)
+    ch = SimpleNamespace(id=channel_id, user_id=user_id)
+    text = "Thank you so much!"
+    assert await _append_handoff_link(text, db, ch, "p", "Loved it") == text
+
+
+async def test_append_skips_without_whatsapp_number(db, channel_id, user_id):
+    from types import SimpleNamespace
+
+    from app.modules.review_engine.handoff import ensure_handoff_code
+    from app.modules.channels.review_reply import _append_handoff_link
+
+    issue = await _issue(db, channel_id, user_id)
+    await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    ch = SimpleNamespace(id=channel_id, user_id=user_id)
+    text = "We are on it."
+    assert await _append_handoff_link(text, db, ch, "r", "cold food") == text
+
+
+async def test_append_is_idempotent(db, channel_id, user_id):
+    """A reply that already carries a link must never grow a second one."""
+    from app.modules.channels.review_reply import _append_handoff_link
+
+    _, ch = await _linked_reply(db, channel_id, user_id)
+    once = await _append_handoff_link(
+        "We are sorry.", db, ch, "r", "The food was cold"
+    )
+    again = await _append_handoff_link(once, db, ch, "r", "The food was cold")
+    assert again == once
+
+
+async def test_append_speaks_the_review_language(db, channel_id, user_id):
+    from app.modules.channels.review_reply import _append_handoff_link
+
+    _, ch = await _linked_reply(db, channel_id, user_id)
+    out = await _append_handoff_link(
+        "نعتذر عن تجربتك.", db, ch, "r", "الطعام كان بارداً"
+    )
+    assert "واتساب" in out
+    assert "wa.me/15556259436" in out
+
+
+async def test_append_degrades_on_failure(db, channel_id, user_id):
+    """A lookup failure must never cost the merchant their reply."""
+    from types import SimpleNamespace
+
+    from app.modules.channels.review_reply import _append_handoff_link
+
+    ch = SimpleNamespace(id=channel_id, user_id=user_id)
+    text = "We are on it."
+    assert await _append_handoff_link(text, None, ch, "r", None) == text
+
+
+async def test_generate_auto_reply_appends_the_link(db, channel_id, user_id, monkeypatch):
+    """The wiring: every reply path flows through generate_auto_reply, so the
+    poll loop, the manual regenerate and the edited-review refresh all get the
+    link without knowing about it."""
+    import uuid
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.modules.channels.models import Channel
+    from app.modules.channels.review_reply import generate_auto_reply
+    import app.modules.review_engine.service as svc
+
+    # A 36-char channel id: ReviewEngineRequest caps channel_id at 36 and the
+    # shared fixture's id is longer, so this test mints its own channel.
+    ch_id = str(uuid.uuid4())
+    db.add(Channel(id=ch_id, user_id=user_id, platform="google_reviews",
+                   platform_user_id="acct", display_name="t", status="active"))
+    await db.commit()
+    code, _ = await _linked_reply(db, ch_id, user_id)
+    ch = (await db.execute(
+        sa_select(Channel).where(Channel.id == ch_id)
+    )).scalar_one()
+
+    async def fake_process(req, tenant, db_):
+        return SimpleNamespace(response_text="Sorry about the cold food.")
+
+    monkeypatch.setattr(svc, "process_review", fake_process)
+    monkeypatch.setattr(settings, "GOOGLE_REVIEWS_MOCK", False)
+
+    out = await generate_auto_reply(
+        SimpleNamespace(model=None), ch, 1, "The food was cold", "Ali",
+        db, review_id="r",
+    )
+    assert out.startswith("Sorry about the cold food.\n")
+    assert f"text={code}" in out
+
+
+# --- phase C: the tenant toggle --------------------------------------------
+
+
+async def test_append_respects_the_tenant_toggle(db, channel_id, user_id):
+    """handoff_link_enabled=False means the number stays off the listing."""
+    from types import SimpleNamespace
+
+    from app.modules.channels.review_reply import _append_handoff_link
+
+    _, ch = await _linked_reply(db, channel_id, user_id)
+    cfg = SimpleNamespace(handoff_link_enabled=False)
+    text = "We are sorry about the cold food."
+    assert await _append_handoff_link(text, db, ch, "r", "cold food", config=cfg) == text
+
+
+async def test_append_defaults_on_without_the_flag(db, channel_id, user_id):
+    """Objects from before the column exists keep the enabled default."""
+    from types import SimpleNamespace
+
+    from app.modules.channels.review_reply import _append_handoff_link
+
+    _, ch = await _linked_reply(db, channel_id, user_id)
+    out = await _append_handoff_link(
+        "We are sorry.", db, ch, "r", "cold food", config=SimpleNamespace(model=None)
+    )
+    assert "wa.me/" in out
+
+
+async def test_generate_auto_reply_honors_the_toggle(db, user_id, monkeypatch):
+    """The toggle flows through the wiring: no link in the returned reply."""
+    import uuid
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.modules.channels.models import Channel
+    from app.modules.channels.review_reply import generate_auto_reply
+    import app.modules.review_engine.service as svc
+
+    ch_id = str(uuid.uuid4())
+    db.add(Channel(id=ch_id, user_id=user_id, platform="google_reviews",
+                   platform_user_id="acct", display_name="t", status="active"))
+    await db.commit()
+    code, _ = await _linked_reply(db, ch_id, user_id)
+    ch = (await db.execute(
+        sa_select(Channel).where(Channel.id == ch_id)
+    )).scalar_one()
+
+    async def fake_process(req, tenant, db_):
+        return SimpleNamespace(response_text="Sorry about the cold food.")
+
+    monkeypatch.setattr(svc, "process_review", fake_process)
+    monkeypatch.setattr(settings, "GOOGLE_REVIEWS_MOCK", False)
+
+    out = await generate_auto_reply(
+        SimpleNamespace(model=None, handoff_link_enabled=False), ch, 1,
+        "The food was cold", "Ali", db, review_id="r",
+    )
+    assert out == "Sorry about the cold food."
+    assert "wa.me/" not in out

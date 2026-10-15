@@ -265,6 +265,68 @@ async def ensure_handoff_code(
     )
 
 
+async def tenant_whatsapp_number(db: AsyncSession, *, tenant_id: str) -> str | None:
+    """The tenant's WhatsApp business number, digits only, ready for wa.me.
+
+    Reads the active WhatsApp phone asset written by Embedded Signup
+    (meta_assets.provider == "whatsapp"). Newest active asset wins when a
+    tenant somehow connected two; a per-tenant picker can pin one later.
+
+    Returns None — never raises — when nothing usable is connected: a missing
+    handoff link must never break the review reply it rides on. Deselected
+    assets (active=False) are skipped, same contract as everywhere else the
+    asset table is read.
+
+    Ordering is already safe on every reply path: the poll loop classifies
+    (and mints the code) BEFORE composing the reply, and the manual
+    regenerate / edited-review paths resolve the code idempotently through
+    ensure_handoff_code, which mints only what does not exist yet.
+    """
+    from sqlalchemy import select
+
+    from ..channels.meta.models import MetaAsset
+
+    try:
+        phone = (await db.execute(
+            select(MetaAsset.phone)
+            .where(
+                MetaAsset.tenant_id == tenant_id,
+                MetaAsset.provider == "whatsapp",
+                MetaAsset.asset_type == "phone_number",
+                MetaAsset.active.is_(True),
+                MetaAsset.phone.isnot(None),
+            )
+            .order_by(MetaAsset.created_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+    except Exception as e:
+        logger.warning("whatsapp number lookup failed for tenant %s: %s", tenant_id, e)
+        return None
+    if not phone:
+        return None
+    digits = re.sub(r"\D", "", str(phone))
+    return digits or None
+
+
+def wa_me_link(number: str, code: str) -> str:
+    """The deep link a customer taps: WhatsApp opens with the code prefilled.
+
+    The prefill is JUST the code. A sentence in the prefill reads as marketing
+    to the person tapping and risks Meta's template filters, while the bare
+    code is exactly what resolve_inbound matches — so the whole journey is one
+    tap plus one send. The handoff alphabet is URL-safe by construction, but
+    quote the value anyway so a future alphabet change cannot ship a broken
+    query string. Empty string for a number with no digits, so callers can
+    skip falsy.
+    """
+    from urllib.parse import quote
+
+    digits = re.sub(r"\D", "", str(number or ""))
+    if not digits:
+        return ""
+    return f"https://wa.me/{digits}?text={quote(str(code))}"
+
+
 async def resolve_and_advance(
     db: AsyncSession,
     *,
