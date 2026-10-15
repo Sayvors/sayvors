@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 LOCK_SECONDS = 120
 
+# Channel ids already reported as having no stored Google credentials, so the
+# poll loop warns once instead of on every cycle. Process-local by design: a
+# restart re-surfaces the state, which is what you want after a redeploy.
+_no_token_warned: set[str] = set()
+
 # Kafka topics (delivered via the transactional outbox, modules/outbox)
 REVIEW_EVENTS_TOPIC = "review-events"
 
@@ -435,7 +440,17 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
     access_token = decrypt_token(channel.access_token) if channel.access_token else None
     refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
     if not access_token and not refresh_token:
-        logger.error("Channel %s has no tokens; skipping", channel.id)
+        # A channel with no Google token is expected state (never connected,
+        # or credentials cleared), not a failure — logging it at ERROR put
+        # three identical lines in front of every real error, five minutes
+        # apart, forever. Warn once per channel per process so a reconnect
+        # problem stays visible without becoming the background noise.
+        if channel.id not in _no_token_warned:
+            _no_token_warned.add(channel.id)
+            logger.warning(
+                "Channel %s has no Google credentials stored; skipping its review poll",
+                channel.id,
+            )
         return stats
 
     client = GoogleReviewsClient(access_token or "", refresh_token)
