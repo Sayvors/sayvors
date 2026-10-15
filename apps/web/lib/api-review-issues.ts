@@ -39,6 +39,7 @@ export interface ReviewIssueQuery {
   status?: string;
   priority?: string;
   channel_id?: string;
+  ticketed?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -48,6 +49,7 @@ export const fetchReviewIssues = (q: ReviewIssueQuery = {}): Promise<ReviewIssue
   if (q.status) params.set("status", q.status);
   if (q.priority) params.set("priority", q.priority);
   if (q.channel_id) params.set("channel_id", q.channel_id);
+  if (q.ticketed !== undefined) params.set("ticketed", String(q.ticketed));
   params.set("limit", String(q.limit ?? 200));
   params.set("offset", String(q.offset ?? 0));
   return apiFetch(`/api/v1/reviews/issues?${params.toString()}`);

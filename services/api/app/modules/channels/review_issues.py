@@ -79,6 +79,7 @@ async def list_review_issues(
     status_filter: str | None = Query(None, alias="status"),
     priority_filter: str | None = Query(None, alias="priority"),
     channel_id: str | None = Query(None, alias="channel_id"),
+    ticketed: bool | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     ctx: TenantContext = Depends(require_perm("channels.view")),
@@ -91,6 +92,10 @@ async def list_review_issues(
         conds.append(ReviewIssue.priority == priority_filter)
     if channel_id:
         conds.append(ReviewIssue.channel_id == channel_id)
+    if ticketed is True:
+        conds.append(ReviewIssue.ticket_number.isnot(None))
+    elif ticketed is False:
+        conds.append(ReviewIssue.ticket_number.is_(None))
 
     total = (await db.execute(select(func.count()).select_from(ReviewIssue).where(*conds))).scalar_one()
     rows = (await db.execute(

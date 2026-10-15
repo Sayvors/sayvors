@@ -56,7 +56,7 @@ export default function ReviewTicketsPage() {
     setError(null);
     try {
       // 200 is the API ceiling; like the admin queue, slice in memory.
-      const d = await fetchReviewIssues({ limit: 200 });
+      const d = await fetchReviewIssues({ ticketed: true, limit: 200 });
       setIssues(d.issues);
       setTotal(d.total);
     } catch (e) {
@@ -118,7 +118,7 @@ export default function ReviewTicketsPage() {
           <div>
             <h1 className="text-[20px] font-bold text-[var(--ui-ink)]">Review tickets</h1>
             <p className="mt-0.5 text-[13px] text-[var(--ui-ink-2)]">
-              Problems customers reported in Google reviews, and the WhatsApp handoff that lets the assistant solve them.
+              Problems customers reported in Google reviews that need action, and the WhatsApp handoff that lets the assistant solve them. Praise and neutral reviews are classified, but they do not get tickets and are not shown here.
             </p>
           </div>
           <button type="button" onClick={() => void load()} disabled={loading} className={BTN_GHOST}>
@@ -188,7 +188,7 @@ export default function ReviewTicketsPage() {
             </p>
             <p className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
               {issues.length === 0
-                ? `Tickets appear here when Google reviews are polled and classified. ${total > 0 ? `(${total} exist but none loaded — try Refresh.)` : ""}`
+                ? `Tickets appear here when a review needs attention. ${total > 0 ? `(${total} exist but none loaded — try Refresh.)` : ""}`
                 : "Try clearing the search or the status filter."}
             </p>
           </div>

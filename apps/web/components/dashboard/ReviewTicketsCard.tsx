@@ -46,7 +46,9 @@ export default function ReviewTicketsCard() {
       setError(null);
       try {
         const responses = await Promise.all(
-          STATUSES.map((status) => fetchReviewIssues({ status, limit: 200 }))
+          STATUSES.map((status) =>
+            fetchReviewIssues({ status, ticketed: true, limit: 200 })
+          )
         );
         if (cancelled) return;
         const byStatus = Object.fromEntries(
@@ -97,8 +99,8 @@ export default function ReviewTicketsCard() {
             Review tickets
           </h2>
           <p className="mt-0.5 max-w-2xl text-[12px] leading-relaxed text-ink/55">
-            Customer complaints classified from Google reviews, with WhatsApp
-            handoff for the ones needing care.
+            Customer complaints classified from Google reviews that need action, with
+            WhatsApp handoff for the ones needing care. Praise and neutral reviews are not tickets.
           </p>
         </div>
         <Link
