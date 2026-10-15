@@ -11,6 +11,7 @@ import { adminClearSession, adminHasSession, adminLogout } from "@/lib/admin-api
  */
 const SECTIONS = [
   { href: "/admin/overview", label: "Overview" },
+  { href: "/admin/review-issues", label: "Review Issues" },
   { href: "/admin/tenants", label: "Tenants" },
   { href: "/admin/models", label: "AI Models" },
   { href: "/admin/catalogs", label: "Catalogs" },
