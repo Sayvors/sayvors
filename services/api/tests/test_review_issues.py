@@ -6,6 +6,7 @@ shared SQLite `db` fixture; no LLM and no network.
 """
 
 import pytest
+from types import SimpleNamespace
 from sqlalchemy import select as sa_select
 
 from app.modules.review_engine.classification import (
@@ -60,6 +61,35 @@ def test_default_subcategories_unknown():
     out = default_subcategories("Zoology Observatory")
     assert out == ["general"]
     assert default_subcategories(None) == ["general"]
+
+
+async def test_classify_review_uses_the_llm_result(monkeypatch):
+    """The LLM path must not fall through to keyword rules after a successful call."""
+    from app.modules.review_engine import classifier
+
+    analysis = SimpleNamespace(
+        issue_type="billing",
+        intent=["refund_request"],
+        customer_request="charged twice",
+        sentiment="negative",
+        urgency="critical",
+    )
+    calls = []
+
+    async def fake_analyze(text, rating, reviewer_name, model, **kwargs):
+        calls.append(model)
+        return analysis, {"stub": True}
+
+    monkeypatch.setattr(classifier, "analyze_review", fake_analyze)
+    out = await classifier.classify_review(
+        "opaque text with no keywords", 5, "Ali", model="db:selected-model"
+    )
+
+    assert calls == ["db:selected-model"]
+    assert out.primary_category == "billing_payments"
+    assert out.intent == "request_refund"
+    assert out.sentiment == "negative"
+    assert out.priority == "urgent"
 
 
 def test_clamp_classification_uses_tenant_subcategories():

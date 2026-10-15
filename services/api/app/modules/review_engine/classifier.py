@@ -131,8 +131,6 @@ async def classify_review(
 
     analysis = _rule_based_analysis(text, rating)
     primary = PRIMARY_CATEGORY_FROM_ISSUE_TYPE.get(getattr(analysis, "issue_type", None) or "", "other")
-    from app.modules.review_engine.classification import clamp_classification, ReviewClassification
-
     raw = {
         "primary_category": primary,
         "intent": _map_intent(analysis.intent, analysis.customer_request, looks_q),
