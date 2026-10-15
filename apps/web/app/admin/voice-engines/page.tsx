@@ -63,6 +63,29 @@ const EMPTY_FORM: EngineForm = {
 
 const TIERS = ["simple", "advanced"] as const;
 
+interface VoiceUsage {
+  days: number;
+  totals: {
+    notes: number;
+    calls: number;
+    failed: number;
+    chars: number;
+    avg_latency_ms: number;
+    active_engines: number;
+  };
+  per_engine: {
+    engine: string;
+    provider: string;
+    api_model: string;
+    notes: number;
+    calls: number;
+    chars: number;
+    failures: number;
+    avg_latency_ms: number;
+  }[];
+  daily: { day: string; notes: number; chars: number }[];
+}
+
 /**
  * A tier is the only thing a tenant ever sees — never the provider or the key.
  * That asymmetry is the whole point of this screen, so it is stated once,
@@ -102,13 +125,22 @@ export default function AdminVoiceEnginesPage() {
   const [fish, setFish] = useState<FishVoice[]>([]);
   const [fishError, setFishError] = useState<string | null>(null);
 
+  /** Voice-note metering, fetched alongside the engine list. */
+  const [voiceUsage, setVoiceUsage] = useState<VoiceUsage | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setEngines(await adminFetch<VoiceEngine[]>("/api/v1/admin/voice-engines"));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load voice engines.");
+      // Engine list and voice metering are independent; a usage failure must
+      // not blank the engine list.
+      const [engines, vu] = await Promise.allSettled([
+        adminFetch<VoiceEngine[]>("/api/v1/admin/voice-engines"),
+        adminFetch<VoiceUsage>("/api/v1/admin/usage/voice"),
+      ]);
+      if (engines.status === "fulfilled") setEngines(engines.value);
+      else setError(engines.reason instanceof Error ? engines.reason.message : "Could not load voice engines.");
+      if (vu.status === "fulfilled") setVoiceUsage(vu.value);
     } finally {
       setLoading(false);
     }
@@ -361,6 +393,71 @@ export default function AdminVoiceEnginesPage() {
               </div>
             ))}
           </div>
+        </Panel>
+      )}
+
+      {/* ── voice metering ─────────────────────────────────────────── */}
+      {voiceUsage && (
+        <Panel className="mt-[var(--ad-m)]">
+          <SectionTitle>Voice note usage ({voiceUsage.days}d)</SectionTitle>
+          <div className="grid grid-cols-3 gap-[var(--ad-2xs)] sm:grid-cols-6">
+            {(
+              [
+                ["Notes", voiceUsage.totals.notes],
+                ["Calls", voiceUsage.totals.calls],
+                ["Failed", voiceUsage.totals.failed],
+                ["Chars", voiceUsage.totals.chars],
+                ["Avg ms", voiceUsage.totals.avg_latency_ms],
+                ["Engines", voiceUsage.totals.active_engines],
+              ] as [string, number][]
+            ).map(([k, v]) => (
+              <div key={k}>
+                <p className="text-admin-micro text-ink/45">{k}</p>
+                <p className="text-admin-base font-bold tabular-nums text-ink">
+                  {v.toLocaleString()}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {voiceUsage.per_engine.length > 0 && (
+            <div className="mt-[var(--ad-xs)]">
+              <p className="mb-[var(--ad-3xs)] text-admin-micro font-bold uppercase tracking-[0.12em] text-ink/45">
+                Per engine
+              </p>
+              <ul className="space-y-[var(--ad-3xs)]">
+                {voiceUsage.per_engine.map((e) => (
+                  <li key={e.engine} className="flex flex-wrap items-baseline justify-between gap-[var(--ad-2xs)] text-admin-base">
+                    <span className="min-w-0 truncate text-ink/70">{e.engine}</span>
+                    <span className="tabular-nums text-ink">
+                      {e.notes.toLocaleString()} notes · {e.calls.toLocaleString()} calls
+                      {e.failures > 0 && (
+                        <span className="text-coral"> · {e.failures.toLocaleString()} failed</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {voiceUsage.daily.length > 0 && (
+            <div className="mt-[var(--ad-xs)]">
+              <p className="mb-[var(--ad-3xs)] text-admin-micro font-bold uppercase tracking-[0.12em] text-ink/45">
+                Daily
+              </p>
+              <ul className="space-y-[var(--ad-3xs)]">
+                {voiceUsage.daily.slice(-7).map((d) => (
+                  <li key={d.day} className="flex items-baseline justify-between gap-[var(--ad-2xs)] text-admin-base">
+                    <span className="text-ink/60">{d.day}</span>
+                    <span className="tabular-nums text-ink">
+                      {d.notes.toLocaleString()} notes · {d.chars.toLocaleString()} chars
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </Panel>
       )}
 
