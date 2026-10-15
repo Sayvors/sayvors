@@ -1824,6 +1824,7 @@ class TestReviewPipelineResult(BaseModel):
     handoff_code: str | None = None
     handoff_eligible: bool = False
     handoff_link: str | None = None
+    sales_link: str | None = None
     reply_preview: str | None = None
     reply_error: str | None = None
     published: bool = False
@@ -1952,16 +1953,18 @@ async def test_review_pipeline(
         reply_error = f"{type(e).__name__}: {str(e)[:300]}"
 
     handoff_link: str | None = None
-    if issue is not None and issue.handoff_code:
-        try:
-            from ..review_engine.handoff import tenant_whatsapp_number, wa_me_link
+    sales_link: str | None = None
+    try:
+        from ..review_engine.handoff import tenant_whatsapp_number, wa_me_link
 
-            number = await tenant_whatsapp_number(
-                db, tenant_id=ctx.tenant_id
-            )
-            handoff_link = wa_me_link(number or "", issue.handoff_code) or None
-        except Exception:
-            handoff_link = None
+        number = await tenant_whatsapp_number(db, tenant_id=ctx.tenant_id)
+        if number:
+            sales_link = f"https://wa.me/{number}"
+            if issue is not None and issue.handoff_code:
+                handoff_link = wa_me_link(number, issue.handoff_code) or None
+    except Exception:
+        handoff_link = None
+        sales_link = None
 
     return TestReviewPipelineResult(
         review_id=review_id,
@@ -1979,6 +1982,7 @@ async def test_review_pipeline(
         else outcome.get("handoff_code"),
         handoff_eligible=bool(outcome.get("handoff_eligible")),
         handoff_link=handoff_link,
+        sales_link=sales_link,
         reply_preview=reply_preview,
         reply_error=reply_error,
         published=False,

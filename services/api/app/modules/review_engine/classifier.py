@@ -101,14 +101,15 @@ async def classify_review(
             text, rating, reviewer_name, model,
             tenant_id=tenant_id, channel_id=channel_id,
         )
-        primary = PRIMARY_CATEGORY_FROM_ISSUE_TYPE.get(
-            getattr(analysis, "issue_type", None) or "", "other"
-        )
+        issue_type = getattr(analysis, "issue_type", None) or ""
         direction = _map_intent(
             analysis.intent,
             analysis.customer_request if hasattr(analysis, "customer_request") else None,
             looks_q,
         )
+        primary = PRIMARY_CATEGORY_FROM_ISSUE_TYPE.get(issue_type, "other")
+        if primary == "other" and direction in {"ask_question", "information_request"}:
+            primary = "information_inquiries"
         raw = {
             "primary_category": primary,
             "intent": direction,
@@ -129,10 +130,15 @@ async def classify_review(
         logger.warning("classify_review: LLM failed: %s — using rule fallback", e)
 
     analysis = _rule_based_analysis(text, rating)
-    primary = PRIMARY_CATEGORY_FROM_ISSUE_TYPE.get(getattr(analysis, "issue_type", None) or "", "other")
+    direction = _map_intent(analysis.intent, analysis.customer_request, looks_q)
+    primary = PRIMARY_CATEGORY_FROM_ISSUE_TYPE.get(
+        getattr(analysis, "issue_type", None) or "", "other"
+    )
+    if primary == "other" and direction in {"ask_question", "information_request"}:
+        primary = "information_inquiries"
     raw = {
         "primary_category": primary,
-        "intent": _map_intent(analysis.intent, analysis.customer_request, looks_q),
+        "intent": direction,
         "sentiment": _map_sentiment(analysis.sentiment),
         "priority": _map_priority(analysis.urgency),
         "subcategory": (sub[0] if sub else "other"),

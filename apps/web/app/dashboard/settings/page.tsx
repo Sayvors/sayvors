@@ -1143,7 +1143,7 @@ export default function SettingsPage() {
               <Section
                 eyebrow="Review replies"
                 title="WhatsApp recovery link"
-                subtitle="When a review needs attention, the public reply offers the customer a WhatsApp link with their ticket code prefilled — the assistant already knows the issue when they message. Note: the link makes your WhatsApp number publicly visible on Google."
+                subtitle="When a review needs attention, the public reply offers a WhatsApp link with the customer's ticket code. Pricing and plan questions get a normal WhatsApp sales link instead, without a ticket. Note: this makes your WhatsApp number publicly visible on Google."
               >
                 <label className="flex cursor-pointer items-start gap-2.5">
                   <input
@@ -1159,7 +1159,7 @@ export default function SettingsPage() {
                       {bulk?.varies.has("handoffLink") ? <VariesBadge /> : null}
                     </span>
                     <span className="block text-[11px] text-ink/45 dark:text-fog/45">
-                      Only on reviews that need attention — never on praise. Off keeps your number off the listing entirely.
+                      On problem reviews the link carries the ticket code; on pricing/plan questions it opens a normal sales conversation. Off keeps your number off the listing entirely.
                     </span>
                   </span>
                 </label>

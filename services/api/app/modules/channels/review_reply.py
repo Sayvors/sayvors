@@ -29,6 +29,8 @@ _ARABIC_SCRIPT = re.compile(r"[؀-ۿ]")
 # appear).
 _HANDOFF_LINE_EN = "To sort this out quickly, message us on WhatsApp:"
 _HANDOFF_LINE_AR = "لحل الأمر سريعاً، راسلنا على واتساب:"
+_SALES_LINE_EN = "We can share the details privately on WhatsApp:"
+_SALES_LINE_AR = "يمكننا مشاركة التفاصيل على واتساب:"
 
 # Google caps the public review reply at 4000 characters. Engine replies
 # target <=90 words, so this is belt-and-braces — but the guard is one
@@ -104,6 +106,78 @@ async def _append_handoff_link(
         return f"{text}\n{addition}"
     except Exception as e:
         logger.warning("handoff link append failed for %s: %s", review_id, e)
+        return text
+
+
+async def _append_sales_link(
+    text: str,
+    db: AsyncSession,
+    channel,
+    review_id: str | None,
+    review_text: str | None,
+    config=None,
+) -> str:
+    """Offer a generic WhatsApp conversation for purchase/pricing questions.
+
+    This is deliberately NOT a ticket handoff. The reviewer gets the business's
+    normal WhatsApp number with no code, so the conversation is captured as a
+    lead and the assistant can answer from the databank. Complaint handoffs keep
+    their own code-bearing link and are handled by _append_handoff_link first.
+    """
+    if not text or not review_id or "wa.me/" in text:
+        return text
+    if config is not None and not getattr(config, "handoff_link_enabled", True):
+        return text
+
+    try:
+        from sqlalchemy import select
+
+        from ..review_engine.handoff import tenant_whatsapp_number
+        from .models import ReviewIssue
+
+        issue = (
+            await db.execute(
+                select(ReviewIssue)
+                .where(
+                    ReviewIssue.channel_id == getattr(channel, "id", None),
+                    ReviewIssue.review_id == review_id,
+                )
+                .order_by(ReviewIssue.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if issue is not None and issue.needs_attention:
+            return text  # complaint path: its code-bearing link is authoritative
+
+        commercial = bool(
+            issue is not None
+            and issue.primary_category in {"information_inquiries", "pricing_promotions"}
+            and issue.intent in {"ask_question", "information_request"}
+        )
+        if issue is None:
+            from ..review_engine.understanding import looks_like_question
+
+            commercial = looks_like_question(review_text)
+        if not commercial:
+            return text
+
+        number = await tenant_whatsapp_number(
+            db, tenant_id=getattr(channel, "user_id", None)
+        )
+        if not number:
+            return text
+        link = f"https://wa.me/{number}"
+        line = (
+            _SALES_LINE_AR
+            if review_text and _ARABIC_SCRIPT.search(review_text)
+            else _SALES_LINE_EN
+        )
+        addition = f"{line} {link}"
+        if len(text) + len(addition) + 1 > _REPLY_MAX_CHARS:
+            return text
+        return f"{text}\n{addition}"
+    except Exception as e:
+        logger.warning("sales link append failed for %s: %s", review_id, e)
         return text
 
 
@@ -185,9 +259,12 @@ async def generate_auto_reply(
     if _settings.GOOGLE_REVIEWS_MOCK:
         # Mock mode changes the wording, not the product contract: a
         # needs-attention reviewer still gets the WhatsApp handoff link.
-        return await _append_handoff_link(
+        mock_text = await _append_handoff_link(
             _mock_reply(rating, review_text, reviewer_name),
             db, channel, review_id, review_text, config=config,
+        )
+        return await _append_sales_link(
+            mock_text, db, channel, review_id, review_text, config=config
         )
 
     from ..review_engine.schemas import ReviewEngineRequest
@@ -215,4 +292,9 @@ async def generate_auto_reply(
     cleaned = strip_em_dashes(text)
     if cleaned != text:
         logger.warning("Stripped em dash(es) from engine reply")
-    return await _append_handoff_link(cleaned, db, channel, review_id, review_text, config=config)
+    with_handoff = await _append_handoff_link(
+        cleaned, db, channel, review_id, review_text, config=config
+    )
+    return await _append_sales_link(
+        with_handoff, db, channel, review_id, review_text, config=config
+    )

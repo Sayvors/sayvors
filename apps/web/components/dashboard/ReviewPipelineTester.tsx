@@ -20,6 +20,7 @@ interface PipelineResult {
   handoff_code: string | null;
   handoff_eligible: boolean;
   handoff_link: string | null;
+  sales_link: string | null;
   reply_preview: string | null;
   reply_error: string | null;
   published: boolean;
@@ -234,7 +235,7 @@ export default function ReviewPipelineTester() {
             ) : (
               <p className="mt-2 text-[12px] text-ink/50">No reply preview was generated.</p>
             )}
-            {result.handoff_link && (
+            {result.handoff_link ? (
               <a
                 href={result.handoff_link}
                 target="_blank"
@@ -243,7 +244,16 @@ export default function ReviewPipelineTester() {
               >
                 Open the reviewer WhatsApp handoff
               </a>
-            )}
+            ) : result.sales_link ? (
+              <a
+                href={result.sales_link}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-block text-[12px] font-bold text-deep-violet underline underline-offset-2"
+              >
+                Open the WhatsApp sales conversation
+              </a>
+            ) : null}
           </div>
 
           {result.reply_error && (

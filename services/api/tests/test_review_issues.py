@@ -97,7 +97,7 @@ async def test_question_beats_praise_opener(monkeypatch):
     from app.modules.review_engine import classifier
 
     analysis = SimpleNamespace(
-        issue_type="pricing",
+        issue_type=None,
         intent=["praise"],
         customer_request="tell me about the premium deal",
         sentiment="positive",
@@ -116,6 +116,7 @@ async def test_question_beats_praise_opener(monkeypatch):
     )
 
     assert out.intent in {"ask_question", "information_request"}
+    assert out.primary_category == "information_inquiries"
     assert out.sentiment == "positive"
     assert out.priority == "low"
     assert out.needs_attention is False
@@ -755,6 +756,52 @@ async def _linked_reply(db, channel_id, user_id):
     return code, SimpleNamespace(id=channel_id, user_id=user_id)
 
 
+async def test_append_adds_generic_sales_link_for_a_question(
+    db, channel_id, user_id
+):
+    """A premium-plan question is a lead path, not a complaint ticket."""
+    from types import SimpleNamespace
+
+    from app.modules.channels.review_reply import _append_sales_link
+
+    await _issue(
+        db, channel_id, user_id,
+        primary_category="information_inquiries",
+        intent="ask_question",
+        sentiment="positive",
+        priority="low",
+        needs_attention=False,
+    )
+    await _wa_asset(db, user_id)
+    ch = SimpleNamespace(id=channel_id, user_id=user_id)
+
+    out = await _append_sales_link(
+        "Thanks for asking — we can share the Premium details privately.",
+        db, ch, "r", "Great service, can you tell me about the premium deal?",
+    )
+    assert "wa.me/15556259436" in out
+    assert "?text=" not in out  # no ticket code on a sales link
+
+
+async def test_append_skips_sales_link_for_praise(db, channel_id, user_id):
+    from types import SimpleNamespace
+
+    from app.modules.channels.review_reply import _append_sales_link
+
+    await _issue(
+        db, channel_id, user_id, "p",
+        primary_category="product_service",
+        intent="praise",
+        sentiment="positive",
+        priority="low",
+        needs_attention=False,
+    )
+    await _wa_asset(db, user_id)
+    ch = SimpleNamespace(id=channel_id, user_id=user_id)
+    text = "Thank you so much!"
+    assert await _append_sales_link(text, db, ch, "p", "Great service") == text
+
+
 async def test_append_adds_link_for_needs_attention(db, channel_id, user_id):
     from app.modules.channels.review_reply import _append_handoff_link
 
@@ -893,6 +940,51 @@ async def test_mock_auto_reply_still_appends_the_link(
     )
     assert f"text={code}" in out
     assert "wa.me/15556259436" in out
+
+
+async def test_generate_auto_reply_appends_generic_sales_link(
+    db, user_id, monkeypatch
+):
+    import uuid
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.modules.channels.models import Channel
+    from app.modules.channels.review_reply import generate_auto_reply
+    import app.modules.review_engine.service as svc
+
+    ch_id = str(uuid.uuid4())
+    db.add(Channel(id=ch_id, user_id=user_id, platform="google_reviews",
+                   platform_user_id="acct", display_name="t", status="active"))
+    await db.commit()
+    await _issue(
+        db, ch_id, user_id,
+        primary_category="information_inquiries",
+        intent="ask_question",
+        sentiment="positive",
+        priority="low",
+        needs_attention=False,
+    )
+    await _wa_asset(db, user_id)
+    ch = (await db.execute(
+        sa_select(Channel).where(Channel.id == ch_id)
+    )).scalar_one()
+
+    async def fake_process(req, tenant, db_):
+        return SimpleNamespace(
+            response_text="Thanks for asking! We can share the Premium details privately."
+        )
+
+    monkeypatch.setattr(svc, "process_review", fake_process)
+    monkeypatch.setattr(settings, "GOOGLE_REVIEWS_MOCK", False)
+
+    out = await generate_auto_reply(
+        SimpleNamespace(model=None, handoff_link_enabled=True), ch, 5,
+        "Great service, can you tell me about the premium deal?", "Sara", db,
+        review_id="r",
+    )
+    assert "wa.me/15556259436" in out
+    assert "?text=" not in out
 
 
 # --- phase C: the tenant toggle --------------------------------------------

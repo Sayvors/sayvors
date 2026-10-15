@@ -163,7 +163,7 @@ class AutoReplyConfigUpdate(BaseModel):
     promo_links: bool | None = Field(None, description="Allow promotional links in replies")
     promo_only_relevant: bool | None = Field(None, description="Only promote when relevant to the review")
     promo_max_ctas: int | None = Field(None, ge=0, le=5, description="Maximum promotional CTAs per reply")
-    handoff_link_enabled: bool | None = Field(None, description="Offer needs-attention reviewers a WhatsApp deep link (prefilled with their issue's handoff code) in the public reply. Note: the link makes your WhatsApp number public on the listing")
+    handoff_link_enabled: bool | None = Field(None, description="Offer reviewers a WhatsApp link: a ticket-code handoff for problems, or a generic sales link for pricing/plan questions. Note: the link makes your WhatsApp number public on the listing")
 
 
 class AutoReplyConfigResponse(BaseModel):
