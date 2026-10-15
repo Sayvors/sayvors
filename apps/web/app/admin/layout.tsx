@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { adminClearSession, adminHasSession, adminLogout } from "@/lib/admin-api";
+import { adminClearSession, adminFetch, adminHasSession, adminLogout } from "@/lib/admin-api";
 
 /**
  * Sections, in the order an operator actually works them: is it broken, then
@@ -42,6 +42,30 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setHasSession(adminHasSession());
     setNavOpen(false);
   }, [pathname]);
+
+  const [sessionVerified, setSessionVerified] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!ready || !hasSession || pathname === "/admin") {
+      if (!hasSession) setSessionVerified(null);
+      return;
+    }
+    let cancelled = false;
+    adminFetch<{ admin?: boolean }>("/api/v1/admin/me")
+      .then((res) => {
+        if (!cancelled) setSessionVerified(res?.admin !== false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          adminClearSession();
+          setHasSession(false);
+          setSessionVerified(false);
+          router.replace("/admin");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, hasSession, pathname]);
 
   if (!ready) {
     return (
@@ -125,6 +149,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
 
           {nav}
+
+          {hasSession && (
+            <div className="mb-[var(--ad-m)] rounded-admin-ctl border border-ink/[0.06] bg-card p-[var(--ad-xs)]">
+              <p className="text-admin-micro font-bold uppercase tracking-[0.12em] text-ink/45">
+                Operator session
+              </p>
+              <p className="mt-[var(--ad-3xs)] text-admin-base font-semibold text-ink">
+                {sessionVerified === true ? "verified via /admin/me" : sessionVerified === false ? "unverified" : "checking…"}
+              </p>
+            </div>
+          )}
 
           <button
             type="button"

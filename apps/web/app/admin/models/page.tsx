@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/admin-api";
 import LogoLoader from "@/components/LogoLoader";
-import { EmptyState, ErrorState, PageHeader, Panel } from "../admin-ui";
+import { EmptyState, ErrorState, PageHeader, Panel, Pill, SectionTitle, Table, TableScroll, Th, Td } from "../admin-ui";
 
 interface Provider {
   provider: string;
@@ -30,6 +30,17 @@ interface RemoteModel {
   name: string;
 }
 
+interface SavedModel {
+  id: string;
+  name: string;
+  provider: string;
+  api_model: string;
+  enabled: boolean;
+  custom: boolean;
+  tested_ok: boolean | null;
+  tested_at: string | null;
+}
+
 export default function AdminModelsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -37,17 +48,38 @@ export default function AdminModelsPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
+  const [savedModels, setSavedModels] = useState<SavedModel[]>([]);
+  const [savedError, setSavedError] = useState<string | null>(null);
   const [remote, setRemote] = useState<Record<string, RemoteModel[]>>({});
   const [showAdd, setShowAdd] = useState<string | null>(null);
   const [form, setForm] = useState({ id: "", name: "", api_model: "", context_window: 32000, max_output: 4096 });
 
   const load = useCallback(async () => {
     try {
-      const data = await adminFetch<Provider[]>("/api/v1/admin/llm");
-      setProviders(data ?? []);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load providers.");
+      const [providersRes, savedRes] = await Promise.allSettled([
+        adminFetch<Provider[]>("/api/v1/admin/llm"),
+        adminFetch<SavedModel[]>("/api/v1/admin/models"),
+      ]);
+      if (providersRes.status === "fulfilled") {
+        setProviders(providersRes.value ?? []);
+        setError(null);
+      } else {
+        setError(
+          providersRes.reason instanceof Error
+            ? providersRes.reason.message
+            : "Could not load providers.",
+        );
+      }
+      if (savedRes.status === "fulfilled") {
+        setSavedModels(savedRes.value ?? []);
+        setSavedError(null);
+      } else {
+        setSavedError(
+          savedRes.reason instanceof Error
+            ? savedRes.reason.message
+            : "Could not load saved models.",
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -127,6 +159,54 @@ export default function AdminModelsPage() {
     }
   }
 
+  async function toggleProvider(provider: string, enabled: boolean) {
+    setBusy(`${provider}:provider-enabled`);
+    try {
+      await adminFetch(`/api/v1/admin/llm/${provider}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update provider.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearProviderKey(provider: string) {
+    setBusy(`${provider}:provider-key`);
+    try {
+      await adminFetch(`/api/v1/admin/llm/${provider}`, {
+        method: "PUT",
+        body: JSON.stringify({ api_key: "" }),
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not clear key.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function toggleSavedModel(m: SavedModel, enabled: boolean) {
+    if (!m.provider) return;
+    await toggleModel(m.provider, m.id, enabled);
+  }
+
+  async function testSavedModel(m: SavedModel) {
+    if (!m.provider) return;
+    await testModel(m.provider, m.id);
+    // Test persists tested_ok server-side; reload so the saved-model row
+    // reflects it rather than waiting on the next provider refresh.
+    await load();
+  }
+
+  async function removeSavedModel(m: SavedModel) {
+    if (!m.provider) return;
+    await deleteModel(m.provider, m.id);
+  }
+
   async function fetchRemote(provider: string) {
     setBusy(`${provider}:remote`);
     try {
@@ -180,6 +260,95 @@ export default function AdminModelsPage() {
           <EmptyState message="No providers configured." />
         </Panel>
       )}
+
+      <Panel className="mb-[var(--ad-m)]">
+        <SectionTitle>Saved models ({savedModels.length})</SectionTitle>
+        <p className="mb-[var(--ad-2xs)] text-admin-base text-ink/45">
+          Every explicitly saved model in one place — catalog toggles you have flipped and
+          custom models you have added. Rows without a provider are read-only.
+        </p>
+        {savedError && (
+          <ErrorState title="Could not load saved models" detail={savedError} onRetry={() => void load()} />
+        )}
+        {savedModels.length === 0 && !savedError && (
+          <EmptyState message="No models have been saved yet. Toggling a model or adding a custom one saves it here." />
+        )}
+        {savedModels.length > 0 && (
+          <TableScroll>
+            <Table minWidth={760}>
+              <thead>
+                <tr className="border-b border-ink/[0.06]">
+                  <Th>Model</Th>
+                  <Th>Provider</Th>
+                  <Th>Provider model</Th>
+                  <Th>Status</Th>
+                  <Th>Tested</Th>
+                  <Th align="right">Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {savedModels.map((m) => (
+                  <tr key={m.id}>
+                    <Td>
+                      <div className="font-semibold text-ink">{m.name}</div>
+                      <div className="text-admin-micro text-ink/40">{m.id}</div>
+                    </Td>
+                    <Td className="font-mono text-ink/65">{m.provider || "—"}</Td>
+                    <Td className="font-mono text-ink/65">{m.api_model || "—"}</Td>
+                    <Td>
+                      <Pill tone={m.enabled ? "ok" : "neutral"}>{m.enabled ? "on" : "off"}</Pill>
+                    </Td>
+                    <Td>
+                      {m.tested_ok === null ? (
+                        <span className="text-ink/30">never</span>
+                      ) : m.tested_ok ? (
+                        <Pill tone="ok">pass</Pill>
+                      ) : (
+                        <Pill tone="bad">fail</Pill>
+                      )}
+                      {m.tested_at && (
+                        <div className="mt-[var(--ad-3xs)] text-admin-micro text-ink/40">
+                          {new Date(m.tested_at).toLocaleDateString()}
+                        </div>
+                      )}
+                    </Td>
+                    <Td align="right">
+                      {m.provider && (
+                        <div className="flex flex-wrap justify-end gap-[var(--ad-2xs)]">
+                          <button
+                            onClick={() => void toggleSavedModel(m, !m.enabled)}
+                            disabled={busy !== null}
+                            className="text-admin-base font-semibold text-deep-violet hover:underline disabled:opacity-40"
+                          >
+                            {m.enabled ? "Disable" : "Enable"}
+                          </button>
+                          <button
+                            onClick={() => void testSavedModel(m)}
+                            disabled={busy !== null}
+                            className="text-admin-base font-semibold text-deep-violet hover:underline disabled:opacity-40"
+                          >
+                            Test
+                          </button>
+                          {m.custom && (
+                            <button
+                              onClick={() => void removeSavedModel(m)}
+                              disabled={busy !== null}
+                              className="text-admin-base font-semibold text-coral hover:underline disabled:opacity-40"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </TableScroll>
+        )}
+      </Panel>
+
       <div className="space-y-[var(--ad-m)]">
       {providers.map((p) => (
         <section key={p.provider} className="rounded-admin-card border border-card-border bg-card p-[var(--ad-m)]">
@@ -214,6 +383,20 @@ export default function AdminModelsPage() {
                 className="rounded-lg border border-ink/10 px-3 py-1.5 text-admin-base font-bold text-ink/60 disabled:opacity-40"
               >
                 {busy === `${p.provider}:test` ? "Testing…" : "Test"}
+              </button>
+              <button
+                onClick={() => void toggleProvider(p.provider, !p.enabled)}
+                disabled={busy !== null}
+                className="rounded-lg border border-ink/10 px-3 py-1.5 text-admin-base font-bold text-ink/60 disabled:opacity-40"
+              >
+                {busy === `${p.provider}:provider-enabled` ? "Saving…" : p.enabled ? "Disable" : "Enable"}
+              </button>
+              <button
+                onClick={() => void clearProviderKey(p.provider)}
+                disabled={busy !== null || !p.has_key}
+                className="rounded-lg border border-ink/10 px-3 py-1.5 text-admin-base font-bold text-ink/60 disabled:opacity-40"
+              >
+                {busy === `${p.provider}:provider-key` ? "Clearing…" : "Clear key"}
               </button>
               <button
                 onClick={() => void fetchRemote(p.provider)}
