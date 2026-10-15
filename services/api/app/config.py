@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     COOKIE_SAMESITE: str = "none"  # none | lax | strict
     ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
 
+    # ── Logging ─────────────────────────────────────────
+    # "" = auto: readable console when stdout is a terminal, one-JSON-object-per-
+    # line when it is piped (Docker, log shippers, aggregators). Force either
+    # shape with "console" / "json". Anything else falls back to auto.
+    LOG_FORMAT: str = ""
+
     # ── File uploads ────────────────────────────────────
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 100

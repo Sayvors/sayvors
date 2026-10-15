@@ -184,14 +184,91 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(log_data, ensure_ascii=False)
 
 
-def configure_json_logging(service: str = DEFAULT_SERVICE) -> None:
-    """Install the JSON formatter on the root logger.
+class ConsoleFormatter(logging.Formatter):
+    """One readable line for a human watching the terminal.
+
+    Only used when stdout is a TTY. The JSON formatter is what anything
+    downstream (Docker, log shippers, aggregators) has to parse, so it stays
+    the default whenever output is redirected -- piping this into a file must
+    never produce a format the shipper cannot read.
+
+    Extra fields (`request_id`, `tenant_id`) are appended as `key=value` only
+    when a record actually carries them, so a plain worker line stays plain.
+    """
+
+    LEVEL_STYLE = {
+        "DEBUG": ("\033[90m", "\033[0m"),
+        "INFO": ("\033[36m", "\033[0m"),
+        "WARNING": ("\033[33m", "\033[0m"),
+        "ERROR": ("\033[31m", "\033[0m"),
+        "CRITICAL": ("\033[1;41m", "\033[0m"),
+    }
+
+    def __init__(self, use_color: bool) -> None:
+        super().__init__(datefmt="%H:%M:%S")
+        self.use_color = use_color
+
+    def format(self, record: logging.LogRecord) -> str:
+        if self.use_color:
+            color, reset = self.LEVEL_STYLE.get(record.levelname, ("", ""))
+            stamp = f"\033[90m{self.formatTime(record, self.datefmt)}\033[0m"
+            level = f"{color}{record.levelname:<8}{reset}"
+            name = f"\033[35m{record.name}\033[0m"
+        else:
+            stamp = self.formatTime(record, self.datefmt)
+            level = f"{record.levelname:<8}"
+            name = record.name
+
+        line = f"{stamp} {level} {name} | {record.getMessage()}"
+
+        extras = [
+            f"{key}={getattr(record, key)}"
+            for key in ("request_id", "tenant_id")
+            if hasattr(record, key)
+        ]
+        if extras:
+            line += " | " + " ".join(extras)
+
+        # Point at the source line for WARNING+ only. A stack of locations on
+        # every INFO line is what makes a console unreadable; when something is
+        # actually wrong the location is the thing you want.
+        if record.levelno >= logging.WARNING:
+            line += f"  ({record.module}:{record.lineno} in {record.funcName}())"
+
+        if record.exc_info:
+            line += "\n" + self.formatException(record.exc_info)
+
+        return line
+
+
+def configure_logging(service: str = DEFAULT_SERVICE) -> None:
+    """Install the log formatter on the root logger.
+
+    A TTY gets `ConsoleFormatter` (readable); a pipe or file gets
+    `JsonFormatter` (machine-parseable). Chosen from the stream, not a setting,
+    so `npm run dev`-style piping and `docker logs` both do the right thing
+    without anyone remembering a flag.
+
+    `LOG_FORMAT` overrides it outright when you need to force one shape --
+    `LOG_FORMAT=json` for a local process you want to paste into a parser, or
+    `LOG_FORMAT=console` to read a piped log in your terminal.
 
     Applied to the root logger (not a single logger) so libraries and worker
     modules are covered without per-module opt-in.
     """
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S%z"))
+    force = (settings.LOG_FORMAT or "").strip().lower()
+    stream = sys.stdout
+    if force in ("console", "text", "pretty"):
+        formatter = ConsoleFormatter(use_color=stream.isatty())
+    elif force == "json":
+        formatter = JsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S%z")
+    elif stream.isatty():
+        formatter = ConsoleFormatter(use_color=True)
+    else:
+        formatter = JsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S%z")
+
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(formatter)
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
     root_logger.addHandler(handler)

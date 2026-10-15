@@ -45,15 +45,20 @@ from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
 
 
-# ── Structured JSON logging ──────────────────────────────────────────────
+# ── Logging ──────────────────────────────────────────────────────────────
 # Implementation lives in app.observability so the worker process emits the
-# same JSON shape; re-exported here for existing importers.
-from .observability import JsonFormatter, configure_json_logging as _configure_json_logging
+# same shape; re-exported here for existing importers. The format itself is
+# chosen per stream there (console when a TTY, JSON when piped).
+from .observability import (
+    ConsoleFormatter,
+    JsonFormatter,
+    configure_logging as _configure_logging,
+)
 
 
 def setup_logging():
-    """Configure structured JSON logging for the API process."""
-    _configure_json_logging("api")
+    """Configure logging for the API process."""
+    _configure_logging("api")
 
 
 # ── GlitchTip error tracking ─────────────────────────────────────────────

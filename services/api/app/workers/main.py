@@ -65,10 +65,10 @@ async def _warmup() -> None:
 
 
 async def _amain() -> None:
-    # Same JSON log shape as the API process, so one log query covers both.
-    from ..observability import configure_json_logging, init_observability
+    # Same log shape as the API process, so one log query covers both.
+    from ..observability import configure_logging, init_observability
 
-    configure_json_logging("worker")
+    configure_logging("worker")
 
     # The worker is a separate process from the API, and sentry_sdk patches
     # handlers in-process only. Without this call every failure in the
