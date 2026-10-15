@@ -99,16 +99,21 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
     // by someone who also happened to hold a customer login. Admin's own layout
     // gates on its own session and 401s clear it; this guard is for tenants and
     // must not claim authority over it.
-    const path = typeof window !== "undefined" ? window.location.pathname : "";
+    // Named `pathname`, NOT `path` — shadowing the `path` parameter here put
+    // the whole 401 block in the temporal dead zone: the retry `fetch` above
+    // evaluated `path` before this `const` initialized and threw
+    // "Cannot access 'path' before initialization", so every successful
+    // token refresh still ended in a bounce to /login.
+    const pathname = typeof window !== "undefined" ? window.location.pathname : "";
     const publicPath =
-      path.startsWith("/login") ||
-      path.startsWith("/signup") ||
-      path.startsWith("/forgot-password") ||
-      path.startsWith("/reset-password") ||
-      path.startsWith("/verify-email") ||
-      path.startsWith("/verify-otp") ||
-      path.startsWith("/invite") ||
-      path.startsWith("/admin");
+      pathname.startsWith("/login") ||
+      pathname.startsWith("/signup") ||
+      pathname.startsWith("/forgot-password") ||
+      pathname.startsWith("/reset-password") ||
+      pathname.startsWith("/verify-email") ||
+      pathname.startsWith("/verify-otp") ||
+      pathname.startsWith("/invite") ||
+      pathname.startsWith("/admin");
     if (typeof window !== "undefined" && !publicPath) {
       window.location.href = "/login";
     }
