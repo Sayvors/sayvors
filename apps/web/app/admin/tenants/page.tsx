@@ -44,6 +44,21 @@ function usd(cents: number | null | undefined): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+/** Shape of GET /api/v1/admin/tenants/{id}/usage (llm.usage.get_tenant_summary). */
+interface TenantUsage {
+  days: number;
+  totals: {
+    calls: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    avg_latency_ms: number;
+  };
+  by_model: { model: string; api_model: string; calls: number; total_tokens: number; avg_latency_ms: number }[];
+  by_purpose: { purpose: string; calls: number; total_tokens: number }[];
+  daily: { day: string; total_tokens: number; prompt_tokens: number; completion_tokens: number; avg_latency_ms: number; calls: number }[];
+}
+
 export default function AdminTenantsPage() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +79,9 @@ export default function AdminTenantsPage() {
    * with a Try again button -- the opposite of what just happened.
    */
   const [notice, setNotice] = useState<string | null>(null);
+
+  /** Per-tenant AI usage, fetched alongside the detail. */
+  const [usage, setUsage] = useState<TenantUsage | null>(null);
 
   async function load() {
     setLoading(true);
@@ -91,10 +109,17 @@ export default function AdminTenantsPage() {
     setOpenId(id);
     setDetail(null);
     setDetailLoading(true);
+    setUsage(null);
     try {
-      setDetail(await adminFetch<TenantDetail>(`/api/v1/admin/tenants/${id}`));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load tenant.");
+      // Detail and usage are independent; a usage failure must not blank the
+      // detail the operator opened the row for.
+      const [d, u] = await Promise.allSettled([
+        adminFetch<TenantDetail>(`/api/v1/admin/tenants/${id}`),
+        adminFetch<TenantUsage>(`/api/v1/admin/tenants/${id}/usage`),
+      ]);
+      if (d.status === "fulfilled") setDetail(d.value);
+      else setError(d.reason instanceof Error ? d.reason.message : "Could not load tenant.");
+      if (u.status === "fulfilled") setUsage(u.value);
     } finally {
       setDetailLoading(false);
     }
@@ -296,6 +321,85 @@ export default function AdminTenantsPage() {
                               {planError}
                             </p>
                           )}
+                          {usage && (
+                            <div className="mt-[var(--ad-xs)] space-y-[var(--ad-xs)] rounded-admin-ctl border border-ink/[0.07] p-[var(--ad-xs)]">
+                              <p className="text-admin-base font-bold uppercase tracking-wide text-ink">
+                                AI usage ({usage.days}d)
+                              </p>
+                              <div className="grid grid-cols-3 gap-[var(--ad-2xs)]">
+                                {(
+                                  [
+                                    ["Calls", usage.totals.calls],
+                                    ["Tokens", usage.totals.total_tokens],
+                                    ["Avg ms", usage.totals.avg_latency_ms],
+                                  ] as [string, number][]
+                                ).map(([k, v]) => (
+                                  <div key={k}>
+                                    <p className="text-admin-micro text-ink/45">{k}</p>
+                                    <p className="text-admin-base font-bold tabular-nums text-ink">
+                                      {v.toLocaleString()}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                              {usage.by_model.length > 0 && (
+                                <div>
+                                  <p className="mb-[var(--ad-3xs)] text-admin-micro font-bold uppercase tracking-[0.12em] text-ink/45">
+                                    By model
+                                  </p>
+                                  <ul className="space-y-[var(--ad-3xs)]">
+                                    {usage.by_model.slice(0, 5).map((m) => (
+                                      <li key={m.api_model} className="flex items-baseline justify-between gap-[var(--ad-2xs)] text-admin-base">
+                                        <span className="min-w-0 truncate text-ink/70">{m.api_model}</span>
+                                        <span className="tabular-nums text-ink">
+                                          {m.calls.toLocaleString()} calls ·{" "}
+                                          {m.total_tokens.toLocaleString()} tok
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {usage.by_purpose.length > 0 && (
+                                <div>
+                                  <p className="mb-[var(--ad-3xs)] text-admin-micro font-bold uppercase tracking-[0.12em] text-ink/45">
+                                    By purpose
+                                  </p>
+                                  <ul className="space-y-[var(--ad-3xs)]">
+                                    {usage.by_purpose.slice(0, 5).map((p) => (
+                                      <li key={p.purpose} className="flex items-baseline justify-between gap-[var(--ad-2xs)] text-admin-base">
+                                        <span className="min-w-0 truncate text-ink/70">
+                                          {p.purpose.replace(/_/g, " ")}
+                                        </span>
+                                        <span className="tabular-nums text-ink">
+                                          {p.calls.toLocaleString()} calls
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {usage.daily.length > 0 && (
+                                <div>
+                                  <p className="mb-[var(--ad-3xs)] text-admin-micro font-bold uppercase tracking-[0.12em] text-ink/45">
+                                    Daily
+                                  </p>
+                                  <ul className="space-y-[var(--ad-3xs)]">
+                                    {usage.daily.slice(-7).map((d) => (
+                                      <li key={d.day} className="flex items-baseline justify-between gap-[var(--ad-2xs)] text-admin-base">
+                                        <span className="text-ink/60">{d.day}</span>
+                                        <span className="tabular-nums text-ink">
+                                          {d.calls.toLocaleString()} calls ·{" "}
+                                          {d.total_tokens.toLocaleString()} tok
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           <div className="mt-[var(--ad-xs)] space-y-[var(--ad-xs)] rounded-admin-ctl border border-deep-violet/20 bg-deep-violet/[0.03] p-[var(--ad-xs)]">
                             <p className="text-admin-base font-bold uppercase tracking-wide text-deep-violet">
                               Grant plan
