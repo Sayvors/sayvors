@@ -806,6 +806,36 @@ async def test_generate_auto_reply_appends_the_link(db, channel_id, user_id, mon
     assert f"text={code}" in out
 
 
+async def test_mock_auto_reply_still_appends_the_link(
+    db, user_id, monkeypatch
+):
+    """Mock mode changes the words, not the reviewer handoff contract."""
+    import uuid
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.modules.channels.models import Channel
+    from app.modules.channels.review_reply import generate_auto_reply
+
+    ch_id = str(uuid.uuid4())
+    db.add(Channel(id=ch_id, user_id=user_id, platform="google_reviews",
+                   platform_user_id="acct", display_name="t", status="active"))
+    await db.commit()
+    code, _ = await _linked_reply(db, ch_id, user_id)
+    ch = (await db.execute(
+        sa_select(Channel).where(Channel.id == ch_id)
+    )).scalar_one()
+
+    monkeypatch.setattr(settings, "GOOGLE_REVIEWS_MOCK", True)
+
+    out = await generate_auto_reply(
+        SimpleNamespace(model=None, handoff_link_enabled=True), ch, 1,
+        "The food was cold", "Ali", db, review_id="r",
+    )
+    assert f"text={code}" in out
+    assert "wa.me/15556259436" in out
+
+
 # --- phase C: the tenant toggle --------------------------------------------
 
 

@@ -19,6 +19,10 @@ interface PipelineResult {
   ticket_number: string | null;
   handoff_code: string | null;
   handoff_eligible: boolean;
+  handoff_link: string | null;
+  reply_preview: string | null;
+  reply_error: string | null;
+  published: boolean;
   status: string | null;
   primary_category: string | null;
   subcategory: string | null;
@@ -88,8 +92,9 @@ export default function ReviewPipelineTester() {
     <section className="rounded-[2px] border border-ink/[0.08] bg-white p-4 shadow-sm">
       <h2 className="text-[14px] font-bold text-ink">Review pipeline test</h2>
       <p className="mt-0.5 max-w-3xl text-[12px] leading-relaxed text-ink/55">
-        Run classification, ticketing, and handoff using a synthetic review. This does not fetch
-        from Google, does not publish anything, and does not reply to a customer.
+        Run classification, ticketing, handoff, and the public reply preview. This does not fetch
+        from Google, publish anything, or message the customer. The preview shows exactly what
+        the reviewer would receive, including the WhatsApp handoff link.
       </p>
 
       {channels.length === 0 ? (
@@ -212,6 +217,40 @@ export default function ReviewPipelineTester() {
               <dd className="font-semibold text-ink">{String(result.needs_attention ?? false)}</dd>
             </div>
           </dl>
+
+          <div className="rounded-[2px] border border-ink/[0.06] bg-ink/[0.02] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-[11px] font-bold uppercase tracking-[0.1em] text-ink/45">
+                Public review reply preview
+              </h4>
+              <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                Not published
+              </span>
+            </div>
+            {result.reply_preview ? (
+              <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-ink">
+                {result.reply_preview}
+              </p>
+            ) : (
+              <p className="mt-2 text-[12px] text-ink/50">No reply preview was generated.</p>
+            )}
+            {result.handoff_link && (
+              <a
+                href={result.handoff_link}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-block text-[12px] font-bold text-deep-violet underline underline-offset-2"
+              >
+                Open the reviewer WhatsApp handoff
+              </a>
+            )}
+          </div>
+
+          {result.reply_error && (
+            <p className="text-[12px] font-medium text-coral">
+              Reply generation error: {result.reply_error}
+            </p>
+          )}
           {result.summary && (
             <p className="text-[12px] text-ink/70">
               <span className="font-semibold text-ink">Summary:</span> {result.summary}

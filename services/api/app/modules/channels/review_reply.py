@@ -183,7 +183,12 @@ async def generate_auto_reply(
     from ...config import settings as _settings
 
     if _settings.GOOGLE_REVIEWS_MOCK:
-        return _mock_reply(rating, review_text, reviewer_name)
+        # Mock mode changes the wording, not the product contract: a
+        # needs-attention reviewer still gets the WhatsApp handoff link.
+        return await _append_handoff_link(
+            _mock_reply(rating, review_text, reviewer_name),
+            db, channel, review_id, review_text, config=config,
+        )
 
     from ..review_engine.schemas import ReviewEngineRequest
     from ..review_engine.service import process_review

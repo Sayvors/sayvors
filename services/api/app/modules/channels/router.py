@@ -1823,6 +1823,10 @@ class TestReviewPipelineResult(BaseModel):
     ticket_number: str | None = None
     handoff_code: str | None = None
     handoff_eligible: bool = False
+    handoff_link: str | None = None
+    reply_preview: str | None = None
+    reply_error: str | None = None
+    published: bool = False
     status: str | None = None
     primary_category: str | None = None
     subcategory: str | None = None
@@ -1843,11 +1847,13 @@ async def test_review_pipeline(
     ctx: TenantContext = Depends(require_perm("channels.edit")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run a review through the local classification/ticket/handoff pipeline.
+    """Run a review through the local review/ticket/handoff pipeline.
 
-    This is a development/testing helper. It never calls Google Business Profile
-    and never generates or publishes a reply. It only persists a synthetic
-    review issue.
+    This is a development/testing helper. It never calls Google Business
+    Profile, never posts a reply, and never sends a WhatsApp message. It
+    generates the same public reply preview the live worker would publish so
+    the reviewer-facing WhatsApp handoff link can be inspected before any
+    external side effect.
     """
     channel = await db.get(Channel, channel_id)
     if channel is None or channel.user_id != ctx.tenant_id:
@@ -1861,18 +1867,20 @@ async def test_review_pipeline(
 
     review_id = f"test-review-{uuid.uuid4().hex}"
 
+    config = None
     model: str | None = None
     try:
         from ..review_engine.schemas import ReviewEngineRequest
         from ..review_engine.service import _resolve_engine_model
 
-        configured_model = (
+        config = (
             await db.execute(
-                select(AutoReplyConfig.model).where(
+                select(AutoReplyConfig).where(
                     AutoReplyConfig.channel_id == channel_id
                 )
             )
-        ).scalar_one_or_none()
+        ).scalars().first()
+        configured_model = getattr(config, "model", None)
         req = ReviewEngineRequest(
             rating=body.rating, channel_id=channel_id, model=configured_model
         )
@@ -1924,6 +1932,37 @@ async def test_review_pipeline(
         )
     ).scalar_one_or_none()
 
+    # Same generation path as the live worker, but the returned text is a
+    # preview only: no ReviewReply row, no Google API call, no WhatsApp send.
+    reply_preview: str | None = None
+    reply_error: str | None = None
+    try:
+        from .review_reply import generate_auto_reply
+
+        reply_preview = await generate_auto_reply(
+            config,
+            channel,
+            body.rating,
+            body.review_text,
+            body.reviewer_name,
+            db,
+            review_id=review_id,
+        )
+    except Exception as e:
+        reply_error = f"{type(e).__name__}: {str(e)[:300]}"
+
+    handoff_link: str | None = None
+    if issue is not None and issue.handoff_code:
+        try:
+            from ..review_engine.handoff import tenant_whatsapp_number, wa_me_link
+
+            number = await tenant_whatsapp_number(
+                db, tenant_id=ctx.tenant_id
+            )
+            handoff_link = wa_me_link(number or "", issue.handoff_code) or None
+        except Exception:
+            handoff_link = None
+
     return TestReviewPipelineResult(
         review_id=review_id,
         issue_id=getattr(issue, "id", None)
@@ -1939,6 +1978,10 @@ async def test_review_pipeline(
         if issue is not None
         else outcome.get("handoff_code"),
         handoff_eligible=bool(outcome.get("handoff_eligible")),
+        handoff_link=handoff_link,
+        reply_preview=reply_preview,
+        reply_error=reply_error,
+        published=False,
         status=getattr(issue, "status", None),
         primary_category=getattr(issue, "primary_category", None),
         subcategory=getattr(issue, "subcategory", None),
