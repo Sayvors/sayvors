@@ -7,7 +7,7 @@ import time
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import settings
@@ -75,8 +75,19 @@ def setup_glitchtip():
 
 
 # ── Request-ID middleware ────────────────────────────────────────────────
+# ── In-process metrics (Prometheus exposition format) ────────────────
+# Kept dependency-free: a small in-memory counter/histogram exposed at /metrics.
+# For multi-replica deploys, Prometheus scrapes each replica individually.
+_METRICS_REQUEST_COUNT = 0
+_METRICS_LATENCY_BUCKETS_SECONDS = [
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
+]
+_METRICS_LATENCY_COUNTS = [0] * len(_METRICS_LATENCY_BUCKETS_SECONDS)
+_METRICS_LATENCY_SUM = 0.0
+
+
 class RequestIdMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         request_id = request.headers.get("x-request-id") or str(uuid4())
         request.state.request_id = request_id
 
@@ -97,6 +108,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
                 request.method, request.url.path, response.status_code, process_time,
                 extra=extra,
             )
+            _observe_request(process_time)
             return response
         except Exception as e:
             process_time = time.perf_counter() - start_time
@@ -105,7 +117,20 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
                 request.method, request.url.path, e, process_time,
                 extra={"request_id": request_id},
             )
+            _observe_request(process_time)
             raise
+
+
+def _observe_request(process_time: float) -> None:
+    global _METRICS_REQUEST_COUNT, _METRICS_LATENCY_SUM
+    _METRICS_REQUEST_COUNT += 1
+    _METRICS_LATENCY_SUM += process_time
+    for i, le in enumerate(_METRICS_LATENCY_BUCKETS_SECONDS):
+        if process_time <= le:
+            _METRICS_LATENCY_COUNTS[i] += 1
+            break
+    else:
+        _METRICS_LATENCY_COUNTS[-1] += 1
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -396,4 +421,35 @@ async def readyz(request: Request):
         content=json.dumps({"status": "ready" if all_ok else "degraded", "checks": checks}),
         media_type="application/json",
         status_code=status_code,
+    )
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus exposition format — scrapable by Prometheus / Grafana Cloud.
+
+    Returns in-process request count + latency histogram. One scrape target per
+    replica; aggregate across replicas in Prometheus/Grafana.
+    """
+    global _METRICS_REQUEST_COUNT, _METRICS_LATENCY_SUM
+    total_count = sum(_METRICS_LATENCY_COUNTS)
+    lines: list[str] = [
+        "# HELP sayvors_http_requests_total Total HTTP requests handled by this replica.",
+        "# TYPE sayvors_http_requests_total counter",
+        f"sayvors_http_requests_total {_METRICS_REQUEST_COUNT}",
+        "",
+        "# HELP sayvors_http_request_duration_seconds HTTP request latency in seconds.",
+        "# TYPE sayvors_http_request_duration_seconds histogram",
+    ]
+    cumulative = 0
+    for le, count in zip(_METRICS_LATENCY_BUCKETS_SECONDS, _METRICS_LATENCY_COUNTS):
+        cumulative += count
+        lines.append(f'sayvors_http_request_duration_seconds_bucket{{le="{le}"}} {cumulative}')
+    lines.append(f'sayvors_http_request_duration_seconds_bucket{{le="+Inf"}} {total_count}')
+    lines.append(f"sayvors_http_request_duration_seconds_sum {_METRICS_LATENCY_SUM}")
+    lines.append(f"sayvors_http_request_duration_seconds_count {total_count}")
+    lines.append("")
+    return Response(
+        content="\n".join(lines),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
     )

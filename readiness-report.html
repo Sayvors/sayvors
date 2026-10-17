@@ -268,12 +268,12 @@
       <td>Verify RDS PITR is on, retention ≥ 7d, then rehearse a real restore. Buy row §4.</td>
       <td class="num">~1 day</td>
     </tr>
-    <tr>
-      <td class="num">OPS-2</td><td><span class="chip crit">Crit</span></td>
-      <td><strong>Zero observability.</strong> No metrics, no error tracking, no structured logs, no request IDs; <code>/health</code> returns a static literal. Every incident is discovered by users.</td>
-      <td class="path">main.py:263–265</td>
-      <td>Sentry (backend + all frontends), JSON logs + request-ID middleware, real <code>/readyz</code> probing DB/Redis/Kafka, container healthchecks. Buy row §4.</td>
-      <td class="num">3–4 days</td>
+    <tr class="good">
+      <td class="num">OPS-2</td><td><span class="chip ok">Fixed</span></td>
+      <td><strong>Observability in place.</strong> Sentry/GlitchTip on backend + frontend, JSON structured logging with request_id/tenant_id, Request-ID middleware, real <code>/readyz</code> probing DB/Redis/Kafka, container HEALTHCHECKs on both Dockerfiles, and a Prometheus <code>/metrics</code> endpoint on the API.</td>
+      <td class="path">app/observability.py, app/main.py, services/api/Dockerfile, apps/web/Dockerfile</td>
+      <td><strong>Fixed</strong> — GlitchTip DSN + structured logs + request IDs already wired; added /readyz-backed HEALTHCHECKs to both containers and a /metrics Prometheus endpoint.</td>
+      <td class="num"><span class="chip ok">Done</span></td>
     </tr>
   </table></div>
 
