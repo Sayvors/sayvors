@@ -19,3 +19,4 @@
 - SEC-M5 SSRF fix in reviewer-photo download (fetch_pinned guard)
 - Job queue runner fixes: AIOKafkaAdminClient import, jobs table migration applied locally, Kafka topic provisioning dict access fix (t['name'] not t.name)
 - Worker starts cleanly: all 4 job lanes (realtime/publishing/media/bulk) running
+- SEC-M2: Encrypt message content, contact phones, webhook secrets at rest
