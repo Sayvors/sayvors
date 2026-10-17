@@ -33,7 +33,6 @@ async def get_kafka_producer(*, retry: bool = False) -> AIOKafkaProducer:
                 linger_ms=5,
                 compression_type="gzip",
                 request_timeout_ms=30000,
-                max_in_flight=1,
                 metadata_max_age_ms=5000,
             )
             try:
