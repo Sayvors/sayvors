@@ -52,7 +52,7 @@ async def provision_topics() -> None:
         if new_topics:
             await admin.create_topics(new_topics=new_topics, validate_only=False)
             for t in new_topics:
-                logger.info("Created Kafka topic: %s (%d partitions)", t["name"], t.num_partitions)
+                logger.info("Created Kafka topic: %s (%d partitions)", t.name, t.num_partitions)
         else:
             logger.info("All Kafka topics already provisioned")
     except Exception:
