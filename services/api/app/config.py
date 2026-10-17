@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -52,8 +53,18 @@ class Settings(BaseSettings):
     # Parent domain shared by the SPA and the API (e.g. ".sayvors.com").
     # Lets the SPA origin read the non-httpOnly CSRF cookie for the
     # X-CSRF-Token double-submit header in split-domain deployments.
-    # None = host-only cookies (local dev).
-    COOKIE_DOMAIN: str | None = None
+    # None = host-only cookies (local dev). Defaults to .sayvors.com so that
+    # cookies set by api.sayvors.com are also sent to web.sayvors.com and vice
+    # versa. Local dev: set COOKIE_DOMAIN= in .env to get host-only cookies.
+    COOKIE_DOMAIN: str | None = ".sayvors.com"
+
+    @field_validator("COOKIE_DOMAIN")
+    @classmethod
+    def _cookie_domain(cls, v: str | None) -> str | None:
+        # Empty string means host-only (for local dev on localhost)
+        if v == "":
+            return None
+        return v
     # Cookie transport flags. Both cookies are hardcoded Secure/SameSite=None
     # by default, which is correct in production and silently breaks local dev:
     # a browser refuses a Secure cookie over plain http, so the CSRF cookie
