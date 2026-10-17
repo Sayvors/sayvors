@@ -8,7 +8,7 @@ See docs/specs/2026-10-10-unified-job-processing-design.md §D.1
 
 import logging
 
-from aiokafka.admin import AIOAdminClient, NewTopic
+from aiokafka.admin import AIOKafkaAdminClient as AIOAdminClient, NewTopic
 
 from ...config import settings
 
