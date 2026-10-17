@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
+from ...channels.service import hash_contact_phone
 from ..models import ChannelMessage, Lead, LeadAction
 
 logger = logging.getLogger(__name__)
@@ -624,7 +625,7 @@ async def latest_inbound(db, channel_id: str, contact_id: str):
         select(ChannelMessage.platform_message_id, ChannelMessage.created_at)
         .where(
             ChannelMessage.channel_id == channel_id,
-            ChannelMessage.contact_phone == contact_id,
+            ChannelMessage.contact_phone_hash == hash_contact_phone(contact_id),
             ChannelMessage.direction == "inbound",
         )
         .order_by(ChannelMessage.created_at.desc())

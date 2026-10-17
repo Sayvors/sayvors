@@ -17,4 +17,5 @@
 - COOKIE_DOMAIN default changed to .sayvors.com for cross-subdomain auth
 - API_BASE defaults to same-origin proxy on HTTPS dev (tunnel fix)
 - SEC-M5 SSRF fix in reviewer-photo download (fetch_pinned guard)
-- Job queue runner fixes: AIOKafkaAdminClient import, jobs table migration applied locally
+- Job queue runner fixes: AIOKafkaAdminClient import, jobs table migration applied locally, Kafka topic provisioning dict access fix (t['name'] not t.name)
+- Worker starts cleanly: all 4 job lanes (realtime/publishing/media/bulk) running

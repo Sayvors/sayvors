@@ -101,6 +101,7 @@ class ChannelMessage(Base):
     # inbox groups those into one "Unknown" thread rather than dropping them,
     # because they still contain the real conversation text.
     contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # Best-known display name. WhatsApp only sends a profile name on some
     # payloads, so this is often NULL and the UI falls back to the phone.
     contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -657,7 +658,8 @@ class WhatsAppThreadState(Base):
     channel_id: Mapped[str] = mapped_column(
         ForeignKey("channels.id", ondelete="CASCADE"), index=True
     )
-    contact_phone: Mapped[str] = mapped_column(String(32), index=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # Customer's language as detected from their own words ("en", "ar",
     # "ur", "ps", "hi", "bn", ...). Drives the voice-note language.
     language: Mapped[str] = mapped_column(String(16), default="en")

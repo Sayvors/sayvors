@@ -26,6 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from ....database import async_session
 from ...kafka.client import create_consumer
+from ...channels.service import encrypt_contact_phone, encrypt_message_content, hash_contact_phone
 from .models import MetaAsset
 
 logger = logging.getLogger(__name__)
@@ -107,9 +108,9 @@ async def _publish_message_notification(db, tenant_id: str, row, platform: str) 
             "kind": "message",
             "platform": platform,
             "channel_id": row.channel_id,
-            "contact_id": row.contact_phone,
+            "contact_id": decrypt_contact_phone(row.contact_phone),
             "contact_name": row.contact_name,
-            "preview": (row.content or "")[:160],
+            "preview": (decrypt_message_content(row.content) or "")[:160],
             "content_type": row.content_type,
             "message_id": row.platform_message_id,
             "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -414,7 +415,7 @@ async def _generate_reply(
                 select(ChannelMessage)
                 .where(
                     ChannelMessage.channel_id == channel.id,
-                    ChannelMessage.contact_phone == contact,
+                    ChannelMessage.contact_phone_hash == hash_contact_phone(contact),
                 )
                 .order_by(ChannelMessage.created_at.desc())
                 .limit(_HISTORY_MESSAGES)
@@ -431,7 +432,7 @@ async def _generate_reply(
     history = merge_consecutive([
         LLMMessage(
             role="user" if m.direction == "inbound" else "assistant",
-            content=m.content,
+            content=decrypt_message_content(m.content),
         )
         for m in reversed(rows)
     ])
@@ -551,10 +552,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 channel_id=channel.id,
                 platform_message_id=wamid[:200] or None,
                 direction="inbound",
-                content=text if text else f"[{msg_type} message]",
+                content=encrypt_message_content(text if text else f"[{msg_type} message]"),
                 content_type=msg_type,
                 status="delivered",
-                contact_phone=from_wa or None,
+                contact_phone=encrypt_contact_phone(from_wa or None),
                 contact_name=data.get("profile_name") or None,
             )
         db.add(row)
@@ -603,10 +604,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             "channel_id": channel.id,
             "platform": "whatsapp",
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "content_type": row.content_type,
             "status": row.status,
-            "contact_phone": row.contact_phone,
+            "contact_phone": decrypt_contact_phone(row.contact_phone),
             "contact_name": row.contact_name,
             "created_at": row.created_at,
         })
@@ -779,9 +780,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     channel_id=channel.id,
                     platform_message_id=provider_msg_id[:200] or None,
                     direction="outbound",
-                    content=canned,
+                    content=encrypt_message_content(canned),
                     status="sent",
-                    contact_phone=from_wa or None,
+                    contact_phone=encrypt_contact_phone(from_wa or None),
+                    contact_phone_hash=hash_contact_phone(from_wa or None),
                     is_ai=True,
                 )
                 db.add(row)
@@ -794,10 +796,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     "channel_id": channel.id,
                     "platform": "whatsapp",
                     "direction": "outbound",
-                    "content": row.content,
+                    "content": decrypt_message_content(row.content),
                     "content_type": "text",
                     "status": "sent",
-                    "contact_phone": row.contact_phone,
+                    "contact_phone": decrypt_contact_phone(row.contact_phone),
                     "created_at": row.created_at,
                 })
                 await _publish_typing(tenant_id, channel.id, from_wa, False)
@@ -903,10 +905,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             channel_id=channel.id,
                             platform_message_id=provider_msg_id[:200] or None,
                             direction="outbound",
-                            content=reply,  # transcript of what was spoken
+                            content=encrypt_message_content(reply),  # transcript of what was spoken
                             content_type="audio",
                             status="sent",
-                            contact_phone=from_wa or None,
+                            contact_phone=encrypt_contact_phone(from_wa or None),
                             is_ai=True,  # drives the escalation counter
                         )
                     db.add(row)
@@ -925,10 +927,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         "channel_id": channel.id,
                         "platform": "whatsapp",
                         "direction": "outbound",
-                        "content": row.content,
+                        "content": decrypt_message_content(row.content),
                         "content_type": row.content_type,
                         "status": "sent",
-                        "contact_phone": row.contact_phone,
+                        "contact_phone": decrypt_contact_phone(row.contact_phone),
                         "created_at": row.created_at,
                     })
                     logger.info(
@@ -974,10 +976,11 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             id=str(uuid.uuid4()),
                             channel_id=channel.id,
                             direction="outbound",
-                            content=part,
+                            content=encrypt_message_content(part),
                             status="failed",
                             error=str(e)[:500],
-                            contact_phone=from_wa or None,
+                            contact_phone=encrypt_contact_phone(from_wa or None),
+                            contact_phone_hash=hash_contact_phone(from_wa or None),
                         )
                     )
                     await db.commit()
@@ -988,9 +991,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         channel_id=channel.id,
                         platform_message_id=provider_msg_id[:200] or None,
                         direction="outbound",
-                        content=part,
+                        content=encrypt_message_content(part),
                         status="sent",
-                        contact_phone=from_wa or None,
+                        contact_phone=encrypt_contact_phone(from_wa or None),
+                        contact_phone_hash=hash_contact_phone(from_wa or None),
                         is_ai=True,  # drives the escalation counter
                     )
                 db.add(row)
@@ -1003,10 +1007,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     "channel_id": channel.id,
                     "platform": "whatsapp",
                     "direction": "outbound",
-                    "content": row.content,
+                    "content": decrypt_message_content(row.content),
                     "content_type": "text",
                     "status": "sent",
-                    "contact_phone": row.contact_phone,
+                    "contact_phone": decrypt_contact_phone(row.contact_phone),
                     "created_at": row.created_at,
                 })
                 if index < len(messages) - 1:
@@ -1091,10 +1095,11 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             channel_id=channel.id,
             platform_message_id=wamid[:200] or None,
             direction="inbound",
-            content=text if text else f"[{msg_type} message]",
+            content=encrypt_message_content(text if text else f"[{msg_type} message]"),
             content_type=msg_type,
             status="delivered",
-            contact_phone=from_wa or None,
+            contact_phone=encrypt_contact_phone(from_wa or None),
+            contact_phone_hash=hash_contact_phone(from_wa or None),
             contact_name=data.get("profile_name") or None,
         )
         db.add(row)
@@ -1111,10 +1116,10 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             "channel_id": channel.id,
             "platform": "whatsapp",
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "content_type": row.content_type,
             "status": "delivered",
-            "contact_phone": row.contact_phone,
+            "contact_phone": decrypt_contact_phone(row.contact_phone),
             "contact_name": row.contact_name,
             "created_at": row.created_at,
         })
@@ -1156,12 +1161,13 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
             channel_id=channel.id,
             platform_message_id=wamid[:200] or None,
             direction="outbound",
-            content=text if text else f"[{msg_type} message]",
+            content=encrypt_message_content(text if text else f"[{msg_type} message]"),
             content_type=msg_type,
             status="delivered",
             # An echo is a message the business sent from the WhatsApp app, so
             # `to` is the customer — the same contact the thread is keyed on.
-            contact_phone=to_wa or None,
+            contact_phone=encrypt_contact_phone(to_wa or None),
+            contact_phone_hash=hash_contact_phone(to_wa or None),
         )
         db.add(row)
         await db.commit()
@@ -1173,10 +1179,10 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
             "channel_id": channel.id,
             "platform": "whatsapp",
             "direction": "outbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "content_type": row.content_type,
             "status": row.status,
-            "contact_phone": row.contact_phone,
+            "contact_phone": decrypt_contact_phone(row.contact_phone),
             "created_at": row.created_at,
         })
 
@@ -1316,10 +1322,11 @@ async def _handle_instagram_echo(event: dict, data: dict) -> None:
             channel_id=channel.id,
             platform_message_id=mid[:200] or None,
             direction="outbound",
-            content=text if text else "[non-text message]",
+            content=encrypt_message_content(text if text else "[non-text message]"),
             content_type="text",
             status="sent",
-            contact_phone=to_contact or None,
+            contact_phone=encrypt_contact_phone(to_contact or None),
+            contact_phone_hash=hash_contact_phone(to_contact or None),
         ))
         await db.commit()
 
@@ -1380,8 +1387,8 @@ async def _handle_instagram_comment(event: dict, data: dict) -> None:
         if existing is not None:
             # Edited redelivery: same id, new text. Any other replay of an
             # unchanged comment is a Kafka redelivery — nothing to do.
-            if text and existing.content != text:
-                existing.content = text
+            if text and decrypt_message_content(existing.content) != text:
+                existing.content = encrypt_message_content(text)
                 db.add(existing)
                 await db.commit()
                 from ...channels.realtime import publish_inbox_event
@@ -1391,7 +1398,7 @@ async def _handle_instagram_comment(event: dict, data: dict) -> None:
                     "id": existing.id,
                     "channel_id": existing.channel_id,
                     "platform": "instagram",
-                    "content": existing.content,
+                    "content": decrypt_message_content(existing.content),
                 })
             return
 
@@ -1406,7 +1413,7 @@ async def _handle_instagram_comment(event: dict, data: dict) -> None:
             parent_platform_comment_id=data.get("parent_id") or None,
             media_id=data.get("media_id") or None,
             direction="inbound",
-            content=text or "[non-text comment]",
+            content=encrypt_message_content(text or "[non-text comment]"),
             author_id=author_id,
             author_name=author_name,
             status="received",
@@ -1424,7 +1431,7 @@ async def _handle_instagram_comment(event: dict, data: dict) -> None:
             "comment_id": comment_id,
             "media_id": row.media_id,
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "author_id": row.author_id,
             "author_name": row.author_name,
             "platform_timestamp": row.platform_timestamp,
@@ -1473,8 +1480,8 @@ async def _handle_facebook_comment(event: dict, data: dict) -> None:
         if existing is not None:
             # Edited redelivery: same id, new text. Any other replay of an
             # unchanged comment is a Kafka redelivery — nothing to do.
-            if text and existing.content != text:
-                existing.content = text
+            if text and decrypt_message_content(existing.content) != text:
+                existing.content = encrypt_message_content(text)
                 db.add(existing)
                 await db.commit()
                 from ...channels.realtime import publish_inbox_event
@@ -1484,7 +1491,7 @@ async def _handle_facebook_comment(event: dict, data: dict) -> None:
                     "id": existing.id,
                     "channel_id": existing.channel_id,
                     "platform": "facebook",
-                    "content": existing.content,
+                    "content": decrypt_message_content(existing.content),
                 })
             return
 
@@ -1499,7 +1506,7 @@ async def _handle_facebook_comment(event: dict, data: dict) -> None:
             parent_platform_comment_id=data.get("parent_id") or None,
             media_id=data.get("post_id") or None,
             direction="inbound",
-            content=text or "[non-text comment]",
+            content=encrypt_message_content(text or "[non-text comment]"),
             author_id=author_id,
             author_name=author_name,
             status="received",
@@ -1517,7 +1524,7 @@ async def _handle_facebook_comment(event: dict, data: dict) -> None:
             "comment_id": comment_id,
             "media_id": row.media_id,
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "author_id": row.author_id,
             "author_name": row.author_name,
             "platform_timestamp": row.platform_timestamp,
@@ -1581,10 +1588,11 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             channel_id=channel.id,
             platform_message_id=mid[:200] or None,
             direction="inbound",
-            content=text if text else "[non-text message]",
+            content=encrypt_message_content(text if text else "[non-text message]"),
             content_type="text",
             status="delivered",
-            contact_phone=igsid or None,
+            contact_phone=encrypt_contact_phone(igsid or None),
+            contact_phone_hash=hash_contact_phone(igsid or None),
         )
         db.add(row)
         await db.commit()
@@ -1596,10 +1604,10 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             "channel_id": channel.id,
             "platform": "instagram",
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "content_type": row.content_type,
             "status": row.status,
-            "contact_phone": row.contact_phone,
+            "contact_phone": decrypt_contact_phone(row.contact_phone),
             "created_at": row.created_at,
         })
 
@@ -1746,10 +1754,11 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                     id=str(uuid.uuid4()),
                     channel_id=channel.id,
                     direction="outbound",
-                    content=part,
+                    content=encrypt_message_content(part),
                     status="failed",
                     error=str(e)[:500],
-                    contact_phone=igsid or None,
+                    contact_phone=encrypt_contact_phone(igsid or None),
+                    contact_phone_hash=hash_contact_phone(igsid or None),
                 ))
                 await db.commit()
                 # Later parts would land without their context — stop.
@@ -1759,9 +1768,10 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 channel_id=channel.id,
                 platform_message_id=provider_msg_id[:200] or None,
                 direction="outbound",
-                content=part,
+                content=encrypt_message_content(part),
                 status="sent",
-                contact_phone=igsid or None,
+                contact_phone=encrypt_contact_phone(igsid or None),
+                contact_phone_hash=hash_contact_phone(igsid or None),
                 is_ai=True,  # drives the escalation counter
             )
             db.add(row)
@@ -1775,10 +1785,10 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                     "channel_id": channel.id,
                     "platform": "instagram",
                     "direction": "outbound",
-                    "content": row.content,
+                    "content": decrypt_message_content(row.content),
                     "content_type": "text",
                     "status": "sent",
-                    "contact_phone": row.contact_phone,
+                    "contact_phone": decrypt_contact_phone(row.contact_phone),
                     "created_at": row.created_at,
                 })
             except Exception:

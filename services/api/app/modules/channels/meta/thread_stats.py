@@ -22,6 +22,8 @@ import logging
 
 from sqlalchemy import select
 
+from ...channels.service import hash_contact_phone
+
 logger = logging.getLogger(__name__)
 
 _CLASSIFY_MAX_TOKENS = 120
@@ -103,7 +105,10 @@ async def classify_thread(db, channel_id: str, contact_phone: str | None) -> dic
 
         conditions = [ChannelMessage.channel_id == channel_id]
         if contact_phone:
-            conditions.append(ChannelMessage.contact_phone == contact_phone)
+            conditions.append(
+                ChannelMessage.contact_phone_hash
+                == hash_contact_phone(contact_phone)
+            )
         # Voice hysteresis: a voice note is the explanation for the confusion
         # that came before it — after one goes out, the customer's next
         # "okay, but..." is a fresh start, not ongoing confusion. Only what
@@ -115,7 +120,10 @@ async def classify_thread(db, channel_id: str, contact_phone: str | None) -> dic
                     ChannelMessage.direction == "outbound",
                     ChannelMessage.content_type == "audio",
                     *(
-                        [ChannelMessage.contact_phone == contact_phone]
+                        [
+                            ChannelMessage.contact_phone_hash
+                            == hash_contact_phone(contact_phone)
+                        ]
                         if contact_phone
                         else []
                     ),
