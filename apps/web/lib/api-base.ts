@@ -32,10 +32,13 @@ function resolveApiBase(): string {
     if (window.location.protocol === "http:") {
       return "";
     }
-    // https dev on tunnel URLs (dev-web.sayvors.com etc.): use same-origin
+    // HTTPS dev (tunnel URLs like dev-web.sayvors.com): always use same-origin
     // proxy so the httpOnly cookie set by the API (domain .sayvors.com) is
-    // sent on every request. Only point at the absolute API URL when
-    // NEXT_PUBLIC_API_URL is explicitly set (production or explicit tunnel).
+    // sent on every API request. Only point at the absolute API URL when
+    // explicitly configured for production.
+    if (process.env.NODE_ENV !== "production") {
+      return "";
+    }
     if (process.env.NEXT_PUBLIC_API_URL) {
       return process.env.NEXT_PUBLIC_API_URL;
     }
