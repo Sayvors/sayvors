@@ -17,4 +17,4 @@
 - COOKIE_DOMAIN default changed to .sayvors.com for cross-subdomain auth
 - API_BASE defaults to same-origin proxy on HTTPS dev (tunnel fix)
 - SEC-M5 SSRF fix in reviewer-photo download (fetch_pinned guard)
-- Storage confirmed: local disk (no S3/GCS buckets configured)
+- Job queue runner fixes: AIOKafkaAdminClient import, jobs table migration applied locally
