@@ -21,13 +21,36 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Create enum types first
+    job_type_enum = sa.Enum(
+        "meta.send_reply", "meta.send_template",
+        "post.publish", "media.publish",
+        "media.process",
+        "databank.ingest", "scrape.url",
+        "stt.job", "tts.job",
+        name="job_type",
+    )
+    job_lane_enum = sa.Enum(
+        "realtime", "publishing", "media", "bulk",
+        name="job_lane",
+    )
+    job_status_enum = sa.Enum(
+        "accepted", "queued", "running", "retrying",
+        "blocked", "succeeded", "failed",
+        "cancelled", "dead",
+        name="job_status",
+    )
+    job_type_enum.create(op.get_bind(), checkfirst=True)
+    job_lane_enum.create(op.get_bind(), checkfirst=True)
+    job_status_enum.create(op.get_bind(), checkfirst=True)
+
     op.create_table(
         'jobs',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('tenant_id', sa.String(length=36), nullable=False),
-        sa.Column('job_type', sa.String(length=100), nullable=False),
-        sa.Column('lane', sa.String(length=50), nullable=False),
-        sa.Column('status', sa.String(length=50), nullable=False),
+        sa.Column('job_type', job_type_enum, nullable=False),
+        sa.Column('lane', job_lane_enum, nullable=False),
+        sa.Column('status', job_status_enum, nullable=False),
         sa.Column('priority', sa.Integer(), nullable=False),
         sa.Column('payload', sa.JSON(), nullable=False),
         sa.Column('result', sa.JSON(), nullable=True),
@@ -74,3 +97,8 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_jobs_status'), table_name='jobs')
     op.drop_index(op.f('ix_jobs_tenant_id'), table_name='jobs')
     op.drop_table('jobs')
+
+    # Drop enum types
+    sa.Enum(name="job_status").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="job_lane").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="job_type").drop(op.get_bind(), checkfirst=True)

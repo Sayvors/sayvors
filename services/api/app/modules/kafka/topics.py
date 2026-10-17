@@ -41,7 +41,7 @@ async def provision_topics() -> None:
     try:
         await admin.start()
         existing = await admin.describe_topics()
-        existing_names = {t["name"] for t in existing}
+        existing_names = {t.name for t in existing}
 
         new_topics = [
             NewTopic(name=name, num_partitions=parts, replication_factor=rf)
