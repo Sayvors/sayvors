@@ -62,7 +62,7 @@ class OutboxWorker:
                     last_kafka_check = now
                     try:
                         from ..kafka.client import get_kafka_producer, mark_kafka_available
-                        await get_kafka_producer()
+                        await get_kafka_producer(retry=True)
                         mark_kafka_available()
                         logger.info("Kafka reconnected!")
                     except Exception:

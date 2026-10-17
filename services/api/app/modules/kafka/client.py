@@ -12,9 +12,14 @@ _kafka_available = True
 _producer_lock = asyncio.Lock()
 
 
-async def get_kafka_producer() -> AIOKafkaProducer:
+async def get_kafka_producer(*, retry: bool = False) -> AIOKafkaProducer:
     global _producer, _kafka_available
-    if not _kafka_available:
+    if _producer is not None and _kafka_available:
+        return _producer
+    # The availability latch may only be bypassed by an explicit recovery
+    # attempt (the outbox worker's retry loop); everyone else fails fast so
+    # request paths never queue behind a dead broker.
+    if not _kafka_available and not retry:
         raise ConnectionError("Kafka marked unavailable")
 
     async with _producer_lock:
@@ -34,6 +39,9 @@ async def get_kafka_producer() -> AIOKafkaProducer:
             )
             try:
                 await asyncio.wait_for(_producer.start(), timeout=15.0)
+                # Clear the latch at the point of success — recovery must never
+                # depend on a separate call sitting behind this same guard.
+                _kafka_available = True
             except Exception as e:
                 _producer = None
                 _kafka_available = False
