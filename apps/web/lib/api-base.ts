@@ -28,14 +28,20 @@
 function resolveApiBase(): string {
   // Runs in the browser only. On the server there is no page origin to be
   // relative to, so fall through to the configured value.
-  if (typeof window !== "undefined" && window.location.protocol === "http:") {
+  if (typeof window !== "undefined") {
+    if (window.location.protocol === "http:") {
+      return "";
+    }
+    // https dev on tunnel URLs (dev-web.sayvors.com etc.): use same-origin
+    // proxy so the httpOnly cookie set by the API (domain .sayvors.com) is
+    // sent on every request. Only point at the absolute API URL when
+    // NEXT_PUBLIC_API_URL is explicitly set (production or explicit tunnel).
+    if (process.env.NEXT_PUBLIC_API_URL) {
+      return process.env.NEXT_PUBLIC_API_URL;
+    }
     return "";
   }
-  // https keeps the original resolution exactly, including the localhost
-  // fallback: staging and production build with NEXT_PUBLIC_API_URL pointed at
-  // the API host, and returning "" here instead would send every call to
-  // staging.sayvors.com/api/* where no rewrite exists. Do not change this to
-  // "" without auditing that first.
+  // SSR / build time: use configured API URL or default localhost.
   return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 }
 
