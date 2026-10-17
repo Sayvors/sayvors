@@ -92,6 +92,18 @@ function extractDetail(text: string, status: number): string {
   return `Request failed (${status}).`;
 }
 
+export async function fetchOverviewStats(window: string): Promise<OverviewStats> {
+  return adminFetch<OverviewStats>(`/api/v1/admin/overview/stats?window=${encodeURIComponent(window)}`);
+}
+
+export async function fetchLiveStats(minutes: 30 | 60): Promise<LiveStats> {
+  return adminFetch<LiveStats>(`/api/v1/admin/overview/stats/live?minutes=${minutes}`);
+}
+
+export async function fetchAdminHealth(): Promise<AdminHealth> {
+  return adminFetch<AdminHealth>("/api/v1/admin/health");
+}
+
 export interface AdminOverview {
   users_total: number;
   users_verified: number;
@@ -139,4 +151,95 @@ export interface AdminTenantDetail extends AdminTenant {
     status: string;
     created_at: string | null;
   }[];
+}
+
+export interface PlatformStats {
+  platform: string;
+  label: string;
+  connected: number;
+  connected_total: number;
+  messages: number;
+  messages_in: number;
+  messages_out: number;
+}
+
+export interface OverviewTotals {
+  users: number;
+  tenants: number;
+  businesses: number;
+  reviews: number;
+  messages: number;
+  posts: number;
+}
+
+export interface OverviewWindowDelta {
+  users: number;
+  tenants: number;
+  businesses: number;
+  reviews: number;
+  messages: number;
+  messages_in: number;
+  messages_out: number;
+  ai_replies: number;
+  posts: number;
+}
+
+export interface OverviewLast24h {
+  users: number;
+  reviews: number;
+  messages: number;
+  messages_in: number;
+  messages_out: number;
+  ai_replies: number;
+}
+
+export interface OverviewStats {
+  window: string;
+  window_start: string | null;
+  generated_at: string | null;
+  totals: OverviewTotals;
+  window_delta: OverviewWindowDelta;
+  last_24h: OverviewLast24h;
+  platforms: PlatformStats[];
+}
+
+export interface LiveStats {
+  minutes: number;
+  generated_at: string | null;
+  messages: number;
+  messages_in: number;
+  messages_out: number;
+  ai_replies: number;
+  new_users: number;
+  new_reviews: number;
+  businesses_connected: number;
+  businesses_disconnected: number;
+  active_platforms: number;
+  top_platform: string | null;
+}
+
+export interface HealthService {
+  name: string;
+  kind: string;
+  ok: boolean;
+  latency_ms: number;
+  detail: string;
+  enabled: boolean;
+  key_source: string;
+}
+
+export interface HealthFailure {
+  source: string;
+  type: string;
+  message: string;
+  at: string | null;
+}
+
+export interface AdminHealth {
+  status: string;
+  checked_at: string | null;
+  uptime_seconds: number;
+  probe: boolean;
+  services: HealthService[];
+  recent_failures: HealthFailure[];
 }
