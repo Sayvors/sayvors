@@ -105,9 +105,9 @@ export default function AdminLogsPage() {
     { key: "key", label: `With key`, n: count((s) => s.key_source === "database") },
   ] as const;
 
-  const statusMeta = health?.status === "ok" ? { bg: "bg-emerald-500", label: "Healthy", desc: "All checks passing", dot: "bg-emerald-500", ring: "shadow-[0_0_0_6px_rgba(16,185,129,0.15)]" }
-    : health?.status === "degraded" ? { bg: "bg-amber-500", label: "Degraded", desc: "Some services need attention", dot: "bg-amber-500", ring: "shadow-[0_0_0_6px_rgba(245,158,11,0.15)]" }
-    : { bg: "bg-red-500", label: "Down", desc: "Core service unreachable", dot: "bg-red-500", ring: "shadow-[0_0_0_6px_rgba(239,68,68,0.15)]" };
+  const statusMeta = health?.status === "ok" ? { bg: "bg-emerald-500", label: "Healthy", desc: "All checks passing", dot: "bg-emerald-500", ring: "" }
+    : health?.status === "degraded" ? { bg: "bg-amber-500", label: "Degraded", desc: "Some services need attention", dot: "bg-amber-500", ring: "" }
+    : { bg: "bg-red-500", label: "Down", desc: "Core service unreachable", dot: "bg-red-500", ring: "" };
 
   const insights = useMemo(() => {
     if (!health) return null;
@@ -121,8 +121,8 @@ export default function AdminLogsPage() {
   return (
     <div className="space-y-4">
       {/* Header hero */}
-      <div className="overflow-hidden rounded-[6px] border-2 border-white bg-white/85 shadow-sm">
-        <div className="bg-gradient-to-r from-deep-violet/[0.06] via-violet-500/[0.04] to-sky-500/[0.05] px-4 py-4 sm:px-5">
+      <div className="panel overflow-hidden">
+        <div className="px-4 py-4 sm:px-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h1 className="flex flex-wrap items-center gap-2 text-[18px] font-bold tracking-tight text-ink">
@@ -151,15 +151,10 @@ export default function AdminLogsPage() {
               )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <button onClick={() => void load(false)} disabled={loading} className="rounded-xl bg-white px-3 py-2 text-[12px] font-semibold text-ink/60 ring-1 ring-ink/[0.08] transition hover:bg-ink/[0.03] hover:text-ink disabled:opacity-50">
+              <button onClick={() => void load(false)} disabled={loading} className="rounded-[2px] bg-[var(--ui-surface)]px-3 py-2 text-[12px] font-semibold text-ink/60 ring-1 ring-ink/[0.08] transition hover:bg-ink/[0.03] hover:text-ink disabled:opacity-50">
                 {loading ? "Checking…" : "Refresh"}
               </button>
-              <button
-                onClick={() => void load(true)}
-                disabled={probing || loading}
-                title="Live probe hits Localith + each AI provider (free list calls)"
-                className="rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-[#4a2575] disabled:opacity-50"
-              >
+              <button onClick={() => void load(true)} disabled={probing || loading} title="Live probe hits Localith + each AI provider (free list calls)" className="rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50">
                 {probing ? "Probing…" : "Live check"}
               </button>
             </div>
@@ -173,7 +168,7 @@ export default function AdminLogsPage() {
                 { label: "Infra failing", value: String(insights?.failingInfra ?? 0), sub: insights?.failingInfra ? "needs triage" : "all clear", tone: insights?.failingInfra ? "text-red-600" : "text-emerald-600" },
                 { label: "Recent failures", value: String(health.recent_failures.length), sub: health.recent_failures.length ? "last 20" : "no recent" },
               ].map((c) => (
-                <div key={c.label} className="rounded-[6px] bg-white px-3.5 py-3 ring-1 ring-ink/[0.06]">
+                <div key={c.label} className="rounded-[2px] bg-[var(--ui-surface)]px-3.5 py-3 ring-1 ring-ink/[0.06]">
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</p>
                   <p className={`mt-1 text-[15px] font-bold leading-none tabular-nums ${c.tone ?? "text-ink"}`}>{c.value}</p>
                   <p className="mt-1 text-[11px] leading-none text-ink/40">{c.sub}</p>
@@ -185,27 +180,27 @@ export default function AdminLogsPage() {
       </div>
 
       {error ? (
-        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
+        <div className="panel p-10 text-center">
           <p className="text-[13px] font-semibold text-ink/60">{error}</p>
-          <button onClick={() => void load(false)} className="mt-3 rounded-xl bg-deep-violet px-3 py-1.5 text-[12px] font-bold text-white">Retry</button>
+          <button onClick={() => void load(false)} className="mt-3 rounded-[2px] bg-deep-violet px-3 py-1.5 text-[12px] font-bold text-white">Retry</button>
         </div>
       ) : !health && loading ? (
         <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-[92px] animate-pulse rounded-[6px] border-2 border-white bg-white/60" />
+            <div key={i} className="panel h-[92px] animate-pulse" />
           ))}
         </div>
       ) : health && (
         <>
           {/* toolbar */}
-          <div className="flex flex-col gap-2.5 rounded-[6px] border-2 border-white bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="panel flex flex-col gap-2.5 p-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-1.5">
               {filters.map((f) => (
                 <button
                   key={f.key}
                   onClick={() => setFilter(f.key as any)}
                   aria-pressed={filter === f.key}
-                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition ${filter === f.key ? "bg-deep-violet text-white shadow-sm" : "bg-white text-ink/60 ring-1 ring-ink/[0.06] hover:bg-ink/[0.03] hover:text-ink"}`}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition ${filter === f.key ? "bg-deep-violet text-white" : "bg-[var(--ui-surface)]text-ink/60 ring-1 ring-ink/[0.06] hover:bg-ink/[0.03] hover:text-ink"}`}
                 >
                   {f.label} <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${filter === f.key ? "bg-white/20 text-white" : "bg-ink/[0.06] text-ink/50"}`}>{f.n}</span>
                 </button>
@@ -213,7 +208,7 @@ export default function AdminLogsPage() {
             </div>
             <div className="relative">
               <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink/30"><circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.6"/><path d="M15.5 15.5L19 19" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter services…" className="w-48 rounded-xl border border-ink/[0.08] bg-white py-1.5 pl-8 pr-3 text-[11px] text-ink placeholder:text-ink/35 outline-none focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/10 sm:w-56"/>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter services…" className="w-48 rounded-[2px] border border-ink/[0.08] bg-[var(--ui-surface)]py-1.5 pl-8 pr-3 text-[11px] text-ink placeholder:text-ink/35 outline-none focus:border-[var(--ui-ink)] sm:w-56"/>
             </div>
           </div>
 
@@ -221,20 +216,20 @@ export default function AdminLogsPage() {
           {infra.length > 0 && (
             <section>
               <h2 className="mb-2 flex items-center gap-2 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40">
-                Infrastructure <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold tabular-nums text-ink/50 ring-1 ring-ink/10">{infra.length}</span>
+                Infrastructure <span className="rounded-full bg-[var(--ui-surface)]px-2 py-0.5 text-[11px] font-bold tabular-nums text-ink/50 ring-1 ring-ink/10">{infra.length}</span>
               </h2>
               <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
                 {infra.map((s) => (
-                  <div key={s.name} className={`relative overflow-hidden rounded-[6px] border-2 bg-white/85 p-3.5 shadow-sm transition hover:shadow-md ${s.ok ? "border-white" : "border-red-200 bg-red-50/30"}`}>
+                  <div key={s.name} className={`panel relative overflow-hidden p-3.5 transition ${s.ok ? "" : "border-red-200 bg-red-50/30"}`}>
                     <div className={`absolute left-0 top-0 h-1 w-full ${s.ok ? "bg-emerald-500" : "bg-red-500"}`} aria-hidden />
                     <div className="flex items-start justify-between gap-2">
-                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl ${s.ok ? "bg-emerald-500" : "bg-red-500"} shadow-sm`}>
+                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[2px] ${s.ok ? "bg-emerald-500" : "bg-red-500"}`}>
                         <KindIcon kind={s.kind} ok={s.ok} />
                       </span>
                       <span className={`rounded-full px-2 py-1 text-[10px] font-bold tabular-nums ring-1 ${s.ok ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-red-50 text-red-700 ring-red-200"}`}>{s.latency_ms}ms</span>
                     </div>
                     <p className="mt-2.5 flex items-center gap-2 text-[13px] font-bold leading-none text-ink">
-                      <span className={`h-2 w-2 rounded-full ${s.ok ? "bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]" : "bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.15)]"}`} aria-hidden /> {s.name}
+                      <span className={`h-2 w-2 rounded-full ${s.ok ? "bg-emerald-500" : "bg-red-500"}`} aria-hidden /> {s.name}
                     </p>
                     <p className="mt-1 text-[11px] font-medium text-ink/40">{s.kind}</p>
                     <p className="mt-1.5 line-clamp-3 break-words text-[11px] leading-relaxed text-ink/60" title={s.detail}>{s.detail || (s.ok ? "Working" : "Not working")}</p>
@@ -248,15 +243,14 @@ export default function AdminLogsPage() {
           {ai.length > 0 && (
             <section>
               <h2 className="mb-2 flex items-center gap-2 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40">
-                AI providers <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold tabular-nums text-ink/50 ring-1 ring-ink/10">{ai.length}</span>
+                AI providers <span className="rounded-full bg-[var(--ui-surface)]px-2 py-0.5 text-[11px] font-bold tabular-nums text-ink/50 ring-1 ring-ink/10">{ai.length}</span>
                 <span className="hidden text-[11px] font-normal normal-case tracking-normal text-ink/30 sm:inline">· keys in DB = ready for tenants</span>
               </h2>
               <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {ai.map((s) => (
-                  <div key={s.name} className={`relative overflow-hidden rounded-[6px] p-3.5 shadow-sm ring-1 transition ${s.ok ? "bg-white ring-ink/[0.06] hover:shadow-md" : s.key_source === "disabled" ? "bg-ink/[0.02] ring-ink/10 opacity-80" : "bg-amber-50/60 ring-amber-200"}`}>
+                  <div key={s.name} className={`panel relative overflow-hidden p-3.5 transition ${s.ok ? "" : s.key_source === "disabled" ? "bg-ink/[0.03] opacity-80" : "bg-amber-50/60"}`}>
                     <div className="flex items-center gap-2">
-                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl ${s.ok ? "bg-deep-violet text-white" : s.key_source==="disabled" ? "bg-ink/20 text-white" : "bg-amber-500 text-white"}`}>
-                        <KindIcon kind={s.kind} ok={true} />
+                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[2px] ${s.ok ? "bg-deep-violet text-white" : s.key_source==="disabled" ? "bg-ink/20 text-white" : "bg-amber-500 text-white"}`}>                        <KindIcon kind={s.kind} ok={true} />
                       </span>
                       <span className="min-w-0 flex-1 truncate text-[12px] font-bold text-ink">{s.name.replace("AI:", "")}</span>
                       <span className={`h-2 w-2 shrink-0 rounded-full ${s.ok ? "bg-emerald-500" : "bg-red-500"}`} aria-hidden />
@@ -271,20 +265,20 @@ export default function AdminLogsPage() {
                     </div>
                   </div>
                 ))}
-                {ai.length === 0 && <p className="col-span-full rounded-[6px] bg-white/60 p-6 text-center text-[11px] text-ink/40">No AI providers in this filter.</p>}
+                {ai.length === 0 && <p className="col-span-full rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-6 text-center text-[11px] text-ink/40">No AI providers in this filter.</p>}
               </div>
             </section>
           )}
 
           {services.length === 0 && (
-            <div className="rounded-[6px] border-2 border-white bg-white/60 p-8 text-center text-[12px] text-ink/40">
+            <div className="panel p-8 text-center text-[12px] text-ink/40">
               No services match — clear search or switch filter.
               <button onClick={() => { setQ(""); setFilter("all"); }} className="ml-2 font-bold text-deep-violet hover:underline">Reset</button>
             </div>
           )}
 
           {/* Recent failures */}
-          <section className="rounded-[6px] border-2 border-white bg-white/80 p-4 sm:p-5">
+          <section className="panel p-4 sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <h2 className="flex items-center gap-2 text-[13px] font-bold tracking-tight text-ink">
                 Recent failures
@@ -294,7 +288,7 @@ export default function AdminLogsPage() {
               <span className="hidden text-[11px] text-ink/30 sm:inline">Auto-refresh 30s · {fmtRelative(health.checked_at)}</span>
             </div>
             {health.recent_failures.length === 0 ? (
-              <div className="mt-4 rounded-[6px] border border-dashed border-emerald-200 bg-emerald-50/50 p-8 text-center">
+              <div className="mt-4 rounded-[2px] border border-dashed border-emerald-200 bg-emerald-50/50 p-8 text-center">
                 <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500 text-white">✓</div>
                 <p className="mt-2 text-[13px] font-bold text-emerald-700">No failures recorded</p>
                 <p className="mx-auto mt-1 max-w-[420px] text-[11px] leading-relaxed text-emerald-700/70">Good sign — outbox and ingest are clear. Failures appear here for 20 most recent with source, type and time.</p>
@@ -302,13 +296,13 @@ export default function AdminLogsPage() {
             ) : (
               <ul className="mt-4 space-y-2">
                 {health.recent_failures.map((f, i) => (
-                  <li key={`${f.source}-${f.type}-${i}`} className="flex gap-3 rounded-[6px] bg-ink/[0.02] p-3 ring-1 ring-ink/[0.04] transition hover:bg-white">
+                  <li key={`${f.source}-${f.type}-${i}`} className="flex gap-3 rounded-[2px] bg-ink/[0.02] p-3 ring-1 ring-ink/[0.04] transition hover:bg-[var(--ui-surface)]">
                     <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${f.source==="outbox"?"bg-amber-500":"bg-sky-500"}`} aria-hidden />
                     <div className="min-w-0 flex-1">
                       <p className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-ink">
                         <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ring-1 ${f.source==="outbox"?"bg-amber-50 text-amber-700 ring-amber-200":"bg-sky-50 text-sky-700 ring-sky-200"}`}>{f.source}</span>
                         <span className="truncate">{f.type}</span>
-                        <span className="ml-auto shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-medium tabular-nums text-ink/40 ring-1 ring-ink/10">{f.at ? fmtRelative(f.at) : "—"}</span>
+                        <span className="ml-auto shrink-0 rounded-full bg-[var(--ui-surface)]px-2 py-1 text-[10px] font-medium tabular-nums text-ink/40 ring-1 ring-ink/10">{f.at ? fmtRelative(f.at) : "—"}</span>
                       </p>
                       {f.message && <p className="mt-1 break-words text-[11px] leading-relaxed text-ink/55">{f.message}</p>}
                       {f.at && <p className="mt-1 text-[10px] text-ink/30" title={f.at}>{new Date(f.at).toLocaleString()}</p>}

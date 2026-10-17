@@ -251,7 +251,7 @@ export default function AdminTenantsPage() {
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Search email or name…"
             aria-label="Search tenants by email or name"
-            className={`w-full rounded-xl border border-ink/[0.08] bg-white py-2.5 pl-9 pr-9 text-[13px] text-ink placeholder:text-ink/35 outline-none transition focus:border-deep-violet/30 focus:ring-4 focus:ring-deep-violet/10 ${FOCUS_RING}`}
+            className={`w-full rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] py-2.5 pl-9 pr-9 text-[13px] text-ink placeholder:text-ink/35 outline-none transition focus:border-[var(--ui-ink)] ${FOCUS_RING}`}
           />
           {searchInput && (
             <button
@@ -272,7 +272,7 @@ export default function AdminTenantsPage() {
       {overview && (
         <section
           aria-label="Tenant funnel totals"
-          className="admin-rise rounded-[6px] border-2 border-white bg-white/80 px-5 py-4"
+          className="admin-rise panel px-5 py-4"
           style={{ animationDelay: "70ms" }}
         >
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4 sm:divide-x sm:divide-ink/[0.07]">
@@ -301,7 +301,7 @@ export default function AdminTenantsPage() {
 
       {/* ── toolbar: filters + sort ──────────────────────────── */}
       <div
-        className="admin-rise flex flex-col gap-3 rounded-[6px] border-2 border-white bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between"
+        className="admin-rise panel flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"
         style={{ animationDelay: "140ms" }}
       >
         <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter tenants">
@@ -320,8 +320,8 @@ export default function AdminTenantsPage() {
               aria-pressed={filter === f.key}
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold transition ${
                 filter === f.key
-                  ? "bg-deep-violet text-white shadow-sm"
-                  : "bg-white text-ink/60 ring-1 ring-ink/[0.06] hover:bg-ink/[0.03] hover:text-ink"
+                  ? "bg-deep-violet text-white"
+                  : "bg-[var(--ui-surface)] text-ink/60 ring-1 ring-[var(--ui-line)] hover:bg-ink/[0.03] hover:text-ink"
               } ${FOCUS_RING}`}
             >
               {f.label}{" "}
@@ -347,7 +347,7 @@ export default function AdminTenantsPage() {
             id="tenant-sort"
             value={sort}
             onChange={(e) => setSort(e.target.value as SortKey)}
-            className={`rounded-xl border border-ink/[0.08] bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink outline-none focus:border-deep-violet/30 ${FOCUS_RING}`}
+            className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[12px] font-semibold text-ink outline-none focus:border-[var(--ui-ink)] ${FOCUS_RING}`}
           >
             <option value="newest">Newest</option>
             <option value="oldest">Oldest</option>
@@ -363,7 +363,7 @@ export default function AdminTenantsPage() {
 
       {/* ── error ────────────────────────────────────────────── */}
       {error ? (
-        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
+        <div className="panel p-10 text-center">
           <p className="text-[13px] font-semibold text-ink/60">{error}</p>
           <button
             onClick={() => {
@@ -380,7 +380,7 @@ export default function AdminTenantsPage() {
         <>
           {/* ── desktop ledger ─────────────────────────────── */}
           <div
-            className="admin-rise hidden overflow-hidden rounded-[6px] border-2 border-white bg-white/80 shadow-sm md:block"
+            className="admin-rise panel hidden overflow-hidden md:block"
             style={{ animationDelay: "210ms" }}
           >
             <div className="overflow-x-auto">
@@ -453,7 +453,7 @@ export default function AdminTenantsPage() {
                                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-deep-violet/10 text-[11px] font-bold text-deep-violet ring-1 ring-deep-violet/10">
                                   {initials(t)}
                                 </div>
-                                <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${meta.dot}`} />
+                                <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--ui-surface)] ${meta.dot}`} />
                               </div>
                               <div className="min-w-0">
                                 <Link
@@ -511,7 +511,7 @@ export default function AdminTenantsPage() {
                           <td className="px-3 py-3 text-right">
                             <Link
                               href={`/tenants/${t.id}`}
-                              className={`inline-flex h-8 w-8 items-center justify-center rounded-xl bg-white text-ink/40 ring-1 ring-ink/[0.06] transition group-hover:bg-deep-violet group-hover:text-white group-hover:ring-deep-violet ${FOCUS_RING}`}
+                              className={`inline-flex h-8 w-8 items-center justify-center rounded-[2px] bg-[var(--ui-surface)] text-ink/40 ring-1 ring-[var(--ui-line)] transition group-hover:bg-deep-violet group-hover:text-white group-hover:ring-deep-violet ${FOCUS_RING}`}
                               aria-label={`Open ${t.email}`}
                             >
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -532,7 +532,7 @@ export default function AdminTenantsPage() {
           <div className="admin-rise grid gap-3 md:hidden" style={{ animationDelay: "210ms" }}>
             {loading ? (
               Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="animate-pulse rounded-[6px] border-2 border-white bg-white/60 p-4" aria-hidden>
+                <div key={i} className="panel animate-pulse p-4" aria-hidden>
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-ink/[0.06]" />
                     <div className="flex-1 space-y-2">
@@ -543,7 +543,7 @@ export default function AdminTenantsPage() {
                 </div>
               ))
             ) : visible.length === 0 ? (
-              <div className="rounded-[6px] border-2 border-white bg-white/80 p-8 text-center">
+              <div className="panel p-8 text-center">
                 <p className="text-[13px] font-semibold text-ink">No tenants match</p>
                 <p className="mt-1 text-[12px] text-ink/45">{search ? `No match for “${search}”.` : "Try clearing filters."}</p>
                 {(search || hasActiveFilter) && (
@@ -568,14 +568,14 @@ export default function AdminTenantsPage() {
                     key={t.id}
                     href={`/tenants/${t.id}`}
                     aria-label={`${t.email} — ${meta.label}. ${nudgeLine(t, stage)}`}
-                    className={`block rounded-[6px] border-2 border-white bg-white/80 p-4 shadow-sm transition hover:shadow-md ${FOCUS_RING}`}
+                    className={`panel block p-4 transition ${FOCUS_RING}`}
                   >
                     <div className="flex items-start gap-3">
                       <div className="relative shrink-0" aria-hidden>
                         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-deep-violet/10 text-[12px] font-bold text-deep-violet">
                           {initials(t)}
                         </div>
-                        <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${meta.dot}`} />
+                        <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--ui-surface)] ${meta.dot}`} />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[13px] font-semibold text-ink">{t.email}</p>
@@ -587,12 +587,12 @@ export default function AdminTenantsPage() {
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${meta.pill}`}>
                             {meta.label}
                           </span>
-                          <span className="rounded-full bg-white px-2 py-1 text-[11px] font-bold tabular-nums text-ink/60 ring-1 ring-ink/[0.06]">
+                          <span className="rounded-full bg-[var(--ui-surface)] px-2 py-1 text-[11px] font-bold tabular-nums text-ink/60 ring-1 ring-[var(--ui-line)]">
                             {t.reviews} rev · {t.posts} posts · {t.databanks} banks
                           </span>
                         </div>
                       </div>
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-ink/[0.04] text-ink/30" aria-hidden>
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] bg-ink/[0.04] text-ink/30" aria-hidden>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                           <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
@@ -607,7 +607,7 @@ export default function AdminTenantsPage() {
       )}
 
       {/* ── pagination ─────────────────────────────────────── */}
-      <div className="flex flex-col gap-3 rounded-[6px] border-2 border-white bg-white/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="panel flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink/50">
           <span className="font-medium tabular-nums text-ink/60" aria-live="polite">
             {total === 0 ? "No results" : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${total.toLocaleString()}`}
@@ -627,7 +627,7 @@ export default function AdminTenantsPage() {
                 setPage(0);
               }}
               aria-label="Rows per page"
-              className={`rounded-lg border border-ink/[0.08] bg-white px-2 py-1 text-[11px] font-semibold text-ink outline-none ${FOCUS_RING}`}
+              className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1 text-[11px] font-semibold text-ink outline-none ${FOCUS_RING}`}
             >
               {PAGE_SIZE_OPTIONS.map((n) => (
                 <option key={n} value={n}>
@@ -642,7 +642,7 @@ export default function AdminTenantsPage() {
           <button
             onClick={() => gotoPage(Math.max(0, page - 1))}
             disabled={page === 0 || loading}
-            className={`rounded-xl border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.03] disabled:opacity-40 ${FOCUS_RING}`}
+            className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-1.5 text-[12px] font-semibold text-ink/70 transition hover:border-[var(--ui-ink)] disabled:opacity-40 ${FOCUS_RING}`}
           >
             Prev
           </button>
@@ -663,8 +663,8 @@ export default function AdminTenantsPage() {
                     onClick={() => gotoPage(idx)}
                     aria-current={isActive ? "page" : undefined}
                     aria-label={`Page ${idx + 1}`}
-                    className={`h-8 w-8 rounded-xl text-[12px] font-bold tabular-nums transition ${
-                      isActive ? "bg-deep-violet text-white shadow-sm" : "bg-white text-ink/60 ring-1 ring-ink/[0.06] hover:bg-ink/[0.03]"
+                    className={`h-8 w-8 rounded-[2px] text-[12px] font-bold tabular-nums transition ${
+                      isActive ? "bg-deep-violet text-white" : "bg-[var(--ui-surface)] text-ink/60 ring-1 ring-[var(--ui-line)] hover:bg-ink/[0.03]"
                     } ${FOCUS_RING}`}
                   >
                     {idx + 1}
@@ -681,7 +681,7 @@ export default function AdminTenantsPage() {
           <button
             onClick={() => gotoPage(Math.min(pages - 1, page + 1))}
             disabled={page >= pages - 1 || loading}
-            className={`rounded-xl border border-ink/[0.08] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.03] disabled:opacity-40 ${FOCUS_RING}`}
+            className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-1.5 text-[12px] font-semibold text-ink/70 transition hover:border-[var(--ui-ink)] disabled:opacity-40 ${FOCUS_RING}`}
           >
             Next
           </button>

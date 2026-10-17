@@ -84,12 +84,12 @@ function HeroNumeral({ value, decimals = 0, dark = false }: { value: number; dec
 function SkeletonOverview() {
   return (
     <div className="space-y-5" aria-hidden aria-label="Loading overview">
-      <div className="h-10 w-64 animate-pulse rounded-[6px] bg-white/60" />
-      <div className="h-24 animate-pulse rounded-[6px] bg-white/60" />
-      <div className="h-52 animate-pulse rounded-[6px] bg-ink/10" />
+      <div className="h-10 w-64 animate-pulse rounded-[2px] bg-[var(--ui-surface)]" />
+      <div className="h-24 animate-pulse rounded-[2px] bg-[var(--ui-surface)]" />
+      <div className="h-52 animate-pulse rounded-[2px] bg-ink/10" />
       <div className="grid gap-3 lg:grid-cols-5">
-        <div className="h-56 animate-pulse rounded-[6px] bg-white/60 lg:col-span-3" />
-        <div className="h-56 animate-pulse rounded-[6px] bg-white/60 lg:col-span-2" />
+        <div className="h-56 animate-pulse rounded-[2px] bg-[var(--ui-surface)] lg:col-span-3" />
+        <div className="h-56 animate-pulse rounded-[2px] bg-[var(--ui-surface)] lg:col-span-2" />
       </div>
     </div>
   );
@@ -154,7 +154,7 @@ export default function AdminOverviewPage() {
 
   if ((error && !data) || !data) {
     return (
-      <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
+      <div className="panel p-10 text-center">
         <p className="text-[14px] font-bold text-ink">Couldn&apos;t load overview.</p>
         {error && <p className="mt-1 text-[12px] text-ink/50">{error}</p>}
         <button
@@ -224,7 +224,7 @@ export default function AdminOverviewPage() {
         <div className="flex shrink-0 items-center gap-2">
           <Link
             href="/tenants"
-            className="hidden rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet sm:inline-flex"
+            className="hidden rounded-[2px] border border-ink/[0.08] bg-[var(--ui-surface)]px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet sm:inline-flex"
           >
             View tenants →
           </Link>
@@ -232,7 +232,7 @@ export default function AdminOverviewPage() {
             onClick={() => void fetchData(true)}
             disabled={refreshing}
             aria-busy={refreshing}
-            className="inline-flex items-center gap-2 rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-[#4a2575] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+            className="inline-flex items-center gap-2 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
           >
             <svg
               aria-hidden
@@ -280,7 +280,7 @@ export default function AdminOverviewPage() {
       {/* ── funnel: acquisition → verification → activation ──── */}
       <section
         aria-labelledby="funnel-heading"
-        className="admin-rise overflow-hidden rounded-[6px] bg-[#15102e] p-5 sm:p-6"
+        className="admin-rise overflow-hidden rounded-[2px] bg-deep-violet p-5 sm:p-6"
         style={{ animationDelay: "140ms" }}
       >
         <h2 id="funnel-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/40">
@@ -375,7 +375,7 @@ export default function AdminOverviewPage() {
       {problems > 0 && (
         <div
           role="alert"
-          className="admin-rise flex flex-col gap-3 rounded-[6px] border border-red-200 bg-red-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between"
+          className="admin-rise flex flex-col gap-3 rounded-[2px] border border-red-200 bg-red-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between"
           style={{ animationDelay: "200ms" }}
         >
           <div className="flex items-start gap-3">
@@ -399,7 +399,7 @@ export default function AdminOverviewPage() {
           </div>
           <Link
             href="/logs"
-            className="shrink-0 self-start rounded-xl bg-red-600 px-3.5 py-2 text-center text-[12px] font-bold text-white transition hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 sm:self-auto"
+            className="shrink-0 self-start rounded-[2px] bg-red-600 px-3.5 py-2 text-center text-[12px] font-bold text-white transition hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 sm:self-auto"
           >
             Open logs →
           </Link>
@@ -410,7 +410,7 @@ export default function AdminOverviewPage() {
       <div className="grid gap-3 lg:grid-cols-5">
         <section
           aria-labelledby="content-heading"
-          className="admin-rise rounded-[6px] border-2 border-white bg-white/85 p-5 lg:col-span-3"
+          className="admin-rise panel p-5 lg:col-span-3"
           style={{ animationDelay: "210ms" }}
         >
           <h2 id="content-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">
@@ -502,7 +502,7 @@ export default function AdminOverviewPage() {
 
         <section
           aria-labelledby="ops-heading"
-          className="admin-rise rounded-[6px] border-2 border-white bg-white/85 p-5 lg:col-span-2"
+          className="admin-rise panel p-5 lg:col-span-2"
           style={{ animationDelay: "280ms" }}
         >
           <h2 id="ops-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">
@@ -528,7 +528,7 @@ export default function AdminOverviewPage() {
               </dd>
             </div>
           </dl>
-          <p className="mt-3 rounded-xl bg-ink/[0.03] px-3 py-2.5 text-[11px] leading-relaxed text-ink/55 ring-1 ring-ink/[0.05]">
+          <p className="mt-3 rounded-[2px] bg-ink/[0.03] px-3 py-2.5 text-[11px] leading-relaxed text-ink/55 ring-1 ring-ink/[0.05]">
             {problems > 0 ? (
               <>Failures are losing tenant value every hour — open the logs, oldest first.</>
             ) : data.outbox_pending >= 25 ? (
@@ -539,7 +539,7 @@ export default function AdminOverviewPage() {
           </p>
           <Link
             href="/logs"
-            className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+            className="mt-3 inline-flex w-full items-center justify-center rounded-[2px] border border-ink/[0.08] bg-[var(--ui-surface)]px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
           >
             Open logs →
           </Link>

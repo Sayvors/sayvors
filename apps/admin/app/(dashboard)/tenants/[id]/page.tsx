@@ -109,9 +109,9 @@ function MiniArea({ points }: { points: { x: string; y: number }[] }) {
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 w-full text-ink" role="img" aria-label="Daily token trend">
       <line x1={PAD} x2={W - PAD} y1={py(max)} y2={py(max)} stroke="currentColor" strokeOpacity={0.06} />
-      <path d={area} fill="#5b2d8e" opacity={0.1} />
-      <path d={line} fill="none" stroke="#5b2d8e" strokeWidth={1.6} strokeLinejoin="round" />
-      {points.map((p, i) => <circle key={i} cx={px(i)} cy={py(p.y)} r={1.4} fill="#5b2d8e"><title>{`${p.x}: ${p.y.toLocaleString()}`}</title></circle>)}
+      <path d={area} opacity={0.1} style={{ fill: "var(--ui-ink)" }} />
+      <path d={line} fill="none" strokeWidth={1.6} strokeLinejoin="round" style={{ stroke: "var(--ui-ink)" }} />
+      {points.map((p, i) => <circle key={i} cx={px(i)} cy={py(p.y)} r={1.4} style={{ fill: "var(--ui-ink)" }}><title>{`${p.x}: ${p.y.toLocaleString()}`}</title></circle>)}
       <text x={PAD} y={H - 3} fontSize={8.5} fill="currentColor" opacity={0.35}>{points[0]?.x ?? ""}</text>
       <text x={W - PAD} y={H - 3} textAnchor="end" fontSize={8.5} fill="currentColor" opacity={0.35}>{points[points.length - 1]?.x ?? ""}</text>
     </svg>
@@ -221,22 +221,22 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
 
   if (error) {
     return (
-      <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
+      <div className="panel p-10 text-center">
         <p className="text-[14px] font-bold text-ink">{error}</p>
         <p className="mt-1 text-[12px] text-ink/45">Tenant ID: {id}</p>
-        <Link href="/tenants" className={`mt-4 inline-flex rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-bold text-white hover:bg-[#4a2575] ${FOCUS_RING}`}>← Back to tenants</Link>
+        <Link href="/tenants" className={`mt-4 inline-flex rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white hover:bg-deep-violet/90 ${FOCUS_RING}`}>← Back to tenants</Link>
       </div>
     );
   }
   if (!tenant) {
     return (
       <div className="space-y-4" aria-hidden aria-label="Loading tenant">
-        <div className="h-6 w-40 animate-pulse rounded-full bg-white/60" />
-        <div className="h-24 animate-pulse rounded-[6px] bg-white/60" />
-        <div className="h-52 animate-pulse rounded-[6px] bg-ink/10" />
+        <div className="h-6 w-40 animate-pulse rounded-full bg-[var(--ui-sunken)]" />
+        <div className="panel h-24 animate-pulse" />
+        <div className="panel h-52 animate-pulse" />
         <div className="grid gap-3 lg:grid-cols-2">
-          <div className="h-64 animate-pulse rounded-[6px] bg-white/60" />
-          <div className="h-64 animate-pulse rounded-[6px] bg-white/60" />
+          <div className="panel h-64 animate-pulse" />
+          <div className="panel h-64 animate-pulse" />
         </div>
       </div>
     );
@@ -269,7 +269,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
         <div className="flex items-center gap-2 text-[12px]">
           <Link
             href="/tenants"
-            className={`inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 font-semibold text-ink/60 ring-1 ring-ink/[0.06] transition hover:bg-ink/[0.03] hover:text-ink ${FOCUS_RING}`}
+            className={`inline-flex items-center gap-1.5 rounded-full bg-[var(--ui-surface)] px-3 py-1.5 font-semibold text-ink/60 ring-1 ring-[var(--ui-line)] transition hover:bg-ink/[0.03] hover:text-ink ${FOCUS_RING}`}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden><path d="M14.5 6l-6 6 6 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
             Tenants
@@ -290,7 +290,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
               } catch { /* clipboard unavailable */ }
             }}
             aria-live="polite"
-            className={`rounded-xl border border-ink/[0.08] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:bg-ink/[0.03] hover:text-ink ${FOCUS_RING}`}
+            className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-[var(--ui-ink)] hover:text-ink ${FOCUS_RING}`}
           >
             {copied ? "Copied!" : "Copy ID"}
           </button>
@@ -300,7 +300,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       {/* ── identity + lede ────────────────────────────────── */}
       <div className="admin-rise" style={{ animationDelay: "70ms" }}>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[6px] bg-deep-violet text-[15px] font-black tracking-tight text-white ring-1 ring-deep-violet/20" aria-hidden>
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[2px] bg-deep-violet text-[15px] font-black tracking-tight text-white" aria-hidden>
             {initialsFromTenant(tenant)}
           </div>
           <div className="min-w-0">
@@ -347,7 +347,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       {/* ── dossier band ───────────────────────────────────── */}
       <section
         aria-labelledby="dossier-heading"
-        className="admin-rise overflow-hidden rounded-[6px] bg-[#15102e] p-5 sm:p-6"
+        className="admin-rise overflow-hidden rounded-[2px] bg-deep-violet p-5 sm:p-6"
         style={{ animationDelay: "140ms" }}
       >
         <h2 id="dossier-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/40">
@@ -399,7 +399,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       {/* ── AI usage ───────────────────────────────────────── */}
       <section
         aria-labelledby="usage-heading"
-        className="admin-rise rounded-[6px] border-2 border-white bg-white/85 p-4 shadow-sm sm:p-5"
+        className="admin-rise panel p-4 sm:p-5"
         style={{ animationDelay: "210ms" }}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -423,13 +423,13 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
               )}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5 rounded-xl bg-ink/[0.04] p-1" role="group" aria-label="Usage window">
+          <div className="flex shrink-0 items-center gap-1.5 rounded-[2px] bg-ink/[0.04] p-1" role="group" aria-label="Usage window">
             {[7, 30, 90].map((d) => (
               <button
                 key={d}
                 onClick={() => setUsageDays(d)}
                 aria-pressed={usageDays === d}
-                className={`rounded-lg px-3 py-1 text-[11px] font-bold transition ${usageDays === d ? "bg-deep-violet text-white shadow-sm" : `text-ink/50 hover:bg-white hover:text-ink ${FOCUS_RING}`}`}
+                className={`rounded-[2px] px-3 py-1 text-[11px] font-bold transition ${usageDays === d ? "bg-deep-violet text-white" : `text-ink/50 hover:bg-[var(--ui-surface)] hover:text-ink ${FOCUS_RING}`}`}
               >
                 {d}d
               </button>
@@ -439,17 +439,17 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
 
         {usageLoading ? (
           <div className="mt-4 grid gap-2.5 sm:grid-cols-4" aria-hidden aria-label="Loading usage">
-            {[1, 2, 3, 4].map((i) => <div key={i} className="h-20 animate-pulse rounded-[6px] bg-ink/[0.04]" />)}
+            {[1, 2, 3, 4].map((i) => <div key={i} className="h-20 animate-pulse rounded-[2px] bg-ink/[0.04]" />)}
           </div>
         ) : usage ? (
           <>
             {usageError && (
-              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800">
+              <div className="mt-4 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800">
                 {usageError} <button onClick={retryUsage} className={`ml-1 font-bold underline ${FOCUS_RING}`}>Retry</button>
               </div>
             )}
             {usage.totals.calls === 0 ? (
-              <div className="mt-4 rounded-[6px] border border-dashed border-ink/10 bg-ink/[0.02] p-8 text-center">
+              <div className="mt-4 rounded-[2px] border border-dashed border-[var(--ui-line-strong)] p-8 text-center">
                 <p className="text-[13px] font-semibold text-ink/70">No AI usage in last {usage.days}d</p>
                 <p className="mx-auto mt-1 max-w-[440px] text-[12px] leading-relaxed text-ink/45">
                   This tenant hasn’t triggered a single LLM call. Nudge them to try AI features, or check provider keys in{" "}
@@ -465,7 +465,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                     { label: "Avg latency", value: fmtMs(usage.totals.avg_latency_ms), note: usage.totals.avg_latency_ms > 3000 ? "Slow — check provider" : usage.totals.avg_latency_ms > 1500 ? "Moderate" : "Fast" },
                     { label: "Momentum", value: growth === null ? "—" : `${growth >= 0 ? "↗" : "↘"} ${Math.abs(growth)}%`, note: `${usage.daily.length} active days` },
                   ].map((c) => (
-                    <div key={c.label} className="rounded-[6px] bg-ink/[0.02] px-3.5 py-3 ring-1 ring-ink/[0.04]">
+                    <div key={c.label} className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3">
                       <dt className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</dt>
                       <dd className="mt-1 text-[18px] font-bold leading-none tabular-nums text-ink">{c.value}</dd>
                       <dd className="mt-1 text-[11px] text-ink/45">{c.note}</dd>
@@ -474,7 +474,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                 </dl>
 
                 <div className="mt-4 grid gap-4 lg:grid-cols-5">
-                  <div className="rounded-[6px] bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04] lg:col-span-3">
+                  <div className="rounded-[2px] border border-[var(--ui-line)] p-3.5 lg:col-span-3">
                     <p className="text-[11px] font-bold uppercase tracking-wide text-ink/50">Daily tokens · {usage.days}d</p>
                     {usage.daily.length === 0 ? (
                       <p className="mt-2 text-[11px] text-ink/40">No daily points.</p>
@@ -483,7 +483,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                     )}
                   </div>
                   <div className="space-y-3 lg:col-span-2">
-                    <div className="rounded-[6px] bg-white p-3.5 ring-1 ring-ink/[0.06]">
+                    <div className="rounded-[2px] border border-[var(--ui-line)] p-3.5">
                       <p className="text-[11px] font-bold uppercase tracking-wide text-ink/50">By model</p>
                       {usage.by_model.length === 0 ? (
                         <p className="mt-2 text-[11px] text-ink/40">No model breakdown.</p>
@@ -504,14 +504,14 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                         </div>
                       )}
                     </div>
-                    <div className="rounded-[6px] bg-violet-50 p-3.5 ring-1 ring-violet-100">
-                      <p className="text-[11px] font-bold uppercase tracking-wide text-violet-700/60">By purpose</p>
+                    <div className="rounded-[2px] border border-violet-100 bg-violet-50 p-3.5">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-violet-800">By purpose</p>
                       {usage.by_purpose.length === 0 ? (
                         <p className="mt-1 text-[11px] text-ink/40">No purpose tagged.</p>
                       ) : (
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {usage.by_purpose.slice(0, 6).map((p) => (
-                            <span key={p.purpose} className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-ink ring-1 ring-violet-200">
+                            <span key={p.purpose} className="inline-flex items-center gap-1.5 rounded-full bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-ink ring-1 ring-violet-200">
                               {p.purpose} <span className="rounded-full bg-violet-500 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white">{fmt(p.total_tokens)}</span>
                             </span>
                           ))}
@@ -525,7 +525,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             )}
           </>
         ) : usageError ? (
-          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] leading-relaxed text-amber-800">
+          <div className="mt-4 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] leading-relaxed text-amber-800">
             {usageError}{" "}
             <button onClick={retryUsage} className={`font-bold underline ${FOCUS_RING}`}>Retry</button>
             <span className="ml-1 text-amber-700/70">· Restart the API to enable full per-tenant history if needed.</span>
@@ -537,7 +537,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       <div className="grid gap-4 lg:grid-cols-2">
         <section
           aria-labelledby="reviews-heading"
-          className="admin-rise rounded-[6px] border-2 border-white bg-white/80 p-5 shadow-sm"
+          className="admin-rise panel p-5"
           style={{ animationDelay: "280ms" }}
         >
           <div className="flex items-baseline justify-between gap-2">
@@ -553,7 +553,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             </p>
           </div>
           {reviewCount === 0 ? (
-            <div className="mt-4 rounded-[6px] border border-dashed border-ink/10 bg-ink/[0.02] p-8 text-center">
+            <div className="mt-4 rounded-[2px] border border-dashed border-[var(--ui-line-strong)] p-8 text-center">
               <p className="text-[13px] font-semibold text-ink/70">No reviews synced yet</p>
               <p className="mx-auto mt-1 max-w-[320px] text-[12px] leading-relaxed text-ink/45">
                 Once the listing syncs, Google reviews land here with sentiment and reply status.
@@ -567,7 +567,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                     type="button"
                     onClick={() => setSelected(r)}
                     aria-label={`Open review by ${r.reviewer ?? "Google user"}, ${r.rating} stars`}
-                    className={`group w-full rounded-[6px] bg-ink/[0.02] p-3.5 text-left ring-1 ring-ink/[0.04] transition hover:bg-white hover:shadow-sm hover:ring-deep-violet/20 ${FOCUS_RING}`}
+                    className={`group w-full rounded-[2px] bg-ink/[0.02] p-3.5 text-left ring-1 ring-[var(--ui-line)] transition hover:bg-[var(--ui-surface)] hover:ring-[var(--ui-line-strong)] ${FOCUS_RING}`}
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="flex items-center gap-2">
@@ -580,7 +580,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                         {r.replied ? (
                           <span className="rounded-full bg-emerald-500 px-2 py-1 text-[10px] font-bold uppercase text-white">replied</span>
                         ) : (
-                          <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold uppercase text-ink/40 ring-1 ring-ink/10">not replied</span>
+                          <span className="rounded-full bg-[var(--ui-surface)] px-2 py-1 text-[10px] font-bold uppercase text-ink/40 ring-1 ring-[var(--ui-line)]">not replied</span>
                         )}
                       </div>
                     </div>
@@ -596,7 +596,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
 
         <section
           aria-labelledby="posts-heading"
-          className="admin-rise rounded-[6px] border-2 border-white bg-white/80 p-5 shadow-sm"
+          className="admin-rise panel p-5"
           style={{ animationDelay: "340ms" }}
         >
           <div className="flex items-baseline justify-between gap-2">
@@ -608,7 +608,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             </p>
           </div>
           {tenant.recent_posts.length === 0 ? (
-            <div className="mt-4 rounded-[6px] border border-dashed border-ink/10 bg-ink/[0.02] p-8 text-center">
+            <div className="mt-4 rounded-[2px] border border-dashed border-[var(--ui-line-strong)] p-8 text-center">
               <p className="text-[13px] font-semibold text-ink/70">No posts yet</p>
               <p className="mx-auto mt-1 max-w-[320px] text-[12px] leading-relaxed text-ink/45">
                 The composer is idle — {tenant.has_connection ? "the listing is connected, posts should follow." : "connect a listing first."}
@@ -617,7 +617,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
           ) : (
             <ul className="mt-4 space-y-2.5">
               {tenant.recent_posts.map((p) => (
-                <li key={p.id} className="flex items-center gap-3 rounded-[6px] bg-ink/[0.02] p-3.5 ring-1 ring-ink/[0.04]">
+                <li key={p.id} className="flex items-center gap-3 rounded-[2px] bg-ink/[0.02] p-3.5 ring-1 ring-[var(--ui-line)]">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-semibold leading-none text-ink" title={p.title || "(untitled)"}>
                       {p.title || <span className="italic text-ink/40">(untitled)</span>}
@@ -631,7 +631,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
               ))}
             </ul>
           )}
-          <dl className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-ink/[0.02] p-2.5 text-center ring-1 ring-ink/[0.04]">
+          <dl className="mt-4 grid grid-cols-3 gap-2 rounded-[2px] bg-ink/[0.02] p-2.5 text-center ring-1 ring-[var(--ui-line)]">
             {[
               { label: "reviews", value: tenant.reviews.toLocaleString() },
               { label: "posts", value: tenant.posts.toLocaleString() },
@@ -649,8 +649,8 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       {/* ── review modal ─────────────────────────────────── */}
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button type="button" aria-label="Close review" onClick={() => setSelected(null)} className={`absolute inset-0 bg-ink/40 backdrop-blur-sm ${FOCUS_RING}`} />
-          <div role="dialog" aria-modal="true" aria-labelledby="review-title" className="relative max-h-[85vh] w-full max-w-[560px] overflow-auto rounded-[6px] border-2 border-white bg-white p-5 shadow-xl">
+          <button type="button" aria-label="Close review" onClick={() => setSelected(null)} className={`absolute inset-0 bg-ink/40 ${FOCUS_RING}`} />
+          <div role="dialog" aria-modal="true" aria-labelledby="review-title" className="panel relative max-h-[85vh] w-full max-w-[560px] overflow-auto p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p id="review-title" className="flex items-center gap-2 text-[13px] font-bold text-ink">
@@ -669,22 +669,22 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
                 ) : (
                   <span className="rounded-full bg-ink/[0.06] px-2.5 py-1 text-[11px] font-bold uppercase text-ink/50">Not replied</span>
                 )}
-                <button onClick={() => setSelected(null)} autoFocus className={`rounded-xl bg-ink px-3 py-1.5 text-[12px] font-bold text-white hover:bg-ink/90 ${FOCUS_RING}`}>
+                <button onClick={() => setSelected(null)} autoFocus className={`btn-primary !px-3 !py-1.5 ${FOCUS_RING}`}>
                   Close
                 </button>
               </div>
             </div>
-            <div className="mt-4 rounded-[6px] bg-ink/[0.03] p-4 ring-1 ring-ink/[0.06]">
+            <div className="mt-4 rounded-[2px] bg-ink/[0.03] p-4 ring-1 ring-[var(--ui-line)]">
               <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink/80">{selected.text || "(No text — star rating only)"}</p>
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <button
                 onClick={async () => { try { await navigator.clipboard.writeText(selected.text || ""); } catch { /* clipboard unavailable */ } }}
-                className={`rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.03] ${FOCUS_RING}`}
+                className={`btn-secondary !px-3 !py-2 ${FOCUS_RING}`}
               >
                 Copy text
               </button>
-              <span className="rounded-full bg-white px-3 py-2 text-[11px] tabular-nums text-ink/40 ring-1 ring-ink/[0.06]">ID {selected.id.slice(0, 8)}…</span>
+              <span className="rounded-full bg-[var(--ui-surface)] px-3 py-2 text-[11px] tabular-nums text-ink/40 ring-1 ring-[var(--ui-line)]">ID {selected.id.slice(0, 8)}…</span>
             </div>
             <p className="mt-3 text-center text-[11px] text-ink/30">Click outside to close · Esc</p>
           </div>

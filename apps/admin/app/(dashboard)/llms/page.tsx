@@ -76,7 +76,7 @@ function ProviderLogo({ provider }: { provider: string }) {
   return (
     <span
       aria-hidden
-      className={`flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-gradient-to-br text-[18px] font-bold text-white shadow-md ${brand.gradient}`}
+      className={`flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-[2px] bg-gradient-to-br text-[18px] font-bold text-white ${brand.gradient}`}
     >
       {!failed && brand.icon ? (
         <img
@@ -397,23 +397,23 @@ export default function AdminLlmsPage() {
       </div>
 
       {notice && (
-        <div role="status" className="rounded-xl border border-deep-violet/20 bg-white px-4 py-2.5 text-[12px] font-medium text-ink/70">
+        <div role="status" className="panel px-4 py-2.5 text-[12px] font-medium text-ink/70">
           {notice}
         </div>
       )}
 
       {error ? (
-        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
+        <div className="panel p-10 text-center">
           <p className="text-[13px] font-semibold text-ink/60">{error}</p>
         </div>
       ) : loading && items.length === 0 ? (
         <div className="grid gap-3 sm:grid-cols-2" aria-hidden>
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-32 animate-pulse rounded-[6px] border-2 border-white bg-white/60" />
+            <div key={i} className="panel h-32 animate-pulse" />
           ))}
         </div>
       ) : keyedProviders.length === 0 ? (
-        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
+        <div className="panel p-10 text-center">
           <p className="text-[14px] font-semibold text-ink/70">No providers with keys yet</p>
           <p className="mt-1 text-[12px] text-ink/45">
             Add a provider key above to get started — models appear once a key is stored.
@@ -428,9 +428,7 @@ export default function AdminLlmsPage() {
             return (
               <div
                 key={p.provider}
-                className={`rounded-[6px] border-2 bg-white/80 p-4 backdrop-blur-sm transition ${
-                  p.enabled ? "border-white hover:shadow-lg hover:shadow-deep-violet/[0.08]" : "border-ink/[0.06] opacity-75"
-                }`}
+                className={`panel p-4 transition ${p.enabled ? "" : "opacity-75"}`}
               >
                 <div className="flex items-center gap-3">
                   <ProviderLogo provider={p.provider} />
@@ -453,7 +451,7 @@ export default function AdminLlmsPage() {
                     disabled={isBusy}
                     onChange={(e) => void toggleEnabled(p.provider, e.target.value === "enabled")}
                     aria-label={`${p.provider} status`}
-                    className={`ml-auto shrink-0 cursor-pointer rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] font-bold outline-none transition focus:border-deep-violet/30 disabled:opacity-50 ${
+                    className={`ml-auto shrink-0 cursor-pointer rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1.5 text-[11px] font-bold outline-none transition focus:border-[var(--ui-ink)] disabled:opacity-50 ${
                       p.enabled ? "text-emerald-600" : "text-ink/40"
                     }`}
                   >
@@ -504,14 +502,14 @@ export default function AdminLlmsPage() {
                     <button
                       onClick={() => void clearKey(p.provider)}
                       disabled={isBusy}
-                      className="rounded-xl px-3 py-1.5 text-[11px] font-semibold text-ink/40 transition hover:text-coral disabled:opacity-50"
+                      className="rounded-[2px] px-3 py-1.5 text-[11px] font-semibold text-ink/40 transition hover:text-coral disabled:opacity-50"
                     >
                       Clear
                     </button>
                     <button
                       onClick={() => void runTest(p.provider)}
                       disabled={isBusy}
-                      className="ml-auto rounded-xl bg-emerald-500 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-emerald-600 disabled:opacity-50"
+                      className="ml-auto rounded-[2px] bg-emerald-500 px-3 py-1.5 text-[11px] font-bold text-white transition hover:bg-emerald-600 disabled:opacity-50"
                     >
                       Test
                     </button>
@@ -529,7 +527,7 @@ export default function AdminLlmsPage() {
         </div>
       )}
 
-      <section className="rounded-[6px] border-2 border-white bg-white/80 p-5">
+      <section className="panel p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-[16px] font-bold text-ink">Models</h2>
@@ -545,7 +543,7 @@ export default function AdminLlmsPage() {
         </div>
 
         {adding && (
-          <div className="mt-3 space-y-3 rounded-xl border border-dashed border-ink/[0.12] p-4">
+          <div className="mt-3 space-y-3 rounded-[2px] border border-dashed border-[var(--ui-line-strong)] p-4">
             <div>
               <label className="mb-1 block text-[11px] font-semibold text-ink/50">1 · Provider</label>
               <select
@@ -656,7 +654,7 @@ export default function AdminLlmsPage() {
 
         <ul className="mt-3 space-y-2">
           {savedModels.length === 0 ? (
-            <li className="rounded-xl bg-ink/[0.02] p-4 text-center text-[12px] text-ink/40">
+            <li className="rounded-[2px] border border-dashed border-[var(--ui-line-strong)] p-4 text-center text-[12px] text-ink/40">
               No saved models yet — tenants see nothing until you add the first one.
             </li>
           ) : (
@@ -664,7 +662,7 @@ export default function AdminLlmsPage() {
               const mt = modelTests[m.id];
               const mbusy = (busy ?? "").startsWith(`saved:${m.id}`);
               return (
-                <li key={m.id} className="rounded-xl bg-ink/[0.02] p-3">
+                <li key={m.id} className="rounded-[2px] border border-[var(--ui-line)] p-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink" title={m.id}>
                       {m.name}
@@ -693,7 +691,7 @@ export default function AdminLlmsPage() {
                       disabled={mbusy}
                       onChange={(e) => void toggleSavedModel(m.provider, m.id, e.target.value === "enabled")}
                       aria-label={`${m.id} status`}
-                      className="shrink-0 cursor-pointer rounded-lg border border-ink/[0.08] bg-white px-1.5 py-1 text-[10px] font-bold outline-none focus:border-deep-violet/30 disabled:opacity-50"
+                      className="shrink-0 cursor-pointer rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-1.5 py-1 text-[10px] font-bold outline-none focus:border-[var(--ui-ink)] disabled:opacity-50"
                     >
                       <option value="enabled">On</option>
                       <option value="disabled">Off</option>
@@ -701,7 +699,7 @@ export default function AdminLlmsPage() {
                     <button
                       onClick={() => void testSavedModel(m.provider, m.id)}
                       disabled={mbusy}
-                      className="shrink-0 rounded-lg bg-emerald-500 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-emerald-600 disabled:opacity-50"
+                      className="shrink-0 rounded-[2px] bg-emerald-500 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-emerald-600 disabled:opacity-50"
                     >
                       Test
                     </button>
@@ -710,7 +708,7 @@ export default function AdminLlmsPage() {
                         onClick={() => void deleteSavedModel(m.provider, m.id)}
                         disabled={mbusy}
                         aria-label={`Delete ${m.id}`}
-                        className="shrink-0 rounded-lg px-1.5 py-1 text-[10px] font-bold text-ink/30 transition hover:text-coral disabled:opacity-50"
+                        className="shrink-0 rounded-[2px] px-1.5 py-1 text-[10px] font-bold text-ink/30 transition hover:text-coral disabled:opacity-50"
                       >
                         ✕
                       </button>

@@ -88,14 +88,6 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
     }
     // Public pages must not bounce: auth pages would reload-loop, and /invite
     // visitors are anonymous by definition (they have no session yet).
-    //
-    // /admin must not bounce either. Admin auth is a separate cookie set by
-    // POST /api/v1/admin/login ("password only — separate from tenant
-    // accounts"), and an operator has no tenant session. Without this carve-out
-    // every /admin/* request bounced to /login, so the panel was only reachable
-    // by someone who also happened to hold a customer login. Admin's own layout
-    // gates on its own session and 401s clear it; this guard is for tenants and
-    // must not claim authority over it.
     // Named `pathname`, NOT `path` — shadowing the `path` parameter here put
     // the whole 401 block in the temporal dead zone: the retry `fetch` above
     // evaluated `path` before this `const` initialized and threw
@@ -109,8 +101,7 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
       pathname.startsWith("/reset-password") ||
       pathname.startsWith("/verify-email") ||
       pathname.startsWith("/verify-otp") ||
-      pathname.startsWith("/invite") ||
-      pathname.startsWith("/admin");
+      pathname.startsWith("/invite");
     if (typeof window !== "undefined" && !publicPath) {
       window.location.href = "/login";
     }

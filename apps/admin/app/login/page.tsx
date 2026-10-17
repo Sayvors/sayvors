@@ -29,10 +29,10 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#f3f0ff] p-4">
+    <div className="flex min-h-screen items-center justify-center bg-[var(--ui-page)] p-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-sm space-y-4 rounded-[6px] border-2 border-white bg-white/80 p-6 shadow-lg shadow-deep-violet/[0.08] backdrop-blur-sm"
+        className="panel w-full max-w-sm space-y-4 p-6"
       >
         <div>
           <h1 className="text-[18px] font-bold text-ink">Sayvors Admin</h1>
@@ -50,7 +50,7 @@ export default function AdminLoginPage() {
           />
         </div>
         {error && (
-          <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">
+          <p role="alert" className="rounded-[2px] bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">
             {error}
           </p>
         )}

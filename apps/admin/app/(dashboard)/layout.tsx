@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { adminLogout, checkAdminSession } from "@/lib/admin-api";
+import { useTheme } from "../theme";
 
 type NavItem = {
   href: string;
@@ -36,8 +37,10 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+const SIDEBAR_KEY = "sayvors-admin-sidebar";
+
 function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
-  const cls = `h-[16px] w-[16px] shrink-0 ${active ? "text-white" : "text-white/45 group-hover:text-white/70"}`;
+  const cls = `h-[16px] w-[16px] shrink-0 ${active ? "text-[var(--ui-ink)]" : "text-ink/45 group-hover:text-ink/75"}`;
   switch (name) {
     case "overview":
       return (
@@ -98,7 +101,10 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { theme, toggle } = useTheme();
   const [ready, setReady] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     checkAdminSession().then((ok) => {
@@ -107,107 +113,221 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     });
   }, [router]);
 
+  // Restore the saved rail width once, after mount (SSR-safe).
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
+    } catch {
+      /* private mode */
+    }
+  }, []);
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
   if (!ready) return null;
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
+  const nav = (
+    <nav className="flex-1 px-3 py-3" aria-label="Primary">
+      <div className="space-y-5">
+        {SECTIONS.map((section) => (
+          <div key={section.title}>
+            <p className={`mb-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40 ${collapsed ? "text-center" : ""}`}>
+              {collapsed ? "···" : section.title}
+            </p>
+            <ul className="space-y-1">
+              {section.items.map((item) => {
+                const active = isActive(item.href);
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      aria-current={active ? "page" : undefined}
+                      title={collapsed ? item.label : undefined}
+                      className={`group relative flex items-center gap-3 rounded-[2px] px-2.5 py-2.5 text-[13px] transition-colors duration-150 ${
+                        active
+                          ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
+                          : "text-ink/55 hover:bg-ink/[0.04] hover:text-ink"
+                      } ${collapsed ? "justify-center px-0" : ""}`}
+                    >
+                      {/* The active marker is a rail, not a fill. */}
+                      <span
+                        aria-hidden
+                        className={`absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 bg-[var(--ui-ink)] transition-opacity duration-150 ${
+                          active ? "opacity-100" : "opacity-0"
+                        }`}
+                      />
+                      <NavIcon name={item.icon} active={active} />
+                      {!collapsed && (
+                        <span className="min-w-0 flex-1">
+                          <span className={`block text-[13px] font-semibold leading-none ${active ? "text-[var(--ui-ink)]" : "text-ink/80 group-hover:text-ink"}`}>
+                            {item.label}
+                          </span>
+                          <span className={`mt-1 block truncate text-[11px] leading-none ${active ? "text-ink/55" : "text-ink/40 group-hover:text-ink/60"}`}>
+                            {item.desc}
+                          </span>
+                        </span>
+                      )}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </nav>
+  );
+
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f3f0ff]">
-      {/* Sidebar: fixed visual, internal scroll */}
-      <aside className="flex w-[256px] shrink-0 flex-col overflow-y-auto overscroll-contain border-r border-white/5 bg-[#15102e] [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.12)_transparent]">
+    <div className="flex h-screen overflow-hidden bg-[var(--ui-page)]">
+      {/* Sidebar: a drawer under lg, a flat rail on desktop. */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-[var(--ui-line)] bg-[var(--ui-surface)] transition-[width,transform] duration-200 ease-out lg:static lg:translate-x-0 ${
+          navOpen ? "translate-x-0" : "-translate-x-full"
+        } ${collapsed ? "lg:w-14" : "w-60"}`}
+      >
+        {/* Everything scrolls in here; the aside itself must not clip, or the
+            collapse toggle straddling its right edge gets cut off. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain [scrollbar-width:thin]">
         {/* Brand */}
-        <div className="sticky top-0 z-10 bg-[#15102e] px-4 pb-3 pt-4">
-          <div className="flex items-center gap-3">
+        <div className="sticky top-0 z-10 bg-[var(--ui-surface)] px-4 pb-3 pt-4">
+          <div className={`flex items-center gap-3 ${collapsed ? "lg:justify-center lg:px-0" : ""}`}>
             <img
               src="/Sayvors_Icon.png"
               alt="Sayvors"
               width={36}
               height={36}
-              className="h-9 w-9 shrink-0 rounded-[6px] bg-white object-contain p-1 shadow-sm"
+              className="h-9 w-9 shrink-0 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-1"
             />
-            <div className="min-w-0">
-              <p className="text-[14px] font-bold leading-none tracking-tight text-white">Sayvors</p>
-              <p className="mt-0.5 text-[11px] font-medium leading-none text-white/45">Admin console</p>
-            </div>
-            <span className="ml-auto rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-white/60">
-              Admin
-            </span>
+            {!collapsed && (
+              <div className="min-w-0">
+                <p className="text-[14px] font-bold leading-none tracking-tight text-[var(--ui-ink)]">Sayvors</p>
+                <p className="mt-0.5 text-[11px] font-medium leading-none text-ink/45">Admin console</p>
+              </div>
+            )}
+            {!collapsed && (
+              <span className="ml-auto rounded-[2px] border border-[var(--ui-line)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-ink/50">
+                Admin
+              </span>
+            )}
           </div>
-          <div className="mt-4 h-px bg-white/[0.06]" aria-hidden />
+          <div className="mt-4 h-px bg-[var(--ui-line)]" aria-hidden />
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 px-3 py-3" aria-label="Primary">
-          <div className="space-y-5">
-            {SECTIONS.map((section) => (
-              <div key={section.title}>
-                <p className="mb-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white/30">{section.title}</p>
-                <ul className="space-y-1">
-                  {section.items.map((item) => {
-                    const active = isActive(item.href);
-                    return (
-                      <li key={item.href}>
-                        <Link
-                          href={item.href}
-                          aria-current={active ? "page" : undefined}
-                          className={`group relative flex items-center gap-3 rounded-[6px] px-2.5 py-2.5 text-[13px] transition ${
-                            active
-                              ? "bg-white text-[#1e1547] shadow-sm"
-                              : "text-white/55 hover:bg-white/[0.06] hover:text-white"
-                          }`}
-                        >
-                          {/* active left bar for non-white active alternative: keep subtle */}
-                          <NavIcon name={item.icon} active={active} />
-                          <span className="min-w-0 flex-1">
-                            <span className={`block text-[13px] font-semibold leading-none ${active ? "text-[#1e1547]" : "text-white/80 group-hover:text-white"}`}>
-                              {item.label}
-                            </span>
-                            <span className={`block truncate text-[11px] leading-none ${active ? "mt-1 text-[#1e1547]/55" : "mt-1 text-white/35 group-hover:text-white/50"}`}>
-                              {item.desc}
-                            </span>
-                          </span>
-                          {active && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#1e1547]/20" aria-hidden />}
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
-          </div>
-
-        </nav>
+        {nav}
 
         {/* Footer */}
-        <div className="sticky bottom-0 mt-auto bg-[#15102e] p-3">
-          <div className="h-px bg-white/[0.06]" aria-hidden />
-          <div className="mt-3 flex items-center gap-2 rounded-[6px] bg-white/[0.04] px-3 py-2.5 ring-1 ring-white/[0.06]">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-[11px] font-bold text-white/80">AD</div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[12px] font-semibold leading-none text-white">Admin</p>
-              <p className="truncate text-[11px] leading-none text-white/40">Session · secure</p>
-            </div>
-            <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" aria-hidden title="Session active" />
+        <div className="sticky bottom-0 mt-auto bg-[var(--ui-surface)] p-3">
+          <div className="h-px bg-[var(--ui-line)]" aria-hidden />
+          <div className={`mt-3 flex items-center gap-2 rounded-[2px] border border-[var(--ui-line)] px-3 py-2.5 ${collapsed ? "lg:justify-center lg:px-0" : ""}`}>
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-deep-violet text-[11px] font-bold text-white">AD</div>
+            {!collapsed && (
+              <>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[12px] font-semibold leading-none text-[var(--ui-ink)]">Admin</p>
+                  <p className="truncate text-[11px] leading-none text-ink/40">Session · secure</p>
+                </div>
+                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden title="Session active" />
+              </>
+            )}
           </div>
-          <button
-            onClick={() => {
-              adminLogout().finally(() => router.replace("/login"));
-            }}
-            className="mt-2 flex w-full items-center justify-center gap-2 rounded-[6px] border border-white/10 bg-transparent px-3 py-2.5 text-[12px] font-semibold text-white/60 transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white"
-          >
-            <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-60">
-              <path d="M15.2 18.2L9 12l6.2-6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M9 12H21" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-              <path d="M3 5.2a2 2 0 0 1 2-2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M3 18.8a2 2 0 0 0 2 2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            Sign out
-          </button>
-          <p className="mt-2.5 text-center text-[10px] font-medium tracking-wide text-white/20">Sayvors · Admin v1 · Internal</p>
+          <div className={`mt-2 flex gap-2 ${collapsed ? "lg:flex-col" : ""}`}>
+            <button
+              onClick={toggle}
+              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={theme === "dark" ? "Light mode" : "Dark mode"}
+              className="flex flex-1 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] px-3 py-2.5 text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink"
+            >
+              {theme === "dark" ? (
+                <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="4.2" stroke="currentColor" strokeWidth="1.7" />
+                  <path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5 5l1.7 1.7M17.3 17.3L19 19M19 5l-1.7 1.7M6.7 17.3L5 19" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <path d="M20 13.6A8.4 8.4 0 0 1 10.4 4a8.4 8.4 0 1 0 9.6 9.6z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                </svg>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                adminLogout().finally(() => router.replace("/login"));
+              }}
+              title="Sign out"
+              className={`flex flex-1 items-center justify-center gap-2 rounded-[2px] border border-[var(--ui-line-strong)] px-3 py-2.5 text-[12px] font-semibold text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink ${collapsed ? "lg:px-0" : ""}`}
+            >
+              <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-60">
+                <path d="M15.2 18.2L9 12l6.2-6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M9 12H21" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                <path d="M3 5.2a2 2 0 0 1 2-2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M3 18.8a2 2 0 0 0 2 2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              {!collapsed && "Sign out"}
+            </button>
+          </div>
+          {!collapsed && (
+            <p className="mt-2.5 text-center text-[10px] font-medium tracking-wide text-ink/30">Sayvors · Admin v1 · Internal</p>
+          )}
         </div>
+        </div>
+
+        {/* Collapse toggle: a small circular arrow straddling the sidebar's
+            right edge line. Desktop only. */}
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          className="absolute -right-3 top-[68px] z-50 hidden h-6 w-6 items-center justify-center rounded-full border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink)] transition-colors duration-150 hover:bg-[var(--ui-sunken)] lg:flex"
+        >
+          <svg aria-hidden viewBox="0 0 24 24" fill="none" className={`h-3 w-3 transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`}>
+            <path d="M14.5 6.5L9 12l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto overscroll-contain bg-[#f3f0ff] p-4 sm:p-6">{children}</main>
+      {/* Mobile scrim */}
+      {navOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => setNavOpen(false)}
+          className="fixed inset-0 z-30 bg-ink/30 lg:hidden"
+        />
+      )}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Mobile top bar */}
+        <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 lg:hidden">
+          <button
+            type="button"
+            onClick={() => setNavOpen(true)}
+            aria-label="Open navigation"
+            aria-expanded={navOpen}
+            className="flex h-8 w-8 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] text-ink/60"
+          >
+            <svg aria-hidden viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
+          </button>
+          <img src="/Sayvors_Icon.png" alt="Sayvors" width={24} height={24} className="h-6 w-6 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-0.5" />
+          <p className="text-[13px] font-bold tracking-tight text-[var(--ui-ink)]">Sayvors Admin</p>
+        </header>
+
+        <main className="min-w-0 flex-1 overflow-y-auto overscroll-contain bg-[var(--ui-page)] p-4 sm:p-6">{children}</main>
+      </div>
     </div>
   );
 }

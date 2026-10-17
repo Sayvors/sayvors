@@ -61,11 +61,11 @@ export default function AdminFeedbackPage() {
         </p>
       </div>
 
-      <div className="rounded-[6px] border-2 border-white bg-white/80 p-4 shadow-sm backdrop-blur-sm sm:p-5">
+      <div className="panel p-4 sm:p-5">
         {loading ? (
           <div className="space-y-3" aria-hidden>
             {[0, 1, 2, 3, 4].map((i) => (
-              <div key={i} className="h-12 animate-pulse rounded-[6px] bg-ink/[0.05]" />
+              <div key={i} className="h-12 animate-pulse rounded-[2px] bg-ink/[0.05]" />
             ))}
           </div>
         ) : error ? (
@@ -76,7 +76,7 @@ export default function AdminFeedbackPage() {
                 setError(null);
                 setPage(0);
               }}
-              className="rounded-lg bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-deep-violet/90"
+              className="rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-deep-violet/90"
             >
               Try again
             </button>
@@ -119,7 +119,7 @@ export default function AdminFeedbackPage() {
                 <button
                   onClick={() => setPage((p) => Math.max(0, p - 1))}
                   disabled={page === 0}
-                  className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-deep-violet transition enabled:hover:bg-deep-violet/[0.06] disabled:opacity-30"
+                  className="rounded-[2px] px-3 py-1.5 text-[11px] font-semibold text-deep-violet transition enabled:hover:bg-deep-violet/[0.06] disabled:opacity-30"
                 >
                   Previous
                 </button>
@@ -127,7 +127,7 @@ export default function AdminFeedbackPage() {
                 <button
                   onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}
                   disabled={page >= pages - 1}
-                  className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-deep-violet transition enabled:hover:bg-deep-violet/[0.06] disabled:opacity-30"
+                  className="rounded-[2px] px-3 py-1.5 text-[11px] font-semibold text-deep-violet transition enabled:hover:bg-deep-violet/[0.06] disabled:opacity-30"
                 >
                   Next
                 </button>

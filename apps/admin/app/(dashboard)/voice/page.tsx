@@ -346,7 +346,7 @@ export default function AdminVoicePage() {
     voiceFilter === "*" ? voices : voices.filter((v) => v.languages.includes(voiceFilter));
 
   const renderCatalog = () => (
-    <div className="mt-3 rounded-xl border border-deep-violet/20 bg-white/70 p-3">
+    <div className="mt-3 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] p-3">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-[11px] font-bold text-ink">Fish voice library</p>
         <select
@@ -389,7 +389,7 @@ export default function AdminVoicePage() {
         <button
           onClick={() => void loadVoices(1, true)}
           disabled={voiceLoading}
-          className="ml-auto rounded-lg px-2 py-1 text-[11px] font-semibold text-deep-violet hover:underline disabled:opacity-40"
+          className="ml-auto rounded-[2px] px-2 py-1 text-[11px] font-semibold text-deep-violet hover:underline disabled:opacity-40"
         >
           {voiceLoading ? "Loading…" : "Refresh"}
         </button>
@@ -397,7 +397,7 @@ export default function AdminVoicePage() {
       {voiceError && <p className="mt-2 text-[11px] text-coral">{voiceError}</p>}
       <ul className="mt-2 max-h-64 space-y-1.5 overflow-y-auto pr-1">
         {filteredVoices.map((v) => (
-          <li key={v.id} className="flex items-center gap-2 rounded-lg bg-white px-2.5 py-1.5">
+          <li key={v.id} className="flex items-center gap-2 rounded-[2px] bg-[var(--ui-surface)]px-2.5 py-1.5">
             <div className="min-w-0 flex-1">
               <p className="truncate text-[12px] font-semibold text-ink">{v.title}</p>
               <p className="truncate text-[10px] text-ink/45">
@@ -426,7 +426,7 @@ export default function AdminVoicePage() {
         <button
           onClick={() => void loadVoices(voicePage + 1, false)}
           disabled={voiceLoading}
-          className="mt-2 w-full rounded-lg border border-ink/[0.08] py-1.5 text-[11px] font-semibold text-ink/55 hover:border-deep-violet/30 disabled:opacity-40"
+          className="mt-2 w-full rounded-[2px] border border-ink/[0.08] py-1.5 text-[11px] font-semibold text-ink/55 hover:border-deep-violet/30 disabled:opacity-40"
         >
           {voiceLoading ? "Loading…" : "Load more"}
         </button>
@@ -457,13 +457,13 @@ export default function AdminVoicePage() {
       </div>
 
       {notice && (
-        <div role="status" className="rounded-xl border border-deep-violet/20 bg-white px-4 py-2.5 text-[12px] font-medium text-ink/70">
+        <div role="status" className="rounded-[2px] border border-deep-violet/20 bg-[var(--ui-surface)]px-4 py-2.5 text-[12px] font-medium text-ink/70">
           {notice}
         </div>
       )}
 
       {adding && (
-        <div className="space-y-3 rounded-[6px] border-2 border-white bg-white/80 p-5">
+        <div className="panel space-y-3 p-5">
           <p className="text-[14px] font-bold text-ink">Add a voice model</p>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
@@ -539,7 +539,7 @@ export default function AdminVoicePage() {
                 The default persona for every language. Pick one at fish.audio/voice or browse the
                 library — without a pin the persona changes every note.
               </p>
-              <div className="mt-2 rounded-xl border border-dashed border-ink/[0.12] p-2.5">
+              <div className="mt-2 rounded-[2px] border border-dashed border-ink/[0.12] p-2.5">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-ink/45">
                   Language voices (optional)
                 </p>
@@ -647,17 +647,17 @@ export default function AdminVoicePage() {
       )}
 
       {error ? (
-        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
+        <div className="panel p-10 text-center">
           <p className="text-[13px] font-semibold text-ink/60">{error}</p>
         </div>
       ) : loading && engines.length === 0 ? (
         <div className="space-y-3" aria-hidden>
           {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-[6px] border-2 border-white bg-white/60" />
+            <div key={i} className="panel h-24 animate-pulse" />
           ))}
         </div>
       ) : engines.length === 0 ? (
-        <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
+        <div className="panel p-10 text-center">
           <p className="text-[14px] font-semibold text-ink/70">No voice engines yet</p>
           <p className="mt-1 text-[12px] text-ink/45">
             Tenants get no voice notes until you enable one engine per tier.
@@ -672,12 +672,10 @@ export default function AdminVoicePage() {
             return (
               <li
                 key={engine.id}
-                className={`rounded-[6px] border-2 bg-white/80 p-4 backdrop-blur-sm transition ${
-                  engine.enabled ? "border-white hover:shadow-lg hover:shadow-deep-violet/[0.08]" : "border-ink/[0.06] opacity-75"
-                }`}
+                className={`panel p-4 transition ${engine.enabled ? "" : "opacity-75"}`}
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-gradient-to-br from-deep-violet to-magenta text-[16px] text-white shadow-md" aria-hidden>
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[2px] bg-deep-violet text-[16px] text-white" aria-hidden>
                     {isEdge ? "🎙" : "🐟"}
                   </span>
                   <div className="min-w-0 flex-1">
@@ -723,7 +721,7 @@ export default function AdminVoicePage() {
                     disabled={isBusy}
                     onChange={(e) => void toggleEnabled(engine, e.target.value === "enabled")}
                     aria-label={`${engine.label} status`}
-                    className={`ml-auto shrink-0 cursor-pointer rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] font-bold outline-none transition focus:border-deep-violet/30 disabled:opacity-50 ${
+                    className={`ml-auto shrink-0 cursor-pointer rounded-[2px] border border-ink/[0.08] bg-[var(--ui-surface)]px-2 py-1.5 text-[11px] font-bold outline-none transition focus:border-deep-violet/30 disabled:opacity-50 ${
                       engine.enabled ? "text-emerald-600" : "text-ink/40"
                     }`}
                   >
@@ -811,7 +809,7 @@ export default function AdminVoicePage() {
                           <button
                             onClick={() => void clearKey(engine)}
                             disabled={isBusy}
-                            className="rounded-xl px-3 py-1.5 text-[11px] font-semibold text-ink/40 transition hover:text-coral disabled:opacity-50"
+                            className="rounded-[2px] px-3 py-1.5 text-[11px] font-semibold text-ink/40 transition hover:text-coral disabled:opacity-50"
                           >
                             Clear key
                           </button>
@@ -840,7 +838,7 @@ export default function AdminVoicePage() {
                     <button
                       onClick={() => void runTest(engine)}
                       disabled={isBusy}
-                      className="ml-auto rounded-xl bg-emerald-500 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-emerald-600 disabled:opacity-50"
+                      className="ml-auto rounded-[2px] bg-emerald-500 px-3 py-1.5 text-[11px] font-bold text-white transition hover:bg-emerald-600 disabled:opacity-50"
                     >
                       {busy === `${engine.id}:test` ? "Speaking…" : "Test"}
                     </button>
@@ -848,7 +846,7 @@ export default function AdminVoicePage() {
                       onClick={() => void deleteEngine(engine)}
                       disabled={isBusy}
                       aria-label={`Delete ${engine.label}`}
-                      className="rounded-xl px-2.5 py-1.5 text-[11px] font-bold text-ink/30 transition hover:text-coral disabled:opacity-50"
+                      className="rounded-[2px] px-2.5 py-1.5 text-[11px] font-bold text-ink/30 transition hover:text-coral disabled:opacity-50"
                     >
                       ✕
                     </button>
@@ -868,7 +866,7 @@ export default function AdminVoicePage() {
         </ul>
       )}
 
-      <div className="rounded-xl border border-dashed border-ink/[0.12] bg-white/50 p-4 text-[11px] leading-relaxed text-ink/45">
+      <div className="rounded-[2px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-surface)] p-4 text-[11px] leading-relaxed text-ink/45">
         <p className="font-semibold text-ink/60">How tiers work</p>
         <p className="mt-1">
           A tenant picks a tier on their WhatsApp channel — Off, Simple, or Advanced. When a customer

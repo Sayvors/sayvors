@@ -9,4 +9,9 @@
 - Billing budget balance TTL added (24h)
 - SEC-H1 SSRF fix implemented
 - G2 access token to httpOnly cookie implemented
+- G2 pushed to development (c80028d)
+- G2 test fixes pushed (794443f)
 - Production checklist created
+- G2 cookie forwarding fix pushed (middleware forwards Set-Cookie from API)
+- API_BASE defaults to same-origin proxy on HTTPS dev (tunnel fix)
+- COOKIE_DOMAIN default changed to .sayvors.com for cross-subdomain auth

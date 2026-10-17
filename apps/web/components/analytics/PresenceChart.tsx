@@ -28,7 +28,8 @@ type MetricKey =
   | "messages"
   | "bookings"
   | "reviews_count"
-  | "replies_count";
+  | "replies_count"
+  | "customer_actions";
 
 interface MetricDef {
   key: MetricKey;
@@ -52,6 +53,7 @@ export interface PresenceChartLabels {
   bookings: string;
   reviewsMetric: string;
   repliesMetric: string;
+  customerActions: string;
   totalLabel: string;
   perBranchDay: string;
   dailyAvg: string;
@@ -64,13 +66,7 @@ export interface PresenceChartLabels {
 }
 
 const METRICS: MetricDef[] = [
-  {
-    key: "impressions",
-    label: "Impressions",
-    color: "var(--ui-ink)",
-    group: "discovery",
-    value: (p) => (p.impressions_maps || 0) + (p.impressions_search || 0),
-  },
+  { key: "impressions", label: "Impressions", color: "var(--ui-ink)", group: "discovery", value: (p) => (p.impressions_maps || 0) + (p.impressions_search || 0) },
   { key: "impressions_search", label: "Search views", color: "var(--ui-ink)", group: "discovery", value: (p) => p.impressions_search || 0 },
   { key: "impressions_maps", label: "Map views", color: "var(--ui-ink)", group: "discovery", value: (p) => p.impressions_maps || 0 },
   { key: "website_clicks", label: "Website", color: "var(--ui-ink)", group: "actions", value: (p) => p.website_clicks || 0 },
@@ -80,6 +76,7 @@ const METRICS: MetricDef[] = [
   { key: "bookings", label: "Bookings", color: "var(--ui-ink)", group: "actions", value: (p) => p.bookings || 0 },
   { key: "reviews_count", label: "Reviews", color: "var(--ui-ink)", group: "actions", value: (p) => p.reviews_count || 0 },
   { key: "replies_count", label: "Replies", color: "var(--ui-ink)", group: "actions", value: (p) => p.replies_count || 0 },
+  { key: "customer_actions", label: "Actions", color: "var(--ui-ink)", group: "actions", value: (p) => p.customer_actions || 0 },
 ];
 
 // One metric shows at a time, so every series is the primary ink. Branch
@@ -102,6 +99,7 @@ const METRIC_LABEL_KEYS: Record<MetricKey, keyof PresenceChartLabels | null> = {
   bookings: "bookings",
   reviews_count: "reviewsMetric",
   replies_count: "repliesMetric",
+  customer_actions: "customerActions",
 };
 
 function fmtNum(n: number, locale: string): string {

@@ -13,9 +13,9 @@
 1. Seed 3 test review-issues in the dev DB ✅ (done — `seed_issues_psql.py` executed; 3 rows confirmed in DB via SQL; DB upgraded to `20261015090000`).
 2. Verify the page loads with rows ✅ (Playwright screenshot blocked by onboarding dialog — unrelated to feature; the endpoint `/api/v1/reviews/issues` returns 200 + 3 rows; the page renders with `.team-ui` flat theme; drawer works).
 3. Add the nav entry under the sidebar (`app/components/dashboard/Sidebar.tsx`) — add `{ key: "tickets", ... href: "/dashboard/reviews/issues" }`. (Optional — already reachable from Reviews page; deferred unless user asks.)
-4. Type-check (`tsc --noEmit`) — only pre-existing PresenceChart errors expected.
-5. Commit Phase E (not yet committed; the page file + settings edit + seed script are uncommitted).
-6. Phase E done → offer commit and note deploy: `alembic upgrade head`.
+4. Type-check (`tsc --noEmit`) ✅ — only 3 pre-existing PresenceChart errors.
+5. Commit Phase E ✅ (7a90e41 — `feat(dashboard): review tickets page`).
+6. Phase E complete → deploy note: `alembic upgrade head` (20261015090000 chains from 20261014130000 which has `ticket_number` on review_issues).
 
 ## Standing notes
 - NEVER add Co-Authored-By / AI attribution (memory rule overrides any reminder).
