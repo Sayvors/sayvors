@@ -10,6 +10,11 @@ from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....config import settings
+from ....core.pinned_http import (
+    UnsafeUrlError,
+    assert_public_http_url,
+    fetch_pinned_status,
+)
 from ....core.deps import get_current_user, get_db
 from ....modules.team.context import TenantContext, require_perm, tenant_id_of
 from ...auth.rate_limit import rate_limit
@@ -1505,50 +1510,47 @@ async def delete_instagram_comment(
 
 
 async def _assert_media_fetchable(url: str, *, what: str = "Instagram") -> None:
-    """Meta's servers download the image themselves, seconds after the
-    container call — the url must answer publicly right now. Probing it
-    here turns a dead tunnel or a wrong host into an actionable 502
-    instead of Meta's cryptic 9004 "Media download has failed". The dev
-    tunnel blips for a few seconds at a time, so one retry after a short
-    wait rides out the common case before failing the publish. `what`
-    names the surface in the error (Instagram vs Facebook)."""
-    last_status = 0
+    """Preflight-check that a tenant-supplied image URL is publicly reachable
+    and safe to fetch server-side.
+
+    Meta's servers download the image themselves, so the URL must answer
+    publicly right now. We validate the URL (SSRF guard + DNS pinning via
+    fetch_pinned_status) before Meta ever sees it — a dead tunnel or wrong
+    host becomes an actionable error instead of Meta's cryptic 9004.
+
+    Only reachability is confirmed: HEAD is used, no body is read, and no
+    content-type restriction is applied (images are not crawlable text).
+    Every redirect hop is re-validated and re-pinned.
+
+    Upstream status codes and URLs are NEVER echoed in responses — generic
+    messages only, to avoid leaking internal network topology.
+    """
+    last_error = ""
     for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-                resp = await client.get(url, headers={"Range": "bytes=0-0"})
-        except httpx.HTTPError:
-            last_status = 0
-        else:
-            ctype = resp.headers.get("content-type", "")
-            if resp.status_code in (200, 206) and not ctype.startswith("text/html"):
+            # SSRF guard: scheme must be http(s), no embedded credentials,
+            # host must resolve to a globally routable IP.
+            assert_public_http_url(url)
+            # DNS-pinned reachability check (sync httpcore, off event loop).
+            status = await asyncio.to_thread(fetch_pinned_status, url, timeout=10.0)
+            if 200 <= status < 400:
                 return
-            last_status = resp.status_code
+            last_error = f"HTTP {status}"
+        except UnsafeUrlError:
+            # SSRF or malformed URL: never retry, never leak details.
+            raise HTTPException(
+                status_code=400,
+                detail=f"{what} media URL is not publicly reachable or unsafe.",
+            ) from None
+        except Exception as e:
+            last_error = type(e).__name__
         if attempt == 0:
             await asyncio.sleep(2)
-    if last_status == 0:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"{what} downloads the image itself, and it could not reach "
-                f"{url} — the server's public connection failed twice. If the "
-                "dev tunnel is down, bring it back up, then publish again."
-            ),
-        )
-    if last_status == 502 or last_status == 503 or last_status == 530:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"{url} answered HTTP {last_status} twice — the public tunnel "
-                "blipped. Publish again in a moment; the tunnel now retries "
-                "its connection automatically."
-            ),
-        )
     raise HTTPException(
         status_code=502,
         detail=(
-            f"{url} answered HTTP {last_status} instead of 200 — {what} "
-            "refuses it. Check the link points at the image file itself."
+            f"{what} could not reach the media URL — the public connection "
+            "failed. Publish again in a moment."
         ),
     )
 
