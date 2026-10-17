@@ -19,10 +19,20 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
 ):
-    token = credentials.credentials
+    # G2: access token lives in an httpOnly cookie, not the JSON body.
+    # Read from cookie first (SPA), fall back to Bearer header (mobile/API).
+    token = None
+    cookie_token = request.cookies.get(settings.ACCESS_COOKIE_NAME)
+    if cookie_token:
+        token = cookie_token
+    elif credentials:
+        token = credentials.credentials
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
         user_id: str = payload.get("sub")

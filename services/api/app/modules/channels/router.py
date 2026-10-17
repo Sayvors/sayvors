@@ -382,10 +382,14 @@ _inbox_router = APIRouter(prefix="/api/v1/inbox", tags=["inbox"])
 async def inbox_ws(websocket: WebSocket):
     """Live inbox events for the authenticated user.
 
-    Browsers can't set headers on WebSocket, so the access token travels in
-    the query string and is validated exactly like the HTTP auth dependency.
+    G2: access token travels as an httpOnly cookie. Browsers send cookies
+    with same-origin WebSocket connections, so we read it from
+    ``websocket.cookies`` first, falling back to the ``?token=`` query
+    param for non-browser clients.
     """
-    token = websocket.query_params.get("token") or ""
+    token = websocket.cookies.get(settings.ACCESS_COOKIE_NAME, "")
+    if not token:
+        token = websocket.query_params.get("token") or ""
     try:
         import jwt as pyjwt
 

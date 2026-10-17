@@ -46,7 +46,9 @@ class Settings(BaseSettings):
     RETENTION_DELETE_BATCH_SIZE: int = 1000
     CSRF_COOKIE_NAME: str = "csrf_token"
     REFRESH_COOKIE_NAME: str = "refresh_token"
+    ACCESS_COOKIE_NAME: str = "access_token"
     REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
+    ACCESS_COOKIE_MAX_AGE: int = 15 * 60  # 15 minutes, matches JWT access expiry
     # Parent domain shared by the SPA and the API (e.g. ".sayvors.com").
     # Lets the SPA origin read the non-httpOnly CSRF cookie for the
     # X-CSRF-Token double-submit header in split-domain deployments.

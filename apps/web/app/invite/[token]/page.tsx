@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { getAccessToken, useAuth } from "@/lib/auth-context";
+import { useAuth } from "@/lib/auth-context";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -62,15 +62,13 @@ export default function InvitePage() {
   const emailMatches =
     !!user?.email && !!preview?.email && user.email.toLowerCase() === preview.email.toLowerCase();
 
-  const accept = async (extra: Record<string, unknown>, withBearer: boolean): Promise<boolean> => {
+  const accept = async (extra: Record<string, unknown>): Promise<boolean> => {
     setBusy(true); setMsg("");
     try {
-      const accessToken = withBearer ? getAccessToken() : null;
       const res = await fetch(`${API}/api/v1/team/invites/accept`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         credentials: "include",
         body: JSON.stringify({ token, ...extra }),
@@ -132,7 +130,7 @@ export default function InvitePage() {
           ) : preview?.account_exists ? (
             emailMatches ? (
               <button
-                onClick={() => accept({}, true)}
+                onClick={() => accept({})}
                 disabled={busy}
                 className="mt-4 w-full rounded-lg bg-deep-violet px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-40"
               >
@@ -235,7 +233,7 @@ export default function InvitePage() {
           <div className="flex gap-2">
             {user && emailMatches ? (
               <button
-                onClick={() => accept({}, true)}
+                onClick={() => accept({})}
                 disabled={busy}
                 className="rounded-lg bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
               >

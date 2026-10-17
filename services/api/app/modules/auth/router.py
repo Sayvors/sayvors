@@ -55,11 +55,16 @@ def _set_csrf_cookie(response: Response, token: str | None = None) -> str:
     return csrf_token
 
 
-def _set_session_cookies(response: Response, refresh_token: str) -> None:
-    """Refresh + CSRF cookies, shared across the parent domain when configured."""
+def _set_session_cookies(response: Response, refresh_token: str, access_token: str | None = None) -> None:
+    """Refresh + access (+ CSRF) cookies, shared across the parent domain when configured.
+
+    Access token is httpOnly so JavaScript cannot read it — G2 fix: no token
+    in JSON body, no token accessible to XSS.
+    """
     domain = settings.COOKIE_DOMAIN or None
     if domain:
         response.delete_cookie(settings.REFRESH_COOKIE_NAME, path="/")
+        response.delete_cookie(settings.ACCESS_COOKIE_NAME, path="/")
     response.set_cookie(
         key=settings.REFRESH_COOKIE_NAME,
         value=refresh_token,
@@ -70,15 +75,28 @@ def _set_session_cookies(response: Response, refresh_token: str) -> None:
         path="/",
         domain=domain,
     )
+    if access_token:
+        response.set_cookie(
+            key=settings.ACCESS_COOKIE_NAME,
+            value=access_token,
+            httponly=True,
+            secure=settings.COOKIE_SECURE,
+            samesite=settings.COOKIE_SAMESITE,
+            max_age=settings.ACCESS_COOKIE_MAX_AGE,
+            path="/",
+            domain=domain,
+        )
     _set_csrf_cookie(response)
 
 
 def _clear_session_cookies(response: Response) -> None:
-    """Remove both the host-only and the shared-domain cookie variants."""
+    """Remove refresh, access, and CSRF cookies (host-only + shared domain)."""
     response.delete_cookie(settings.REFRESH_COOKIE_NAME, path="/")
+    response.delete_cookie(settings.ACCESS_COOKIE_NAME, path="/")
     response.delete_cookie(settings.CSRF_COOKIE_NAME, path="/")
     if settings.COOKIE_DOMAIN:
         response.delete_cookie(settings.REFRESH_COOKIE_NAME, path="/", domain=settings.COOKIE_DOMAIN)
+        response.delete_cookie(settings.ACCESS_COOKIE_NAME, path="/", domain=settings.COOKIE_DOMAIN)
         response.delete_cookie(settings.CSRF_COOKIE_NAME, path="/", domain=settings.COOKIE_DOMAIN)
 
 
@@ -143,11 +161,13 @@ async def signup_endpoint(
         raise HTTPException(status_code=409, detail=str(e))
 
     verification_token = result.pop("verification_token", None)
-    _set_session_cookies(response, result.pop("refresh_token"))
+    access_token = result.pop("access_token", None)
+    refresh_token = result.pop("refresh_token")
+    _set_session_cookies(response, refresh_token, access_token)
 
     return {
-        "access_token": result["access_token"],
         "user": result["user"],
+        "verification_token": verification_token,
     }
 
 
@@ -177,9 +197,10 @@ async def login_endpoint(
         raise HTTPException(status_code=401, detail=str(e))
 
     refresh_token = result.pop("refresh_token")
-    _set_session_cookies(response, refresh_token)
+    access_token = result.pop("access_token", None)
+    _set_session_cookies(response, refresh_token, access_token)
 
-    return result
+    return {"user": result["user"]}
 
 
 @router.post("/refresh")
@@ -203,9 +224,10 @@ async def refresh_endpoint(
         raise HTTPException(status_code=401, detail=str(e))
 
     new_refresh = result.pop("refresh_token")
-    _set_session_cookies(response, new_refresh)
+    access_token = result.pop("access_token", None)
+    _set_session_cookies(response, new_refresh, access_token)
 
-    return result
+    return {"message": "Refreshed"}
 
 
 @router.post("/logout")
@@ -318,8 +340,21 @@ async def google_verify_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
     refresh_token = result.pop("refresh_token")
-    _set_session_cookies(response, refresh_token)
+    access_token = result.pop("access_token", None)
+    _set_session_cookies(response, refresh_token, access_token)
     return result
+
+
+@router.post("/verify-email")
+async def verify_email_endpoint(
+    body: VerifyEmailRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await verify_email(body.token, db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"message": "Email verified successfully"}
 
 
 @router.post("/facebook/verify")
@@ -361,20 +396,9 @@ async def facebook_verify_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
     refresh_token = result.pop("refresh_token")
-    _set_session_cookies(response, refresh_token)
+    access_token = result.pop("access_token", None)
+    _set_session_cookies(response, refresh_token, access_token)
     return result
-
-
-@router.post("/verify-email")
-async def verify_email_endpoint(
-    body: VerifyEmailRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        await verify_email(body.token, db)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"message": "Email verified successfully"}
 
 
 @router.post("/verify-otp")
@@ -394,7 +418,8 @@ async def verify_otp_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
     refresh_token = result.pop("refresh_token")
-    _set_session_cookies(response, refresh_token)
+    access_token = result.pop("access_token", None)
+    _set_session_cookies(response, refresh_token, access_token)
     return result
 
 

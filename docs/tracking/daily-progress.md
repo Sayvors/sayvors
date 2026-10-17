@@ -8,3 +8,5 @@
 - Redis implementation docs created
 - Billing budget balance TTL added (24h)
 - SEC-H1 SSRF fix implemented
+- G2 access token to httpOnly cookie implemented
+- Production checklist created

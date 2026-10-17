@@ -154,8 +154,8 @@ async def test_fb_verify_endpoint_success(client, db, user_id):
 
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    assert "access_token" in data
-    assert "refresh_token" not in data          # refresh travels as httpOnly cookie
+    assert "access_token" not in data  # access token is httpOnly cookie, not JSON body
+    assert "refresh_token" not in data  # refresh travels as httpOnly cookie
     assert set(data["user"]) == {
         "id", "first_name", "last_name", "email", "email_verified", "onboarded",
     }

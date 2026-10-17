@@ -6,10 +6,6 @@ import { getCsrfToken } from "./csrf";
 
 const API_URL = API_BASE;
 
-let _accessToken: string | null = null;
-export function getAccessToken(): string | null { return _accessToken; }
-export function setAccessToken(token: string | null) { _accessToken = token; }
-
 interface User {
   id: string;
   first_name: string;
@@ -63,10 +59,12 @@ export function useAuth() {
 function buildHeaders(isForm = false): Record<string, string> {
   const headers: Record<string, string> = {};
   if (!isForm) headers["Content-Type"] = "application/json";
-  if (_accessToken) headers["Authorization"] = `Bearer ${_accessToken}`;
   const csrf = getCsrfToken();
   if (csrf) headers["X-CSRF-Token"] = csrf;
   return headers;
+  // Access token travels as httpOnly cookie — never exposed to JS,
+  // never sent as an Authorization header. The browser attaches it
+  // automatically via credentials: "include".
 }
 
 async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
@@ -88,7 +86,6 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
     if (refreshed) {
       return fetch(`${API_URL}${path}`, { ...options, headers: buildHeaders(isForm), credentials: "include" });
     }
-    setAccessToken(null);
     // Public pages must not bounce: auth pages would reload-loop, and /invite
     // visitors are anonymous by definition (they have no session yet).
     //
@@ -145,8 +142,7 @@ async function tryRefresh(): Promise<boolean> {
       headers: { "Content-Type": "application/json" },
     });
     if (res.ok) {
-      const data = await res.json();
-      if (data.access_token) setAccessToken(data.access_token);
+      await res.json();
       return true;
     }
     return false;
@@ -191,7 +187,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const result = await res.json();
-    if (result.access_token) setAccessToken(result.access_token);
     setUser(result.user);
     return { verification_token: result.verification_token };
   };
@@ -213,7 +208,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const result = await res.json();
-    if (result.access_token) setAccessToken(result.access_token);
     setUser(result.user);
     return result.user as User;
   };
@@ -231,7 +225,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const result = await res.json();
-    if (result.access_token) setAccessToken(result.access_token);
     setUser(result.user);
     return result.user as User;
   };
@@ -249,7 +242,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const result = await res.json();
-    if (result.access_token) setAccessToken(result.access_token);
     setUser(result.user);
     return result.user as User;
   };
@@ -259,7 +251,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ all_devices: allDevices }),
     });
-    setAccessToken(null);
     setUser(null);
     // Invite acceptance passes its own path so sign-in returns there.
     window.location.href = next ? `/login?next=${encodeURIComponent(next)}` : "/login";
@@ -315,7 +306,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const result = await res.json();
-    if (result.access_token) setAccessToken(result.access_token);
     if (result.user) setUser(result.user);
   };
 

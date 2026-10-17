@@ -1,7 +1,6 @@
 "use client";
 
 import { API_BASE } from "./api-base";
-import { getAccessToken } from "./auth-context";
 import { getCsrfToken } from "./csrf";
 
 const API = API_BASE;
@@ -57,8 +56,6 @@ export async function* streamReviewReply(
   signal?: AbortSignal
 ): AsyncGenerator<StreamEvent, void, void> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const token = getAccessToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const csrf = getCsrfToken();
   if (csrf) headers["X-CSRF-Token"] = csrf;
 
@@ -113,8 +110,6 @@ export interface EngineLog {
 
 export async function listEngineLogs(limit = 10): Promise<{ logs: EngineLog[] }> {
   const headers: Record<string, string> = {};
-  const token = getAccessToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`${API}/api/v1/review-engine/logs?limit=${limit}`, {
     headers,
     credentials: "include",

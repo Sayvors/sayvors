@@ -1,7 +1,7 @@
 "use client";
 
 import { API_BASE } from "./api-base";
-import { getAccessToken, refreshSession } from "./auth-context";
+import { refreshSession } from "./auth-context";
 import { ensureCsrfToken, getCsrfToken, isCsrfFailure, prefetchCsrfToken } from "./csrf";
 
 const API = API_BASE;
@@ -41,8 +41,6 @@ async function readError(res: Response): Promise<string> {
 function buildHeaders(isForm = false): Record<string, string> {
   const headers: Record<string, string> = {};
   if (!isForm) headers["Content-Type"] = "application/json";
-  const token = getAccessToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const csrf = getCsrfToken();
   if (csrf) headers["X-CSRF-Token"] = csrf;
   return headers;
@@ -180,8 +178,6 @@ export async function uploadFile(databankId: string, file: File): Promise<any> {
   const form = new FormData();
   form.append("file", file);
   const headers: Record<string, string> = {};
-  const token = getAccessToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const csrf = getCsrfToken();
   if (csrf) headers["X-CSRF-Token"] = csrf;
   const res = await fetch(`${API}/api/v1/rag/databanks/${databankId}/documents`, {
@@ -434,8 +430,6 @@ export async function uploadCSV(file: File, purpose?: string): Promise<CSVUpload
   form.append("file", file);
   if (purpose) form.append("purpose", purpose);
   const headers: Record<string, string> = {};
-  const token = getAccessToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const csrf = getCsrfToken();
   if (csrf) headers["X-CSRF-Token"] = csrf;
   const res = await fetch(`${API}/api/v1/csv/upload`, {
