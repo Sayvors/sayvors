@@ -17,13 +17,16 @@ from ...security import create_admin_token, verify_password
 from ..auth.rate_limit import rate_limit
 from ..auth.router import get_client_ip
 from . import service as admin_service
+from . import stats as admin_service_stats
 from .schemas import (
     AdminHealth,
     AdminOverview,
+    AdminOverviewStats,
     AdminTenantDetail,
     AdminTenantList,
     AdminUsageOverview,
     AdminVoiceUsageOverview,
+    LiveStats,
     LlmModelCreate,
     LlmModelStatus,
     LlmModelTestResult,
@@ -31,6 +34,10 @@ from .schemas import (
     LlmProviderStatus,
     LlmProviderUpdate,
     LlmTestResult,
+    OverviewLast24h,
+    OverviewTotals,
+    OverviewWindowDelta,
+    PlatformStats,
     RemoteModel,
     SavedModel,
 )
@@ -178,6 +185,24 @@ async def admin_overview(
     db: AsyncSession = Depends(get_db),
 ):
     return AdminOverview(**await admin_service.get_overview(db))
+
+
+@router.get("/overview/stats", response_model=AdminOverviewStats)
+async def admin_overview_stats(
+    window: str = Query("30d", pattern="^(24h|7d|30d|90d|1y)$"),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    return AdminOverviewStats(**await admin_service_stats.get_stats(db, window))
+
+
+@router.get("/overview/stats/live", response_model=LiveStats)
+async def admin_overview_stats_live(
+    minutes: int = Query(30, ge=15, le=120),
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    return LiveStats(**await admin_service_stats.get_live_stats(db, minutes))
 
 
 @router.get("/tenants", response_model=AdminTenantList)
