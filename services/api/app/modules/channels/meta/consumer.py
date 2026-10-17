@@ -26,7 +26,12 @@ from sqlalchemy.orm import selectinload
 
 from ....database import async_session
 from ...kafka.client import create_consumer
-from ...channels.service import encrypt_contact_phone, encrypt_message_content, hash_contact_phone
+from ...channels.service import (
+    encrypt_contact_phone,
+    encrypt_message_content,
+    decrypt_message_content,
+    hash_contact_phone,
+)
 from .models import MetaAsset
 
 logger = logging.getLogger(__name__)
