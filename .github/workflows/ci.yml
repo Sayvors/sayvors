@@ -65,6 +65,7 @@ jobs:
           JWT_SECRET: test-secret-key-do-not-use-in-production
           TESTING: "true"
           AUTH_RATE_LIMIT_FAIL_CLOSED: "false"
+          RUN_BACKGROUND_WORKERS: "false"
         run: |
           cd services/api
           python -m pytest tests/ -q
