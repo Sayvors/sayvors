@@ -54,3 +54,7 @@
 - test_post_draft_prompt_layers_databank_facts: skipped (env-specific, passes locally on SQLite)
 - Full suite: 1353 passed, 1 skipped, 0 failures
 - Pushed to development (commits 6e62414, 526d464, 355a8df)
+- CI failures root-caused from run #20 logs: (1) CI has no .env and ci.yml set no platform creds → 6 sign-in endpoint tests returned 503 "not configured"; (2) CI installed SQLAlchemy 2.1.5 (unbounded >=2.0) which wraps MissingGreenlet in StatementError, breaking test_sync_locks
+- ci.yml: dummy META_APP_ID / META_APP_SECRET / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in pytest env
+- test_sync_locks: assertion accepts bare MissingGreenlet (2.0) or StatementError-wrapping-MissingGreenlet (2.1); still asserts the same contract
+- CI #21 green on 17c93dd: 1352 passed, 2 skipped, 0 failed
