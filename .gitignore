@@ -19,3 +19,6 @@ data/
 animations/
 brag-output/
 brag-*/
+
+# Local curl cookie jars (contain live session tokens) - never commit
+cj*.txt
