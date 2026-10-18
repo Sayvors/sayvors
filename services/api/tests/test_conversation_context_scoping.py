@@ -20,6 +20,9 @@ import pytest
 from sqlalchemy import select
 
 from app.modules.channels.models import Channel, ChannelMessage
+from app.modules.channels.service import (
+    encrypt_contact_phone, encrypt_message_content, hash_contact_phone,
+)
 
 
 class _CaptureProvider:
@@ -86,9 +89,10 @@ def _msg(db, channel_id, contact, content, direction="inbound", i=0):
         id=f"m{i}-{direction}-{contact}-{channel_id}",
         channel_id=channel_id,
         direction=direction,
-        content=content,
+        content=encrypt_message_content(content),
         status="sent",
-        contact_phone=contact,
+        contact_phone=encrypt_contact_phone(contact),
+        contact_phone_hash=hash_contact_phone(contact) if contact else None,
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(minutes=i),
     ))
 

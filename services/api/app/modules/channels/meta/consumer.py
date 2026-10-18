@@ -27,9 +27,10 @@ from sqlalchemy.orm import selectinload
 from ....database import async_session
 from ...kafka.client import create_consumer
 from ...channels.service import (
+    decrypt_contact_phone,
+    decrypt_message_content,
     encrypt_contact_phone,
     encrypt_message_content,
-    decrypt_message_content,
     hash_contact_phone,
 )
 from .models import MetaAsset
@@ -561,6 +562,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 content_type=msg_type,
                 status="delivered",
                 contact_phone=encrypt_contact_phone(from_wa or None),
+                contact_phone_hash=hash_contact_phone(from_wa or None),
                 contact_name=data.get("profile_name") or None,
             )
         db.add(row)
@@ -914,6 +916,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             content_type="audio",
                             status="sent",
                             contact_phone=encrypt_contact_phone(from_wa or None),
+                            contact_phone_hash=hash_contact_phone(from_wa or None),
                             is_ai=True,  # drives the escalation counter
                         )
                     db.add(row)
