@@ -16,6 +16,9 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.modules.channels.models import Channel, ChannelMessage
+from app.modules.channels.service import (
+    encrypt_contact_phone, encrypt_message_content, hash_contact_phone,
+)
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
 
 
@@ -34,8 +37,9 @@ async def _msg(db, channel_id, *, phone=None, direction="inbound", content="hi",
     db.add(ChannelMessage(
         id=f"m-{abs(hash((channel_id, phone, content, minutes_ago))) % 10**12}",
         channel_id=channel_id, platform_message_id=None, direction=direction,
-        content=content, content_type="text", status="delivered",
-        contact_phone=phone, contact_name=name,
+        content=encrypt_message_content(content), content_type="text", status="delivered",
+        contact_phone=encrypt_contact_phone(phone), contact_phone_hash=hash_contact_phone(phone) if phone else None,
+        contact_name=name,
         created_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
     ))
     await db.commit()

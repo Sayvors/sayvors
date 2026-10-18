@@ -18,7 +18,9 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.modules.channels.meta import lead_engine as le
-from app.modules.channels.models import ChannelMessage, Lead, LeadAction
+from app.modules.channels.models import ChannelMessage
+from app.modules.channels.models import Lead, LeadAction
+from app.modules.channels.service import hash_contact_phone
 
 
 # ── extraction split: pure, byte-identical without the line ──────────
@@ -571,12 +573,14 @@ async def test_latest_inbound_returns_newest(db, channel_id):
         id=str(uuid.uuid4()), channel_id=channel_id, direction="inbound",
         platform_message_id="old-1", content="first", status="delivered",
         contact_phone="c-newest",
+        contact_phone_hash=hash_contact_phone("c-newest"),
         created_at=datetime.now(timezone.utc) - timedelta(hours=2),
     ))
     db.add(ChannelMessage(
         id=str(uuid.uuid4()), channel_id=channel_id, direction="inbound",
         platform_message_id="new-1", content="second", status="delivered",
         contact_phone="c-newest",
+        contact_phone_hash=hash_contact_phone("c-newest"),
         created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
     ))
     await db.commit()

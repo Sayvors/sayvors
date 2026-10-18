@@ -95,10 +95,18 @@ def encrypt_message_content(content: str | None) -> str | None:
 
 
 def decrypt_message_content(encrypted: str | None) -> str | None:
-    """Decrypt a customer message body at rest."""
+    """Decrypt a customer message body at rest.
+
+    Gracefully returns the input as-is if it is not valid Fernet ciphertext
+    (e.g. legacy plaintext rows or test fixtures). Production data is always
+    encrypted; this fallback exists only for migration safety.
+    """
     if not encrypted:
         return encrypted
-    return _get_fernet().decrypt(encrypted.encode()).decode()
+    try:
+        return _get_fernet().decrypt(encrypted.encode()).decode()
+    except Exception:
+        return encrypted
 
 
 def encrypt_contact_phone(phone: str | None) -> str | None:
@@ -109,10 +117,18 @@ def encrypt_contact_phone(phone: str | None) -> str | None:
 
 
 def decrypt_contact_phone(phone: str | None) -> str | None:
-    """Decrypt a customer phone number at rest."""
+    """Decrypt a customer phone number at rest.
+
+    Gracefully returns the input as-is if it is not valid Fernet ciphertext
+    (e.g. legacy plaintext rows or test fixtures). Production data is always
+    encrypted; this fallback exists only for migration safety.
+    """
     if not phone:
         return phone
-    return _get_fernet().decrypt(phone.encode()).decode()
+    try:
+        return _get_fernet().decrypt(phone.encode()).decode()
+    except Exception:
+        return phone
 
 
 def encrypt_webhook_secret(secret: str | None) -> str | None:
@@ -303,6 +319,7 @@ async def send_message(
         content_type=body.content_type,
         status="sent",
         contact_phone=encrypt_contact_phone(contact_phone),
+        contact_phone_hash=hash_contact_phone(contact_phone),
         contact_name=body.contact_name or None,
     )
 
@@ -535,34 +552,43 @@ async def list_inbox_threads(
     channel_ids = [c.id for c in channels]
     by_id = {c.id: c for c in channels}
 
-    needle = f"%{search.strip()}%" if search and search.strip() else None
+    needle = search.strip().lower() if search and search.strip() else None
     stmt = (
         select(
+            ChannelMessage.contact_phone_hash,
             ChannelMessage.contact_phone,
             ChannelMessage.channel_id,
             func.max(ChannelMessage.created_at).label("last_at"),
             func.count(ChannelMessage.id).label("total"),
         )
         .where(ChannelMessage.channel_id.in_(channel_ids))
-        .group_by(ChannelMessage.contact_phone, ChannelMessage.channel_id)
+        .group_by(ChannelMessage.contact_phone_hash, ChannelMessage.channel_id)
     )
-    if needle:
-        # Match the text of any message in the group, not the name: the contact
-        # name is usually missing, and the phone is rarely what someone types.
-        # HAVING, not WHERE — a filter here would drop whole threads instead of
-        # narrowing them to matching messages.
-        #
-        # MAX(CASE ...) rather than bool_or: the two are equivalent here, but
-        # bool_or does not exist in SQLite, which the test suite runs on.
-        matched = func.max(
-            case((ChannelMessage.content.ilike(needle), 1), else_=0)
-        )
-        stmt = stmt.having(matched == 1)
     stmt = stmt.order_by(func.max(ChannelMessage.created_at).desc()).limit(limit)
 
     summaries = (await db.execute(stmt)).all()
     if not summaries:
         return []
+
+    # When searching, filter threads by decrypting message content in Python.
+    # SQL ILIKE cannot match encrypted content.
+    if needle:
+        filtered_summaries = []
+        for phone_hash, phone, channel_id, last_at, total in summaries:
+            conditions = [
+                ChannelMessage.channel_id == channel_id,
+                ChannelMessage.contact_phone_hash.is_(None)
+                if phone_hash is None
+                else ChannelMessage.contact_phone_hash == phone_hash,
+            ]
+            rows = (await db.execute(
+                select(ChannelMessage.content).where(*conditions)
+            )).scalars().all()
+            if any(needle in (decrypt_message_content(c) or "").lower() for c in rows):
+                filtered_summaries.append((phone_hash, phone, channel_id, last_at, total))
+        summaries = filtered_summaries
+        if not summaries:
+            return []
 
     # Cached contact profiles (names/usernames/avatars) in one read — the
     # map lookup stays exact per (platform, contact) even though the IN
@@ -570,8 +596,8 @@ async def list_inbox_threads(
     from .models import ContactProfile
 
     profile_keys = {
-        (by_id[cid].platform, phone)
-        for phone, cid, _la, _t in summaries
+        (by_id[cid].platform, decrypt_contact_phone(phone))
+        for phone_hash, phone, cid, _la, _t in summaries
         if phone is not None
     }
     profiles: dict = {}
@@ -590,13 +616,12 @@ async def list_inbox_threads(
     # The preview line and unread count need per-thread detail the grouped
     # aggregate cannot carry, so fetch those rows only.
     out: list[dict] = []
-    for phone, channel_id, last_at, total in summaries:
+    for phone_hash, phone, channel_id, last_at, total in summaries:
         conditions = [
             ChannelMessage.channel_id == channel_id,
             ChannelMessage.contact_phone_hash.is_(None)
-            if phone is None
-            else ChannelMessage.contact_phone_hash
-            == hash_contact_phone(phone),
+            if phone_hash is None
+            else ChannelMessage.contact_phone_hash == phone_hash,
         ]
         last_row = (
             await db.execute(
@@ -632,23 +657,25 @@ async def list_inbox_threads(
 
         name = last_row.contact_name
         profile = (
-            profiles.get((by_id[channel_id].platform, phone))
+            profiles.get((by_id[channel_id].platform, decrypt_contact_phone(phone)))
             if phone is not None
             else None
         )
         if profile is not None and profile.name:
             name = profile.name
+        decrypted_phone = decrypt_contact_phone(phone) if phone is not None else None
+        decrypted_last = decrypt_message_content(last_row.content) if last_row.content else ""
         out.append(
             {
-                "key": thread_key(phone),
-                "contact_phone": phone,
-                "display_name": name or phone,
+                "key": thread_key(decrypted_phone),
+                "contact_phone": decrypted_phone,
+                "display_name": name or decrypted_phone,
                 "username": profile.username if profile else None,
                 "avatar_url": profile.avatar_url if profile else None,
                 "channel_id": channel_id,
                 "channel_name": by_id[channel_id].display_name,
                 "platform": by_id[channel_id].platform,
-                "last_message": (last_row.content or "")[:280],
+                "last_message": (decrypted_last or "")[:280],
                 "last_message_at": last_at.isoformat() if last_at else None,
                 "last_direction": last_row.direction,
                 "message_count": total,

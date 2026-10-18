@@ -22,7 +22,10 @@ import logging
 
 from sqlalchemy import select
 
-from ...channels.service import hash_contact_phone
+from ...channels.service import (
+    decrypt_message_content,
+    hash_contact_phone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +143,10 @@ async def classify_thread(db, channel_id: str, contact_phone: str | None) -> dic
                 .limit(_CLASSIFY_HISTORY)
             )
         ).scalars().all()
+        from ...channels.service import decrypt_message_content
+
         transcript = "\n".join(
-            f"{'Customer' if m.direction == 'inbound' else 'Assistant'}: {m.content}"
+            f"{'Customer' if m.direction == 'inbound' else 'Assistant'}: {decrypt_message_content(m.content) or ''}"
             for m in reversed(rows)
         )
         if transcript:

@@ -26,6 +26,11 @@ from app.modules.channels.models import (
     LeadAction,
     WhatsAppThreadState,
 )
+from app.modules.channels.service import (
+    decrypt_contact_phone,
+    decrypt_message_content,
+    hash_contact_phone,
+)
 from conftest import TEST_ENGINE
 
 _PHONE_ID = "pn-voice-test-1"
@@ -67,6 +72,7 @@ async def test_classify_thread_uses_llm_result(db, channel_id, monkeypatch):
         id=str(uuid.uuid4()), channel_id=channel_id, direction="inbound",
         content="سلام، میں پشمینو شرما چاہتا ہوں", status="delivered",
         contact_phone=_FROM,
+        contact_phone_hash=hash_contact_phone(_FROM),
     ))
     await db.commit()
 
@@ -105,6 +111,7 @@ async def test_classify_thread_falls_back_to_script_heuristic(db, channel_id, mo
         id=str(uuid.uuid4()), channel_id=channel_id, direction="inbound",
         content="یہ کیا ہے؟ مجھے سمجھ نہیں آیا", status="delivered",
         contact_phone=_FROM,
+        contact_phone_hash=hash_contact_phone(_FROM),
     ))
     await db.commit()
 
@@ -135,6 +142,7 @@ async def test_classify_ignores_history_before_last_voice_note(db, channel_id, m
         id=str(uuid.uuid4()), channel_id=channel_id, direction="outbound",
         content="No problem, let me explain out loud.", content_type="audio",
         status="sent", contact_phone=_FROM,
+        contact_phone_hash=hash_contact_phone(_FROM),
         created_at=now - timedelta(minutes=3),
     ))
     db.add(ChannelMessage(
@@ -171,12 +179,14 @@ async def test_classify_counts_messages_after_voice_note(db, channel_id, monkeyp
         id=str(uuid.uuid4()), channel_id=channel_id, direction="outbound",
         content="Here you go.", content_type="audio",
         status="sent", contact_phone=_FROM,
+        contact_phone_hash=hash_contact_phone(_FROM),
         created_at=now - timedelta(minutes=3),
     ))
     db.add(ChannelMessage(
         id=str(uuid.uuid4()), channel_id=channel_id, direction="inbound",
         content="wait what?? i still dont understand", status="delivered",
         contact_phone=_FROM,
+        contact_phone_hash=hash_contact_phone(_FROM),
         created_at=now - timedelta(minutes=1),
     ))
     await db.commit()
@@ -655,6 +665,7 @@ async def _seed_lead(db, *, guard_id="wamid-guard-1", attempt=1, language="en",
         id=str(uuid.uuid4()), channel_id=channel.id, direction="inbound",
         platform_message_id=guard_id,
         content="i want shawarma", status="delivered", contact_phone=_FROM,
+        contact_phone_hash=hash_contact_phone(_FROM),
         created_at=datetime.now(timezone.utc) - timedelta(seconds=inbound_age),
     ))
     db.add(LeadAction(
@@ -770,6 +781,7 @@ async def test_lead_followup_cancelled_when_customer_replied(db, monkeypatch):
             id=str(uuid.uuid4()), channel_id=channel.id, direction="inbound",
             platform_message_id="wamid-newer", content="yes please",
             status="delivered", contact_phone=_FROM,
+            contact_phone_hash=hash_contact_phone(_FROM),
             created_at=datetime.now(timezone.utc) - timedelta(seconds=30),
         ))
         await s.commit()
@@ -1023,7 +1035,7 @@ async def test_consumer_confused_advanced_sends_voice_note(db, user_id, monkeypa
     assert len(rows) == 1
     assert rows[0].content_type == "audio"
     assert rows[0].status == "sent"
-    assert rows[0].content == "No problem! Let me explain it out loud for you."
+    assert decrypt_message_content(rows[0].content) == "No problem! Let me explain it out loud for you."
 
     # The voice note is the remedy: confusion is cleared, the AI is back in
     # text mode until genuinely fresh confusion appears.

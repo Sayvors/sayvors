@@ -29,6 +29,7 @@ from app.modules.channels.meta.providers.base import MetaAPIError
 from app.modules.channels.meta.providers.facebook import FacebookAdapter
 from app.modules.channels.meta.webhooks.parser import parse
 from app.modules.channels.models import Channel, ChannelMessage
+from app.modules.channels.service import decrypt_contact_phone, decrypt_message_content
 from app.modules.channels.schemas import ChannelMessageSend
 
 TENANT = "ig-tenant-0000-0000-0000-000000000001"
@@ -252,13 +253,13 @@ async def test_instagram_inbound_stored_and_ai_reply_sent(db, ig_mocks):
     assert len(inbound) == 1 and len(outbound) == 1
     assert inbound[0].platform_message_id == MID
     # The thread is keyed on the IGSID (contact_phone is String(32) — fits).
-    assert inbound[0].contact_phone == IGSID
-    assert inbound[0].content == "do you deliver to Maadi?"
+    assert decrypt_contact_phone(inbound[0].contact_phone) == IGSID
+    assert decrypt_message_content(inbound[0].content) == "do you deliver to Maadi?"
     # Best-effort profile read names the contact for the inbox.
     assert inbound[0].contact_name == "Sara"
     ig_mocks.profile.assert_awaited_once_with(PAGE_TOKEN, IGSID)
     assert outbound[0].status == "sent"
-    assert outbound[0].contact_phone == IGSID
+    assert decrypt_contact_phone(outbound[0].contact_phone) == IGSID
     # The send rides the parent Page's id + token, recipient = the customer.
     ig_mocks.send.assert_called_once_with(PAGE_ID, PAGE_TOKEN, IGSID, REPLY)
     ig_mocks.typing.assert_called_once_with(PAGE_ID, PAGE_TOKEN, IGSID)
@@ -352,8 +353,8 @@ async def test_instagram_echo_stored_outbound_without_reply(db, ig_mocks):
     outbound = [r for r in rows if r.direction == "outbound"]
     assert len(inbound) == 0 and len(outbound) == 1
     # The thread is keyed on the customer either way.
-    assert outbound[0].contact_phone == IGSID
-    assert outbound[0].content == "Sent from the Meta inbox"
+    assert decrypt_contact_phone(outbound[0].contact_phone) == IGSID
+    assert decrypt_message_content(outbound[0].content) == "Sent from the Meta inbox"
     assert outbound[0].status == "sent"
     ig_mocks.reply.assert_not_awaited()
     ig_mocks.send.assert_not_awaited()

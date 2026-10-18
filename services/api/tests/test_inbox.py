@@ -18,7 +18,11 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.modules.channels import service as channels
-from app.modules.channels.models import Channel, ChannelMessage, ContactProfile
+from app.modules.channels.models import Channel, ChannelMessage, ContactProfile, ContactProfile
+from app.modules.channels.service import decrypt_contact_phone
+from app.modules.channels.service import (
+    encrypt_contact_phone, encrypt_message_content, hash_contact_phone,
+)
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
 
 
@@ -45,10 +49,11 @@ async def _msg(db, channel_id, *, phone=None, direction="inbound", content="hi",
         channel_id=channel_id,
         platform_message_id=mid,
         direction=direction,
-        content=content,
+        content=encrypt_message_content(content),
         content_type="text",
         status=status,
-        contact_phone=phone,
+        contact_phone=encrypt_contact_phone(phone),
+        contact_phone_hash=hash_contact_phone(phone) if phone else None,
         contact_name=name,
         created_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
     )
@@ -68,6 +73,7 @@ async def test_threads_group_by_contact(db, user_id):
     by_phone = {t["contact_phone"]: t for t in threads}
     assert set(by_phone) == {"966500000001", "966500000002"}
     # Newest activity first.
+    from app.modules.channels.service import decrypt_contact_phone
     assert [t["contact_phone"] for t in threads] == ["966500000001", "966500000002"]
     assert by_phone["966500000001"]["message_count"] == 2
     assert by_phone["966500000001"]["last_message"] == "second"
@@ -193,7 +199,9 @@ async def test_thread_messages_ordered_oldest_first(db, user_id):
     await db.commit()
 
     msgs = await channels.list_thread_messages(_user(user_id), db, ch.id, "966500000001")
-    assert [m.content for m in msgs] == ["one", "two", "three"]
+    from app.modules.channels.service import decrypt_message_content
+    from app.modules.channels.service import decrypt_message_content
+    assert [decrypt_message_content(m.content) for m in msgs] == ["one", "two", "three"]
 
 
 @pytest.mark.asyncio
@@ -203,7 +211,8 @@ async def test_thread_messages_unknown_bucket(db, user_id):
     await _msg(db, ch.id, phone="966500000001", content="real")
     await db.commit()
     msgs = await channels.list_thread_messages(_user(user_id), db, ch.id, None)
-    assert [m.content for m in msgs] == ["legacy"]
+    from app.modules.channels.service import decrypt_message_content
+    assert [decrypt_message_content(m.content) for m in msgs] == ["legacy"]
 
 
 @pytest.mark.asyncio
@@ -312,7 +321,7 @@ async def test_send_records_provider_message_id(db, user_id, monkeypatch):
     )
     assert msg.status == "sent"
     assert msg.platform_message_id == "wamid.PROVIDER1"
-    assert msg.contact_phone == "966500000001"
+    assert decrypt_contact_phone(msg.contact_phone) == "966500000001"
     # The send went to the resolved phone number, not the channel's own.
     adapter.send_text_message.assert_awaited_once()
     args = adapter.send_text_message.await_args

@@ -17,6 +17,7 @@ from app.modules.channels.meta.consumer import (
     _platform_timestamp,
 )
 from app.modules.channels.models import ChannelComment
+from app.modules.channels.service import decrypt_message_content
 # Top-level import: `tests.conftest` would re-execute the module and build
 # a SECOND empty in-memory engine (no tests/__init__.py — namespace trap).
 from conftest import TEST_SESSION
@@ -87,7 +88,7 @@ async def test_comment_is_stored_with_platform_truth(db, _realtime_captured):
     row = await _row("c-1")
     assert row is not None
     assert row.direction == "inbound"
-    assert row.content == "love this!"
+    assert decrypt_message_content(row.content) == "love this!"
     assert row.author_id == "fbuser-77"
     assert row.author_name == "Fan One", "FB carries a name, not a username"
     assert row.media_id == f"{pid}_101", "the FB post id rides media_id"
@@ -146,7 +147,7 @@ async def test_edited_redelivery_updates_text(db, _realtime_captured):
 
     row = await _row("c-3")
     assert row is not None
-    assert row.content == "love this! (edited)"
+    assert decrypt_message_content(row.content) == "love this! (edited)"
     assert len(_realtime_captured) == 2
     assert _realtime_captured[1][1]["type"] == "comment_updated"
     assert _realtime_captured[1][1]["platform"] == "facebook"
