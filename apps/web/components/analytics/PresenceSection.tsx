@@ -80,6 +80,7 @@ export default function PresenceSection({
     bookings: copy.bookings,
     reviewsMetric: copy.reviewsMetric,
     repliesMetric: copy.repliesMetric,
+    customerActions: copy.customerActions,
     totalLabel: copy.totalLabel,
     perBranchDay: copy.perBranchDay,
     dailyAvg: copy.dailyAvg,

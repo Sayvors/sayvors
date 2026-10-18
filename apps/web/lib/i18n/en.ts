@@ -367,6 +367,7 @@ const en = {
       bookings: "Bookings",
       reviewsMetric: "Reviews",
       repliesMetric: "Replies",
+      customerActions: "Customer actions",
       totalLabel: "total",
       perBranchDay: "avg per branch per day",
       dailyAvg: "daily avg",

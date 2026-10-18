@@ -198,7 +198,7 @@ export default function InvitePage() {
             {password && !passwordValid && <p className="text-[11px] text-red-600">Password must be at least 8 characters.</p>}
           </div>
           <button
-            onClick={() => accept({ password, first_name: firstName || undefined, last_name: lastName || undefined }, false)}
+            onClick={() => accept({ password, first_name: firstName || undefined, last_name: lastName || undefined })}
             disabled={!passwordValid || busy}
             className="w-full rounded-lg bg-deep-violet px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 disabled:opacity-40"
           >
