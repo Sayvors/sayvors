@@ -13,7 +13,7 @@ import { useRef, useState } from "react";
  * none yet.
  */
 
-const BOX = 260; // on-screen editor width, css px
+const BOX = 200; // on-screen editor width, css px
 
 export const CROP_KEYS = ["orig", "1:1", "4:5", "16:9", "9:16"] as const;
 export type CropKey = (typeof CROP_KEYS)[number];

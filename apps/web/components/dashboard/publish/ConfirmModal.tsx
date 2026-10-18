@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
-import { PLATFORM_META, type MediaState, type PublishTarget } from "./types";
+import { METHOD_META, type MediaState, type PostMethod, type PublishTarget } from "./types";
 
 /*
  * The final gate before a post leaves the composer. UI-only today: the
@@ -13,7 +13,7 @@ import { PLATFORM_META, type MediaState, type PublishTarget } from "./types";
 
 export default function ConfirmModal({
   open,
-  targets,
+  items,
   media,
   captionLen,
   descriptionLen,
@@ -21,7 +21,7 @@ export default function ConfirmModal({
   onClose,
 }: {
   open: boolean;
-  targets: PublishTarget[];
+  items: { target: PublishTarget; methods: PostMethod[] }[];
   media: MediaState;
   captionLen: number;
   descriptionLen: number;
@@ -29,6 +29,7 @@ export default function ConfirmModal({
   onClose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const formatCount = items.reduce((n, i) => n + i.methods.length, 0);
 
   useEffect(() => {
     if (!open) return;
@@ -83,21 +84,23 @@ export default function ConfirmModal({
         </div>
 
         <p className="mt-3 px-1 text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">
-          Publishing to {targets.length === 0 ? "— none selected" : `${targets.length} destination${targets.length === 1 ? "" : "s"}`}
+          {items.length === 0
+            ? "No destination with a format selected"
+            : `Publishing to ${items.length} destination${items.length === 1 ? "" : "s"} · ${formatCount} format${formatCount === 1 ? "" : "s"}`}
         </p>
         <ul className="mt-1.5 space-y-1">
-          {targets.map((t) => (
+          {items.map(({ target: t, methods }) => (
             <li key={t.id} className="flex items-center gap-2.5 rounded-[10px] border border-[var(--ui-line)] px-3 py-2">
               <PlatformMark platform={t.platform} size={16} />
               <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
-              <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                {PLATFORM_META[t.platform].label}
+              <span className="shrink-0 text-right text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
+                {methods.map((m) => METHOD_META[m].label).join(" · ")}
               </span>
             </li>
           ))}
-          {targets.length === 0 && (
+          {items.length === 0 && (
             <li className="px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)]">
-              Pick at least one destination before publishing.
+              Pick at least one destination and format before publishing.
             </li>
           )}
         </ul>

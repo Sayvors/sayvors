@@ -7,10 +7,12 @@ import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
 import ConfirmModal from "./ConfirmModal";
+import CropFrame from "./CropFrame";
 import {
   DEFAULT_CROP,
   METHOD_META,
   PLATFORM_META,
+  cropKeyFor,
   defaultCropFor,
   methodsFor,
   type CropState,
@@ -18,14 +20,17 @@ import {
   type PostMethod,
   type PublishTarget,
 } from "./types";
-import CropFrame from "./CropFrame";
 
 /*
  * The unified Publish composer.
  *
- * Left rail: what to say (media, caption, description), where to say it
- * (all connected / selected), when (schedule). Right rail: a main preview
- * plus one expandable per-network preview with a visual crop for each.
+ * Destinations are picked in the aside (step 3) with an "all connected"
+ * master switch. Each selected destination shows method pills (Feed post /
+ * Story / Reel / Status) right below it — clicking a pill opens a wide
+ * modal where that specific platform+method gets its own preview + crop
+ * editor + Save button. Crop state is keyed per destination+method so every
+ * format keeps its own framing, and the step-1 thumbnail + live preview
+ * mirror whatever you're currently configuring.
  *
  * Everything here is local state — the publish endpoint hasn't landed.
  * The confirm modal says so explicitly rather than faking success.
@@ -43,7 +48,7 @@ const FIELD =
 export default function PublishComposer() {
   // ── Destinations ─────────────────────────────────────────────────
   const [targets, setTargets] = useState<PublishTarget[]>([]);
-  const [targetsStatus, setTargetsStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [targetsStatus, setTargetsStatus] = useState<"loading" | "ready">("loading");
   const [allConnected, setAllConnected] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -95,81 +100,110 @@ export default function PublishComposer() {
   }, []);
 
   const usableTargets = useMemo(() => targets.filter((t) => !t.demo), [targets]);
+  const selectedTargets = useMemo(() => targets.filter((t) => selected.has(t.id)), [targets, selected]);
 
   // ── Media + message ─────────────────────────────────────────────
   const [media, setMedia] = useState<MediaState | null>(null);
   const [caption, setCaption] = useState("");
   const [description, setDescription] = useState("");
 
-  // ── Live media blob url (revoked on replace/unmount) ─────────────
   const blobRef = useRef<string | null>(null);
 
   // ── Schedule ────────────────────────────────────────────────────
   const [scheduleOn, setScheduleOn] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
 
-  // ── Per-network previews + crops ────────────────────────────────
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // ── Per-format previews + saved crops ───────────────────────────
   const [crops, setCrops] = useState<Record<string, CropState>>({});
-  /** Crop ids the tenant has actually adjusted — powers the "left to
-   *  review" counter (a default framing is fine, but it's unreviewed). */
-  const [reviewed, setReviewed] = useState<Set<string>>(new Set());
-  /** Per-network format (post/story/reel/status). Unset = not chosen yet,
-   *  which is what turns a readiness chip amber. */
-  const [formats, setFormats] = useState<Record<string, PostMethod>>({});
+  /** destination+format currently being edited in the modal */
+  const [modalCtx, setModalCtx] = useState<{ targetId: string; method: PostMethod } | null>(null);
+  /** draft crop being edited in the modal (committed on Save) */
+  const [draftCrop, setDraftCrop] = useState<CropState>(DEFAULT_CROP);
+  /** formats that have been explicitly saved */
+  const [configured, setConfigured] = useState<Set<string>>(new Set());
+
+  /** Per-destination chosen formats */
+  const [formats, setFormats] = useState<Record<string, PostMethod[]>>({});
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Sync selection with "all connected": flipping the master selects or
-  // clears everything; manual edits turn the master off without touching
-  // the individual rows.
-  /** Every single-format network (WhatsApp → status) gets its format seeded
-   *  on selection so its readiness chip reflects real work left, not a
-   *  choice it doesn't actually have. */
-  const seedFormatsFor = (rows: PublishTarget[]) => {
-    setFormats((prev) => {
-      const next = { ...prev };
-      rows.forEach((t) => {
-        if (next[t.id]) return;
-        const opts = methodsFor(t.platform, media?.type ?? null);
-        if (opts.length === 1) next[t.id] = opts[0];
-      });
-      return next;
-    });
-  };
-
+  // ── Selection plumbing ──────────────────────────────────────────
   const applyAll = (v: boolean) => {
     setAllConnected(v);
     setSelected(v ? new Set(usableTargets.map((t) => t.id)) : new Set());
-    if (v) seedFormatsFor(usableTargets);
+    if (v) usableTargets.forEach((t) => seedFormats(t, "default"));
   };
 
   const toggleTarget = (t: PublishTarget) => {
-    setAllConnected(false);
-    const adding = !selected.has(t.id);
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(t.id)) next.delete(t.id);
-      else next.add(t.id);
-      // Refill when the last manual pick re-covers every destination so the
-      // master switch stays honest rather than one edit away.
-      if (usableTargets.length > 0 && next.size === usableTargets.length) {
-        setAllConnected(true);
-      }
-      return next;
+    const next = new Set(selected);
+    const turningOn = !next.has(t.id);
+    if (turningOn) next.add(t.id);
+    else next.delete(t.id);
+    setSelected(next);
+    setAllConnected(usableTargets.length > 0 && next.size === usableTargets.length);
+    if (turningOn) seedFormats(t, "default");
+  };
+
+  const seedFormats = (t: PublishTarget, mode: "default" | "all") => {
+    setFormats((prev) => {
+      if (prev[t.id]?.length) return prev;
+      const avail = methodsFor(t.platform, media?.type ?? null);
+      const chosen = mode === "default" ? avail.slice(0, 1) : avail;
+      return { ...prev, [t.id]: chosen };
     });
-    if (adding) seedFormatsFor([t]);
+  };
+
+  const availableFor = (t: PublishTarget) => methodsFor(t.platform, media?.type ?? null);
+  const chosenFor = (t: PublishTarget) => {
+    const avail = availableFor(t);
+    return (formats[t.id] ?? []).filter((m) => avail.includes(m));
+  };
+
+  const toggleFormat = (t: PublishTarget, m: PostMethod) => {
+    const cur = chosenFor(t);
+    const wasOn = cur.includes(m);
+    const nextList = wasOn ? cur.filter((x) => x !== m) : [...cur, m];
+    setFormats((prev) => ({ ...prev, [t.id]: nextList }));
+    if (!wasOn) {
+      // seed crop default if not present
+      const key = cropKeyFor(t.id, m);
+      setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
+    }
+  };
+
+  const toggleAllFormats = (t: PublishTarget) => {
+    const avail = availableFor(t);
+    const cur = chosenFor(t);
+    const turningAll = cur.length < avail.length;
+    const nextList = turningAll ? [...avail] : [];
+    setFormats((prev) => ({ ...prev, [t.id]: nextList }));
+    if (turningAll) {
+      avail.forEach((m) => {
+        const key = cropKeyFor(t.id, m);
+        setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
+      });
+    }
   };
 
   const loadDemo = () => {
     setTargets(DEMO_TARGETS);
     setSelected(new Set(DEMO_TARGETS.map((t) => t.id)));
+    setAllConnected(true);
     setFormats(
-      Object.fromEntries(DEMO_TARGETS.map((t) => [t.id, methodsFor(t.platform, null)[0] ?? "post"] as const)),
+      Object.fromEntries(
+        DEMO_TARGETS.map((t) => [t.id, methodsFor(t.platform, null)] as [string, PostMethod[]]),
+      ),
+    );
+    DEMO_TARGETS.forEach((t) =>
+      methodsFor(t.platform, null).forEach((m) => {
+        const key = cropKeyFor(t.id, m);
+        setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
+      }),
     );
   };
 
+  // ── Media blob lifecycle ────────────────────────────────────────
   const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number) => {
     if (blobRef.current && blobRef.current !== url) {
       URL.revokeObjectURL(blobRef.current);
@@ -191,109 +225,74 @@ export default function PublishComposer() {
     };
   }, []);
 
-  const toggleExpanded = (id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  // ── Modal open/close ────────────────────────────────────────────
+  const openConfig = (t: PublishTarget, m: PostMethod) => {
+    const key = cropKeyFor(t.id, m);
+    setDraftCrop(crops[key] ?? defaultCropFor(t.platform, m));
+    setModalCtx({ targetId: t.id, method: m });
   };
 
-  const setCrop = (id: string) => (patch: Partial<CropState>) => {
-    setReviewed((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
-    setCrops((prev) => ({ ...prev, [id]: { ...DEFAULT_CROP, ...prev[id], ...patch } }));
+  const saveConfig = () => {
+    if (!modalCtx) return;
+    const t = targets.find((x) => x.id === modalCtx.targetId);
+    if (!t) return;
+    const key = cropKeyFor(modalCtx.targetId, modalCtx.method);
+    setCrops((prev) => ({ ...prev, [key]: draftCrop }));
+    setConfigured((prev) => new Set(prev).add(key));
+    setModalCtx(null);
   };
 
-  /** The stored format if it's still valid for this network + media type,
-   *  else unset — e.g. "reel" dies when the video is swapped for an image. */
-  const formatFor = (t: PublishTarget): PostMethod | undefined => {
-    const m = formats[t.id];
-    return m && methodsFor(t.platform, media?.type ?? null).includes(m) ? m : undefined;
+  const cancelConfig = () => {
+    setModalCtx(null);
   };
 
-  const setFormat = (t: PublishTarget, m: PostMethod) => {
-    setFormats((prev) => ({ ...prev, [t.id]: m }));
-    // The crop was framed for the previous format — start it over.
-    setCrops((prev) => ({ ...prev, [t.id]: defaultCropFor(t.platform, m) }));
-    setReviewed((prev) => {
-      if (!prev.has(t.id)) return prev;
-      const next = new Set(prev);
-      next.delete(t.id);
-      return next;
-    });
-  };
-
-  /** Bulk format: apply one format to every selected network that offers it. */
-  const setAllFormats = (m: PostMethod) => {
-    const applicable = selectedTargets.filter((t) => methodsFor(t.platform, media?.type ?? null).includes(m));
-    if (applicable.length === 0) return;
-    setFormats((prev) => {
-      const next = { ...prev };
-      applicable.forEach((t) => {
-        next[t.id] = m;
-      });
-      return next;
-    });
-    setCrops((prev) => {
-      const next = { ...prev };
-      applicable.forEach((t) => {
-        next[t.id] = defaultCropFor(t.platform, m);
-      });
-      return next;
-    });
-    const ids = new Set(applicable.map((t) => t.id));
-    setReviewed((prev) => new Set([...prev].filter((id) => !ids.has(id))));
-  };
-
-  // React Compiler memoizes this automatically — a manual useMemo here
-  // breaks its analysis (preserve-manual-memoization).
-  const selectedTargets = targets.filter((t) => selected.has(t.id));
-
-  /** Readiness chip → open the network's row, then scroll to it. */
-  const openRow = (id: string) => {
-    if (!expanded.has(id)) setExpanded((prev) => new Set(prev).add(id));
-    window.setTimeout(() => {
-      document.getElementById(`net-row-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 60);
-  };
-
-  /** Copy this network's framing to every other selected network — crop
-   *  once instead of once per network. */
-  const copyCropToAll = (fromId: string) => {
-    const src = crops[fromId];
-    if (!src) return;
-    const ids = selectedTargets.filter((t) => t.id !== fromId).map((t) => t.id);
-    if (ids.length === 0) return;
-    setCrops((prev) => {
-      const next = { ...prev };
-      ids.forEach((id) => {
-        next[id] = { ...src };
-      });
-      return next;
-    });
-    setReviewed((prev) => new Set([...prev, ...ids]));
-  };
-
-  // ── Caption budget across the selected networks ─────────────────
-  const captionLimit =
-    selectedTargets.length === 0
-      ? PLATFORM_META.facebook.captionMax
-      : Math.min(...selectedTargets.map((t) => PLATFORM_META[t.platform].captionMax));
-  const captionOver = selectedTargets.filter((t) => caption.length > PLATFORM_META[t.platform].captionMax);
-  const captionFits = selectedTargets.filter((t) => caption.length <= PLATFORM_META[t.platform].captionMax);
-  const showCaptionWarn = caption.length > 0 && captionOver.length > 0;
-
-  const canPublish = selectedTargets.length > 0 && (media !== null || caption.trim().length > 0 || description.trim().length > 0);
+  // ── Confirm ─────────────────────────────────────────────────────
+  const confirmItems = selectedTargets
+    .map((t) => ({ target: t, methods: chosenFor(t) }))
+    .filter((i) => i.methods.length > 0);
+  const formatCount = confirmItems.reduce((n, i) => n + i.methods.length, 0);
+  const canPublish =
+    confirmItems.length > 0 && (media !== null || caption.trim().length > 0 || description.trim().length > 0);
 
   const openConfirm = () => {
     if (!canPublish) {
-      setNotice("Add media or write a caption, and pick at least one destination.");
+      setNotice("Pick a destination with at least one format, and add media or a caption.");
       return;
     }
     setNotice(null);
     setConfirmOpen(true);
   };
+
+  // ── What's being edited (mirrors) ───────────────────────────────
+  const activeTarget = modalCtx ? targets.find((t) => t.id === modalCtx.targetId) ?? null : null;
+  // While modal is open, mirror the draft; otherwise last configured
+  const mirrorTarget = modalCtx ? activeTarget : null;
+  const mirrorMethod = modalCtx ? modalCtx.method : null;
+  const mirrorCrop = modalCtx ? draftCrop : DEFAULT_CROP;
+
+  const thumb =
+    media && mirrorTarget && mirrorMethod
+      ? { cropKey: mirrorCrop.key, zoom: mirrorCrop.zoom, x: mirrorCrop.x, y: mirrorCrop.y }
+      : null;
+  const thumbLabel =
+    media && mirrorTarget && mirrorMethod
+      ? `${PLATFORM_META[mirrorTarget.platform].label} · ${METHOD_META[mirrorMethod].label}`
+      : "";
+
+  // ── Caption budget ──────────────────────────────────────────────
+  const captionLimit =
+    selectedTargets.length === 0
+      ? PLATFORM_META.facebook.captionMax
+      : Math.min(...selectedTargets.map((t) => PLATFORM_META[t.platform].captionMax));
+  const captionOver = selectedTargets.filter((t) => caption.length > PLATFORM_META[t.platform].captionMax);
+  const showCaptionWarn = caption.length > 0 && captionOver.length > 0;
+
+  const openRow = (id: string) => {
+    document.getElementById(`dest-row-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  // The modal target + method
+  const modalTarget = modalCtx ? targets.find((t) => t.id === modalCtx.targetId) ?? null : null;
 
   return (
     <div className="flex h-full flex-col">
@@ -303,7 +302,7 @@ export default function PublishComposer() {
           <div>
             <h1 className={`text-[20px] font-bold ${INK}`}>Publish a post</h1>
             <p className={`mt-0.5 text-[13px] ${INK2}`}>
-              One post, every connected network — preview it per channel before anything leaves.
+              One post, every connected network — pick a format on any destination to configure its crop.
             </p>
           </div>
           <p className={`text-[11px] font-semibold uppercase tracking-widest ${INK2}`}>UI preview</p>
@@ -312,18 +311,20 @@ export default function PublishComposer() {
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto grid max-w-6xl gap-5 px-4 pb-28 pt-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          {/* ── Left rail: compose ── */}
+          {/* ── left / main ── */}
           <div className="space-y-5">
-            {/* Media */}
+            {/* 1 · Media */}
             <section aria-labelledby="publish-media-h" className="ui-panel bg-[var(--ui-surface)] p-5">
               <h2 id="publish-media-h" className={`text-[14px] font-bold ${INK}`}>
                 1 · Media
               </h2>
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>An image, a video, or nothing — the text-only option stays open.</p>
-              <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} />
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                An image, a video, or nothing — the text-only option stays open. The frame mirrors the format you&apos;re configuring.
+              </p>
+              <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
             </section>
 
-            {/* Message */}
+            {/* 2 · Message */}
             <section aria-labelledby="publish-message-h" className="ui-panel bg-[var(--ui-surface)] p-5">
               <h2 id="publish-message-h" className={`text-[14px] font-bold ${INK}`}>
                 2 · Message
@@ -363,12 +364,6 @@ export default function PublishComposer() {
                       {captionOver
                         .map((t) => `${PLATFORM_META[t.platform].label} (${PLATFORM_META[t.platform].captionMax.toLocaleString("en-US")})`)
                         .join(" · ")}
-                      {captionFits.length > 0 && (
-                        <>
-                          {" — fits: "}
-                          {captionFits.map((t) => PLATFORM_META[t.platform].label).join(" · ")}
-                        </>
-                      )}
                     </p>
                   )}
                 </div>
@@ -392,13 +387,60 @@ export default function PublishComposer() {
               </div>
             </section>
 
-            {/* Destinations */}
+            {/* 4 · When */}
+            <section aria-labelledby="publish-schedule-h" className="ui-panel bg-[var(--ui-surface)] p-5">
+              <h2 id="publish-schedule-h" className={`text-[14px] font-bold ${INK}`}>
+                4 · When
+              </h2>
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>Optional — leave it off to publish immediately.</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} />
+                {scheduleOn && (
+                  <input
+                    type="datetime-local"
+                    value={scheduleAt}
+                    onChange={(e) => setScheduleAt(e.target.value)}
+                    aria-label="Publish at"
+                    className={`${FIELD} w-full sm:w-64`}
+                  />
+                )}
+              </div>
+            </section>
+
+            {/* Live preview */}
+            <section aria-labelledby="publish-preview-h" className="ui-panel bg-[var(--ui-surface)] p-5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 id="publish-preview-h" className={`text-[14px] font-bold ${INK}`}>
+                  Live preview
+                </h2>
+                <p className={`text-[12px] ${INK2}`} role="status">
+                  {mirrorTarget && mirrorMethod
+                    ? `Mirroring ${mirrorTarget.name} · ${METHOD_META[mirrorMethod].label}`
+                    : "Pick a format on the right to configure it"}
+                </p>
+              </div>
+              <div className="mt-3">
+                <DestinationPreview
+                  target={mirrorTarget}
+                  method={mirrorMethod ?? "post"}
+                  media={media ?? { type: null, url: "" }}
+                  caption={caption}
+                  description={description}
+                  crop={mirrorCrop}
+                />
+              </div>
+            </section>
+          </div>
+
+          {/* ── right / aside ── */}
+          <aside className="space-y-5 lg:sticky lg:top-4 lg:h-fit">
+            {/* 3 · Where it goes */}
             <section aria-labelledby="publish-dest-h" className="ui-panel bg-[var(--ui-surface)] p-5">
               <h2 id="publish-dest-h" className={`text-[14px] font-bold ${INK}`}>
                 3 · Where it goes
               </h2>
               <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                Smash the master switch for every network, or hand-pick below.
+                Flip the master switch for every network, or hand-pick below.
               </p>
               <DestinationSelector
                 targets={targets}
@@ -411,74 +453,68 @@ export default function PublishComposer() {
               />
             </section>
 
-            {/* Schedule */}
-            <section aria-labelledby="publish-schedule-h" className="ui-panel bg-[var(--ui-surface)] p-5">
-              <h2 id="publish-schedule-h" className={`text-[14px] font-bold ${INK}`}>
-                4 · When
-              </h2>
-              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>Optional — leave it off to publish immediately.</p>
-              <div className="flex flex-wrap items-center gap-3">
-                <Switch2 scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} />
-                {scheduleOn && (
-                  <input
-                    type="datetime-local"
-                    value={scheduleAt}
-                    onChange={(e) => setScheduleAt(e.target.value)}
-                    aria-label="Publish at"
-                    className={`${FIELD} w-full sm:w-64`}
-                  />
-                )}
-              </div>
-            </section>
-          </div>
-
-          {/* ── Right rail: previews ── */}
-          <aside className="lg:sticky lg:top-4 lg:h-fit" aria-labelledby="publish-preview-h">
-            <section className="ui-panel bg-[var(--ui-surface)] p-5">
-              <h2 id="publish-preview-h" className={`text-[14px] font-bold ${INK}`}>
-                Preview
-              </h2>
-              <p className={`mt-0.5 text-[12px] ${INK2}`}>How the post reads everywhere.</p>
-              <div className="mt-3">
-                <DestinationPreview
-                  target={null}
-                  media={media ?? { type: null, url: "" }}
-                  caption={caption}
-                  description={description}
-                  crop={crops["main"] ?? DEFAULT_CROP}
-                />
-              </div>
-            </section>
-
-            <section aria-label="Per-network previews" className="mt-4">
-              {targets.filter((t) => !t.demo).length > 0 ? (
-                <TargetList
-                  targets={targets.filter((t) => !t.demo)}
-                  selected={selected}
-                  expanded={expanded}
-                  media={media}
-                  caption={caption}
-                  description={description}
-                  crops={crops}
-                  reviewed={reviewed}
-                  hasMedia={media !== null}
-                  formatOf={formatFor}
-                  onSetFormat={setFormat}
-                  onSetAllFormats={setAllFormats}
-                  onToggleExpanded={toggleExpanded}
-                  onSetCrop={setCrop}
-                  onCopyCropToAll={copyCropToAll}
-                />
-              ) : (
-                targetsStatus === "loading" && (
-                  <div className="ui-panel space-y-2 bg-[var(--ui-surface)] p-5" aria-hidden>
-                    <div className="h-16 animate-pulse rounded-[10px] bg-[var(--ui-sunken)]" />
-                    <div className="h-16 animate-pulse rounded-[10px] bg-[var(--ui-sunken)]" />
-                    <div className="h-16 animate-pulse rounded-[10px] bg-[var(--ui-sunken)]" />
-                  </div>
-                )
-              )}
-            </section>
+            {/* Configure formats — method pills per selected destination */}
+            {selectedTargets.length > 0 && (
+              <section aria-labelledby="publish-formats-h" className="ui-panel bg-[var(--ui-surface)] p-5">
+                <h2 id="publish-formats-h" className={`text-[14px] font-bold ${INK}`}>
+                  Configure formats
+                </h2>
+                <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                  Click a format to set its crop and thumbnail.
+                </p>
+                <div className="space-y-3">
+                  {selectedTargets.map((t) => {
+                    const avail = availableFor(t);
+                    const chosen = chosenFor(t);
+                    return (
+                      <div key={t.id} id={`dest-row-${t.id}`} className="rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3">
+                        <div className="flex items-center gap-2">
+                          <PlatformMark platform={t.platform} size={14} />
+                          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{t.name}</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {avail.map((m) => {
+                            const isOn = chosen.includes(m);
+                            const key = cropKeyFor(t.id, m);
+                            const isConfigured = configured.has(key);
+                            return (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => {
+                                  if (!isOn) {
+                                    toggleFormat(t, m);
+                                  }
+                                  openConfig(t, m);
+                                }}
+                                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                                  isConfigured
+                                    ? "border-[var(--ui-ink)] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+                                    : isOn
+                                    ? "border-[var(--ui-line-strong)] bg-[var(--ui-surface)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
+                                    : "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)] hover:bg-[var(--ui-line)]"
+                                }`}
+                              >
+                                {isConfigured && <span aria-hidden>✓</span>}
+                                {METHOD_META[m].label}
+                              </button>
+                            );
+                          })}
+                          <button
+                            type="button"
+                            onClick={() => toggleAllFormats(t)}
+                            className="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+                            title="Select all formats for this destination"
+                          >
+                            All
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
           </aside>
         </div>
       </div>
@@ -489,14 +525,14 @@ export default function PublishComposer() {
           {selectedTargets.length > 0 && (
             <div className="flex w-full gap-1.5 overflow-x-auto pb-0.5">
               {selectedTargets.map((t) => {
-                const fmt = formatFor(t);
-                const ok = !!fmt && reviewed.has(t.id);
+                const fmt = chosenFor(t)[0];
+                const ok = !!fmt;
                 return (
                   <button
                     key={t.id}
                     type="button"
                     onClick={() => openRow(t.id)}
-                    title={ok ? `Review ${t.name}` : !fmt ? `${t.name} has no format yet` : `${t.name} is still on its default crop`}
+                    title={ok ? `Review ${t.name}` : `${t.name} has no format yet`}
                     className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                       ok
                         ? "border-[var(--ui-line)] bg-[var(--ui-sunken)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
@@ -506,7 +542,7 @@ export default function PublishComposer() {
                     <PlatformMark platform={t.platform} size={12} />
                     <span className="max-w-[140px] truncate">{t.name}</span>
                     <span className={ok ? "text-[var(--ui-ink-2)]" : ""}>
-                      {fmt ? `${METHOD_META[fmt].label} · ${crops[t.id]?.key ?? "default"}` : "no format"}
+                      {fmt ? `${METHOD_META[fmt].label}` : "no format"}
                     </span>
                   </button>
                 );
@@ -514,9 +550,9 @@ export default function PublishComposer() {
             </div>
           )}
           <p className={`min-w-0 flex-1 truncate text-[12px] font-medium ${INK2}`} role="status" aria-live="polite">
-            {selectedTargets.length === 0
-              ? "No destination selected yet."
-              : `Ready for ${selectedTargets.length} destination${selectedTargets.length === 1 ? "" : "s"}.`}
+            {confirmItems.length === 0
+              ? "No destination with a format selected yet."
+              : `Ready for ${confirmItems.length} destination${confirmItems.length === 1 ? "" : "s"} · ${formatCount} format${formatCount === 1 ? "" : "s"}.`}
             {scheduleOn && scheduleAt ? ` · Scheduled ${new Date(scheduleAt).toLocaleString()}` : ""}
           </p>
           {notice && <p className="w-full text-[12px] font-semibold text-red-600 dark:text-red-400 sm:w-auto">{notice}</p>}
@@ -531,9 +567,86 @@ export default function PublishComposer() {
         </div>
       </div>
 
+      {/* Configuration modal — opens when a format pill is clicked */}
+      {modalCtx && modalTarget && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Configure ${modalTarget.name} · ${METHOD_META[modalCtx.method].label}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) cancelConfig();
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,0,0,0.45)] p-4"
+        >
+          <div className="w-full max-w-5xl rounded-[16px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">
+                  Configure {modalTarget.name} · {METHOD_META[modalCtx.method].label}
+                </h2>
+                <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
+                  Crop and frame this format. Saves when you hit Save.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={cancelConfig}
+                aria-label="Close"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[15px] font-bold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col items-center gap-5 sm:flex-row sm:items-start sm:justify-center sm:gap-8">
+              <div className="shrink-0">
+                <DestinationPreview
+                  target={modalTarget}
+                  method={modalCtx.method}
+                  media={media ?? { type: null, url: "" }}
+                  caption={caption}
+                  description={description}
+                  crop={draftCrop}
+                />
+              </div>
+              <div className="w-full max-w-[320px] shrink-0">
+                <CropFrame
+                  key={`${modalCtx.targetId}-${modalCtx.method}`}
+                  url={media?.url ?? null}
+                  type={media?.type ?? null}
+                  cropKey={draftCrop.key}
+                  zoom={draftCrop.zoom}
+                  offset={{ x: draftCrop.x, y: draftCrop.y }}
+                  onCropKey={(k) => setDraftCrop((prev) => ({ ...prev, key: k, zoom: 1, x: 0, y: 0 }))}
+                  onZoom={(z) => setDraftCrop((prev) => ({ ...prev, zoom: z }))}
+                  onOffset={(o) => setDraftCrop((prev) => ({ ...prev, x: o.x, y: o.y }))}
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={cancelConfig}
+                className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveConfig}
+                className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+              >
+                Save {METHOD_META[modalCtx.method].label}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
         open={confirmOpen}
-        targets={selectedTargets}
+        items={confirmItems}
         media={media ?? { type: null, url: "" }}
         captionLen={caption.trim().length}
         descriptionLen={description.trim().length}
@@ -546,7 +659,7 @@ export default function PublishComposer() {
 
 /* ── Inline sub-pieces ───────────────────────────────────────────── */
 
-function Switch2({
+function ScheduleToggle({
   scheduleOn,
   setScheduleOn,
 }: {
@@ -578,232 +691,3 @@ function Switch2({
     </button>
   );
 }
-
-function TargetList({
-  targets,
-  selected,
-  expanded,
-  media,
-  caption,
-  description,
-  crops,
-  reviewed,
-  hasMedia,
-  formatOf,
-  onSetFormat,
-  onSetAllFormats,
-  onToggleExpanded,
-  onSetCrop,
-  onCopyCropToAll,
-}: {
-  targets: PublishTarget[];
-  selected: Set<string>;
-  expanded: Set<string>;
-  media: MediaState | null;
-  caption: string;
-  description: string;
-  crops: Record<string, CropState>;
-  reviewed: Set<string>;
-  hasMedia: boolean;
-  formatOf: (t: PublishTarget) => PostMethod | undefined;
-  onSetFormat: (t: PublishTarget, m: PostMethod) => void;
-  onSetAllFormats: (m: PostMethod) => void;
-  onToggleExpanded: (id: string) => void;
-  onSetCrop: (id: string) => (patch: Partial<CropState>) => void;
-  onCopyCropToAll: (id: string) => void;
-}) {
-  const nonDemo = targets;
-  const cropsLeft = hasMedia ? targets.filter((t) => selected.has(t.id) && !reviewed.has(t.id)).length : 0;
-
-  return (
-    <div
-      className="ui-panel divide-y divide-[var(--ui-line)] bg-[var(--ui-surface)]"
-      role="region"
-      aria-label="Per-network previews with crop"
-    >
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2 px-5 pb-3 pt-4">
-        <span className={`text-[10px] font-bold uppercase tracking-widest ${INK2}`}>Per-network preview · crop each</span>
-        {hasMedia && selected.size > 0 && (
-          cropsLeft === 0 ? (
-            <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">All crops set ✓</span>
-          ) : (
-            <span className={`text-[11px] font-semibold ${INK2}`}>
-              {cropsLeft} of {selected.size} crop{selected.size === 1 ? "" : "s"} left to review
-            </span>
-          )
-        )}
-      </div>
-      {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--ui-line)] px-5 py-2.5">
-          <span className={`text-[10px] font-bold uppercase tracking-widest ${INK2}`}>Set all formats:</span>
-          {(["post", "story", "reel"] as PostMethod[]).map((m) => {
-            const anySupports = targets.some(
-              (t) => selected.has(t.id) && methodsFor(t.platform, media?.type ?? null).includes(m),
-            );
-            return (
-              <button
-                key={m}
-                type="button"
-                onClick={() => onSetAllFormats(m)}
-                disabled={!anySupports}
-                title={anySupports ? `Set ${METHOD_META[m].label} on every selected network that offers it` : `No selected network offers ${METHOD_META[m].label} right now`}
-                className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-              >
-                {METHOD_META[m].label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      <ul>
-        {nonDemo.map((t) => {
-          const isOpen = expanded.has(t.id);
-          const crop = crops[t.id] ?? DEFAULT_CROP;
-          const chosen = selected.has(t.id);
-          const meta = PLATFORM_META[t.platform];
-          const fmt = formatOf(t);
-          return (
-            <li key={t.id} id={`net-row-${t.id}`}>
-              <button
-                type="button"
-                onClick={() => onToggleExpanded(t.id)}
-                aria-expanded={isOpen}
-                aria-controls={`crop-panel-${t.id}`}
-                className="flex w-full items-center gap-2.5 px-5 py-3 text-left transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] focus-visible:-outline-offset-[3px]"
-              >
-                <PlatformMark platform={t.platform} size={16} />
-                <span className="min-w-0 flex-1">
-                  <span className={`block truncate text-[13px] font-semibold ${chosen ? INK : INK2}`}>{t.name}</span>
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                    {meta.label}
-                    {chosen ? "" : " · not selected"}
-                  </span>
-                </span>
-                {fmt ? (
-                  <span className="shrink-0 rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                    {METHOD_META[fmt].label}
-                  </span>
-                ) : (
-                  <span className="shrink-0 rounded-full border border-amber-500/60 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                    format?
-                  </span>
-                )}
-                {crop.key !== "orig" && (
-                  <span className="shrink-0 rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
-                    {crop.key}
-                  </span>
-                )}
-                <svg
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  className={`h-3 w-3 shrink-0 text-[var(--ui-ink-2)] transition-transform ${isOpen ? "rotate-180" : ""}`}
-                  aria-hidden
-                >
-                  <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-              {isOpen && (
-                <div id={`crop-panel-${t.id}`} className="border-t border-[var(--ui-line)] bg-[var(--ui-sunken)] px-5 py-4">
-                  <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                    <span className={`text-[10px] font-bold uppercase tracking-widest ${INK2}`}>Format</span>
-                    {methodsFor(t.platform, media?.type ?? null).map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => onSetFormat(t, m)}
-                        aria-pressed={fmt === m}
-                        className={`rounded-[8px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
-                          fmt === m
-                            ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
-                            : "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
-                        }`}
-                      >
-                        {METHOD_META[m].label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mb-3">
-                    <DestinationPreview
-                      target={t}
-                      method={fmt ?? "post"}
-                      media={media ?? { type: null, url: "" }}
-                      caption={caption}
-                      description={description}
-                      crop={crop}
-                    />
-                  </div>
-                  <CropSection
-                    skuKey={t.id}
-                    media={media ? { type: media.type, url: media.url } : null}
-                    crop={crop}
-                    onCrop={onSetCrop(t.id)}
-                    copyCount={Math.max(0, selected.size - 1)}
-                    copyReady={reviewed.has(t.id)}
-                    onCopyToAll={() => onCopyCropToAll(t.id)}
-                  />
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
-function CropSection({
-  skuKey,
-  media,
-  crop,
-  onCrop,
-  copyCount,
-  copyReady,
-  onCopyToAll,
-}: {
-  skuKey: string;
-  media: { type: "image" | "video" | null; url: string } | null;
-  crop: CropState;
-  onCrop: (patch: Partial<CropState>) => void;
-  copyCount: number;
-  copyReady: boolean;
-  onCopyToAll: () => void;
-}) {
-  if (!media || media.type === null) {
-    return (
-      <p className="text-[11px] font-semibold text-[var(--ui-ink-2)]">
-        Add media on the left to crop it here.
-      </p>
-    );
-  }
-  return (
-    <div>
-      <CropFrame
-        key={skuKey}
-        url={media.url}
-        type={media.type}
-        cropKey={crop.key}
-        zoom={crop.zoom}
-        offset={{ x: crop.x, y: crop.y }}
-        onCropKey={(k) => onCrop({ key: k, zoom: 1, x: 0, y: 0 })}
-        onZoom={(z) => onCrop({ zoom: z })}
-        onOffset={(o) => onCrop({ x: o.x, y: o.y })}
-      />
-      {copyCount > 0 && (
-        <button
-          type="button"
-          onClick={onCopyToAll}
-          disabled={!copyReady}
-          title={copyReady ? undefined : "Adjust this crop first — copying sends this exact framing"}
-          className="mt-2 rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-        >
-          Copy framing to {copyCount} other network{copyCount === 1 ? "" : "s"}
-        </button>
-      )}
-    </div>
-  );
-}
-
-/* ── Small helpers kept local to the composer file ────────────────── */
-

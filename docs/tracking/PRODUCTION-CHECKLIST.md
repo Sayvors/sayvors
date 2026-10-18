@@ -62,12 +62,14 @@ controls; breaking them reintroduces the vulnerabilities we just fixed.
 | I-2 | **`KAFKA_AUTO_CREATE_TOPICS_ENABLE=false`** | Prevents 1-partition topics; provision explicitly (24/12/6/6 per lane) |
 | I-3 | **Redis: 6–8 GB, multi-AZ, AOF on** | Auth infrastructure — memory alarm at 75%, `noeviction` policy |
 | I-4 | **Postgres read replica** | Offload analytics queries; binding constraint is connection pool |
-| I-5 | **DB pool right-sized** | `DB_POOL_SIZE=5`, `MAX_OVERFLOW=5` per process; boot-time headroom check |
-| I-6 | **S3 buckets configured** | `S3_DOCS_BUCKET` + `S3_MEDIA_BUCKET` — customer uploads never on local volume |
-| I-7 | **Second box / AZ / container platform** | One OOM kill shouldn't take auth + messaging + ingestion down together |
-| I-8 | **RDS PITR ≥ 7 days + restore rehearsed** | Backups tested — two migration incidents already happened |
-| I-9 | **CI/CD pipeline** | GitHub Actions: lint → test → build → deploy; 82 backend tests must run before image builds |
-| I-10 | **Monitoring** | Sentry (errors) + Prometheus/Grafana (metrics) scraping `/metrics` + `/readyz` |
+| I-5 | **PgBouncer connection pooling** | `DATABASE_URL` → PgBouncer port 6432, `DB_POOL_MODE=transaction`, prevents connection exhaustion |
+| I-6 | **DB pool right-sized** | `DB_POOL_SIZE=5`, `MAX_OVERFLOW=5` per process; boot-time headroom check |
+| I-7 | **Write/read session splitting** | `get_db()` for writes (primary), `get_db_read()` for reads (replica) |
+| I-8 | **S3 buckets configured** | `S3_DOCS_BUCKET` + `S3_MEDIA_BUCKET` — customer uploads never on local volume |
+| I-9 | **Second box / AZ / container platform** | One OOM kill shouldn't take auth + messaging + ingestion down together |
+| I-10 | **RDS PITR ≥ 7 days + restore rehearsed** | Backups tested — two migration incidents already happened |
+| I-11 | **CI/CD pipeline** | GitHub Actions: lint → test → build → deploy; 82 backend tests must run before image builds |
+| I-12 | **Monitoring** | Sentry (errors) + Prometheus/Grafana (metrics) scraping `/metrics` + `/readyz` |
 
 ---
 
@@ -118,6 +120,8 @@ AUTH_RATE_LIMIT_FAIL_CLOSED=true
 
 # Database
 DATABASE_URL=postgresql+asyncpg://...?ssl=require
+DATABASE_READER_URL=postgresql+asyncpg://replica-host:5432/sayvors   # optional; empty = reads hit primary
+DB_POOL_MODE=transaction          # session | transaction — for PgBouncer pooling
 DB_POOL_SIZE=5
 DB_POOL_MAX_OVERFLOW=5
 DB_POOL_TIMEOUT_SECONDS=30

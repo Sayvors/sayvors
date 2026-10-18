@@ -1,13 +1,15 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { MAX_MEDIA_MB } from "./types";
+import { CROP_ASPECT } from "./CropFrame";
+import { MAX_MEDIA_MB, type CropState } from "./types";
 
-/*
- * Media sink for the unified Publish composer: drag-and-drop, browse, or
- * paste a public url — one slot, one item. The composer owns the state;
- * this piece only hands back media and renders its preview when present.
- */
+export interface ThumbCrop {
+  cropKey: CropState["key"];
+  zoom: number;
+  x: number;
+  y: number;
+}
 
 export function formatBytes(n: number | undefined): string {
   if (!n || n <= 0) return "";
@@ -15,20 +17,33 @@ export function formatBytes(n: number | undefined): string {
   return `${Math.round(n / 1024)}KB`;
 }
 
+function thumbBox(cropKey: CropState["key"]): { w: number; h: number } {
+  if (cropKey === "orig") return { w: 112, h: 112 };
+  const aspect = CROP_ASPECT[cropKey as Exclude<CropState["key"], "orig">];
+  return aspect >= 1 ? { w: Math.round(96 * aspect), h: 96 } : { w: 84, h: Math.round(84 / aspect) };
+}
+
 export default function MediaSink({
   media,
   onPick,
   onClear,
+  thumb = null,
+  thumbLabel = "",
 }: {
   media: { type: "image" | "video" | null; url: string; fileName?: string; sizeBytes?: number } | null;
   onPick: (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number) => void;
   onClear: () => void;
+  thumb?: ThumbCrop | null;
+  thumbLabel?: string;
 }) {
   const [dropping, setDropping] = useState(false);
   const [urlDraft, setUrlDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
+
+  const aspect = thumb && thumb.cropKey !== "orig" ? CROP_ASPECT[thumb.cropKey as Exclude<CropState["key"], "orig">] : null;
+  const box = thumbBox(thumb?.cropKey ?? "orig");
 
   const acceptFiles = (files: FileList | null) => {
     setError(null);
@@ -68,12 +83,38 @@ export default function MediaSink({
     <div>
       {media ? (
         <div className="flex flex-wrap items-start gap-3">
-          <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
+          <div
+            className="relative shrink-0 overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] transition-[width,height] duration-200"
+            style={{ width: box.w, height: box.h }}
+          >
             {media.type === "video" ? (
-              <video src={media.url} muted playsInline className="h-full w-full object-cover" />
+              <video
+                src={media.url}
+                muted
+                playsInline
+                className="h-full w-full object-cover"
+                style={
+                  aspect
+                    ? {
+                        transform: `scale(${Math.max(thumb?.zoom ?? 1, 1.08)}) translate(${(thumb?.x ?? 0) / 12}px, ${(thumb?.y ?? 0) / 12}px)`,
+                      }
+                    : undefined
+                }
+              />
             ) : (
               /* eslint-disable-next-line @next/next/no-img-element */
-              <img src={media.url} alt="" className="h-full w-full object-cover" />
+              <img
+                src={media.url}
+                alt=""
+                className="h-full w-full object-cover"
+                style={
+                  aspect
+                    ? {
+                        transform: `scale(${Math.max(thumb?.zoom ?? 1, 1.08)}) translate(${(thumb?.x ?? 0) / 12}px, ${(thumb?.y ?? 0) / 12}px)`,
+                      }
+                    : undefined
+                }
+              />
             )}
             <button
               type="button"
@@ -92,6 +133,11 @@ export default function MediaSink({
               {media.type === "video" ? "Video" : "Image"}
               {media.sizeBytes ? ` · ${formatBytes(media.sizeBytes)}` : ""}
             </p>
+            {thumbLabel && (
+              <p className="mt-1 text-[11px] font-semibold text-[var(--ui-ink)]">
+                Frame mirrors: {thumbLabel}
+              </p>
+            )}
             <button
               type="button"
               onClick={() => fileInput.current?.click()}
