@@ -26,7 +26,7 @@ Source files are referenced by path. Items marked **"For later"** need a product
 | ID | Item | Status | Source | Effort | Notes |
 |----|------|--------|--------|--------|-------|
 | H-1 | SSRF in media publishing (IG/FB publish probe) | `⏸️ Pending` | `readiness-report.html` SEC-H1 | ~1 day | Route through `fetch_pinned` guard; stop reflecting status |
-| H-2 | LLM chat: no rate limit, no metering | `🟠 High` | `readiness-report.html` SEC-H2 | 2–3 days | Redis limiter + debit `ai_credit_cents` |
+| H-2 | LLM chat: no rate limit, no metering | ✅ Done | `readiness-report.html` SEC-H2 | ~1 day | Redis sliding window (60/min/tenant) + reserve/settle budget enforcement on `/llm/chat` and `/llm/chat/stream` |
 | H-3 | WebSocket auth skips revocation | `🟠 High` | `readiness-report.html` SEC-H3 | 2–4 days | Blacklist + `token_version` checks on connect |
 | H-4 | Unindexed `platform_message_id` | `🟠 High` | `readiness-report.html` SCALE-2 | ~1 day | Full-table dedupe scan per webhook |
 | H-5 | Inbox N+1 (~1,500 queries per dashboard load) | `🟠 High` | `readiness-report.html` SCALE-3 | 3–5 days | Denormalize counters; cursor pagination |

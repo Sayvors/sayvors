@@ -20,6 +20,7 @@
 - Job queue runner fixes: AIOKafkaAdminClient import, jobs table migration applied locally, Kafka topic provisioning dict access fix (t['name'] not t.name)
 - Worker starts cleanly: all 4 job lanes (realtime/publishing/media/bulk) running
 - SEC-M2: Encrypt message content, contact phones, webhook secrets at rest
+- SEC-H2: LLM rate limit + metering on /llm/chat and /llm/chat/stream (reserve/settle budget)
 - PgBouncer support added (config + docker-compose dev + prod)
 - Read replica support added (get_db_read + DATABASE_READER_URL)
 - integrations/channels/embedsocial.py stub created (unblocks app startup)
