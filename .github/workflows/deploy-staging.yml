@@ -16,7 +16,44 @@ env:
   IMAGE: ghcr.io/sayvors/sayvors-api
 
 jobs:
+  ci-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for CI to pass on this commit
+        id: check-ci
+        run: |
+          set -e
+          SHA=${{ github.sha }}
+          echo "Waiting for CI (pytest + lint + tsc) to pass on $SHA..."
+          for i in $(seq 1 60); do
+            STATUS=$(gh api \
+              "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+              --jq '.check_runs[] | select(.name=="test-backend" or .name=="lint-frontend") | .status' \
+              2>/dev/null || echo "unknown")
+            echo "poll $i/60: CI status = $STATUS"
+            if [ "$STATUS" = "completed" ]; then
+              CONCLUSION=$(gh api \
+                "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+                --jq '.check_runs[] | select(.name=="test-backend" or .name=="lint-frontend") | .conclusion' \
+                2>/dev/null || echo "unknown")
+              echo "CI conclusion = $CONCLUSION"
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "CI passed — proceeding with deploy."
+                exit 0
+              else
+                echo "CI failed — aborting deploy."
+                exit 1
+              fi
+            fi
+            sleep 10
+          done
+          echo "CI did not complete in time — aborting deploy."
+          exit 1
+
   secrets-scan:
+    needs: ci-gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +68,7 @@ jobs:
           /tmp/gitleaks detect --no-git --source . -v --redact --config .gitleaks.toml
 
   build:
+    needs: ci-gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,4 +100,3 @@ jobs:
   # The api container runs `alembic upgrade head` on boot, so migrations
   # stay automatic. compose/Caddyfile changes still need a manual
   # `git pull` on the server (add a read-only deploy key when needed).
-

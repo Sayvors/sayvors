@@ -30,7 +30,7 @@ Source files are referenced by path. Items marked **"For later"** need a product
 | H-3 | WebSocket auth skips revocation | `🟠 High` | `readiness-report.html` SEC-H3 | 2–4 days | Blacklist + `token_version` checks on connect |
 | H-4 | Unindexed `platform_message_id` | `🟠 High` | `readiness-report.html` SCALE-2 | ~1 day | Full-table dedupe scan per webhook |
 | H-5 | Inbox N+1 (~1,500 queries per dashboard load) | `🟠 High` | `readiness-report.html` SCALE-3 | 3–5 days | Denormalize counters; cursor pagination |
-| H-6 | CI runs no tests | `🟠 High` | `readiness-report.html` OPS-3 | 1–2 days | 82 backend test files exist, none run before build |
+| H-6 | CI runs no tests | ✅ Done | `readiness-report.html` OPS-3 | 1–2 days | .github/workflows/ci.yml runs pytest+eslint+tsc before image builds; deploy-staging gated on CI pass |
 | H-7 | Staged topology stale (worker split not deployed) | `🟠 High` | `readiness-report.html` OPS-4 | ~half day | Merge `development` → `staging`; `RUN_BACKGROUND_WORKERS=false` |
 | H-8 | `platform_message_id` index | `🟠 High` | `FIXES-NEEDED.md` B24 gap G3 | ~1 day | Same as H-4 |
 | H-9 | Webhook: require secret to process payload | `🟠 High` | `SECURITY-AUDIT.md` G3 | ~half day | Gap remains in B24 fix |
