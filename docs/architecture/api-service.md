@@ -16,22 +16,14 @@ services/api/
 │   │   ├── http.py          # HTTP client (httpx)
 │   │   └── pinned_http.py   # Pinned connections for external APIs
 │   └── modules/
-│       ├── auth/
-│       ├── locations/
-│       ├── posts/
-│       ├── analytics/
-│       ├── channels/
-│       ├── llm/
-│       ├── profile/
-│       ├── localith/
-│       ├── tts/
-│       ├── stt/
-│       ├── rag/
-│       ├── email/
-│       ├── kafka/
-│       ├── redis/
-│       ├── outbox/
-│       └── webhooks/        # (in channels/router.py)
+│       ├── auth/ users/ admin/ team/ billing/
+│       ├── locations/ channels/ posts/ media/ storage/
+│       ├── analytics/ review_engine/ assistant/
+│       ├── profile/ localith/ rag/ retrieval/
+│       ├── llm/ tts/ stt/
+│       ├── email/ notifications/ user_feedback/
+│       ├── jobs/ outbox/ kafka/ redis/
+│       └── workers/         # Dedicated worker process entrypoint
 ├── alembic/                 # Migrations
 ├── tests/
 ├── scripts/
@@ -50,20 +42,24 @@ async def lifespan(app: FastAPI):
     2. Connect Redis (mark unavailable on failure)
     3. Connect Kafka (mark unavailable on failure, 5s timeout)
     4. Run retention cleanup (login_attempts, refresh_tokens)
-    5. Start background tasks:
-       - Retention cleanup loop (6h interval)
-       - Google Reviews poll worker (5m interval)
-       - Localith sync worker (1m interval)
-       - Posts publish worker (5m interval)
-       - Analytics consumer (Kafka)
-       - Performance sync worker (6h interval)
-       - Outbox worker
+    5. Always start the retention cleanup loop
+    6. When RUN_BACKGROUND_WORKERS=true, start queue/poll workers:
+       - Google Reviews poll worker
+       - Localith sync worker
+       - Scheduled post publisher
+       - Analytics Kafka consumer
+       - Google performance and messaging rollup workers
+       - Meta event worker and transactional outbox worker
     yield
     # Shutdown
-    6. Cancel all background tasks
-    7. Flush Kafka producer
-    8. Close Redis/Kafka connections
+    7. Cancel background tasks and stop outbox worker
+    8. Flush Kafka producer
+    9. Close Redis/Kafka connections
 ```
+
+For split deployments, the API sets `RUN_BACKGROUND_WORKERS=false` and the
+dedicated worker process starts these loops with `python -m app.workers`.
+Local development defaults to running them in the API process.
 
 ### Middleware Stack (Order Matters)
 ```python
@@ -84,12 +80,16 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 ## Configuration (`config.py`)
 
 ### Settings Class (Pydantic BaseSettings)
+
+See the [API configuration reference](../api/configuration.md) for the
+maintained list of settings, defaults, and deployment guidance.
+
 ```python
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors"
-    DB_POOL_SIZE: int = 10
-    DB_POOL_MAX_OVERFLOW: int = 10
+    DB_POOL_SIZE: int = 50
+    DB_POOL_MAX_OVERFLOW: int = 50
     DB_POOL_TIMEOUT_SECONDS: int = 30
     
     # Auth
@@ -135,20 +135,15 @@ class Settings(BaseSettings):
     
     # Localith
     LOCALITH_API_KEY: str = ""
-    LOCALITH_SYNC_INTERVAL_SECONDS: int = 100
+    LOCALITH_SYNC_INTERVAL_SECONDS: int = 60
     
     # Analytics
     ANALYTICS_PERFORMANCE_SYNC_INTERVAL_SECONDS: int = 6 * 3600
     ANALYTICS_PERFORMANCE_DAYS_BACK: int = 30
     DEMO_MODE: bool = False
     
-    # LLM Keys
-    OPENAI_API_KEY: str = ""
-    XAI_API_KEY: str = ""
-    GROQ_API_KEY: str = ""
-    GEMINI_API_KEY: str = ""
-    # ... more
-    
+    # LLM provider keys are managed in the database, not environment variables.
+
     model_config = {"env_file": ".env"}
 ```
 

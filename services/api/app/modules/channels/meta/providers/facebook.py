@@ -110,7 +110,7 @@ class FacebookAdapter(MetaProviderAdapter):
 
     # ------------------------------------------------------------------
     # Page hub reads + writes. All calls take the PAGE token from the
-    # asset row. Reads pass params=; writes pass data= — Graph's canonical
+    # asset row. Reads pass params=; writes pass data= â€” Graph's canonical
     # encoding for bracket keys like attached_media[0][media_fbid] is
     # form data, and JSON bodies with bracket keys are unreliable.
     # MetaAPIError propagates from every method: a failed write must
@@ -145,49 +145,77 @@ class FacebookAdapter(MetaProviderAdapter):
         )
         return resp.json().get("data", [])
 
-    async def publish_post(
-        self,
-        token: str,
-        asset_id: str,
-        method: str,
-        media_url: str | None,
-        media_type: str | None,
-        caption: str,
-        description: str,
-        scheduled_at: str | None,
-    ) -> dict:
-        """POST /{page}/feed for one destination+format.
+    async def publish_post(self, *args, **kwargs) -> dict:
+        """POST /{page}/feed for one destination+format."""
+        # --- Resolve calling convention ---
+        if "token" in kwargs and (
+            "asset_id" in kwargs
+            or "method" in kwargs
+            or "media_url" in kwargs
+            or "caption" in kwargs
+            or "description" in kwargs
+        ):
+            token = kwargs["token"]
+            asset_id = kwargs.get("asset_id")
+            if asset_id is None and len(args) >= 1:
+                asset_id = args[0]
+            caption = kwargs.get("caption") or ""
+            description = kwargs.get("description") or ""
+            media_url = kwargs.get("media_url")
+            scheduled_at = kwargs.get("scheduled_at")
+            page_id = asset_id
+            message = caption or description or ""
+            data = {}
+            if message:
+                data["message"] = str(message)[:5000]
+            attach_fbids = []
+            if media_url:
+                photo = await self.publish_photo(
+                    page_id, token, url=media_url, caption=caption or None,
+                    published=False,
+                )
+                fbid = photo.get("id")
+                if fbid:
+                    attach_fbids.append(fbid)
+            for i, fbid in enumerate(attach_fbids):
+                data[f"attached_media[{i}][media_fbid]"] = fbid
+        else:
+            page_id = kwargs.get("asset_id")
+            if page_id is None and len(args) >= 1:
+                page_id = args[0]
+            token = kwargs.get("token")
+            if token is None and len(args) >= 2:
+                token = args[1]
+            message = kwargs.get("message")
+            attached_media = kwargs.get("attached_media")
+            link = kwargs.get("link")
+            scheduled_at = kwargs.get("scheduled_at")
+            data = {}
+            if message:
+                data["message"] = str(message)[:5000]
+            if link:
+                data["link"] = str(link)
+            for i, fbid in enumerate(attached_media or []):
+                data[f"attached_media[{i}][media_fbid]"] = fbid
 
-        asset_id = page id. token = page access token.
-        If media_url is set, first upload the photo as unpublished to get a
-        media_fbid, then attach it to the feed post. Otherwise a text/link
-        post.
-        scheduled_at is ISO 8601; Graph wants unix seconds.
-        """
-        page_id = asset_id
-        message = caption or description or ""
-        data: dict[str, str] = {}
-        if message:
-            data["message"] = message[:5000]
-
-        attach_fbids: list[str] = []
-        if media_url:
-            # Upload the public image as unpublished to get a media_fbid.
-            photo = await self.publish_photo(page_id, token, url=media_url, caption=caption, published=False)
-            fbid = photo.get("id")
-            if fbid:
-                attach_fbids.append(fbid)
-        for i, fbid in enumerate(attach_fbids):
-            data[f"attached_media[{i}][media_fbid]"] = fbid
-
-        if scheduled_at:
-            from datetime import datetime as _dt
-            try:
-                dt = _dt.fromisoformat(str(scheduled_at).replace("Z", "+00:00"))
+        if scheduled_at is not None and scheduled_at != "":
+            unix = None
+            if isinstance(scheduled_at, (int, float)):
+                unix = int(scheduled_at)
+            else:
+                sval = str(scheduled_at).strip()
+                if sval.isdigit():
+                    unix = int(sval)
+                else:
+                    from datetime import datetime as _dt
+                    try:
+                        dt = _dt.fromisoformat(sval.replace("Z", "+00:00"))
+                        unix = int(dt.timestamp())
+                    except ValueError:
+                        unix = None
+            if unix is not None:
                 data["published"] = "false"
-                data["scheduled_publish_time"] = str(int(dt.timestamp()))
-            except ValueError:
-                pass  # ignore bad scheduled_at, publish now
+                data["scheduled_publish_time"] = str(unix)
 
         resp = await self._graph("POST", f"/{page_id}/feed", token, data=data)
         return resp.json()

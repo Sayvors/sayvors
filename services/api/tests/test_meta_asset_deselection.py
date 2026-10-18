@@ -23,6 +23,7 @@ from app.modules.channels.meta.credentials import encrypt_credential
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
 from app.modules.channels.meta.providers import facebook as _fb
 from app.modules.channels.models import Channel, ChannelMessage
+from app.modules.channels.service import decrypt_message_content
 
 pytestmark = pytest.mark.asyncio
 
@@ -213,7 +214,7 @@ async def test_deselected_whatsapp_asset_stores_message_without_reply(db, monkey
     msgs = (await db.execute(
         select(ChannelMessage).where(ChannelMessage.channel_id == chan.id)
     )).scalars().all()
-    assert [m.content for m in msgs] == ["hello"]
+    assert [decrypt_message_content(m.content) for m in msgs] == ["hello"]
 
 
 async def test_deselected_ig_asset_stores_message_without_reply(db, monkeypatch):
@@ -261,4 +262,4 @@ async def test_deselected_ig_asset_stores_message_without_reply(db, monkeypatch)
     msgs = (await db.execute(
         select(ChannelMessage).where(ChannelMessage.channel_id == chan.id)
     )).scalars().all()
-    assert [m.content for m in msgs] == ["do you deliver?"]
+    assert [decrypt_message_content(m.content) for m in msgs] == ["do you deliver?"]

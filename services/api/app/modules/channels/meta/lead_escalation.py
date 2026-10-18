@@ -87,13 +87,16 @@ def _clear_escalation_state(lead) -> None:
 
 async def _latest_outbound(db, lead):
     """The most recent outbound row in the thread, or None."""
+    h = hash_contact_phone(lead.contact_id)
     return (
         await db.execute(
             select(ChannelMessage)
             .where(
                 ChannelMessage.channel_id == lead.channel_id,
-                ChannelMessage.contact_phone_hash == hash_contact_phone(lead.contact_id),
                 ChannelMessage.direction == "outbound",
+                (ChannelMessage.contact_phone_hash == h)
+                | (ChannelMessage.contact_phone_hash.is_(None)
+                   & (ChannelMessage.contact_phone == lead.contact_id)),
             )
             .order_by(ChannelMessage.created_at.desc())
             .limit(1)

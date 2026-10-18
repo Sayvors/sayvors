@@ -16,3 +16,6 @@ __pycache__/
 data/
 .claude
 .backboard
+animations/
+brag-output/
+brag-*/
