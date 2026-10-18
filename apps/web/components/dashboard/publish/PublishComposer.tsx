@@ -101,6 +101,9 @@ export default function PublishComposer() {
   // ── Per-network previews + crops ────────────────────────────────
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [crops, setCrops] = useState<Record<string, CropState>>({});
+  /** Crop ids the tenant has actually adjusted — powers the "left to
+   *  review" counter (a default framing is fine, but it's unreviewed). */
+  const [reviewed, setReviewed] = useState<Set<string>>(new Set());
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -167,6 +170,7 @@ export default function PublishComposer() {
   };
 
   const setCrop = (id: string) => (patch: Partial<CropState>) => {
+    setReviewed((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
     setCrops((prev) => ({ ...prev, [id]: { ...DEFAULT_CROP, ...prev[id], ...patch } }));
   };
 
@@ -174,6 +178,40 @@ export default function PublishComposer() {
     () => targets.filter((t) => selected.has(t.id)),
     [targets, selected],
   );
+
+  /** Readiness chip → open the network's row, then scroll to it. */
+  const openRow = (id: string) => {
+    if (!expanded.has(id)) setExpanded((prev) => new Set(prev).add(id));
+    window.setTimeout(() => {
+      document.getElementById(`net-row-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+  };
+
+  /** Copy this network's framing to every other selected network — crop
+   *  once instead of once per network. */
+  const copyCropToAll = (fromId: string) => {
+    const src = crops[fromId];
+    if (!src) return;
+    const ids = selectedTargets.filter((t) => t.id !== fromId).map((t) => t.id);
+    if (ids.length === 0) return;
+    setCrops((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => {
+        next[id] = { ...src };
+      });
+      return next;
+    });
+    setReviewed((prev) => new Set([...prev, ...ids]));
+  };
+
+  // ── Caption budget across the selected networks ─────────────────
+  const captionLimit =
+    selectedTargets.length === 0
+      ? PLATFORM_META.facebook.captionMax
+      : Math.min(...selectedTargets.map((t) => PLATFORM_META[t.platform].captionMax));
+  const captionOver = selectedTargets.filter((t) => caption.length > PLATFORM_META[t.platform].captionMax);
+  const captionFits = selectedTargets.filter((t) => caption.length <= PLATFORM_META[t.platform].captionMax);
+  const showCaptionWarn = caption.length > 0 && captionOver.length > 0;
 
   const canPublish = selectedTargets.length > 0 && (media !== null || caption.trim().length > 0 || description.trim().length > 0);
 
@@ -228,7 +266,13 @@ export default function PublishComposer() {
                     <label htmlFor="pub-caption" className={`text-[12px] font-semibold ${INK2}`}>
                       Caption
                     </label>
-                    <span className={`text-[11px] ${INK2}`}>{caption.length}</span>
+                    <span
+                      className={`text-[11px] ${
+                        caption.length > captionLimit ? "font-semibold text-amber-600 dark:text-amber-400" : INK2
+                      }`}
+                    >
+                      {caption.length} / {captionLimit.toLocaleString("en-US")}
+                    </span>
                   </div>
                   <textarea
                     id="pub-caption"
@@ -239,6 +283,23 @@ export default function PublishComposer() {
                     placeholder="Say it in one line…"
                     className={`${FIELD} mt-1 w-full resize-y`}
                   />
+                  {showCaptionWarn && (
+                    <p
+                      role="status"
+                      className="mt-1.5 rounded-[10px] border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-700 dark:text-amber-400"
+                    >
+                      ⚠ Truncates on:{" "}
+                      {captionOver
+                        .map((t) => `${PLATFORM_META[t.platform].label} (${PLATFORM_META[t.platform].captionMax.toLocaleString("en-US")})`)
+                        .join(" · ")}
+                      {captionFits.length > 0 && (
+                        <>
+                          {" — fits: "}
+                          {captionFits.map((t) => PLATFORM_META[t.platform].label).join(" · ")}
+                        </>
+                      )}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <div className="flex items-baseline justify-between">
@@ -328,8 +389,11 @@ export default function PublishComposer() {
                   caption={caption}
                   description={description}
                   crops={crops}
+                  reviewed={reviewed}
+                  hasMedia={media !== null}
                   onToggleExpanded={toggleExpanded}
                   onSetCrop={setCrop}
+                  onCopyCropToAll={copyCropToAll}
                 />
               ) : (
                 targetsStatus === "loading" && (
@@ -348,6 +412,30 @@ export default function PublishComposer() {
       {/* Sticky action bar */}
       <div className="sticky bottom-0 z-10 border-t border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 sm:px-6">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
+          {selectedTargets.length > 0 && (
+            <div className="flex w-full gap-1.5 overflow-x-auto pb-0.5">
+              {selectedTargets.map((t) => {
+                const ok = reviewed.has(t.id);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => openRow(t.id)}
+                    title={ok ? `Review ${t.name}` : `${t.name} is still on its default crop`}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                      ok
+                        ? "border-[var(--ui-line)] bg-[var(--ui-sunken)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
+                        : "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                    }`}
+                  >
+                    <PlatformMark platform={t.platform} size={12} />
+                    <span className="max-w-[140px] truncate">{t.name}</span>
+                    <span className={ok ? "text-[var(--ui-ink-2)]" : ""}>{crops[t.id]?.key ?? "default"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <p className={`min-w-0 flex-1 truncate text-[12px] font-medium ${INK2}`} role="status" aria-live="polite">
             {selectedTargets.length === 0
               ? "No destination selected yet."
@@ -422,8 +510,11 @@ function TargetList({
   caption,
   description,
   crops,
+  reviewed,
+  hasMedia,
   onToggleExpanded,
   onSetCrop,
+  onCopyCropToAll,
 }: {
   targets: PublishTarget[];
   selected: Set<string>;
@@ -432,10 +523,14 @@ function TargetList({
   caption: string;
   description: string;
   crops: Record<string, CropState>;
+  reviewed: Set<string>;
+  hasMedia: boolean;
   onToggleExpanded: (id: string) => void;
   onSetCrop: (id: string) => (patch: Partial<CropState>) => void;
+  onCopyCropToAll: (id: string) => void;
 }) {
   const nonDemo = targets;
+  const cropsLeft = hasMedia ? targets.filter((t) => selected.has(t.id) && !reviewed.has(t.id)).length : 0;
 
   return (
     <div
@@ -443,9 +538,18 @@ function TargetList({
       role="region"
       aria-label="Per-network previews with crop"
     >
-      <p className={`flex flex-wrap items-center gap-x-2 px-5 pb-3 pt-4 text-[12px] font-bold ${INK2}`}>
-        <span className="text-[10px] font-bold uppercase tracking-widest">Per-network preview · crop each</span>
-      </p>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 px-5 pb-3 pt-4">
+        <span className={`text-[10px] font-bold uppercase tracking-widest ${INK2}`}>Per-network preview · crop each</span>
+        {hasMedia && selected.size > 0 && (
+          cropsLeft === 0 ? (
+            <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">All crops set ✓</span>
+          ) : (
+            <span className={`text-[11px] font-semibold ${INK2}`}>
+              {cropsLeft} of {selected.size} crop{selected.size === 1 ? "" : "s"} left to review
+            </span>
+          )
+        )}
+      </div>
       <ul>
         {nonDemo.map((t) => {
           const isOpen = expanded.has(t.id);
@@ -453,7 +557,7 @@ function TargetList({
           const chosen = selected.has(t.id);
           const meta = PLATFORM_META[t.platform];
           return (
-            <li key={t.id}>
+            <li key={t.id} id={`net-row-${t.id}`}>
               <button
                 type="button"
                 onClick={() => onToggleExpanded(t.id)}
@@ -501,6 +605,9 @@ function TargetList({
                     media={media ? { type: media.type, url: media.url } : null}
                     crop={crop}
                     onCrop={onSetCrop(t.id)}
+                    copyCount={Math.max(0, selected.size - 1)}
+                    copyReady={reviewed.has(t.id)}
+                    onCopyToAll={() => onCopyCropToAll(t.id)}
                   />
                 </div>
               )}
@@ -517,11 +624,17 @@ function CropSection({
   media,
   crop,
   onCrop,
+  copyCount,
+  copyReady,
+  onCopyToAll,
 }: {
   skuKey: string;
   media: { type: "image" | "video" | null; url: string } | null;
   crop: CropState;
   onCrop: (patch: Partial<CropState>) => void;
+  copyCount: number;
+  copyReady: boolean;
+  onCopyToAll: () => void;
 }) {
   if (!media || media.type === null) {
     return (
@@ -531,17 +644,30 @@ function CropSection({
     );
   }
   return (
-    <CropFrame
-      key={skuKey}
-      url={media.url}
-      type={media.type}
-      cropKey={crop.key}
-      zoom={crop.zoom}
-      offset={{ x: crop.x, y: crop.y }}
-      onCropKey={(k) => onCrop({ key: k, zoom: 1, x: 0, y: 0 })}
-      onZoom={(z) => onCrop({ zoom: z })}
-      onOffset={(o) => onCrop({ x: o.x, y: o.y })}
-    />
+    <div>
+      <CropFrame
+        key={skuKey}
+        url={media.url}
+        type={media.type}
+        cropKey={crop.key}
+        zoom={crop.zoom}
+        offset={{ x: crop.x, y: crop.y }}
+        onCropKey={(k) => onCrop({ key: k, zoom: 1, x: 0, y: 0 })}
+        onZoom={(z) => onCrop({ zoom: z })}
+        onOffset={(o) => onCrop({ x: o.x, y: o.y })}
+      />
+      {copyCount > 0 && (
+        <button
+          type="button"
+          onClick={onCopyToAll}
+          disabled={!copyReady}
+          title={copyReady ? undefined : "Adjust this crop first — copying sends this exact framing"}
+          className="mt-2 rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+        >
+          Copy framing to {copyCount} other network{copyCount === 1 ? "" : "s"}
+        </button>
+      )}
+    </div>
   );
 }
 

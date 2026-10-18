@@ -1,34 +1,76 @@
 "use client";
 
-import PlatformMark from "@/components/channels/PlatformMark";
-import { INK2 } from "@/components/channels/instagram/ui";
-import type { CropState, MediaState, PublishTarget } from "./types";
-import { CROP_ASPECT, CROP_LABEL } from "./CropFrame";
+import { useState } from "react";
+import { CROP_ASPECT } from "./CropFrame";
+import { PLATFORM_META, type CropState, type MediaState, type PublishTarget } from "./types";
 
 /*
- * One preview per network, laid out the way that network actually shows a
- * post. All of them render from the same inputs (media + caption +
+ * One preview per destination, laid out the way that network actually
+ * shows it. Every variant renders from the same inputs (media + caption +
  * description) so what the tenant reads here is what their audience will
- * see, per platform. Crop is visual: the frame clips media with the same
- * object-fit/transform pair the CropFrame uses.
+ * see. Crop is visual only — the real pixels get cut at publish time.
+ *
+ * Overlay note (AGENTS.md): story caption scrims and status tints are
+ * solid rgba fills, never gradients.
  */
 
+const PREVIEW_W = 240; // standard preview width — large enough to read
+
+/** The ratio a container shows, "orig" falling back to the network's own. */
+function aspectFor(crop: CropState, fallback: number): number {
+  return crop.key === "orig" ? fallback : CROP_ASPECT[crop.key];
+}
+
+/*
+ * CroppedMedia — renders media inside a preview box so it matches the
+ * crop frame EXACTLY. It tracks the media's natural dimensions, computes
+ * the same cover scale the crop frame uses, and applies the same pan
+ * offset scaled to the preview box size. This is what makes the preview
+ * an honest mirror of the crop editor.
+ */
 function CroppedMedia({
   media,
   cropKey,
   zoom,
   offset,
+  boxW = PREVIEW_W,
+  aspect,
   className = "",
 }: {
   media: MediaState;
   cropKey: CropState["key"];
   zoom: number;
   offset: { x: number; y: number };
+  boxW?: number;
+  aspect: number;
   className?: string;
 }) {
-  if (!media.type) return null;
+  const boxH = aspect > 0 ? Math.round(boxW / aspect) : boxW;
+  const [naturalState, setNaturalState] = useState<{ url: string; w: number; h: number } | null>(null);
+
   const active = cropKey !== "orig" ? cropKey : null;
+  const url = media?.url ?? "";
+  const natural = naturalState && naturalState.url === url ? { w: naturalState.w, h: naturalState.h } : null;
+
+  if (!media.type) return null;
+
   if (media.type === "video") {
+    if (!active) {
+      return (
+        <video
+          src={media.url}
+          muted
+          loop
+          autoPlay
+          playsInline
+          className={`h-full w-full object-cover ${className}`}
+        />
+      );
+    }
+    // Videos: apply the same transform as images using videoWidth/Height
+    const cover = natural ? Math.max(boxW / natural.w, boxH / natural.h) : 1;
+    const scale = zoom * cover;
+    const s = boxW / 260; // editor→preview scale
     return (
       <video
         src={media.url}
@@ -36,38 +78,77 @@ function CroppedMedia({
         loop
         autoPlay
         playsInline
-        className={`h-full w-full object-cover ${className}`}
+        className={`absolute left-1/2 top-1/2 max-w-none select-none ${className}`}
+        style={{
+          transform: `translate(-50%, -50%) translate(${offset.x * s}px, ${offset.y * s}px) scale(${scale})`,
+        }}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          if (v.videoWidth && v.videoHeight) {
+            setNaturalState({ url, w: v.videoWidth, h: v.videoHeight });
+          }
+        }}
       />
     );
   }
+
+  if (!active) {
+    return (
+      /* eslint-disable-next-line @next/next/no-img-element */
+      <img
+        src={media.url}
+        alt=""
+        className={`h-full w-full object-cover ${className}`}
+        onLoad={(e) => {
+          const img = e.currentTarget;
+          setNaturalState({ url, w: img.naturalWidth, h: img.naturalHeight });
+        }}
+      />
+    );
+  }
+
+  if (!natural) {
+    return (
+      /* eslint-disable-next-line @next/next/no-img-element */
+      <img
+        src={media.url}
+        alt=""
+        className={`h-full w-full object-cover ${className}`}
+        onLoad={(e) => {
+          const img = e.currentTarget;
+          setNaturalState({ url, w: img.naturalWidth, h: img.naturalHeight });
+        }}
+      />
+    );
+  }
+
+  const cover = Math.max(boxW / natural.w, boxH / natural.h);
+  const scale = zoom * cover;
+  const s = boxW / 260; // editor box is 260px wide
   return (
     /* eslint-disable-next-line @next/next/no-img-element */
     <img
       src={media.url}
       alt=""
-      className={`h-full w-full select-none object-cover ${className}`}
-      style={
-        active
-          ? {
-              transform: `scale(${Math.max(zoom, coverFor())}) translate(${offset.x / 6}px, ${offset.y / 6}px)`,
-            }
-          : undefined
-      }
+      className={`absolute left-1/2 top-1/2 max-w-none select-none ${className}`}
+      style={{
+        transform: `translate(-50%, -50%) translate(${offset.x * s}px, ${offset.y * s}px) scale(${scale})`,
+      }}
+      onLoad={(e) => {
+        const img = e.currentTarget;
+        setNaturalState({ url, w: img.naturalWidth, h: img.naturalHeight });
+      }}
     />
   );
 }
 
-// The preview box is narrower than the 260px crop editor, so the editor's
-// px offsets are translated down proportionally and a small push-in zoom
-// keeps the tenant's chosen framing readable at preview size. object-fit:
-// cover already center-crops; translate+scale then re-frames in-window.
-function coverFor(): number {
-  return 1.08; // slight push-in so the cropped frame reads clearly in previews
+function captionOverflow(caption: string, platform: keyof typeof PLATFORM_META): number {
+  return Math.max(caption.length - PLATFORM_META[platform].captionMax, 0);
 }
 
-/* ── Instagram: square/portrait feed card ─────────────────────────── */
+/* ── Instagram: feed card for posts ───────────────────────────────── */
 
-function InstagramPreview({
+function InstagramFeedPreview({
   target,
   media,
   caption,
@@ -78,33 +159,33 @@ function InstagramPreview({
   caption: string;
   crop: CropState;
 }) {
-  const aspect = crop.key === "orig" ? 1 : CROP_ASPECT[crop.key as Exclude<CropState["key"], "orig">];
-  const overflow = Math.max(
-    caption.length - PLATFORM_CAP_SAFE("instagram"),
-    0,
-  );
+  const author = target.handle ? `@${target.handle}` : target.name;
+  const aspect = aspectFor(crop, 1);
+  const overflow = captionOverflow(caption, "instagram");
   return (
-    <div className="mx-auto w-full max-w-[232px] overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
-      <div className="flex items-center gap-2 px-3 py-2">
-        <PlatformMark platform="instagram" size={16} />
-        <span className="text-[12px] font-bold text-[#111]">{target.handle ? `@${target.handle}` : target.name}</span>
-        <span className="ml-auto text-[11px] text-[#888]">···</span>
+    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+      <div className="flex items-center gap-2.5 px-3.5 py-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-[#e0405f] bg-[#f0eaff] text-[11px] font-bold text-[#3a2a5e]">
+          {author.charAt(author.startsWith("@") ? 1 : 0).toUpperCase()}
+        </span>
+        <span className="text-[13px] font-bold text-[#111]">{author}</span>
+        <span className="ml-auto text-[12px] text-[#888]">···</span>
       </div>
-      <div className="w-full bg-black" style={{ aspectRatio: String(aspect) }}>
-        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} />
+      <div className="relative w-full overflow-hidden bg-black" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
+        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W} aspect={aspect} />
       </div>
-      <div className="px-3 py-2">
-        <div className="flex items-center gap-3 text-[#111]">
-          <span aria-hidden className="text-[14px]">♡</span>
-          <span aria-hidden className="text-[14px]">💬</span>
-          <span aria-hidden className="text-[14px]">➤</span>
-        </div>
-        <p className="mt-1.5 text-[12px] leading-snug text-[#111]">
-          <span className="mr-1.5 font-bold">{target.handle ? `@${target.handle}` : target.name}</span>
+      <div className="px-3.5 py-2.5">
+        <p className="flex items-center gap-3.5 text-[14px] text-[#111]">
+          <span aria-hidden>&#9825;</span>
+          <span aria-hidden>&#128172;</span>
+          <span aria-hidden>&#10148;</span>
+        </p>
+        <p className="mt-2 text-[12px] leading-snug text-[#111]">
+          <span className="mr-1.5 font-bold">{author}</span>
           {caption || "Your caption appears here."}
         </p>
         {overflow > 0 && (
-          <p className="mt-1 text-[10px] font-semibold text-amber-600">
+          <p className="mt-1.5 text-[10px] font-semibold text-amber-600">
             {overflow} characters past Instagram&apos;s limit
           </p>
         )}
@@ -113,9 +194,9 @@ function InstagramPreview({
   );
 }
 
-/* ── Facebook: landscape feed card with page header ───────────────── */
+/* ── Facebook: feed card for posts ──────────────────────────────── */
 
-function FacebookPreview({
+function FacebookFeedPreview({
   target,
   media,
   caption,
@@ -128,85 +209,92 @@ function FacebookPreview({
   description: string;
   crop: CropState;
 }) {
-  const aspect =
-    crop.key === "orig" ? 1.91 : crop.key === "9:16" ? CROP_ASPECT["9:16"] : CROP_ASPECT[crop.key as Exclude<CropState["key"], "orig">];
+  const aspect = aspectFor(crop, 1.91);
   return (
-    <div className="mx-auto w-full max-w-[248px] overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
-      <div className="flex items-center gap-2 px-3 pt-2.5 pb-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#e7f3ff] text-[13px] font-bold text-[#0a66c2]">
+    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+      <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
+        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#e7f3ff] text-[14px] font-bold text-[#0a66c2]">
           {(target.name || "P").charAt(0).toUpperCase()}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[12px] font-bold text-[#111]">{target.name}</span>
-          <span className="block text-[10px] text-[#65676b]">Just now · 🌐</span>
+          <span className="block truncate text-[13px] font-bold text-[#111]">{target.name}</span>
+          <span className="block text-[11px] text-[#65676b]">Just now · &#127760;</span>
         </span>
       </div>
       {(caption || description) && (
-        <p className="px-3 pb-2 text-[12px] leading-snug text-[#111]">
+        <p className="px-3.5 pb-2 text-[12px] leading-snug text-[#111]">
           {caption || description || "Your message appears here."}
         </p>
       )}
-      <div className="w-full" style={{ aspectRatio: String(aspect) }}>
-        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} />
+      <div className="relative w-full overflow-hidden bg-black" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
+        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W} aspect={aspect} />
       </div>
-      <div className="flex items-center justify-between border-t border-[#e4e6eb] px-3 py-1.5 text-[10px] font-semibold text-[#65676b]">
-        <span>👍 ❤️ 🔥</span>
-        <span>Share ›</span>
+      <div className="flex items-center justify-between border-t border-[#e4e6eb] px-3.5 py-2 text-[11px] font-semibold text-[#65676b]">
+        <span>&#128077; &#10084;&#65039; &#128293;</span>
+        <span>Share &rsaquo;</span>
       </div>
     </div>
   );
 }
 
-/* ── WhatsApp: business message bubble inside a phone rail ────────── */
+/* ── WhatsApp: status viewer ─────────────────────────────────────── */
 
-function WhatsAppPreview({
+function WhatsAppStatusPreview({
   target,
   media,
   caption,
-  description,
   crop,
 }: {
   target: PublishTarget;
   media: MediaState;
   caption: string;
-  description: string;
   crop: CropState;
 }) {
-  const aspect = crop.key === "orig" ? 4 / 3 : CROP_ASPECT[crop.key as Exclude<CropState["key"], "orig">];
+  const name = target.name || "Your number";
+  const aspect = aspectFor(crop, 9 / 16);
   return (
-    <div className="mx-auto w-full max-w-[236px] overflow-hidden rounded-[14px] bg-[#eae6df] shadow-sm">
-      <div className="flex items-center gap-2 bg-[#008069] px-3 py-2 text-white">
-        <span className="text-[13px]">‹</span>
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/25 text-[10px] font-bold">
-          {(target.name || "W").charAt(0).toUpperCase()}
+    <div className="mx-auto overflow-hidden rounded-[16px] bg-[#eae6df] shadow-sm" style={{ width: PREVIEW_W - 20 }}>
+      <div className="flex items-center gap-2.5 bg-white px-3 py-2.5">
+        <span className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-[#25d366] bg-[#efeae2] text-[12px] font-bold text-[#075e54]">
+          {name.charAt(0).toUpperCase()}
         </span>
-        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{target.name}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-semibold text-[#111b21]">{name}</span>
+          <span className="block text-[11px] text-[#667781]">My status · public update</span>
+        </span>
       </div>
-      <div
-        className="px-2 py-2"
-        style={{
-          backgroundColor: "#efeae2",
-        }}
-      >
-        <div className="ml-auto w-[92%] overflow-hidden rounded-[8px] rounded-tr-none bg-[#d9fdd3] shadow-[0_1px_1px_rgba(0,0,0,0.12)]">
-          <div style={{ aspectRatio: String(aspect) }}>
-            <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} />
-          </div>
-          {(caption || description) && (
-            <p className="px-2 pt-1.5 text-[11px] leading-snug text-[#111]">
-              {caption || description || "Your update lands as a message."}
+      <div className="p-2" style={{ backgroundColor: "#efeae2" }}>
+        <div className="relative mx-auto overflow-hidden rounded-[10px] bg-black" style={{ aspectRatio: String(aspect), width: PREVIEW_W - 40, height: Math.round((PREVIEW_W - 40) / aspect) }}>
+          <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W - 40} aspect={aspect} />
+          {media.type && (
+            <>
+              <div aria-hidden className="pointer-events-none absolute left-2 right-2 top-2 flex gap-1">
+                <span className="h-[2px] flex-1 rounded-full bg-white" />
+                <span className="h-[2px] flex-1 rounded-full bg-white/40" />
+              </div>
+              <span
+                aria-hidden
+                className="pointer-events-none absolute right-2 top-4 flex h-6 w-6 items-center justify-center rounded-full bg-[rgba(0,0,0,0.45)] text-[11px] text-white"
+              >
+                &#128065;
+              </span>
+              <p className="absolute bottom-0 left-0 right-0 bg-[rgba(0,0,0,0.55)] px-2.5 py-2 text-[11px] leading-snug text-white">
+                {caption || "Your status text appears here."}
+              </p>
+            </>
+          )}
+          {!media.type && (
+            <p className="absolute inset-0 flex items-center justify-center px-3 text-center text-[11px] font-semibold text-white/60">
+              Add media — statuses frame 9:16
             </p>
           )}
-          <p className="pb-1 pr-2 text-right text-[9px] text-[#667781]">
-            10:24 <span className="text-[#53bdeb]">✓✓</span>
-          </p>
         </div>
       </div>
     </div>
   );
 }
 
-/* ── Generic fallback for the main preview + later platforms ──────── */
+/* ── Generic fallback for the neutral main preview + later networks ─ */
 
 function GenericPreview({
   label,
@@ -221,19 +309,20 @@ function GenericPreview({
   description: string;
   crop: CropState;
 }) {
+  const aspect = aspectFor(crop, 4 / 3);
   return (
-    <div className="mx-auto w-full max-w-[248px] overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-white">
-      <div className="flex items-center gap-2 px-3 py-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--ui-sunken)] text-[11px] font-bold text-[var(--ui-ink)]">
-          ✦
+    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+      <div className="flex items-center gap-2.5 px-3.5 py-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--ui-sunken)] text-[12px] font-bold text-[var(--ui-ink)]">
+          &#10022;
         </span>
-        <span className="text-[12px] font-bold text-[#111]">{label}</span>
+        <span className="text-[13px] font-bold text-[#111]">{label}</span>
       </div>
-      <div className="w-full" style={{ aspectRatio: String(crop.key === "orig" ? 4 / 3 : CROP_ASPECT[crop.key as Exclude<CropState["key"], "orig">]) }}>
-        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} />
+      <div className="relative w-full overflow-hidden bg-black" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
+        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W} aspect={aspect} />
       </div>
-      {caption && <p className="px-3 py-2 text-[12px] leading-snug text-[#111]">{caption}</p>}
-      {!caption && description && <p className="px-3 py-2 text-[12px] leading-snug text-[#111]">{description}</p>}
+      {caption && <p className="px-3.5 py-2.5 text-[12px] leading-snug text-[#111]">{caption}</p>}
+      {!caption && description && <p className="px-3.5 py-2.5 text-[12px] leading-snug text-[#111]">{description}</p>}
     </div>
   );
 }
@@ -256,30 +345,38 @@ export default function DestinationPreview({
   if (target) {
     switch (target.platform) {
       case "instagram":
-        return <InstagramPreview target={target} media={media} caption={caption} crop={crop} />;
+        return <InstagramFeedPreview target={target} media={media} caption={caption} crop={crop} />;
       case "facebook":
-        return <FacebookPreview target={target} media={media} caption={caption} description={description} crop={crop} />;
+        return (
+          <FacebookFeedPreview
+            target={target}
+            media={media}
+            caption={caption}
+            description={description}
+            crop={crop}
+          />
+        );
       case "whatsapp":
-        return <WhatsAppPreview target={target} media={media} caption={caption} description={description} crop={crop} />;
+        return <WhatsAppStatusPreview target={target} media={media} caption={caption} crop={crop} />;
       default:
-        return <GenericPreview label={target.name || "Destination"} media={media} caption={caption} description={description} crop={crop} />;
+        return (
+          <GenericPreview
+            label={target.name}
+            media={media}
+            caption={caption}
+            description={description}
+            crop={crop}
+          />
+        );
     }
   }
-  return <GenericPreview label="How this post reads" media={media} caption={caption} description={description} crop={crop} />;
-}
-
-/* ── Shared bits ──────────────────────────────────────────────────── */
-
-function PLATFORM_CAP_SAFE(p: string): number {
-  const map: Record<string, number> = { instagram: 2200, facebook: 5000, whatsapp: 1024, x: 280 };
-  return map[p] ?? 2200;
-}
-
-export function CropBadge({ crop }: { crop: CropState }) {
-  if (crop.key === "orig") return null;
   return (
-    <span className={`ml-auto shrink-0 rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${INK2}`}>
-      {CROP_LABEL[crop.key]}
-    </span>
+    <GenericPreview
+      label="How this post reads"
+      media={media}
+      caption={caption}
+      description={description}
+      crop={crop}
+    />
   );
 }
