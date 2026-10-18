@@ -39,3 +39,7 @@
 - docs/tracking/action-items.md updated (job queue status built)
 - OPS-3: CI test gating added (.github/workflows/ci.yml runs pytest+eslint+tsc before image builds; deploy-staging gated on CI pass)
 - All changes pushed to development
+- SEC-M2 encryption test alignment: fixed 12 test files for encrypted-at-rest contract
+- CI test gating updated: scoped ESLint to changed files, DB pool + Redis fail-open for CI
+- Fixed channels/router.py missing decrypt_contact_phone/decrypt_message_content imports
+- Fixed embedsocial _post stub for test compatibility

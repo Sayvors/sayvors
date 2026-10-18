@@ -6,6 +6,11 @@ This directory contains the API documentation for the Sayvors platform.
 
 - [Overview](overview.md) — API overview, base URL, authentication
 - [Endpoints](endpoints.md) — Complete endpoint reference
+- [Configuration](configuration.md) — API environment variables and deployment settings
+- [RAG / Databanks](rag.md) — Document ingestion, search, agent queries, and database sources
+- [Team Management](../guides/team-management.md) — Roles, permissions, invites, and channel access
+- [Billing and Notifications](../guides/billing-and-notifications.md) — Current billing capabilities and notification workflows
+- [Worker and Job Operations](../operations/workers-and-jobs.md) — Worker deployment, job lanes, and status checks
 - [Authentication](authentication.md) — JWT, cookies, CSRF
 - [Rate Limiting](rate-limiting.md) — Rate limit policies
 - [Error Handling](error-handling.md) — Error formats and codes

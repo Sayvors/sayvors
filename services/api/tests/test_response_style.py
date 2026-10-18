@@ -15,6 +15,7 @@ from app.modules.channels.meta import consumer as meta_consumer
 from app.modules.channels.meta import response_style as rs
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
 from app.modules.channels.models import ChannelMessage
+from app.modules.channels.service import decrypt_message_content
 from conftest import TEST_ENGINE
 
 _PHONE_ID = "pn-style-test-1"
@@ -308,7 +309,7 @@ async def test_consumer_human_style_sends_sequential_parts(db, user_id, monkeypa
 
     assert adapter.sent == ["Hey there! 👋", "Yes we can help.", "Want pricing?"]
     rows = await _outbound_rows()
-    assert [(r.content, r.status) for r in rows] == [
+    assert [(decrypt_message_content(r.content), r.status) for r in rows] == [
         ("Hey there! 👋", "sent"),
         ("Yes we can help.", "sent"),
         ("Want pricing?", "sent"),
@@ -333,7 +334,7 @@ async def test_consumer_send_failure_stops_remaining_parts(db, user_id, monkeypa
 
     assert adapter.sent == ["first part"]
     rows = await _outbound_rows()
-    assert [(r.content, r.status) for r in rows] == [
+    assert [(decrypt_message_content(r.content), r.status) for r in rows] == [
         ("first part", "sent"),
         ("second part", "failed"),
     ]

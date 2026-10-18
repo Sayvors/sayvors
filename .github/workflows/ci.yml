@@ -54,12 +54,17 @@ jobs:
       - name: Run pytest
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors
+          DATABASE_READER_URL: ""
+          DB_POOL_SIZE: "5"
+          DB_POOL_MAX_OVERFLOW: "5"
+          DB_POOL_TIMEOUT_SECONDS: "30"
           REDIS_URL: redis://localhost:6379/0
           KAFKA_BOOTSTRAP_SERVERS: localhost:29092
           ADMIN_PASSWORD_HASH: dummy
           ADMIN_SESSION_MINUTES: 30
           JWT_SECRET: test-secret-key-do-not-use-in-production
           TESTING: "true"
+          AUTH_RATE_LIMIT_FAIL_CLOSED: "false"
         run: |
           cd services/api
           python -m pytest tests/ -q
