@@ -58,3 +58,6 @@
 - ci.yml: dummy META_APP_ID / META_APP_SECRET / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in pytest env
 - test_sync_locks: assertion accepts bare MissingGreenlet (2.0) or StatementError-wrapping-MissingGreenlet (2.1); still asserts the same contract
 - CI #21 green on 17c93dd: 1352 passed, 2 skipped, 0 failed
+- Deploy staging #42 root-caused: ci-gate ran gh api with no GH_TOKEN (gh refuses in Actions without it) → every poll reported "CI status = unknown" and aborted after 10 min although CI #24 on the same commit was green; the jq filter also emitted two lines so it could never equal "completed"
+- deploy-staging.yml fixed: GH_TOKEN env on the gate step, checks:read permission, multi-check status expression (latest check per name; both CI jobs must complete and be green; re-run aware) — validated against the real check-runs payload with jq 1.7.1 (success/pending/failure/rerun cases)
+- CI #24 green on staging merge 6fb0022 (PR #33)

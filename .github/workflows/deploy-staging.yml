@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   packages: write
+  checks: read
 
 concurrency:
   group: deploy-staging
@@ -23,29 +24,27 @@ jobs:
 
       - name: Wait for CI to pass on this commit
         id: check-ci
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           SHA=${{ github.sha }}
           echo "Waiting for CI (pytest + lint + tsc) to pass on $SHA..."
           for i in $(seq 1 60); do
+            # Latest check run per name (so a re-run supersedes its old attempt);
+            # both CI jobs must complete, and both must be green.
             STATUS=$(gh api \
               "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
-              --jq '.check_runs[] | select(.name=="test-backend" or .name=="lint-frontend") | .status' \
-              2>/dev/null || echo "unknown")
+              --jq '[.check_runs[] | select(.name=="test-backend" or .name=="lint-frontend")] | sort_by([.name, .id]) | group_by(.name) | map(last) | if length < 2 then "pending" elif any(.status=="completed" and .conclusion!="success") then "failure" elif any(.status != "completed") then "pending" elif any(.conclusion != "success") then "failure" else "success" end' \
+              2>/dev/null || echo "error")
             echo "poll $i/60: CI status = $STATUS"
-            if [ "$STATUS" = "completed" ]; then
-              CONCLUSION=$(gh api \
-                "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
-                --jq '.check_runs[] | select(.name=="test-backend" or .name=="lint-frontend") | .conclusion' \
-                2>/dev/null || echo "unknown")
-              echo "CI conclusion = $CONCLUSION"
-              if [ "$CONCLUSION" = "success" ]; then
-                echo "CI passed — proceeding with deploy."
-                exit 0
-              else
-                echo "CI failed — aborting deploy."
-                exit 1
-              fi
+            if [ "$STATUS" = "success" ]; then
+              echo "CI passed — proceeding with deploy."
+              exit 0
+            fi
+            if [ "$STATUS" = "failure" ]; then
+              echo "CI failed — aborting deploy."
+              exit 1
             fi
             sleep 10
           done
