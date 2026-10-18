@@ -40,6 +40,8 @@ from .schemas import (
 from .service import (
     UNKNOWN_THREAD_KEY,
     create_channel,
+    decrypt_contact_phone,
+    decrypt_message_content,
     delete_channel,
     get_channel,
     handle_webhook,
