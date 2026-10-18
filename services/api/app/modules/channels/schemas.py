@@ -163,6 +163,7 @@ class AutoReplyConfigUpdate(BaseModel):
     promo_links: bool | None = Field(None, description="Allow promotional links in replies")
     promo_only_relevant: bool | None = Field(None, description="Only promote when relevant to the review")
     promo_max_ctas: int | None = Field(None, ge=0, le=5, description="Maximum promotional CTAs per reply")
+    handoff_link_enabled: bool | None = Field(None, description="Offer reviewers a WhatsApp link: a ticket-code handoff for problems, or a generic sales link for pricing/plan questions. Note: the link makes your WhatsApp number public on the listing")
 
 
 class AutoReplyConfigResponse(BaseModel):
@@ -181,6 +182,7 @@ class AutoReplyConfigResponse(BaseModel):
     promo_links: bool = False
     promo_only_relevant: bool = True
     promo_max_ctas: int = 1
+    handoff_link_enabled: bool = True
 
 
 class ReviewReplyResponse(BaseModel):
@@ -279,6 +281,11 @@ class LeadSettingsOut(BaseModel):
     escalation_resume_hours: int
     escalation_reminder_hours: int
     escalation_emails: list[str]
+    # Pending-leads digest (optional, account-wide).
+    digest_enabled: bool
+    digest_hour: int
+    digest_max_leads: int
+    review_issue_subcategories: list[str] = []
 
 
 class LeadSettingsUpdate(BaseModel):
@@ -298,3 +305,7 @@ class LeadSettingsUpdate(BaseModel):
     escalation_resume_hours: int | None = None
     escalation_reminder_hours: int | None = None
     escalation_emails: list[str] | None = Field(None, max_length=10)
+    digest_enabled: bool | None = None
+    digest_hour: int | None = None
+    digest_max_leads: int | None = None
+    review_issue_subcategories: list[str] | None = Field(None, max_length=40)

@@ -8,6 +8,28 @@ from fastapi import HTTPException
 
 from app.modules.assistant.router import AssistantChatRequest, chat
 from app.modules.assistant import router as assistant_router
+
+
+@pytest.fixture(autouse=True)
+def _clear_snapshot_cache():
+    """Clear the assistant's module-level business-snapshot cache between tests.
+
+    `_snapshot_for_user` memoises per tenant for SNAPSHOT_TTL_SECONDS (30s) and
+    never invalidates on a review sync or a posted reply. Every test here shares
+    one `user_id`, so whichever test ran first populated the cache and every
+    later test was served that earlier snapshot — including tests that seed
+    their own reviews. That is why the snapshot test passed alone and failed in
+    the file.
+
+    Not only a test concern: in production it means the assistant can answer
+    from data up to 30s stale after new reviews land. The TTL is a deliberate
+    trade (rebuilding the snapshot per message is expensive) so it is left
+    alone here, but nothing downstream should treat it as a correctness
+    guarantee.
+    """
+    assistant_router._snapshot_cache.clear()
+    yield
+    assistant_router._snapshot_cache.clear()
 from app.modules.users.models import User
 
 
@@ -38,8 +60,11 @@ async def test_assistant_chat_answers_from_snapshot(db, user_id, channel_id, mon
     """Happy path: snapshot-only grounding (no databank in test DB)."""
     from app.modules.assistant import router as assistant_router
 
-    async def fake_rag(db, user, message):
-        return "", [], False
+    async def fake_rag(db, user, message, model=None):
+        # `_rag_answer` now takes the resolved model and returns a 4-tuple
+        # (answer, citations, grounded, status); status is one of
+        # answered|no_results|no_databank|unavailable.
+        return "", [], False, "no_databank"
 
     async def fake_llm(model, system_prompt, history, message, user):
         assert "LIVE BUSINESS DATA" in system_prompt
@@ -72,11 +97,12 @@ async def test_assistant_chat_grounds_in_rag_when_available(db, user_id, monkeyp
     """When a Databank exists and the RAG agent answers, citations flow through."""
     from app.modules.assistant import router as assistant_router
 
-    async def fake_rag(db, user, message):
+    async def fake_rag(db, user, message, model=None):
         return (
             "Our refund policy allows 14 days.",
             [{"source": "refund-policy.pdf"}],
             True,
+            "answered",
         )
 
     async def fake_llm(model, system_prompt, history, message, user):
@@ -100,8 +126,8 @@ async def test_assistant_chat_grounds_in_rag_when_available(db, user_id, monkeyp
 async def test_assistant_chat_llm_failure_is_502(db, user_id, monkeypatch):
     from app.modules.assistant import router as assistant_router
 
-    async def fake_rag(db, user, message):
-        return "", [], False
+    async def fake_rag(db, user, message, model=None):
+        return "", [], False, "no_databank"
 
     async def boom(*a, **k):
         raise RuntimeError("provider down")
@@ -125,8 +151,8 @@ async def test_assistant_chat_history_is_included(db, user_id, monkeypatch):
     from app.modules.assistant import router as assistant_router
     from app.modules.assistant.router import ChatMessage
 
-    async def fake_rag(db, user, message):
-        return "", [], False
+    async def fake_rag(db, user, message, model=None):
+        return "", [], False, "no_databank"
 
     seen = {}
 
@@ -181,8 +207,8 @@ async def test_assistant_snapshot_carries_every_review_and_reply(db, user_id, ch
     ))
     await db.commit()
 
-    async def fake_rag(db, user, message):
-        return "", [], False
+    async def fake_rag(db, user, message, model=None):
+        return "", [], False, "no_databank"
 
     async def fake_llm(model, system_prompt, history, message, user):
         for key in ("Excellent tool, love it", "Adeel", "Thank you Adeel!",

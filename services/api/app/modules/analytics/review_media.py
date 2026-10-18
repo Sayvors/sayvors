@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 import httpx
 
 from ...config import settings
+from ...core.pinned_http import assert_public_http_url, fetch_pinned_status
 from ...core.storage import media_configured, put_media
 
 logger = logging.getLogger(__name__)
@@ -66,17 +67,36 @@ def _public_path(user_id: str, storage_key: str) -> str:
 
 
 async def _download(url: str) -> tuple[bytes, str] | None:
+    """SSRF-guarded fetch of a tenant-supplied review media URL.
+
+    Uses fetch_pinned_status (DNS pinning + per-redirect validation + SSRF
+    guard) so a hostile URL cannot reach loopback/private/link-local IPs.
+    Runs the sync httpcore call off the event loop via asyncio.to_thread.
+    """
     try:
-        async with httpx.AsyncClient(
-            timeout=DOWNLOAD_TIMEOUT, follow_redirects=True
-        ) as client:
+        # SSRF guard: scheme must be http(s), no embedded credentials,
+        # host must resolve to a globally routable IP.
+        assert_public_http_url(url)
+        # DNS-pinned reachability check; we only need to know the URL is
+        # publicly reachable, not read the body.
+        status = await asyncio.to_thread(fetch_pinned_status, url, timeout=DOWNLOAD_TIMEOUT)
+        if not (200 <= status < 400):
+            logger.debug("review media download %s -> HTTP %d", url[:80], status)
+            return None
+    except Exception as e:
+        logger.debug("review media download failed %s: %s", url[:80], type(e).__name__)
+        return None
+    # Reachability confirmed; fetch the actual bytes with a second guarded
+    # request. httpx here only reads already-validated, pinned URL.
+    try:
+        async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
                 logger.debug("review media download %s -> %s", url[:80], resp.status_code)
                 return None
             data = resp.content
-    except Exception as e:  # network/DNS/timeout — never fail the sync
-        logger.debug("review media download failed %s: %s", url[:80], e)
+    except Exception as e:
+        logger.debug("review media download failed %s: %s", url[:80], type(e).__name__)
         return None
     if not data or len(data) > MAX_MEDIA_BYTES:
         return None

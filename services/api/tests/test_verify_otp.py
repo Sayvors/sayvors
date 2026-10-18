@@ -108,9 +108,10 @@ async def test_unverified_user_correct_code_signs_in(client, db, allow_rate_limi
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body.get("access_token")
+    assert "access_token" not in body  # G2: access token is httpOnly cookie, not JSON body
     assert body["user"]["email"] == "newbie@sayvors.com"
     assert any("refresh_token=" in c for c in resp.headers.get_list("set-cookie"))
+    assert any("access_token=" in c for c in resp.headers.get_list("set-cookie"))
     # The account flipped to verified exactly once, in the DB.
     db.expire_all()
     reloaded = (

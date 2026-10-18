@@ -26,6 +26,12 @@ from sqlalchemy.orm import selectinload
 
 from ....database import async_session
 from ...kafka.client import create_consumer
+from ...channels.service import (
+    encrypt_contact_phone,
+    encrypt_message_content,
+    decrypt_message_content,
+    hash_contact_phone,
+)
 from .models import MetaAsset
 
 logger = logging.getLogger(__name__)
@@ -107,9 +113,9 @@ async def _publish_message_notification(db, tenant_id: str, row, platform: str) 
             "kind": "message",
             "platform": platform,
             "channel_id": row.channel_id,
-            "contact_id": row.contact_phone,
+            "contact_id": decrypt_contact_phone(row.contact_phone),
             "contact_name": row.contact_name,
-            "preview": (row.content or "")[:160],
+            "preview": (decrypt_message_content(row.content) or "")[:160],
             "content_type": row.content_type,
             "message_id": row.platform_message_id,
             "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -273,6 +279,27 @@ async def _resolve_asset(
     ).scalar_one_or_none()
 
 
+def _handoff_context(match) -> str | None:
+    """Prompt block for a matched review issue, or None when there wasn't one.
+
+    Building it can raise on odd data; a context block is an optimisation, so
+    a failure must never cost the customer their reply.
+    """
+    if match is None:
+        return None
+    try:
+        from ...review_engine.handoff import context_block
+
+        return context_block(match)
+    except Exception as e:
+        logger.warning(
+            "handoff context block failed for issue %s: %s: %s",
+            getattr(getattr(match, "issue", None), "id", "?"),
+            type(e).__name__, str(e)[:200],
+        )
+        return None
+
+
 def _system_prompt(user, platform: str = "WhatsApp") -> str:
     """Assistant prompt grounded in the tenant's business profile."""
     name = (user.business_name or f"{user.first_name} {user.last_name}").strip()
@@ -350,9 +377,15 @@ def _system_prompt(user, platform: str = "WhatsApp") -> str:
 
 
 async def _generate_reply(
-    db, channel, tenant_id: str, text: str, platform: str = "WhatsApp"
+    db, channel, tenant_id: str, text: str, platform: str = "WhatsApp",
+    context: str | None = None,
+    contact: str | None = None,
 ) -> str:
-    """Generate an AI reply from recent conversation history + business profile.
+    """Generate an AI reply from THIS CONTACT's conversation + business profile.
+
+    `contact` is the platform identity of the person writing (WhatsApp phone,
+    IGSID). It is supplied by both callers and, when absent, degrades to an
+    EMPTY history rather than a channel-wide one — see the scoping note below.
 
     Raises ValueError (no model enabled) / ProviderError — callers decide how
     to surface the failure; nothing is sent on error.
@@ -364,20 +397,47 @@ async def _generate_reply(
 
     model_id = await resolve_tenant_model(db)  # ValueError when nothing enabled
 
-    rows = (
-        await db.execute(
-            select(ChannelMessage)
-            .where(ChannelMessage.channel_id == channel.id)
-            .order_by(ChannelMessage.created_at.desc())
-            .limit(_HISTORY_MESSAGES)
+    # HISTORY IS SCOPED PER CONTACT — never per channel.
+    #
+    # This was channel-wide, so every customer sharing the number shared one
+    # 10-message window: another customer's messages and our replies to them
+    # (names, orders, addresses, complaints) were injected into this prompt,
+    # and the model mirrored their language. ChannelMessage.contact_phone is
+    # built for exactly this split — inbound rows carry the SENDER, outbound
+    # rows the RECIPIENT, "which is what lets a reply be threaded under the
+    # same contact as the question it answers" (channels/models.py).
+    #
+    # An unknown contact is NOT a licence to fall back to channel-wide: that
+    # fallback IS the leak. We send no history instead; the business card and
+    # system prompt still yield a sane first-contact reply.
+    #
+    # Rows with contact_phone IS NULL predate the column. They cannot be
+    # attributed to a person, so they are excluded from every context rather
+    # than guessed at.
+    if contact:
+        rows = (
+            await db.execute(
+                select(ChannelMessage)
+                .where(
+                    ChannelMessage.channel_id == channel.id,
+                    ChannelMessage.contact_phone_hash == hash_contact_phone(contact),
+                )
+                .order_by(ChannelMessage.created_at.desc())
+                .limit(_HISTORY_MESSAGES)
+            )
+        ).scalars().all()
+    else:
+        logger.warning(
+            "reply generated with NO history: inbound carried no contact "
+            "identity (channel=%s platform=%s)", channel.id, platform,
         )
-    ).scalars().all()
+        rows = []
     # Customers fire "Hi / Hi / hello" before any reply lands — consecutive
     # same-role turns must be folded or qwen3 returns an empty completion.
     history = merge_consecutive([
         LLMMessage(
             role="user" if m.direction == "inbound" else "assistant",
-            content=m.content,
+            content=decrypt_message_content(m.content),
         )
         for m in reversed(rows)
     ])
@@ -405,6 +465,7 @@ async def _generate_reply(
         messages=history,
         system_prompt=_system_prompt(user, platform=platform)
         + (f"\n\n{business_card}" if business_card else "")
+        + (f"\n\n{context}" if context else "")
         + f"\n\n{LEAD_PROMPT_BLOCK}",
         temperature=_REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
@@ -496,10 +557,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 channel_id=channel.id,
                 platform_message_id=wamid[:200] or None,
                 direction="inbound",
-                content=text if text else f"[{msg_type} message]",
+                content=encrypt_message_content(text if text else f"[{msg_type} message]"),
                 content_type=msg_type,
                 status="delivered",
-                contact_phone=from_wa or None,
+                contact_phone=encrypt_contact_phone(from_wa or None),
                 contact_name=data.get("profile_name") or None,
             )
         db.add(row)
@@ -548,10 +609,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             "channel_id": channel.id,
             "platform": "whatsapp",
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "content_type": row.content_type,
             "status": row.status,
-            "contact_phone": row.contact_phone,
+            "contact_phone": decrypt_contact_phone(row.contact_phone),
             "contact_name": row.contact_name,
             "created_at": row.created_at,
         })
@@ -651,8 +712,110 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             )
             return
 
+        # Review -> WhatsApp handoff. A returning customer who quotes a code we
+        # put in a public review reply should NOT be re-interviewed about
+        # details they already gave us in public. Resolve their issue, then:
+        #   - already finished + "any update?"  -> templated reply, no LLM call
+        #   - anything else                       -> LLM, but told what we know
+        # Any failure here degrades to the normal flow below: a lookup problem
+        # must never cost the customer their reply.
+        handoff_match = None
         try:
-            raw_reply = await _generate_reply(db, channel, tenant_id, text)
+            from ...review_engine.handoff import resolve_and_advance
+
+            # In a SAVEPOINT: a lookup failure must not roll back the session,
+            # which would expire `channel`/`row` and make the next attribute
+            # access raise MissingGreenlet on this async session (the exact
+            # hazard scheduling.take_lock documents). begin_nested() unwinds only
+            # this block.
+            async with db.begin_nested():
+                handoff_match = await resolve_and_advance(
+                    db, tenant_id=tenant_id, channel_id=channel.id, text=text,
+                )
+            if handoff_match is not None:
+                logger.info(
+                    "WhatsApp review handoff matched %s via %s wamid=%s from=+%s",
+                    handoff_match.issue.ticket_number or handoff_match.raw,
+                    handoff_match.matched_by, wamid[:32], from_wa[-6:],
+                )
+        except Exception as e:
+            logger.warning(
+                "review handoff lookup failed wamid=%s: %s: %s",
+                wamid[:32], type(e).__name__, str(e)[:200],
+            )
+            handoff_match = None
+
+        if handoff_match is not None:
+            from ...review_engine.handoff import (
+                is_status_check,
+                short_circuit_reply,
+            )
+
+            canned = (
+                short_circuit_reply(handoff_match)
+                # Gated on the thread's detected language: a canned English
+                # string to an Arabic speaker reads as a broken bot, and the
+                # model path already speaks their language.
+                if stats.get("language", "en") == "en" and is_status_check(text)
+                else None
+            )
+            if canned:
+                logger.info(
+                    "WhatsApp handoff short-circuit (no LLM) ticket=%s wamid=%s",
+                    handoff_match.issue.ticket_number or handoff_match.raw,
+                    wamid[:32],
+                )
+                # Same send path as an LLM reply -- outbound row plus the
+                # realtime event -- so the canned reply is indistinguishable in
+                # the inbox. A reply that only existed on WhatsApp would leave
+                # the agent staring at a conversation that looks unanswered.
+                try:
+                    provider_msg_id = await adapter.send_text_message(
+                        phone_number_id, token, from_wa, canned
+                    )
+                except MetaAPIError as e:
+                    logger.error(
+                        "WhatsApp short-circuit send failed from=+%s: %s %s",
+                        from_wa[-6:], e.status_code, str(e)[:200],
+                    )
+                    await _publish_typing(tenant_id, channel.id, from_wa, False)
+                    return
+                row = ChannelMessage(
+                    id=str(uuid.uuid4()),
+                    channel_id=channel.id,
+                    platform_message_id=provider_msg_id[:200] or None,
+                    direction="outbound",
+                    content=encrypt_message_content(canned),
+                    status="sent",
+                    contact_phone=encrypt_contact_phone(from_wa or None),
+                    contact_phone_hash=hash_contact_phone(from_wa or None),
+                    is_ai=True,
+                )
+                db.add(row)
+                await db.commit()
+                from ...channels.realtime import publish_inbox_event as _pub_sc
+
+                await _pub_sc(tenant_id, {
+                    "type": "message",
+                    "id": row.id,
+                    "channel_id": channel.id,
+                    "platform": "whatsapp",
+                    "direction": "outbound",
+                    "content": decrypt_message_content(row.content),
+                    "content_type": "text",
+                    "status": "sent",
+                    "contact_phone": decrypt_contact_phone(row.contact_phone),
+                    "created_at": row.created_at,
+                })
+                await _publish_typing(tenant_id, channel.id, from_wa, False)
+                return
+
+        try:
+            raw_reply = await _generate_reply(
+                db, channel, tenant_id, text,
+                context=_handoff_context(handoff_match),
+                contact=from_wa or None,
+            )
         except Exception as e:
             logger.warning(
                 "WhatsApp AI reply generation failed wamid=%s: %s: %s",
@@ -747,10 +910,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             channel_id=channel.id,
                             platform_message_id=provider_msg_id[:200] or None,
                             direction="outbound",
-                            content=reply,  # transcript of what was spoken
+                            content=encrypt_message_content(reply),  # transcript of what was spoken
                             content_type="audio",
                             status="sent",
-                            contact_phone=from_wa or None,
+                            contact_phone=encrypt_contact_phone(from_wa or None),
                             is_ai=True,  # drives the escalation counter
                         )
                     db.add(row)
@@ -769,10 +932,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         "channel_id": channel.id,
                         "platform": "whatsapp",
                         "direction": "outbound",
-                        "content": row.content,
+                        "content": decrypt_message_content(row.content),
                         "content_type": row.content_type,
                         "status": "sent",
-                        "contact_phone": row.contact_phone,
+                        "contact_phone": decrypt_contact_phone(row.contact_phone),
                         "created_at": row.created_at,
                     })
                     logger.info(
@@ -818,10 +981,11 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             id=str(uuid.uuid4()),
                             channel_id=channel.id,
                             direction="outbound",
-                            content=part,
+                            content=encrypt_message_content(part),
                             status="failed",
                             error=str(e)[:500],
-                            contact_phone=from_wa or None,
+                            contact_phone=encrypt_contact_phone(from_wa or None),
+                            contact_phone_hash=hash_contact_phone(from_wa or None),
                         )
                     )
                     await db.commit()
@@ -832,9 +996,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         channel_id=channel.id,
                         platform_message_id=provider_msg_id[:200] or None,
                         direction="outbound",
-                        content=part,
+                        content=encrypt_message_content(part),
                         status="sent",
-                        contact_phone=from_wa or None,
+                        contact_phone=encrypt_contact_phone(from_wa or None),
+                        contact_phone_hash=hash_contact_phone(from_wa or None),
                         is_ai=True,  # drives the escalation counter
                     )
                 db.add(row)
@@ -847,10 +1012,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     "channel_id": channel.id,
                     "platform": "whatsapp",
                     "direction": "outbound",
-                    "content": row.content,
+                    "content": decrypt_message_content(row.content),
                     "content_type": "text",
                     "status": "sent",
-                    "contact_phone": row.contact_phone,
+                    "contact_phone": decrypt_contact_phone(row.contact_phone),
                     "created_at": row.created_at,
                 })
                 if index < len(messages) - 1:
@@ -935,10 +1100,11 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             channel_id=channel.id,
             platform_message_id=wamid[:200] or None,
             direction="inbound",
-            content=text if text else f"[{msg_type} message]",
+            content=encrypt_message_content(text if text else f"[{msg_type} message]"),
             content_type=msg_type,
             status="delivered",
-            contact_phone=from_wa or None,
+            contact_phone=encrypt_contact_phone(from_wa or None),
+            contact_phone_hash=hash_contact_phone(from_wa or None),
             contact_name=data.get("profile_name") or None,
         )
         db.add(row)
@@ -955,10 +1121,10 @@ async def _handle_message_history(event: dict, data: dict) -> None:
             "channel_id": channel.id,
             "platform": "whatsapp",
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "content_type": row.content_type,
             "status": "delivered",
-            "contact_phone": row.contact_phone,
+            "contact_phone": decrypt_contact_phone(row.contact_phone),
             "contact_name": row.contact_name,
             "created_at": row.created_at,
         })
@@ -1000,12 +1166,13 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
             channel_id=channel.id,
             platform_message_id=wamid[:200] or None,
             direction="outbound",
-            content=text if text else f"[{msg_type} message]",
+            content=encrypt_message_content(text if text else f"[{msg_type} message]"),
             content_type=msg_type,
             status="delivered",
             # An echo is a message the business sent from the WhatsApp app, so
             # `to` is the customer — the same contact the thread is keyed on.
-            contact_phone=to_wa or None,
+            contact_phone=encrypt_contact_phone(to_wa or None),
+            contact_phone_hash=hash_contact_phone(to_wa or None),
         )
         db.add(row)
         await db.commit()
@@ -1017,10 +1184,10 @@ async def _handle_message_echo(event: dict, data: dict) -> None:
             "channel_id": channel.id,
             "platform": "whatsapp",
             "direction": "outbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "content_type": row.content_type,
             "status": row.status,
-            "contact_phone": row.contact_phone,
+            "contact_phone": decrypt_contact_phone(row.contact_phone),
             "created_at": row.created_at,
         })
 
@@ -1160,10 +1327,11 @@ async def _handle_instagram_echo(event: dict, data: dict) -> None:
             channel_id=channel.id,
             platform_message_id=mid[:200] or None,
             direction="outbound",
-            content=text if text else "[non-text message]",
+            content=encrypt_message_content(text if text else "[non-text message]"),
             content_type="text",
             status="sent",
-            contact_phone=to_contact or None,
+            contact_phone=encrypt_contact_phone(to_contact or None),
+            contact_phone_hash=hash_contact_phone(to_contact or None),
         ))
         await db.commit()
 
@@ -1224,8 +1392,8 @@ async def _handle_instagram_comment(event: dict, data: dict) -> None:
         if existing is not None:
             # Edited redelivery: same id, new text. Any other replay of an
             # unchanged comment is a Kafka redelivery — nothing to do.
-            if text and existing.content != text:
-                existing.content = text
+            if text and decrypt_message_content(existing.content) != text:
+                existing.content = encrypt_message_content(text)
                 db.add(existing)
                 await db.commit()
                 from ...channels.realtime import publish_inbox_event
@@ -1235,7 +1403,7 @@ async def _handle_instagram_comment(event: dict, data: dict) -> None:
                     "id": existing.id,
                     "channel_id": existing.channel_id,
                     "platform": "instagram",
-                    "content": existing.content,
+                    "content": decrypt_message_content(existing.content),
                 })
             return
 
@@ -1250,7 +1418,7 @@ async def _handle_instagram_comment(event: dict, data: dict) -> None:
             parent_platform_comment_id=data.get("parent_id") or None,
             media_id=data.get("media_id") or None,
             direction="inbound",
-            content=text or "[non-text comment]",
+            content=encrypt_message_content(text or "[non-text comment]"),
             author_id=author_id,
             author_name=author_name,
             status="received",
@@ -1268,7 +1436,7 @@ async def _handle_instagram_comment(event: dict, data: dict) -> None:
             "comment_id": comment_id,
             "media_id": row.media_id,
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "author_id": row.author_id,
             "author_name": row.author_name,
             "platform_timestamp": row.platform_timestamp,
@@ -1317,8 +1485,8 @@ async def _handle_facebook_comment(event: dict, data: dict) -> None:
         if existing is not None:
             # Edited redelivery: same id, new text. Any other replay of an
             # unchanged comment is a Kafka redelivery — nothing to do.
-            if text and existing.content != text:
-                existing.content = text
+            if text and decrypt_message_content(existing.content) != text:
+                existing.content = encrypt_message_content(text)
                 db.add(existing)
                 await db.commit()
                 from ...channels.realtime import publish_inbox_event
@@ -1328,7 +1496,7 @@ async def _handle_facebook_comment(event: dict, data: dict) -> None:
                     "id": existing.id,
                     "channel_id": existing.channel_id,
                     "platform": "facebook",
-                    "content": existing.content,
+                    "content": decrypt_message_content(existing.content),
                 })
             return
 
@@ -1343,7 +1511,7 @@ async def _handle_facebook_comment(event: dict, data: dict) -> None:
             parent_platform_comment_id=data.get("parent_id") or None,
             media_id=data.get("post_id") or None,
             direction="inbound",
-            content=text or "[non-text comment]",
+            content=encrypt_message_content(text or "[non-text comment]"),
             author_id=author_id,
             author_name=author_name,
             status="received",
@@ -1361,7 +1529,7 @@ async def _handle_facebook_comment(event: dict, data: dict) -> None:
             "comment_id": comment_id,
             "media_id": row.media_id,
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "author_id": row.author_id,
             "author_name": row.author_name,
             "platform_timestamp": row.platform_timestamp,
@@ -1425,10 +1593,11 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             channel_id=channel.id,
             platform_message_id=mid[:200] or None,
             direction="inbound",
-            content=text if text else "[non-text message]",
+            content=encrypt_message_content(text if text else "[non-text message]"),
             content_type="text",
             status="delivered",
-            contact_phone=igsid or None,
+            contact_phone=encrypt_contact_phone(igsid or None),
+            contact_phone_hash=hash_contact_phone(igsid or None),
         )
         db.add(row)
         await db.commit()
@@ -1440,10 +1609,10 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             "channel_id": channel.id,
             "platform": "instagram",
             "direction": "inbound",
-            "content": row.content,
+            "content": decrypt_message_content(row.content),
             "content_type": row.content_type,
             "status": row.status,
-            "contact_phone": row.contact_phone,
+            "contact_phone": decrypt_contact_phone(row.contact_phone),
             "created_at": row.created_at,
         })
 
@@ -1528,7 +1697,8 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
 
         try:
             raw_reply = await _generate_reply(
-                db, channel, tenant_id, text or "", platform="Instagram"
+                db, channel, tenant_id, text or "", platform="Instagram",
+                contact=igsid or None,
             )
         except Exception as e:
             logger.warning(
@@ -1589,10 +1759,11 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                     id=str(uuid.uuid4()),
                     channel_id=channel.id,
                     direction="outbound",
-                    content=part,
+                    content=encrypt_message_content(part),
                     status="failed",
                     error=str(e)[:500],
-                    contact_phone=igsid or None,
+                    contact_phone=encrypt_contact_phone(igsid or None),
+                    contact_phone_hash=hash_contact_phone(igsid or None),
                 ))
                 await db.commit()
                 # Later parts would land without their context — stop.
@@ -1602,9 +1773,10 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 channel_id=channel.id,
                 platform_message_id=provider_msg_id[:200] or None,
                 direction="outbound",
-                content=part,
+                content=encrypt_message_content(part),
                 status="sent",
-                contact_phone=igsid or None,
+                contact_phone=encrypt_contact_phone(igsid or None),
+                contact_phone_hash=hash_contact_phone(igsid or None),
                 is_ai=True,  # drives the escalation counter
             )
             db.add(row)
@@ -1618,10 +1790,10 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                     "channel_id": channel.id,
                     "platform": "instagram",
                     "direction": "outbound",
-                    "content": row.content,
+                    "content": decrypt_message_content(row.content),
                     "content_type": "text",
                     "status": "sent",
-                    "contact_phone": row.contact_phone,
+                    "contact_phone": decrypt_contact_phone(row.contact_phone),
                     "created_at": row.created_at,
                 })
             except Exception:

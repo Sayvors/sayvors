@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 LOCK_SECONDS = 120
 
+# Channel ids already reported as having no stored Google credentials, so the
+# poll loop warns once instead of on every cycle. Process-local by design: a
+# restart re-surfaces the state, which is what you want after a redeploy.
+_no_token_warned: set[str] = set()
+
 # Kafka topics (delivered via the transactional outbox, modules/outbox)
 REVIEW_EVENTS_TOPIC = "review-events"
 
@@ -294,6 +299,42 @@ async def _enqueue_review_replied(channel: Channel, review, status: str) -> None
     )
 
 
+async def _announce_new_issue(
+    db: AsyncSession, *, tenant_id: str, outcome: dict
+) -> None:
+    """Tell the merchant a ticket just appeared, and ring the bell once.
+
+    Only ticketed issues are announced. A classified review with nothing to
+    act on (praise, a passing question) is still stored, but pinging about it
+    would train merchants to ignore ticket alerts — and the earlier decision
+    is explicit: praise never becomes a ticket.
+
+    Commits so the notification row survives: the poll loop's `continue`
+    paths below skip the reply work entirely, and without this commit the
+    insert would be rolled back with the session. Failures are swallowed —
+    an unannounced ticket is a missed alert, not a failed poll.
+    """
+    from .models import ReviewIssue
+    from .review_issue_events import notify_review_issue, publish_review_issue_event
+
+    issue_id = outcome.get("issue_id")
+    if not issue_id:
+        return
+    try:
+        issue = (
+            await db.execute(
+                select(ReviewIssue).where(ReviewIssue.id == issue_id)
+            )
+        ).scalar_one_or_none()
+        if issue is None or not issue.ticket_number:
+            return
+        await publish_review_issue_event(tenant_id, issue, "created")
+        await notify_review_issue(db, tenant_id=tenant_id, issue=issue, action="created")
+        await db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("review ticket announcement failed for %s: %s", issue_id, e)
+
+
 async def _refresh_edited_review_reply(
     db: AsyncSession, channel: Channel, config: AutoReplyConfig, review, client=None
 ) -> None:
@@ -435,7 +476,17 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
     access_token = decrypt_token(channel.access_token) if channel.access_token else None
     refresh_token = decrypt_token(channel.refresh_token) if channel.refresh_token else None
     if not access_token and not refresh_token:
-        logger.error("Channel %s has no tokens; skipping", channel.id)
+        # A channel with no Google token is expected state (never connected,
+        # or credentials cleared), not a failure — logging it at ERROR put
+        # three identical lines in front of every real error, five minutes
+        # apart, forever. Warn once per channel per process so a reconnect
+        # problem stays visible without becoming the background noise.
+        if channel.id not in _no_token_warned:
+            _no_token_warned.add(channel.id)
+            logger.warning(
+                "Channel %s has no Google credentials stored; skipping its review poll",
+                channel.id,
+            )
         return stats
 
     client = GoogleReviewsClient(access_token or "", refresh_token)
@@ -485,6 +536,76 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             except Exception as e:
                 # Analytics events must never break auto-reply
                 logger.warning("review.discovered enqueue failed for %s: %s", review.review_id, e)
+            # Persist the structured classification so the WhatsApp handoff and
+            # the "Status: Review" surface have facts to look up. Orchestrated by
+            # the review pipeline graph (classify -> ticket -> handoff); it falls
+            # back to running the same nodes inline if langgraph is unavailable.
+            # Never break the auto-reply pipeline if classification fails (no
+            # model, no network, unreachable provider) -- retried next poll.
+            try:
+                from ..channels.models import ReviewIssue
+                from ..users.models import User
+                from ..review_engine.graph import run_review_pipeline
+                from ..channels.meta.lead_engine import normalize_lead_settings
+
+                existing = await db.execute(
+                    select(ReviewIssue).where(
+                        ReviewIssue.channel_id == channel.id,
+                        ReviewIssue.review_id == review.review_id,
+                    ).limit(1)
+                )
+                if existing.scalar_one_or_none() is None:
+                    model = getattr(config, "model", None)
+                    if not model:
+                        try:
+                            from ..review_engine.service import _resolve_engine_model
+                            from ..review_engine.schemas import ReviewEngineRequest
+                            req = ReviewEngineRequest(rating=review.rating, channel_id=channel.id)
+                            # Best-effort; ignored on failure.
+                            model, _ = await _resolve_engine_model(
+                                req,
+                                channel.user_id,
+                                db,
+                            )
+                        except Exception:
+                            model = None
+                    try:
+                        urow = (await db.execute(
+                            select(User.lead_settings).where(User.id == channel.user_id)
+                        )).scalar_one_or_none()
+                        subcats = normalize_lead_settings(urow).get(
+                            "review_issue_subcategories"
+                        ) or []
+                    except Exception:
+                        subcats = []
+                    outcome = await run_review_pipeline(
+                        db,
+                        tenant_id=channel.user_id,
+                        channel_id=channel.id,
+                        review_id=review.review_id,
+                        rating=review.rating,
+                        review_text=review.text,
+                        reviewer_name=review.reviewer_name,
+                        model=model,
+                        tenant_subcategories=subcats,
+                    )
+                    if outcome.get("classification_error"):
+                        logger.warning(
+                            "review issue classification failed for %s: %s",
+                            review.review_id, outcome["classification_error"],
+                        )
+                    elif outcome.get("issue_created"):
+                        logger.info(
+                            "review issue %s -> ticket=%s handoff=%s code=%s",
+                            review.review_id, outcome.get("ticket_number"),
+                            outcome.get("handoff_eligible"),
+                            outcome.get("handoff_code"),
+                        )
+                        await _announce_new_issue(
+                            db, tenant_id=channel.user_id, outcome=outcome,
+                        )
+            except Exception as e:
+                logger.warning("review issue classification failed for %s: %s", review.review_id, e)
             if await _already_replied(db, review.review_id):
                 # Idempotency: a draft is already queued (or posted) for
                 # this review — polling it again must not create a duplicate.

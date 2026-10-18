@@ -147,27 +147,48 @@ class FacebookAdapter(MetaProviderAdapter):
 
     async def publish_post(
         self,
-        page_id: str,
         token: str,
-        *,
-        message: str | None = None,
-        link: str | None = None,
-        attached_media: list[str] | None = None,
-        scheduled_at: int | None = None,
+        asset_id: str,
+        method: str,
+        media_url: str | None,
+        media_type: str | None,
+        caption: str,
+        description: str,
+        scheduled_at: str | None,
     ) -> dict:
-        """POST /{page}/feed. attached_media is an ordered list of
-        media_fbids from unpublished /photos children. scheduled_at is
-        unix SECONDS and implies published=false."""
+        """POST /{page}/feed for one destination+format.
+
+        asset_id = page id. token = page access token.
+        If media_url is set, first upload the photo as unpublished to get a
+        media_fbid, then attach it to the feed post. Otherwise a text/link
+        post.
+        scheduled_at is ISO 8601; Graph wants unix seconds.
+        """
+        page_id = asset_id
+        message = caption or description or ""
         data: dict[str, str] = {}
         if message:
-            data["message"] = message
-        if link:
-            data["link"] = link
-        for i, fbid in enumerate(attached_media or []):
+            data["message"] = message[:5000]
+
+        attach_fbids: list[str] = []
+        if media_url:
+            # Upload the public image as unpublished to get a media_fbid.
+            photo = await self.publish_photo(page_id, token, url=media_url, caption=caption, published=False)
+            fbid = photo.get("id")
+            if fbid:
+                attach_fbids.append(fbid)
+        for i, fbid in enumerate(attach_fbids):
             data[f"attached_media[{i}][media_fbid]"] = fbid
-        if scheduled_at is not None:
-            data["published"] = "false"
-            data["scheduled_publish_time"] = str(scheduled_at)
+
+        if scheduled_at:
+            from datetime import datetime as _dt
+            try:
+                dt = _dt.fromisoformat(str(scheduled_at).replace("Z", "+00:00"))
+                data["published"] = "false"
+                data["scheduled_publish_time"] = str(int(dt.timestamp()))
+            except ValueError:
+                pass  # ignore bad scheduled_at, publish now
+
         resp = await self._graph("POST", f"/{page_id}/feed", token, data=data)
         return resp.json()
 

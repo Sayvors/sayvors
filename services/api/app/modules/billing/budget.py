@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 # difference to the real cost is settled afterwards.
 RESERVE_CENTS = 5
 
+# TTL for live balance keys in Redis (24 hours). DB is source of truth;
+# Redis is a live cache that re-syncs from DB on expiry.
+BUDGET_TTL_SECONDS = 86_400
+
 # Credits bundled with each plan on grant (cents). Pro = $20 of AI budget.
 PLAN_INCLUDED_CENTS = {"free": 0, "pro": 2000}
 
@@ -104,7 +108,7 @@ async def sync_balance(tenant_id: str, cents: int) -> None:
         from ..redis.client import get_redis
 
         redis = await get_redis()
-        await redis.set(_key(tenant_id), int(cents))
+        await redis.setex(_key(tenant_id), BUDGET_TTL_SECONDS, int(cents))
     except Exception as e:
         logger.error("AI budget sync failed for %s (DB remains source of truth): %s",
                      tenant_id, e)
@@ -118,8 +122,12 @@ async def reserve(tenant_id: str, cents: int = RESERVE_CENTS) -> int | None:
 
         redis = await get_redis()
         new_balance = await redis.decrby(_key(tenant_id), int(cents))
+        # Ensure the key always carries a TTL, even if reserve runs before
+        # sync_balance ever created it with setex.
+        await redis.expire(_key(tenant_id), BUDGET_TTL_SECONDS)
         if new_balance < 0:
             await redis.incrby(_key(tenant_id), int(cents))  # refund
+            await redis.expire(_key(tenant_id), BUDGET_TTL_SECONDS)
             raise BudgetExhausted(tenant_id)
         return int(cents)
     except BudgetExhausted:
@@ -140,5 +148,6 @@ async def settle(tenant_id: str, reserved_cents: int, actual_cents: int) -> None
 
         redis = await get_redis()
         await redis.incrby(_key(tenant_id), delta)
+        await redis.expire(_key(tenant_id), BUDGET_TTL_SECONDS)
     except Exception as e:
         logger.warning("AI budget settle failed (reconcile from usage events): %s", e)

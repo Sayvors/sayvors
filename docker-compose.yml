@@ -39,6 +39,24 @@ services:
       retries: 10
       start_period: 20s
 
+  pgbouncer:
+    image: bitnami/pgbouncer:latest
+    container_name: sayvors-pgbouncer
+    ports:
+      - "127.0.0.1:6432:6432"
+    environment:
+      - PGBOUNCER_PASSWORD=postgres
+      - PGBOUNCER_POSTGRES_HOST=host.docker.internal
+      - PGBOUNCER_POSTGRES_PORT=5432
+      - PGBOUNCER_POSTGRES_DATABASE=sayvors
+      - PGBOUNCER_POOL_MODE=transaction
+      - PGBOUNCER_DEFAULT_POOL_SIZE=50
+      - PGBOUNCER_MAX_CLIENT_CONN=200
+      - PGBOUNCER_LISTEN_ADDR=*
+      - PGBOUNCER_LISTEN_PORT=6432
+      - PGBOUNCER_AUTH_TYPE=md5
+    depends_on: []
+
   # GlitchTip — open-source Sentry alternative for error tracking
   glitchtip:
     image: glitchtip/glitchtip:latest

@@ -46,8 +46,36 @@ async def enqueue_event(
     return event_id
 
 
+async def enqueue_event_in(
+    db: AsyncSession,
+    event_type: str,
+    payload: dict,
+    topic: str = "auth-events",
+) -> str:
+    """Write an event to the outbox using the caller's session.
+
+    Caller commits once — job row + outbox row are atomic (R2 in design doc).
+    """
+    event_id = str(uuid.uuid4())
+    row = EventOutbox(
+        id=event_id,
+        event_type=event_type,
+        payload=payload,
+        topic=topic,
+        status="pending",
+        attempts=0,
+        next_retry_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    await db.flush()
+    return event_id
+
+
 async def fetch_pending_events(batch_size: int = 100) -> list[EventOutbox]:
-    """Fetch a batch of events ready for delivery."""
+    """Fetch a batch of events ready for delivery with FOR UPDATE SKIP LOCKED.
+
+    Multiple drainers can run concurrently without twin-sending events (S5 in design doc).
+    """
     async with async_session() as db:
         now = datetime.now(timezone.utc)
         result = await db.execute(
@@ -58,6 +86,7 @@ async def fetch_pending_events(batch_size: int = 100) -> list[EventOutbox]:
                 EventOutbox.attempts < MAX_RETRIES,
             )
             .order_by(EventOutbox.created_at)
+            .with_for_update(skip_locked=True)
             .limit(batch_size)
         )
         events = list(result.scalars().all())
@@ -112,6 +141,7 @@ async def cleanup_sent_events() -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=SENT_RETENTION_HOURS)
     async with async_session() as db:
         from sqlalchemy import delete
+
         result = await db.execute(
             delete(EventOutbox).where(
                 EventOutbox.status == "sent",
@@ -126,8 +156,8 @@ async def get_outbox_stats() -> dict:
     """Return counts by status for monitoring."""
     async with async_session() as db:
         from sqlalchemy import func
+
         result = await db.execute(
-            select(EventOutbox.status, func.count())
-            .group_by(EventOutbox.status)
+            select(EventOutbox.status, func.count()).group_by(EventOutbox.status)
         )
         return {row[0]: row[1] for row in result.all()}

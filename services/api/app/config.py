@@ -1,8 +1,11 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors"
+    DATABASE_READER_URL: str = ""  # empty = reads also hit DATABASE_URL (no replica yet)
+    DB_POOL_MODE: str = "session"  # session | transaction — PgBouncer pool mode
     # AsyncPG pool: workers hold sessions across network calls (Localith,
     # Groq), so size generously and fail fast instead of hanging forever.
     DB_POOL_SIZE: int = 50
@@ -46,12 +49,24 @@ class Settings(BaseSettings):
     RETENTION_DELETE_BATCH_SIZE: int = 1000
     CSRF_COOKIE_NAME: str = "csrf_token"
     REFRESH_COOKIE_NAME: str = "refresh_token"
+    ACCESS_COOKIE_NAME: str = "access_token"
     REFRESH_COOKIE_MAX_AGE: int = 60 * 60 * 24 * 7  # 7 days
+    ACCESS_COOKIE_MAX_AGE: int = 15 * 60  # 15 minutes, matches JWT access expiry
     # Parent domain shared by the SPA and the API (e.g. ".sayvors.com").
     # Lets the SPA origin read the non-httpOnly CSRF cookie for the
     # X-CSRF-Token double-submit header in split-domain deployments.
-    # None = host-only cookies (local dev).
-    COOKIE_DOMAIN: str | None = None
+    # None = host-only cookies (local dev). Defaults to .sayvors.com so that
+    # cookies set by api.sayvors.com are also sent to web.sayvors.com and vice
+    # versa. Local dev: set COOKIE_DOMAIN= in .env to get host-only cookies.
+    COOKIE_DOMAIN: str | None = ".sayvors.com"
+
+    @field_validator("COOKIE_DOMAIN")
+    @classmethod
+    def _cookie_domain(cls, v: str | None) -> str | None:
+        # Empty string means host-only (for local dev on localhost)
+        if v == "":
+            return None
+        return v
     # Cookie transport flags. Both cookies are hardcoded Secure/SameSite=None
     # by default, which is correct in production and silently breaks local dev:
     # a browser refuses a Secure cookie over plain http, so the CSRF cookie
@@ -61,6 +76,12 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = True
     COOKIE_SAMESITE: str = "none"  # none | lax | strict
     ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
+
+    # ── Logging ─────────────────────────────────────────
+    # "" = auto: readable console when stdout is a terminal, one-JSON-object-per-
+    # line when it is piped (Docker, log shippers, aggregators). Force either
+    # shape with "console" / "json". Anything else falls back to auto.
+    LOG_FORMAT: str = ""
 
     # ── File uploads ────────────────────────────────────
     UPLOAD_DIR: str = "./data/uploads"

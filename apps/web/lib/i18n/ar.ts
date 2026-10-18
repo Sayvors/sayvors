@@ -19,6 +19,7 @@ const ar: Dict = {
     connect: "القنوات",
     channels: "القنوات",
     manage: "إدارة",
+    publishPost: "نشر",
     connectChannel: "اربط قناة",
     connectMore: "اربط المزيد",
     autoReply: "الرد التلقائي",

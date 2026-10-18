@@ -161,12 +161,14 @@ async def unread_count(
 class NotificationSettingsOut(BaseModel):
     messages: bool
     leads: bool
+    tickets: bool
 
 
 class NotificationSettingsIn(BaseModel):
     # None = leave the toggle untouched (PATCH semantics).
     messages: bool | None = None
     leads: bool | None = None
+    tickets: bool | None = None
 
 
 @router.get("/settings", response_model=NotificationSettingsOut)

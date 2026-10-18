@@ -10,6 +10,7 @@ import {
   pillKindFor,
   rememberSeenIds,
 } from "@/lib/notifications";
+import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
 
 export interface BellNotification {
   id: string;
@@ -31,6 +32,9 @@ const TYPE_META: Record<string, { icon: string; tint: string }> = {
   reply_posted: { icon: "✓", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
   reply_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
   review_edited: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300" },
+  review_ticket_created: { icon: "!", tint: "bg-coral/10 text-coral dark:text-coral" },
+  review_ticket_updated: { icon: "✎", tint: "bg-violet-500/10 text-deep-violet dark:text-violet-300" },
+  review_ticket_customer: { icon: "↩", tint: "bg-amber-500/10 text-amber-600 dark:text-amber-300" },
   post_scheduled: { icon: "🕑", tint: "bg-sky-500/10 text-sky-600 dark:text-sky-300" },
   post_published: { icon: "📝", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" },
   post_failed: { icon: "!", tint: "bg-red-500/10 text-red-600 dark:text-red-400" },
@@ -144,6 +148,23 @@ export default function NotificationsBell() {
       window.removeEventListener("focus", onFocus);
     };
   }, [refreshCount]);
+
+  /* The interval is the safety net, not the delivery mechanism: up to 45s
+     between a review ticket appearing and the badge admitting it is a long
+     time when a customer is waiting. Every notification publish (messages,
+     lead escalations, tickets) rides the same socket the inbox already uses,
+     so the badge is correct immediately and the poll only covers a dropped
+     socket. The dropdown, if open, is refetched too so the new row is
+     visible without a click. */
+  const onRealtime = useCallback(
+    (e: InboxRealtimeEvent) => {
+      if (e.type !== "notification") return;
+      void refreshCount();
+      if (open) void openDropdown();
+    },
+    [refreshCount, open, openDropdown]
+  );
+  useInboxRealtime(onRealtime);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {

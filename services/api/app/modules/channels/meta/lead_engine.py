@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
+from ...channels.service import hash_contact_phone
 from ..models import ChannelMessage, Lead, LeadAction
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,17 @@ SETTINGS_DEFAULTS = {
     "escalation_reminder_hours": 4,
     # Empty = escalate to the tenant owner's own signup email.
     "escalation_emails": [],
+    # Pending-leads digest. Off by default: a summary nobody asked for is
+    # worse than none, and it is a new outbound email to a tenant's inbox.
+    # Opt-in per tenant, then at most one per local day.
+    "digest_enabled": False,
+    # Local hour the digest goes out. Paired with the tenant's own timezone so
+    # it lands in the morning rather than at 03:00 UTC.
+    "digest_hour": 8,
+    # How many leads one digest may list, so a large tenant gets a summary
+    # rather than a wall of names.
+    "digest_max_leads": 20,
+    "review_issue_subcategories": [],
 }
 
 _INT_KEYS = (
@@ -78,6 +90,8 @@ _INT_KEYS = (
     "escalation_threshold",
     "escalation_resume_hours",
     "escalation_reminder_hours",
+    "digest_hour",
+    "digest_max_leads",
 )
 # Sanity clamps: a tenant can delay or soften nudges, never spam (max 4
 # attempts) or disable the safety properties. max_attempts=0 turns the
@@ -96,6 +110,11 @@ _INT_CLAMP = {
     # making the handover pointless.
     "escalation_resume_hours": (1, 336),
     "escalation_reminder_hours": (1, 72),
+    # Local hour the digest goes out, in the tenant's own timezone.
+    "digest_hour": (0, 23),
+    # The digest is a rollup, so a cap keeps the email readable rather than
+    # letting a busy tenant's inbox decide the length.
+    "digest_max_leads": (1, 100),
 }
 
 
@@ -109,6 +128,9 @@ def normalize_lead_settings(raw: dict | None) -> dict:
     if not isinstance(raw, dict):
         return settings
     settings["enabled"] = bool(raw.get("enabled", True))
+    # Opt-in, and absent must mean off: a deploy that turned this on by
+    # default would start mailing every tenant who never asked.
+    settings["digest_enabled"] = bool(raw.get("digest_enabled", False))
     for key in _INT_KEYS:
         try:
             value = int(raw.get(key, settings[key]))
@@ -122,6 +144,20 @@ def normalize_lead_settings(raw: dict | None) -> dict:
         settings["timezone"] = tz
     except Exception:
         pass
+    # Review-issue subcategories the tenant cares about (used to classify
+    # Google reviews and to scope WhatsApp handoff context). Stick to a small
+    # list and deduplicate so a tenant cannot bloat storage indefinitely.
+    raw_subs = raw.get("review_issue_subcategories")
+    if isinstance(raw_subs, list):
+        cleaned_subs = []
+        seen = set()
+        for e in raw_subs:
+            if isinstance(e, str) and e.strip():
+                k = e.strip().lower()
+                if k not in seen:
+                    seen.add(k)
+                    cleaned_subs.append(k)
+        settings["review_issue_subcategories"] = cleaned_subs[:40]
     raw_emails = raw.get("escalation_emails")
     if isinstance(raw_emails, list):
         cleaned = [
@@ -589,7 +625,7 @@ async def latest_inbound(db, channel_id: str, contact_id: str):
         select(ChannelMessage.platform_message_id, ChannelMessage.created_at)
         .where(
             ChannelMessage.channel_id == channel_id,
-            ChannelMessage.contact_phone == contact_id,
+            ChannelMessage.contact_phone_hash == hash_contact_phone(contact_id),
             ChannelMessage.direction == "inbound",
         )
         .order_by(ChannelMessage.created_at.desc())

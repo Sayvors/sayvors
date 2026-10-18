@@ -7,7 +7,7 @@ import OnboardingProgress from "@/components/onboarding/OnboardingProgress";
 import ChannelCard from "@/components/onboarding/ChannelCard";
 import DatabankStep from "@/components/onboarding/DatabankStep";
 import AutoReplyToggle from "@/components/onboarding/AutoReplyToggle";
-import { useAuth, getAccessToken } from "@/lib/auth-context";
+import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -141,10 +141,6 @@ export default function OnboardingPage() {
 
   const handleConnect = async (slug: string) => {
     if (slug !== "google") return;
-    if (!getAccessToken()) {
-      setBanner({ kind: "err", text: "Please log in again." });
-      return;
-    }
     try {
       // Mint a 120s single-use connect ticket so the access JWT never
       // appears in a URL (history / proxy logs / Referer leakage).

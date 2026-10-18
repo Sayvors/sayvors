@@ -2,20 +2,26 @@
    Pills surface only failures and fresh arrivals needing action —
    everything else lives quietly in the bell and the detail page. */
 
-export type PillKind = "pulled" | "failed";
+export type PillKind = "pulled" | "failed" | "ticket";
 
 export const PILL_META: Record<PillKind, { glow: string; badge: string; icon: string; label: string }> = {
   pulled: {
     glow: "shadow-[0_10px_36px_rgba(16,185,129,0.45)]",
-    badge: "bg-gradient-to-br from-emerald-400 to-emerald-600",
+    badge: "bg-emerald-600",
     icon: "★",
     label: "New review",
   },
   failed: {
     glow: "shadow-[0_10px_36px_rgba(244,63,94,0.45)]",
-    badge: "bg-gradient-to-br from-rose-400 to-red-600",
+    badge: "bg-red-600",
     icon: "!",
     label: "Reply failed",
+  },
+  ticket: {
+    glow: "shadow-[0_10px_36px_rgba(61,29,110,0.45)]",
+    badge: "bg-deep-violet",
+    icon: "🎫",
+    label: "Review ticket",
   },
 };
 
@@ -73,11 +79,13 @@ export function rememberSeenIds(ids: Set<string>): void {
   }
 }
 
-/** Backend notification type -> pill kind (failures surface as pills). */
+/** Backend notification type -> pill kind (failures and fresh tickets surface
+ *  as pills; the rest live quietly in the bell). */
 export function pillKindFor(type: string): PillKind | null {
   if (type === "review_pulled") return "pulled";
   if (type === "reply_failed") return "failed";
   if (type === "post_failed") return "failed";
   if (type === "media_failed") return "failed";
+  if (type === "review_ticket_created") return "ticket";
   return null;
 }

@@ -98,7 +98,14 @@ class _User:
 @pytest.mark.asyncio
 async def test_agent_loop_uses_tool_then_answers(monkeypatch):
     fake = _FakeProvider()
-    monkeypatch.setattr(agent, "get_provider", lambda name: fake)
+    # The agent no longer resolves a provider directly: `_resolve_agent_model`
+    # picks the tenant's own model first (it used to be hardcoded to Gemini,
+    # which broke databank search for anyone on another provider). So the seam
+    # to patch is that resolver, returning (provider, model_id, api_model).
+    async def _resolve(db, preferred=None):
+        return fake, "fake-model", "fake-api-model"
+
+    monkeypatch.setattr(agent, "_resolve_agent_model", _resolve)
     monkeypatch.setattr(agent, "get_databank", _fake_bank)
     monkeypatch.setitem(TOOL_RUNNERS, "keyword_search", _fake_keyword_search)
 
@@ -125,7 +132,10 @@ async def test_agent_unknown_tool_does_not_crash(monkeypatch):
             return LLMResponse(content="Gave up gracefully.", provider="fake",
                                model="fake", usage=LLMUsage())
 
-    monkeypatch.setattr(agent, "get_provider", lambda name: _BadProvider())
+    async def _resolve(db, preferred=None):
+        return _BadProvider(), "fake-model", "fake-api-model"
+
+    monkeypatch.setattr(agent, "_resolve_agent_model", _resolve)
     monkeypatch.setattr(agent, "get_databank", _fake_bank)
 
     result = await ask_question("bank1", "Hi?", _User(), db=None)

@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 
 import jwt
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,10 +19,21 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    access_cookie: str | None = Cookie(default=None, alias=settings.ACCESS_COOKIE_NAME),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_optional_bearer),
     db: AsyncSession = Depends(get_db),
 ):
-    token = credentials.credentials
+    # G2: access token lives in an httpOnly cookie, not the JSON body.
+    # Read from cookie first (SPA), fall back to Bearer header (mobile/API).
+    # When called directly in tests (no FastAPI DI), access_cookie may be a
+    # Cookie() sentinel — treat non-str as None.
+    if not isinstance(access_cookie, str):
+        access_cookie = None
+    token = access_cookie
+    if token is None and credentials:
+        token = credentials.credentials
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
         user_id: str = payload.get("sub")

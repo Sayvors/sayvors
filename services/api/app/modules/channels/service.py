@@ -87,11 +87,65 @@ def decrypt_token(encrypted: str) -> str:
     return _get_fernet().decrypt(encrypted.encode()).decode()
 
 
+def encrypt_message_content(content: str | None) -> str | None:
+    """Encrypt a customer message body at rest."""
+    if not content:
+        return content
+    return _get_fernet().encrypt(content.encode()).decode()
+
+
+def decrypt_message_content(encrypted: str | None) -> str | None:
+    """Decrypt a customer message body at rest."""
+    if not encrypted:
+        return encrypted
+    return _get_fernet().decrypt(encrypted.encode()).decode()
+
+
+def encrypt_contact_phone(phone: str | None) -> str | None:
+    """Encrypt a customer phone number at rest (PII)."""
+    if not phone:
+        return phone
+    return _get_fernet().encrypt(phone.encode()).decode()
+
+
+def decrypt_contact_phone(phone: str | None) -> str | None:
+    """Decrypt a customer phone number at rest."""
+    if not phone:
+        return phone
+    return _get_fernet().decrypt(phone.encode()).decode()
+
+
+def encrypt_webhook_secret(secret: str | None) -> str | None:
+    """Encrypt a channel webhook secret at rest."""
+    if not secret:
+        return secret
+    return _get_fernet().encrypt(secret.encode()).decode()
+
+
+def decrypt_webhook_secret(secret: str | None) -> str | None:
+    """Decrypt a channel webhook secret at rest."""
+    if not secret:
+        return secret
+    return _get_fernet().decrypt(secret.encode()).decode()
+
+
+def hash_contact_phone(phone: str) -> str:
+    """Hash a phone number for lookup without encryption.
+
+    Uses HMAC-SHA256 with CHANNEL_ENCRYPTION_KEY as the key so the same phone
+    always hashes to the same value, enabling lookups while keeping the
+    plaintext phone encrypted at rest.
+    """
+    import hmac
+    key = settings.CHANNEL_ENCRYPTION_KEY or settings.JWT_SECRET
+    return hmac.new(key.encode(), phone.encode(), hashlib.sha256).hexdigest()
+
+
 async def verify_webhook_signature(
     platform: str, payload: bytes, signature: str, channel: Channel
 ) -> bool:
     """Verify webhook signature for supported platforms."""
-    secret = channel.webhook_secret
+    secret = decrypt_webhook_secret(channel.webhook_secret)
     if not secret:
         return False
 
@@ -133,7 +187,7 @@ async def create_channel(body: ChannelCreate, user: User, db: AsyncSession) -> C
         display_name=body.display_name,
         access_token=encrypt_token(body.access_token) if body.access_token else None,
         refresh_token=encrypt_token(body.refresh_token) if body.refresh_token else None,
-        webhook_secret=body.webhook_secret or None,
+        webhook_secret=encrypt_webhook_secret(body.webhook_secret) if body.webhook_secret else None,
         metadata_json=_json.dumps(metadata) if metadata else None,
         listing_key=key,
     )
@@ -245,10 +299,10 @@ async def send_message(
         id=str(uuid.uuid4()),
         channel_id=channel_id,
         direction="outbound",
-        content=body.content,
+        content=encrypt_message_content(body.content),
         content_type=body.content_type,
         status="sent",
-        contact_phone=contact_phone,
+        contact_phone=encrypt_contact_phone(contact_phone),
         contact_name=body.contact_name or None,
     )
 
@@ -539,9 +593,10 @@ async def list_inbox_threads(
     for phone, channel_id, last_at, total in summaries:
         conditions = [
             ChannelMessage.channel_id == channel_id,
-            ChannelMessage.contact_phone.is_(None)
+            ChannelMessage.contact_phone_hash.is_(None)
             if phone is None
-            else ChannelMessage.contact_phone == phone,
+            else ChannelMessage.contact_phone_hash
+            == hash_contact_phone(phone),
         ]
         last_row = (
             await db.execute(
@@ -617,9 +672,10 @@ async def list_thread_messages(
         return []
     conditions = [
         ChannelMessage.channel_id == channel_id,
-        ChannelMessage.contact_phone.is_(None)
+        ChannelMessage.contact_phone_hash.is_(None)
         if contact_phone is None
-        else ChannelMessage.contact_phone == contact_phone,
+        else ChannelMessage.contact_phone_hash
+        == hash_contact_phone(contact_phone),
     ]
     result = await db.execute(
         select(ChannelMessage)

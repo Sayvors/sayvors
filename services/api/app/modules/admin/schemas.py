@@ -210,3 +210,68 @@ class AdminHealth(BaseModel):
     probe: bool = False
     services: list[HealthService] = []
     recent_failures: list[HealthFailure] = []
+
+
+class PlatformStats(BaseModel):
+    platform: str
+    label: str
+    connected: int = 0
+    connected_total: int = 0
+    messages: int = 0
+    messages_in: int = 0
+    messages_out: int = 0
+
+
+class OverviewTotals(BaseModel):
+    users: int = 0
+    tenants: int = 0
+    businesses: int = 0
+    reviews: int = 0
+    messages: int = 0
+    posts: int = 0
+
+
+class OverviewWindowDelta(BaseModel):
+    users: int = 0
+    tenants: int = 0
+    businesses: int = 0
+    reviews: int = 0
+    messages: int = 0
+    messages_in: int = 0
+    messages_out: int = 0
+    ai_replies: int = 0
+    posts: int = 0
+
+
+class OverviewLast24h(BaseModel):
+    users: int = 0
+    reviews: int = 0
+    messages: int = 0
+    messages_in: int = 0
+    messages_out: int = 0
+    ai_replies: int = 0
+
+
+class AdminOverviewStats(BaseModel):
+    window: str = "30d"
+    window_start: str | None = None
+    generated_at: str | None = None
+    totals: OverviewTotals
+    window_delta: OverviewWindowDelta
+    last_24h: OverviewLast24h
+    platforms: list[PlatformStats] = []
+
+
+class LiveStats(BaseModel):
+    minutes: int
+    generated_at: str | None = None
+    messages: int = 0
+    messages_in: int = 0
+    messages_out: int = 0
+    ai_replies: int = 0
+    new_users: int = 0
+    new_reviews: int = 0
+    businesses_connected: int = 0
+    businesses_disconnected: int = 0
+    active_platforms: int = 0
+    top_platform: str | None = None

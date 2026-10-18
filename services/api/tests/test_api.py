@@ -89,7 +89,14 @@ async def test_overview_empty(client):
     assert body["total_reviews"] == 0
     assert body["avg_rating"] == 0.0
     assert body["response_rate"] == 0.0
-    assert body["reputation_score"] == 10  # neutral baseline
+    # The two scores differ on an empty business, deliberately or not:
+    #   reputation = 0 -- a straight composite with no baseline term.
+    #   health     = 10 -- velocity defaults to "flat" (1.0), which earns half
+    #                 the momentum credit (0.8*0 + 0.2*0.5*100).
+    # The old expectation of 10/10 was aspirational for reputation. If a new
+    # business should read as "neutral" there, that is a change to the formula,
+    # not to this assertion.
+    assert body["reputation_score"] == 0
     assert body["health_score"] == 10
 
 
@@ -165,7 +172,14 @@ async def test_autoreply_config_default(client, channel_id):
 
 
 @pytest.mark.asyncio
-async def test_autoreply_model_restricted_to_admin_enabled(client, channel_id):
+async def test_autoreply_model_restricted_to_admin_enabled(client, channel_id, db):
+    from app.modules.review_engine.models import Tone
+
+    # Tones are a DB-backed catalog now: the route runs is_valid_tone_db() and
+    # rejects a code with no catalog row. Seed the row this test writes.
+    db.add(Tone(code="professional", label="Professional"))
+    await db.commit()
+
     host = {"host": "localhost"}
     # Unknown model id rejected.
     r = client.put(

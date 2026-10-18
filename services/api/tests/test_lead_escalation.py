@@ -574,3 +574,67 @@ async def test_tenant_resume_window_is_honoured(db, monkeypatch):
     await db.commit()
     assert lead.priority == "important", "tenant asked for a longer mute"
     lead_escalation.clear_settings_cache()
+
+
+# -- Email CTA URLs --------------------------------------------------------
+# Every escalation and reminder passed a bare "/dashboard/inbox?..." to
+# send_notification_email, which rejects anything that is not absolute
+# http(s). The ValueError was caught and logged as a warning, so the email
+# that tells a human the AI has gone quiet never sent, and re-entering
+# 'important' retried into the same wall. These pin the absolute form.
+
+
+def test_absolute_makes_an_in_app_path_absolute(monkeypatch):
+    from app.config import settings
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://staging.sayvors.com")
+    assert lead_escalation._absolute("/dashboard/inbox?channel=x") == (
+        "https://staging.sayvors.com/dashboard/inbox?channel=x"
+    )
+
+
+def test_absolute_passes_through_an_already_absolute_url(monkeypatch):
+    from app.config import settings
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://staging.sayvors.com")
+    assert lead_escalation._absolute("https://x.example/y") == "https://x.example/y"
+
+
+def test_absolute_without_frontend_url_drops_the_link_not_the_email(monkeypatch):
+    from app.config import settings
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(settings, "FRONTEND_URL", "")
+    assert lead_escalation._absolute("/dashboard/leads") is None
+    assert lead_escalation._absolute(None) is None
+
+
+async def test_escalation_email_reaches_send_with_an_absolute_cta(db, monkeypatch):
+    """The real send_notification_email, not a stub: it is the thing that
+    rejected the relative URL, so stubbing it is what hid the bug."""
+    from app.config import settings
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://staging.sayvors.com")
+
+    seen = {}
+
+    async def capture(email, subject, message, cta_url=None):
+        seen["email"] = email
+        seen["cta_url"] = cta_url
+        return "msg-id"
+
+    monkeypatch.setattr(
+        "app.modules.email.service.send_notification_email", capture
+    )
+
+    lead, _channel = await _seed_lead(db, stage="qualified")
+    recipients = await lead_escalation.resolve_recipients(db, lead)
+    await lead_escalation.on_escalate(db, lead, {"escalation_reminder_hours": 4})
+    await db.commit()
+
+    assert seen["cta_url"], "an escalation email with no CTA cannot be acted on"
+    assert seen["cta_url"].startswith("https://staging.sayvors.com/dashboard/inbox")
+    assert recipients

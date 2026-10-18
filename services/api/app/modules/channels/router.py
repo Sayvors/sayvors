@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,7 @@ from ...database import async_session as _async_session
 from ...config import settings
 from ..auth.rate_limit import rate_limit
 from ..users.models import User
-from .models import BusinessService, Channel, ReviewReply, AutoReplyConfig, VerificationRecord
+from .models import BusinessService, Channel, ReviewReply, AutoReplyConfig, VerificationRecord, ReviewIssue
 from .schemas import (
     AutoReplyConfigResponse,
     AutoReplyConfigUpdate,
@@ -333,7 +333,7 @@ async def send_to_channel(
         content_type=msg.content_type,
         status=msg.status,
         error=msg.error,
-        contact_phone=msg.contact_phone,
+        contact_phone=decrypt_contact_phone(msg.contact_phone),
         contact_name=msg.contact_name,
         created_at=msg.created_at.isoformat(),
     )
@@ -361,7 +361,7 @@ async def get_channel_messages(
                 content_type=m.content_type,
                 status=m.status,
                 error=m.error,
-                contact_phone=m.contact_phone,
+                contact_phone=decrypt_contact_phone(m.contact_phone),
                 contact_name=m.contact_name,
                 created_at=m.created_at.isoformat(),
             )
@@ -382,10 +382,14 @@ _inbox_router = APIRouter(prefix="/api/v1/inbox", tags=["inbox"])
 async def inbox_ws(websocket: WebSocket):
     """Live inbox events for the authenticated user.
 
-    Browsers can't set headers on WebSocket, so the access token travels in
-    the query string and is validated exactly like the HTTP auth dependency.
+    G2: access token travels as an httpOnly cookie. Browsers send cookies
+    with same-origin WebSocket connections, so we read it from
+    ``websocket.cookies`` first, falling back to the ``?token=`` query
+    param for non-browser clients.
     """
-    token = websocket.query_params.get("token") or ""
+    token = websocket.cookies.get(settings.ACCESS_COOKIE_NAME, "")
+    if not token:
+        token = websocket.query_params.get("token") or ""
     try:
         import jwt as pyjwt
 
@@ -491,7 +495,7 @@ async def inbox_thread_messages(
                 content_type=m.content_type,
                 status=m.status,
                 error=m.error,
-                contact_phone=m.contact_phone,
+                contact_phone=decrypt_contact_phone(m.contact_phone),
                 contact_name=m.contact_name,
                 created_at=m.created_at.isoformat(),
             )
@@ -543,10 +547,10 @@ async def inbox_send(
         "channel_id": msg.channel_id,
         "platform": None,
         "direction": "outbound",
-        "content": msg.content,
+        "content": decrypt_message_content(msg.content),
         "content_type": msg.content_type,
         "status": msg.status,
-        "contact_phone": msg.contact_phone,
+        "contact_phone": decrypt_contact_phone(msg.contact_phone),
         "contact_name": msg.contact_name,
         "created_at": msg.created_at,
     })
@@ -557,11 +561,11 @@ async def inbox_send(
             channel_id=msg.channel_id,
             platform_message_id=msg.platform_message_id,
             direction=msg.direction,
-            content=msg.content,
+            content=decrypt_message_content(msg.content),
             content_type=msg.content_type,
             status=msg.status,
             error=msg.error,
-            contact_phone=msg.contact_phone,
+            contact_phone=decrypt_contact_phone(msg.contact_phone),
             contact_name=msg.contact_name,
             created_at=msg.created_at.isoformat(),
         ),
@@ -1041,6 +1045,7 @@ def _config_response(config: AutoReplyConfig) -> AutoReplyConfigResponse:
         if config.promo_only_relevant is not None else True,
         promo_max_ctas=config.promo_max_ctas
         if config.promo_max_ctas is not None else 1,
+        handoff_link_enabled=bool(getattr(config, "handoff_link_enabled", True)),
     )
 
 
@@ -1133,6 +1138,8 @@ async def update_autoreply_config(
         config.promo_only_relevant = body.promo_only_relevant
     if body.promo_max_ctas is not None:
         config.promo_max_ctas = body.promo_max_ctas
+    if body.handoff_link_enabled is not None:
+        config.handoff_link_enabled = body.handoff_link_enabled
 
     await db.commit()
     await db.refresh(config)
@@ -1803,3 +1810,195 @@ async def _get_owned_reply(
     if not reply:
         raise HTTPException(status_code=404, detail="Reply not found")
     return reply
+
+
+class TestReviewPipelineInput(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+    review_text: str = Field(..., min_length=1, max_length=5000)
+    reviewer_name: str | None = Field(None, max_length=255)
+
+
+class TestReviewPipelineResult(BaseModel):
+    review_id: str
+    issue_id: str | None = None
+    issue_created: bool = False
+    skipped_reason: str | None = None
+    classification_error: str | None = None
+    ticket_number: str | None = None
+    handoff_code: str | None = None
+    handoff_eligible: bool = False
+    handoff_link: str | None = None
+    sales_link: str | None = None
+    reply_preview: str | None = None
+    reply_error: str | None = None
+    published: bool = False
+    status: str | None = None
+    primary_category: str | None = None
+    subcategory: str | None = None
+    subcategory_detail: str | None = None
+    intent: str | None = None
+    sentiment: str | None = None
+    priority: str | None = None
+    needs_attention: bool | None = None
+    summary: str | None = None
+    reviewer_name: str | None = None
+    review_text: str | None = None
+
+
+@router.post("/{channel_id}/test-review", response_model=TestReviewPipelineResult)
+async def test_review_pipeline(
+    channel_id: str,
+    body: TestReviewPipelineInput,
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a review through the local review/ticket/handoff pipeline.
+
+    This is a development/testing helper. It never calls Google Business
+    Profile, never posts a reply, and never sends a WhatsApp message. It
+    generates the same public reply preview the live worker would publish so
+    the reviewer-facing WhatsApp handoff link can be inspected before any
+    external side effect.
+    """
+    channel = await db.get(Channel, channel_id)
+    if channel is None or channel.user_id != ctx.tenant_id:
+        raise HTTPException(status_code=404, detail="Channel not found.")
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel.")
+    if channel.platform != "google_reviews":
+        raise HTTPException(
+            status_code=422, detail="Test reviews require a Google reviews channel."
+        )
+
+    review_id = f"test-review-{uuid.uuid4().hex}"
+
+    config = None
+    model: str | None = None
+    try:
+        from ..review_engine.schemas import ReviewEngineRequest
+        from ..review_engine.service import _resolve_engine_model
+
+        config = (
+            await db.execute(
+                select(AutoReplyConfig).where(
+                    AutoReplyConfig.channel_id == channel_id
+                )
+            )
+        ).scalars().first()
+        configured_model = getattr(config, "model", None)
+        req = ReviewEngineRequest(
+            rating=body.rating, channel_id=channel_id, model=configured_model
+        )
+        model, _ = await _resolve_engine_model(req, ctx.tenant_id, db)
+    except Exception:
+        model = None
+
+    subcats: list[str] = []
+    try:
+        account = (
+            await db.execute(
+                select(User.lead_settings).where(User.id == ctx.tenant_id)
+            )
+        ).scalar_one_or_none()
+        from ..channels.meta.lead_engine import normalize_lead_settings
+
+        subcats = normalize_lead_settings(account).get(
+            "review_issue_subcategories"
+        ) or []
+    except Exception:
+        subcats = []
+
+    try:
+        from ..review_engine.graph import run_review_pipeline
+
+        outcome = await run_review_pipeline(
+            db,
+            tenant_id=ctx.tenant_id,
+            channel_id=channel_id,
+            review_id=review_id,
+            rating=body.rating,
+            review_text=body.review_text,
+            reviewer_name=body.reviewer_name,
+            model=model,
+            tenant_subcategories=subcats,
+        )
+    except Exception as e:
+        outcome = {
+            "skipped_reason": f"pipeline failed: {type(e).__name__}: {str(e)[:200]}"
+        }
+
+    issue = (
+        await db.execute(
+            select(ReviewIssue).where(
+                ReviewIssue.tenant_id == ctx.tenant_id,
+                ReviewIssue.channel_id == channel_id,
+                ReviewIssue.review_id == review_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    # Same generation path as the live worker, but the returned text is a
+    # preview only: no ReviewReply row, no Google API call, no WhatsApp send.
+    reply_preview: str | None = None
+    reply_error: str | None = None
+    try:
+        from .review_reply import generate_auto_reply
+
+        reply_preview = await generate_auto_reply(
+            config,
+            channel,
+            body.rating,
+            body.review_text,
+            body.reviewer_name,
+            db,
+            review_id=review_id,
+        )
+    except Exception as e:
+        reply_error = f"{type(e).__name__}: {str(e)[:300]}"
+
+    handoff_link: str | None = None
+    sales_link: str | None = None
+    try:
+        from ..review_engine.handoff import tenant_whatsapp_number, wa_me_link
+
+        number = await tenant_whatsapp_number(db, tenant_id=ctx.tenant_id)
+        if number:
+            sales_link = f"https://wa.me/{number}"
+            if issue is not None and issue.handoff_code:
+                handoff_link = wa_me_link(number, issue.handoff_code) or None
+    except Exception:
+        handoff_link = None
+        sales_link = None
+
+    return TestReviewPipelineResult(
+        review_id=review_id,
+        issue_id=getattr(issue, "id", None)
+        if issue is not None
+        else outcome.get("issue_id"),
+        issue_created=bool(outcome.get("issue_created")),
+        skipped_reason=outcome.get("skipped_reason"),
+        classification_error=outcome.get("classification_error"),
+        ticket_number=getattr(issue, "ticket_number", None)
+        if issue is not None
+        else outcome.get("ticket_number"),
+        handoff_code=getattr(issue, "handoff_code", None)
+        if issue is not None
+        else outcome.get("handoff_code"),
+        handoff_eligible=bool(outcome.get("handoff_eligible")),
+        handoff_link=handoff_link,
+        sales_link=sales_link,
+        reply_preview=reply_preview,
+        reply_error=reply_error,
+        published=False,
+        status=getattr(issue, "status", None),
+        primary_category=getattr(issue, "primary_category", None),
+        subcategory=getattr(issue, "subcategory", None),
+        subcategory_detail=getattr(issue, "subcategory_detail", None),
+        intent=getattr(issue, "intent", None),
+        sentiment=getattr(issue, "sentiment", None),
+        priority=getattr(issue, "priority", None),
+        needs_attention=getattr(issue, "needs_attention", None),
+        summary=getattr(issue, "summary", None),
+        reviewer_name=getattr(issue, "reviewer_name", body.reviewer_name),
+        review_text=getattr(issue, "review_text", body.review_text),
+    )

@@ -69,3 +69,21 @@ class MetaProviderAdapter(ABC):
                 resp.status_code,
             )
         return resp
+
+    async def publish_post(
+        self,
+        token: str,
+        asset_id: str,
+        method: str,
+        media_url: str | None,
+        media_type: str | None,
+        caption: str,
+        description: str,
+        scheduled_at: str | None,
+    ) -> dict:
+        """Publish one post to one destination+format.
+
+        Subclasses implement the provider-specific Graph API call.
+        Returns a provider-native result dict.
+        """
+        raise NotImplementedError(f"{self.provider} does not implement publish_post")

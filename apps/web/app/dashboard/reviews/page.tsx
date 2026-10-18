@@ -878,6 +878,7 @@ function ReviewsInner() {
             <button onClick={() => fetchReviews(true)} disabled={refreshing} className="btn-secondary disabled:opacity-50">
               {refreshing ? <span className="inline-flex items-center gap-1.5"><LogoLoader size={14} /> Syncing...</span> : "Reconcile"}
             </button>
+            <a href="/dashboard/reviews/issues" className="btn-secondary">Tickets</a>
           </div>
         </div>
         {banner && (

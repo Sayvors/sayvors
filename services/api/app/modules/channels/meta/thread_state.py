@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from ..models import WhatsAppThreadState
+from ...channels.service import decrypt_contact_phone, encrypt_contact_phone, hash_contact_phone
+from ..models import ChannelMessage, WhatsAppThreadState
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,8 @@ async def get_thread_state(db, channel_id: str, contact_phone: str | None) -> Wh
         await db.execute(
             select(WhatsAppThreadState).where(
                 WhatsAppThreadState.channel_id == channel_id,
-                WhatsAppThreadState.contact_phone == contact_phone,
+                WhatsAppThreadState.contact_phone_hash
+                == hash_contact_phone(contact_phone),
             )
         )
     ).scalar_one_or_none()
@@ -44,7 +46,8 @@ async def get_or_create_thread_state(
         state = WhatsAppThreadState(
             id=str(uuid.uuid4()),
             channel_id=channel_id,
-            contact_phone=contact_phone,
+            contact_phone=encrypt_contact_phone(contact_phone),
+            contact_phone_hash=hash_contact_phone(contact_phone),
         )
         db.add(state)
         try:

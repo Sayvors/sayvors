@@ -372,3 +372,84 @@ class WhatsAppAdapter(MetaProviderAdapter):
                 body[k] = fields[k]
         await self._graph("POST", f"/{phone_number_id}/whatsapp_business_profile", token, json=body)
         return await self.get_business_profile(phone_number_id, token)
+
+    # ── Publishing ──
+    # WhatsApp "status" posts are message sends: text-only, or image/video
+    # with a caption. Media must be uploaded first (/media), then referenced
+    # in a send. A status expires after 24h.
+
+    async def publish_post(
+        self,
+        token: str,
+        asset_id: str,
+        method: str,
+        media_url: str | None,
+        media_type: str | None,
+        caption: str,
+        description: str,
+        scheduled_at: str | None,
+    ) -> dict:
+        """Publish a WhatsApp status update to one phone number.
+
+        asset_id = phone_number_id (the destination's Cloud API id).
+        token = the page/business access token from the Channel row.
+        """
+        return await self._publish_status_update(
+            phone_number_id=asset_id,
+            token=token,
+            media_url=media_url,
+            media_type=media_type,
+            caption=caption,
+        )
+
+    async def _publish_status_update(
+        self,
+        phone_number_id: str,
+        token: str,
+        media_url: str | None,
+        media_type: str | None,
+        caption: str,
+    ) -> dict:
+        """Send a WhatsApp status (image/video with caption, or text)."""
+        if media_url:
+            # WhatsApp Cloud API status sends require a media id from /media
+            # upload, not a public URL. The media was already stored on our
+            # S3/GCS backend; fetch it, then upload to WhatsApp.
+            import httpx
+
+            async with httpx.AsyncClient(timeout=30.0) as http:
+                media_resp = await http.get(media_url)
+                if media_resp.status_code >= 400:
+                    raise MetaAPIError(
+                        f"Failed to fetch media from {media_url} ({media_resp.status_code})",
+                        502,
+                    )
+                mime = media_type or "image/jpeg"
+                upload = await self.upload_media(
+                    phone_number_id, token, media_resp.content, mime
+                )
+            media_id = upload
+            body: dict = {
+                "messaging_product": "whatsapp",
+                "to": phone_number_id,
+                "type": "image",
+                "image": {"id": media_id, "caption": caption[:1024]},
+            }
+        else:
+            body = {
+                "messaging_product": "whatsapp",
+                "to": phone_number_id,
+                "type": "text",
+                "text": {"body": (caption or description or "")[:4000]},
+            }
+        resp = await self._graph(
+            "POST", f"/{phone_number_id}/messages", token, json=body
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return {
+            "provider": "whatsapp",
+            "message_id": msgs[0].get("id", "") if msgs else "",
+            "method": method,
+            "asset_id": phone_number_id,
+        }

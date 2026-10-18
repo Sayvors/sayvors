@@ -7,7 +7,6 @@ import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import MetaConnections from "@/components/channels/MetaConnections";
-import { getAccessToken } from "@/lib/auth-context";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 

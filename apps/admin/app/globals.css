@@ -1,26 +1,100 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * ── Flat brand-ink design language ─────────────────────────────────────
+ * The team-page system: a violet-tinted page, white surfaces, 1px hairlines,
+ * 2px radius. Depth comes from hairlines and spacing — no gradients, no
+ * glassmorphism, no shadow stacks.
+ */
 :root {
-  --background: #f3f0ff;
-  --foreground: #1a1230;
+  --ui-ink: #3d1d6e; /* brand Deep Violet — the only ink */
+  --ui-on-ink: #ffffff;
+  --ui-ink-2: rgba(61, 29, 110, 0.62); /* secondary text */
+  --ui-line: rgba(61, 29, 110, 0.14);
+  --ui-line-strong: rgba(61, 29, 110, 0.28);
+  --ui-surface: #ffffff;
+  --ui-sunken: #e7e1f6; /* deep-violet wash over the page */
+  --ui-page: #f3f0ff;
+
+  --background: var(--ui-page);
+  --foreground: var(--ui-ink);
+}
+
+/* Dark is the same roles inverted: white ink on a black page, surfaces at
+ * low alpha so the hue never shifts. Utilities follow because Tailwind v4
+ * emits var() references — re-pointing the vars here flips the whole app. */
+.dark {
+  --ui-ink: #ffffff;
+  --ui-on-ink: #14101f;
+  --ui-ink-2: rgba(255, 255, 255, 0.66);
+  --ui-line: rgba(255, 255, 255, 0.14);
+  --ui-line-strong: rgba(255, 255, 255, 0.26);
+  --ui-surface: rgba(255, 255, 255, 0.06);
+  --ui-sunken: rgba(255, 255, 255, 0.03);
+  --ui-page: #000000;
+
+  --background: var(--ui-page);
+  --foreground: var(--ui-ink);
+
+  /* Brand re-pin for dark legibility (AGENTS.md dark variants). */
+  --color-deep-violet: #7d4fc9;
+  --color-violet-light: #b79df0;
+  --color-magenta: #d8459f;
+  --color-coral: #ff6e85;
+  --color-amber: #fbbf24;
+  --color-emerald: #34d399;
+  --color-sky: #7dd3fc;
+
+  /* Soft status washes (bg-red-50 etc.) would glare on black, and their
+   * -700 text needs the brighter dark variants. Saturated fills that carry
+   * white text (bg-red-500, bg-sky-500, bg-amber-400…) stay untouched. */
+  --color-red-50: rgba(255, 79, 110, 0.1);
+  --color-red-100: rgba(255, 79, 110, 0.16);
+  --color-red-200: rgba(255, 79, 110, 0.3);
+  --color-red-600: #ff6e85;
+  --color-red-700: #ff8b9d;
+  --color-emerald-50: rgba(52, 211, 153, 0.1);
+  --color-emerald-100: rgba(52, 211, 153, 0.16);
+  --color-emerald-200: rgba(52, 211, 153, 0.3);
+  --color-emerald-700: #6ee7b7;
+  --color-amber-50: rgba(251, 191, 36, 0.1);
+  --color-amber-100: rgba(251, 191, 36, 0.16);
+  --color-amber-200: rgba(251, 191, 36, 0.3);
+  --color-amber-700: #fcd34d;
+  --color-sky-50: rgba(56, 189, 248, 0.1);
+  --color-sky-100: rgba(56, 189, 248, 0.16);
+  --color-sky-200: rgba(56, 189, 248, 0.3);
+  --color-sky-700: #7dd3fc;
+  --color-violet-50: rgba(125, 79, 201, 0.12);
+  --color-violet-100: rgba(125, 79, 201, 0.22);
+  --color-violet-800: #c4b5fd;
+  --color-amber-600: #fbbf24;
 }
 
 @theme {
-  --color-deep-violet: #5b2d8e;
-  --color-violet-light: #8b5cf6;
-  --color-violet-soft: #c4b5fd;
-  --color-magenta: #d946a8;
-  --color-coral: #ff4f6e;
-  --color-amber: #f59e0b;
-  --color-emerald: #10b981;
-  --color-sky: #0ea5e9;
-  --color-ink: #1a1230;
-  --color-fog: #f8f6ff;
+  /* Sayvors Brand Guidelines V1.0 — the drifted values (#5b2d8e, #1a1230…)
+   * are gone. text-/bg- utilities re-point automatically. */
+  --color-deep-violet: #3d1d6e;
+  --color-violet-light: #6b4a9e;
+  --color-violet-soft: #ede9f6; /* pale lavender — funnel bars read on any ink */
+  --color-magenta: #b0338a;
+  --color-coral: #d92d3f; /* #FF4F6E is a logo colour; deepened for text on white */
+  --color-amber: #b45309;
+  --color-emerald: #15803d;
+  --color-sky: #0369a1;
 }
 
+/* Semantic tokens: every text-ink/border-ink/bg-fog utility follows the
+ * .dark flip with zero per-page dark: variants. */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-ink: var(--ui-ink);
+  --color-fog: var(--ui-sunken);
+  --color-line: var(--ui-line);
+  --color-surface: var(--ui-surface);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -28,56 +102,99 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Panels: a hairline and nothing else. Layered so utilities (border-red-200,
+ * bg-red-50/30 on a broken card…) can still override individual properties. */
+@layer components {
+  .panel {
+    border: 1px solid var(--ui-line);
+    border-radius: 2px;
+    background: var(--ui-surface);
+  }
+  .panel-sunken {
+    border: 1px solid var(--ui-line);
+    border-radius: 2px;
+    background: var(--ui-sunken);
+  }
 }
 
 .input-field {
   width: 100%;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(26, 18, 48, 0.08);
-  background: white;
+  border-radius: 2px;
+  border: 1px solid var(--ui-line-strong);
+  background: var(--ui-surface);
   padding: 0.5rem 0.75rem;
   font-size: 13px;
-  color: #1a1230;
+  color: var(--ui-ink);
   outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s ease;
 }
 .input-field:focus {
-  border-color: rgba(91, 45, 142, 0.3);
-  box-shadow: 0 0 0 3px rgba(91, 45, 142, 0.08);
+  border-color: var(--ui-ink);
+}
+.input-field::placeholder {
+  color: var(--ui-ink-2);
+  opacity: 1;
 }
 
 .btn-primary {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  border-radius: 0.75rem;
-  background: #5b2d8e;
+  border-radius: 2px;
+  background: var(--ui-ink);
   padding: 0.5rem 1rem;
   font-size: 13px;
   font-weight: 600;
-  color: white;
-  transition: opacity 0.15s;
+  color: var(--ui-on-ink);
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 .btn-primary:hover {
-  opacity: 0.9;
+  opacity: 0.87;
+}
+.btn-primary:active {
+  transform: translateY(1px);
 }
 
 .btn-secondary {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(26, 18, 48, 0.1);
-  background: white;
+  border-radius: 2px;
+  border: 1px solid var(--ui-line-strong);
+  background: var(--ui-surface);
   padding: 0.5rem 1rem;
   font-size: 13px;
   font-weight: 600;
-  color: #1a1230;
-  transition: background 0.15s;
+  color: var(--ui-ink);
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
 }
 .btn-secondary:hover {
-  background: rgba(26, 18, 48, 0.04);
+  border-color: var(--ui-ink);
+}
+.btn-secondary:active {
+  transform: translateY(1px);
+}
+
+/* The hairline design has no shadows, so the focus ring is the one
+ * affordance that must always show up. */
+:focus-visible {
+  outline: 2px solid var(--ui-ink);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ui-line-strong);
+  border-radius: 3px;
 }
 
 /* Overview entrance: rise once on first paint, then still. */

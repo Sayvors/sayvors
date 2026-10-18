@@ -1,7 +1,6 @@
 "use client";
 
 import { API_BASE } from "./api-base";
-import { getAccessToken } from "./auth-context";
 import { getCsrfToken } from "./csrf";
 
 const API = API_BASE;
@@ -29,8 +28,6 @@ export async function* streamAssistantChat(
   signal?: AbortSignal
 ): AsyncGenerator<AssistantStreamEvent, void, void> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const token = getAccessToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   const csrf = getCsrfToken();
   if (csrf) headers["X-CSRF-Token"] = csrf;
 

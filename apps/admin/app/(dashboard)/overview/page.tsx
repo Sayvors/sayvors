@@ -1,13 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { adminFetch } from "@/lib/admin-api";
-import type { AdminOverview } from "@/lib/admin-api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  adminFetch,
+  fetchAdminHealth,
+  fetchLiveStats,
+  fetchOverviewStats,
+  type AdminHealth,
+  type AdminOverview,
+  type LiveStats,
+  type OverviewStats,
+} from "@/lib/admin-api";
 
 // ─── helpers ───────────────────────────────────────────────────────────────
-function fmtNum(n: number): string {
-  return n.toLocaleString("en-US");
+function fmtNum(n: number | null | undefined): string {
+  return (n ?? 0).toLocaleString("en-US");
 }
 function pct(part: number, whole: number): number {
   if (!whole || whole <= 0) return 0;
@@ -44,9 +52,7 @@ const STATUS_DOT: Record<string, string> = {
   archived: "bg-ink/20",
 };
 
-// ─── count-up ──────────────────────────────────────────────────────────────
-// Animates once on first paint; renders the final value immediately for
-// reduced-motion users and always exposes it to assistive tech.
+// ─── count-up (existing sections keep this) ────────────────────────────────
 function useCountUp(target: number, decimals = 0, duration = 900): string {
   const reduceMotion =
     typeof window !== "undefined" &&
@@ -84,19 +90,76 @@ function HeroNumeral({ value, decimals = 0, dark = false }: { value: number; dec
 function SkeletonOverview() {
   return (
     <div className="space-y-5" aria-hidden aria-label="Loading overview">
-      <div className="h-10 w-64 animate-pulse rounded-[6px] bg-white/60" />
-      <div className="h-24 animate-pulse rounded-[6px] bg-white/60" />
-      <div className="h-52 animate-pulse rounded-[6px] bg-ink/10" />
+      <div className="h-10 w-64 animate-pulse rounded-[2px] bg-[var(--ui-surface)]" />
+      <div className="h-24 animate-pulse rounded-[2px] bg-[var(--ui-surface)]" />
+      <div className="h-52 animate-pulse rounded-[2px] bg-ink/10" />
       <div className="grid gap-3 lg:grid-cols-5">
-        <div className="h-56 animate-pulse rounded-[6px] bg-white/60 lg:col-span-3" />
-        <div className="h-56 animate-pulse rounded-[6px] bg-white/60 lg:col-span-2" />
+        <div className="h-56 animate-pulse rounded-[2px] bg-[var(--ui-surface)] lg:col-span-3" />
+        <div className="h-56 animate-pulse rounded-[2px] bg-[var(--ui-surface)] lg:col-span-2" />
       </div>
     </div>
   );
 }
 
+// ─── constants ─────────────────────────────────────────────────────────────
+const WINDOWS: { value: string; label: string }[] = [
+  { value: "24h", label: "24h" },
+  { value: "7d", label: "7d" },
+  { value: "30d", label: "30d" },
+  { value: "90d", label: "90d" },
+  { value: "1y", label: "1y" },
+];
+
+const PLATFORM_ROWS: { slug: string; label: string }[] = [
+  { slug: "whatsapp", label: "WhatsApp" },
+  { slug: "facebook", label: "Facebook" },
+  { slug: "instagram", label: "Instagram" },
+  { slug: "x", label: "X" },
+  { slug: "telegram", label: "Telegram" },
+  { slug: "linkedin", label: "LinkedIn" },
+  { slug: "google_reviews", label: "Google Reviews" },
+];
+
+// ─── attention card ────────────────────────────────────────────────────────
+function AttentionCard({
+  service,
+  failure,
+}: {
+  service: { name: string };
+  failure: { message?: string | null; type?: string | null; at?: string | null } | null;
+}) {
+  const href = service.name.startsWith("AI:") ? "/llms" : "/logs";
+  return (
+    <Link
+      href={href}
+      className="flex items-center gap-3 rounded-[2px] border border-red-200 bg-red-50 px-4 py-3.5 transition hover:bg-red-100/50"
+    >
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-500 text-white text-[10px]">
+        !
+      </span>
+      <div className="flex-1 min-w-0">
+        <p className="text-[12px] font-bold leading-none text-red-800">{service.name}</p>
+        {failure && (
+          <p className="mt-0.5 text-[11px] text-red-700/80 truncate">
+            {failure.message || failure.type || ""}
+            {failure.at && ` · ${fmtRelative(failure.at)}`}
+          </p>
+        )}
+      </div>
+    </Link>
+  );
+}
+
 // ─── main ──────────────────────────────────────────────────────────────────
 export default function AdminOverviewPage() {
+  const [statWindow, setStatWindow] = useState("30d");
+  const [stats, setStats] = useState<OverviewStats | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [liveMinutes, setLiveMinutes] = useState(30);
+  const [live, setLive] = useState<LiveStats | null>(null);
+  const [liveUpdatedAt, setLiveUpdatedAt] = useState<Date | null>(null);
+  const [liveFails, setLiveFails] = useState(0);
+  const [health, setHealth] = useState<AdminHealth | null>(null);
   const [data, setData] = useState<AdminOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -104,8 +167,33 @@ export default function AdminOverviewPage() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [barsIn, setBarsIn] = useState(false);
 
-  const fetchData = useCallback(async (isRefresh: boolean) => {
-    if (isRefresh) setRefreshing(true);
+  const liveInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── derived ─────────────────────────────────────────────────────────────
+  const statsStale = stats !== null && stats.window !== statWindow;
+
+  const total = data?.users_total ?? 0;
+  const verifiedRate = pct(data?.users_verified ?? 0, total);
+  const connectionRate = pct(data?.connections ?? 0, total);
+  const connectionRateVerified = pct(data?.connections ?? 0, data?.users_verified ?? 0);
+  const problems = (data?.outbox_failed ?? 0) + (data?.ingest_failed ?? 0);
+  const isHealthy = problems === 0 && (data?.outbox_pending ?? 0) < 25;
+  const isDegraded = problems > 0;
+  const avgReviews = total ? (data?.reviews_total ?? 0) / total : 0;
+  const avgPosts = total ? (data?.posts_total ?? 0) / total : 0;
+  const docsPerBank = data?.databanks_total ? (data?.documents_total ?? 0) / data.databanks_total : 0;
+  const newShare = pct(data?.signups_last_7d ?? 0, total);
+  const postsEntries = Object.entries(data?.posts_by_status ?? {}).sort((a, b) => b[1] - a[1]);
+  const postsTotal = postsEntries.reduce((s, [, v]) => s + v, 0) || (data?.posts_total ?? 0) || 1;
+  const topPost: [string, number] | null = postsEntries[0] ?? null;
+
+  const verdict = isHealthy ? "healthy" : isDegraded ? "needs attention" : "watch";
+
+  const failingServices = health?.services.filter((s) => s.enabled && !s.ok) ?? [];
+  const recentFailures = health?.recent_failures ?? [];
+
+  // ── fetches ─────────────────────────────────────────────────────────────
+  const fetchOverview = useCallback(async () => {
     try {
       const o = await adminFetch<AdminOverview>("/api/v1/admin/overview");
       setData(o);
@@ -113,31 +201,95 @@ export default function AdminOverviewPage() {
       setUpdatedAt(new Date());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed.");
-    } finally {
-      if (isRefresh) setRefreshing(false);
-      else setLoading(false);
     }
   }, []);
 
-  // Initial load: promise callbacks only, no synchronous setState in the body.
+  const fetchStats = useCallback(async (window: string) => {
+    try {
+      const s = await fetchOverviewStats(window);
+      setStats(s);
+      setStatsError(null);
+    } catch (e) {
+      setStatsError(e instanceof Error ? e.message : "Stats load failed.");
+    }
+  }, []);
+
+  const fetchLive = useCallback(async (minutes: number) => {
+    try {
+      const l = await fetchLiveStats(minutes as 30 | 60);
+      setLive(l);
+      setLiveUpdatedAt(new Date());
+      setLiveFails(0);
+    } catch {
+      setLiveFails((f) => f + 1);
+    }
+  }, []);
+
+  const fetchHealth = useCallback(async () => {
+    try {
+      const h = await fetchAdminHealth();
+      setHealth(h);
+    } catch {
+      /* health is best-effort */
+    }
+  }, []);
+
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.allSettled([
+      fetchOverview(),
+      fetchStats(statWindow),
+      fetchLive(liveMinutes),
+      fetchHealth(),
+    ]);
+    setRefreshing(false);
+  }, [statWindow, liveMinutes, fetchOverview, fetchStats, fetchLive, fetchHealth]);
+
+  // ── effects ─────────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-    adminFetch<AdminOverview>("/api/v1/admin/overview")
-      .then((o) => {
-        if (cancelled) return;
-        setData(o);
-        setUpdatedAt(new Date());
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Load failed.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    void (async () => {
+      await fetchOverview();
+      await fetchStats(statWindow);
+      await fetchLive(liveMinutes);
+      await fetchHealth();
+      if (!cancelled) setLoading(false);
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [statWindow, liveMinutes, fetchOverview, fetchStats, fetchLive, fetchHealth]);
+
+  // Stats refires when the window pill changes.
+  useEffect(() => {
+    void (async () => {
+      await fetchStats(statWindow);
+    })();
+  }, [statWindow, fetchStats]);
+
+  // Live poll — 15s, skip when document.hidden.
+  useEffect(() => {
+    if (liveInterval.current) clearInterval(liveInterval.current);
+    liveInterval.current = setInterval(() => {
+      if (document.hidden) return;
+      void fetchLive(liveMinutes);
+    }, 15_000);
+    return () => {
+      if (liveInterval.current) clearInterval(liveInterval.current);
+    };
+  }, [liveMinutes, fetchLive]);
+
+  // Health poll — 15s cycle.
+  useEffect(() => {
+    if (liveInterval.current) clearInterval(liveInterval.current);
+    liveInterval.current = setInterval(() => {
+      if (document.hidden) return;
+      void fetchHealth();
+    }, 15_000);
+    return () => {
+      if (liveInterval.current) clearInterval(liveInterval.current);
+    };
+  }, [fetchHealth]);
 
   // Funnel bars draw in after first paint.
   useEffect(() => {
@@ -148,20 +300,21 @@ export default function AdminOverviewPage() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  if (loading && !data) {
+  // ── render ──────────────────────────────────────────────────────────────
+  if (loading && !data && !stats) {
     return <SkeletonOverview />;
   }
 
-  if ((error && !data) || !data) {
+  if (((error && !data) || !data) && !stats) {
     return (
-      <div className="rounded-[6px] border-2 border-white bg-white/80 p-10 text-center">
+      <div className="panel p-10 text-center">
         <p className="text-[14px] font-bold text-ink">Couldn&apos;t load overview.</p>
         {error && <p className="mt-1 text-[12px] text-ink/50">{error}</p>}
         <button
           onClick={() => {
             setLoading(true);
             setError(null);
-            void fetchData(false).finally(() => setLoading(false));
+            void doRefresh();
           }}
           className="btn-primary mt-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
         >
@@ -171,27 +324,14 @@ export default function AdminOverviewPage() {
     );
   }
 
-  const total = data.users_total || 0;
-  const verifiedRate = pct(data.users_verified, total);
-  const connectionRate = pct(data.connections, total);
-  const connectionRateVerified = pct(data.connections, data.users_verified || 0);
-  const problems = data.outbox_failed + data.ingest_failed;
-  const isHealthy = problems === 0 && data.outbox_pending < 25;
-  const isDegraded = problems > 0;
-  const avgReviews = total ? data.reviews_total / total : 0;
-  const avgPosts = total ? data.posts_total / total : 0;
-  const docsPerBank = data.databanks_total ? data.documents_total / data.databanks_total : 0;
-  const newShare = pct(data.signups_last_7d, total);
-  const postsEntries = Object.entries(data.posts_by_status).sort((a, b) => b[1] - a[1]);
-  const postsTotal = postsEntries.reduce((s, [, v]) => s + v, 0) || data.posts_total || 1;
-  const topPost: [string, number] | null = postsEntries[0] ?? null;
-
-  const verdict = isHealthy ? "healthy" : isDegraded ? "needs attention" : "watch";
-
   return (
     <div className="space-y-5">
       {/* ── masthead ─────────────────────────────────────────── */}
-      <div className="admin-rise flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div
+        className={`admin-rise flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between ${
+          statsStale ? "opacity-50" : ""
+        }`}
+      >
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-ink/40">
             Sayvors · Admin
@@ -209,30 +349,48 @@ export default function AdminOverviewPage() {
             >
               <span
                 aria-hidden
-                className={`h-1.5 w-1.5 rounded-full ${isHealthy ? "bg-emerald-500" : isDegraded ? "bg-red-500" : "bg-amber-500"}`}
+                className={`h-1.5 w-1.5 rounded-full ${
+                  isHealthy ? "bg-emerald-500" : isDegraded ? "bg-red-500" : "bg-amber-500"
+                }`}
               />
               {verdict}
             </span>
           </h1>
           <p className="mt-1 text-[11px] text-ink/40">
-            {data.last_synced_at
+            {data?.last_synced_at
               ? `Last listing sync ${fmtRelative(data.last_synced_at)}`
               : "No listing sync yet"}
             {updatedAt && <span> · Updated {updatedAt.toLocaleTimeString()} · read-only</span>}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {/* Window segmented pill */}
+          <div className="flex items-center gap-1 rounded-[2px] border border-ink/[0.12] bg-[var(--ui-surface)] px-1">
+            {WINDOWS.map((w) => (
+              <button
+                key={w.value}
+                onClick={() => setStatWindow(w.value)}
+                className={`px-3 py-1.5 text-[11px] font-semibold transition ${
+                  statWindow === w.value
+                    ? "bg-deep-violet text-white"
+                    : "text-ink/50 hover:text-ink"
+                }`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
           <Link
             href="/tenants"
-            className="hidden rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet sm:inline-flex"
+            className="hidden rounded-[2px] border border-ink/[0.08] bg-[var(--ui-surface)]px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet sm:inline-flex"
           >
             View tenants →
           </Link>
           <button
-            onClick={() => void fetchData(true)}
+            onClick={() => void doRefresh()}
             disabled={refreshing}
             aria-busy={refreshing}
-            className="inline-flex items-center gap-2 rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-[#4a2575] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+            className="inline-flex items-center gap-2 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
           >
             <svg
               aria-hidden
@@ -250,7 +408,239 @@ export default function AdminOverviewPage() {
         </div>
       </div>
 
-      {/* ── the lede: the platform in one sentence ───────────── */}
+      {/* ── Atttention ── */}
+      {(failingServices.length > 0 || recentFailures.length > 0 || statsError) && (
+        <section className="admin-rise overflow-hidden rounded-[2px] border border-red-200 bg-red-50 p-4">
+          <h2 className="text-[11px] font-bold uppercase tracking-[0.16em] text-red-700 mb-3">
+            Attention
+          </h2>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+            <div className="flex items-center gap-1.5 text-[12px] font-bold text-red-800">
+              <span className={`h-1.5 w-1.5 rounded-full bg-red-500 ${
+                typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches
+                  ? "animate-none"
+                  : "animate-pulse"
+              }`}></span>
+              {failingServices.length} service{failingServices.length > 1 ? "s" : ""} degraded
+            </div>
+            {recentFailures.length > 0 && (
+              <span className="text-[11px] text-red-600">
+                {recentFailures.length} failure{recentFailures.length > 1 ? "s" : ""} in log
+              </span>
+            )}
+          </div>
+          <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
+            {failingServices.slice(0, 6).map((svc) => {
+              const failure = recentFailures.find((f) => f.source === svc.name) || null;
+              return (
+                <AttentionCard key={svc.name} service={svc} failure={failure} />
+              );
+            })}
+            {failingServices.length > 6 && (
+              <p className="text-[11px] text-red-600">
+                +{failingServices.length - 6} more — see all in logs
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ── Main facts band ── */}
+      <section
+        aria-labelledby="facts-heading"
+        className="admin-rise overflow-hidden rounded-[2px] border border-ink/[0.08] bg-[var(--ui-surface)] p-4"
+        style={{ animationDelay: "210ms" }}
+      >
+        <h2 id="facts-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40 mb-4">
+          Platform facts
+        </h2>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Row 1 */}
+          <div className="panel p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">Users</p>
+            <p className="mt-1 text-[30px] font-bold tabular-nums leading-none text-ink">
+              {fmtNum(stats?.totals.users)}
+            </p>
+            {stats?.window_delta && (
+              <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
+                +{fmtNum(stats.window_delta.users)} in {statWindow.toUpperCase()}
+              </p>
+            )}
+          </div>
+          <div className="panel p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">Tenants</p>
+            <p className="mt-1 text-[30px] font-bold tabular-nums leading-none text-ink">
+              {fmtNum(stats?.totals.tenants)}
+            </p>
+            {stats?.window_delta && (
+              <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
+                +{fmtNum(stats.window_delta.tenants)} in {statWindow.toUpperCase()}
+              </p>
+            )}
+          </div>
+          <div className="panel p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">Businesses</p>
+            <p className="mt-1 text-[30px] font-bold tabular-nums leading-none text-ink">
+              {fmtNum(stats?.totals.businesses)}
+            </p>
+            {stats?.window_delta && (
+              <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
+                +{fmtNum(stats.window_delta.businesses)} in {statWindow.toUpperCase()}
+              </p>
+            )}
+          </div>
+          <div className="panel p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">Reviews</p>
+            <p className="mt-1 text-[30px] font-bold tabular-nums leading-none text-ink">
+              {fmtNum(stats?.totals.reviews)}
+            </p>
+            {stats?.window_delta && (
+              <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
+                +{fmtNum(stats.window_delta.reviews)} in {statWindow.toUpperCase()}
+              </p>
+            )}
+          </div>
+          {/* Row 2 */}
+          <div className="panel p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">Messages</p>
+            <p className="mt-1 text-[30px] font-bold tabular-nums leading-none text-ink">
+              {fmtNum(stats?.totals.messages)}
+            </p>
+            {stats?.last_24h && (
+              <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
+                {fmtNum(stats.last_24h.messages_in)} in · {fmtNum(stats.last_24h.messages_out)} out
+              </p>
+            )}
+            {stats?.last_24h && (
+              <p className="mt-0 text-[11px] tabular-nums text-ink/40">
+                {fmtNum(stats.last_24h.ai_replies)} AI
+              </p>
+            )}
+          </div>
+          <div className="panel p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">Posts</p>
+            <p className="mt-1 text-[30px] font-bold tabular-nums leading-none text-ink">
+              {fmtNum(stats?.totals.posts)}
+            </p>
+            {stats?.window_delta && (
+              <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
+                +{fmtNum(stats.window_delta.posts)} in {statWindow.toUpperCase()}
+              </p>
+            )}
+          </div>
+          {/* Last 24h — fixed card, immune to the pill */}
+          <div className="panel p-4 border-l-2 border-l-deep-violet">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink/40">Last 24h</p>
+            <p className="mt-1 text-[30px] font-bold tabular-nums leading-none text-ink">
+              {fmtNum(stats?.last_24h.messages)}
+            </p>
+            <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
+              {fmtNum(stats?.last_24h.messages_in)} in · {fmtNum(stats?.last_24h.messages_out)} out ·{" "}
+              {fmtNum(stats?.last_24h.ai_replies)} AI
+            </p>
+          </div>
+          {/* Live */}
+          <div className="panel p-4 border-l-2 border-l-violet-500 bg-violet/5">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <p className="text-[11px] font-bold uppercase tracking-widest text-violet-700">Live</p>
+              </div>
+              <div className="flex gap-0.5">
+                <button
+                  onClick={() => setLiveMinutes(30)}
+                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition ${
+                    liveMinutes === 30
+                      ? "bg-violet-200 text-violet-800"
+                      : "text-ink/40 hover:text-ink"
+                  }`}
+                >
+                  30m
+                </button>
+                <button
+                  onClick={() => setLiveMinutes(60)}
+                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition ${
+                    liveMinutes === 60
+                      ? "bg-violet-200 text-violet-800"
+                      : "text-ink/40 hover:text-ink"
+                  }`}
+                >
+                  60m
+                </button>
+              </div>
+            </div>
+            <p className="mt-0.5 text-[30px] font-bold tabular-nums leading-none text-ink">
+              {fmtNum(live?.messages_in)}
+            </p>
+            <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
+              {fmtNum(live?.messages_in)} sent · {fmtNum(live?.ai_replies)} AI
+            </p>
+            <p className="mt-0 text-[11px] tabular-nums text-ink/40">
+              +{fmtNum(live?.new_reviews)} reviews · +{fmtNum(live?.new_users)} users
+            </p>
+            <p className="mt-0.5 text-[11px]">
+              <span className={`font-bold ${(live?.businesses_connected ?? 0) > 0 ? "text-emerald-300" : "text-amber-300"}`}>
+                {fmtNum(live?.businesses_connected)}
+              </span>{" "}
+              connected /{" "}
+              <span className={`font-bold ${(live?.businesses_disconnected ?? 0) > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+                {fmtNum(live?.businesses_disconnected)}
+              </span>{" "}
+              disconnected
+            </p>
+            <p className="mt-0.5 text-[11px] text-ink/40">
+              Top: {live?.top_platform ?? "—"}
+            </p>
+            <p className="mt-1 text-[10px] text-ink/30">
+              {liveUpdatedAt
+                ? liveUpdatedAt.toLocaleTimeString()
+                : liveFails >= 2
+                  ? "retrying…"
+                  : "—"}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Connected platforms panel ── */}
+      {stats && (
+        <section className="admin-rise overflow-hidden rounded-[2px] border border-ink/[0.08] bg-[var(--ui-surface)] p-4">
+          <h2 className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40 mb-3">
+            Connected platforms
+          </h2>
+          <div className="space-y-2">
+            {PLATFORM_ROWS.map((prow) => {
+              const found = stats.platforms.find((p) => p.platform === prow.slug);
+              const connected = found?.connected ?? 0;
+              const total = found?.connected_total ?? 0;
+              const messages = found?.messages ?? 0;
+              const maxMessages = Math.max(...stats.platforms.map((p) => p.messages), 1);
+              const barWidth = maxMessages > 0 ? (messages / maxMessages) * 100 : 0;
+              return (
+                <div key={prow.slug} className="flex items-center gap-3">
+                  <span className="w-24 shrink-0 text-[12px] font-medium text-ink/60">
+                    {prow.label}
+                  </span>
+                  <span className={`w-16 shrink-0 text-[12px] font-bold tabular-nums ${connected === 0 ? "text-amber-500" : "text-ink"}`}>
+                    {connected} / {total}
+                  </span>
+                  <span className="w-16 shrink-0 text-[12px] font-bold tabular-nums text-ink/60">
+                    {fmtNum(messages)}
+                  </span>
+                  <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-ink/[0.06]">
+                    <div
+                      className="h-full rounded-full bg-deep-violet transition-[width] duration-700 ease-out"
+                      style={{ width: barsIn ? `${barWidth}%` : "0%" }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ── the lede ── */}
       <p
         className="admin-rise max-w-[720px] text-[17px] font-medium leading-relaxed text-ink sm:text-[19px]"
         style={{ animationDelay: "70ms" }}
@@ -260,10 +650,10 @@ export default function AdminOverviewPage() {
         ) : (
           <>
             <b className="font-bold text-deep-violet">{fmtNum(total)} tenants</b>,{" "}
-            <b className="font-bold text-deep-violet">{fmtNum(data.users_verified)} verified</b>,{" "}
-            <b className="font-bold text-deep-violet">{fmtNum(data.connections)} connected</b>
+            <b className="font-bold text-deep-violet">{fmtNum(data?.users_verified ?? 0)} verified</b>,{" "}
+            <b className="font-bold text-deep-violet">{fmtNum(data?.connections ?? 0)} connected</b>
             {" — "}
-            {fmtNum(data.reviews_total)} reviews and {fmtNum(data.posts_total)} posts indexed.{" "}
+            {fmtNum(data?.reviews_total ?? 0)} reviews and {fmtNum(data?.posts_total ?? 0)} posts indexed.{" "}
             {isHealthy ? (
               <span className="text-ink/60">Pipeline healthy.</span>
             ) : isDegraded ? (
@@ -277,10 +667,10 @@ export default function AdminOverviewPage() {
         )}
       </p>
 
-      {/* ── funnel: acquisition → verification → activation ──── */}
+      {/* ── funnel ── */}
       <section
         aria-labelledby="funnel-heading"
-        className="admin-rise overflow-hidden rounded-[6px] bg-[#15102e] p-5 sm:p-6"
+        className="admin-rise overflow-hidden rounded-[2px] bg-deep-violet p-5 sm:p-6"
         style={{ animationDelay: "140ms" }}
       >
         <h2 id="funnel-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/40">
@@ -295,8 +685,10 @@ export default function AdminOverviewPage() {
             </p>
             <p className="mt-1.5 text-[12px] font-semibold text-white">tenants</p>
             <p className="mt-0.5 text-[11px] text-white/45">
-              {data.signups_last_7d > 0 ? (
-                <>+{fmtNum(data.signups_last_7d)} in 7 days · {newShare}% of base</>
+              {data?.signups_last_7d ?? 0 > 0 ? (
+                <>
+                  +{fmtNum(data?.signups_last_7d)} in 7 days · {newShare}% of base
+                </>
               ) : (
                 "no sign-ups in 7 days"
               )}
@@ -311,7 +703,9 @@ export default function AdminOverviewPage() {
           {/* connector */}
           <div className="flex items-center justify-center" aria-hidden>
             <div className="text-center">
-              <p className="text-[18px] font-bold tabular-nums text-violet-soft">{total > 0 ? `${verifiedRate}%` : "—"}</p>
+              <p className="text-[18px] font-bold tabular-nums text-violet-soft">
+                {total > 0 ? `${verifiedRate}%` : "—"}
+              </p>
               <p className="text-[10px] font-bold uppercase tracking-widest text-white/35">
                 <span className="sm:hidden">↓ verify</span>
                 <span className="hidden sm:inline">→ verify</span>
@@ -322,7 +716,7 @@ export default function AdminOverviewPage() {
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/40">2 · Verification</p>
             <p className="mt-1 text-[44px] font-bold tabular-nums leading-none sm:text-[52px]">
-              <HeroNumeral value={data.users_verified} dark />
+              <HeroNumeral value={data?.users_verified ?? 0} dark />
             </p>
             <p className="mt-1.5 text-[12px] font-semibold text-white">verified</p>
             <p className="mt-0.5 text-[11px] text-white/45">
@@ -339,7 +733,7 @@ export default function AdminOverviewPage() {
           <div className="flex items-center justify-center" aria-hidden>
             <div className="text-center">
               <p className="text-[18px] font-bold tabular-nums text-violet-soft">
-                {data.users_verified > 0 ? `${connectionRateVerified}%` : "—"}
+                {data?.users_verified ?? 0 > 0 ? `${connectionRateVerified}%` : "—"}
               </p>
               <p className="text-[10px] font-bold uppercase tracking-widest text-white/35">
                 <span className="sm:hidden">↓ connect</span>
@@ -351,11 +745,11 @@ export default function AdminOverviewPage() {
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/40">3 · Activation</p>
             <p className="mt-1 text-[44px] font-bold tabular-nums leading-none sm:text-[52px]">
-              <HeroNumeral value={data.connections} dark />
+              <HeroNumeral value={data?.connections ?? 0} dark />
             </p>
             <p className="mt-1.5 text-[12px] font-semibold text-white">connected listings</p>
             <p className="mt-0.5 text-[11px] text-white/45">
-              {data.users_verified > 0 ? (
+              {data?.users_verified ?? 0 > 0 ? (
                 `${connectionRateVerified}% of verified`
               ) : (
                 <span className="text-white/60">activation starts at verification</span>
@@ -371,11 +765,11 @@ export default function AdminOverviewPage() {
         </div>
       </section>
 
-      {/* ── urgent first: problems ───────────────────────────── */}
+      {/* ── urgent first: problems ── */}
       {problems > 0 && (
         <div
           role="alert"
-          className="admin-rise flex flex-col gap-3 rounded-[6px] border border-red-200 bg-red-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between"
+          className="admin-rise flex flex-col gap-3 rounded-[2px] border border-red-200 bg-red-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between"
           style={{ animationDelay: "200ms" }}
         >
           <div className="flex items-start gap-3">
@@ -391,26 +785,26 @@ export default function AdminOverviewPage() {
                 {problems} failed item{problems > 1 ? "s" : ""} need attention
               </p>
               <p className="mt-1 text-[11px] leading-relaxed text-red-700/80">
-                Outbox failed <b className="font-bold text-red-800">{fmtNum(data.outbox_failed)}</b> · Ingest
-                failed <b className="font-bold text-red-800">{fmtNum(data.ingest_failed)}</b> · Pending{" "}
-                {fmtNum(data.outbox_pending)} still in queue.
+                Outbox failed <b className="font-bold text-red-800">{fmtNum(data?.outbox_failed)}</b> · Ingest
+                failed <b className="font-bold text-red-800">{fmtNum(data?.ingest_failed)}</b> · Pending{" "}
+                {fmtNum(data?.outbox_pending)} still in queue.
               </p>
             </div>
           </div>
           <Link
             href="/logs"
-            className="shrink-0 self-start rounded-xl bg-red-600 px-3.5 py-2 text-center text-[12px] font-bold text-white transition hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 sm:self-auto"
+            className="shrink-0 self-start rounded-[2px] bg-red-600 px-3.5 py-2 text-center text-[12px] font-bold text-white transition hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700 sm:self-auto"
           >
             Open logs →
           </Link>
         </div>
       )}
 
-      {/* ── content engine + operations ──────────────────────── */}
+      {/* ── content engine + operations ── */}
       <div className="grid gap-3 lg:grid-cols-5">
         <section
           aria-labelledby="content-heading"
-          className="admin-rise rounded-[6px] border-2 border-white bg-white/85 p-5 lg:col-span-3"
+          className="admin-rise panel p-5 lg:col-span-3"
           style={{ animationDelay: "210ms" }}
         >
           <h2 id="content-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">
@@ -419,7 +813,7 @@ export default function AdminOverviewPage() {
           <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-4">
             <div>
               <p className="text-[30px] font-bold tabular-nums leading-none text-ink">
-                <HeroNumeral value={data.reviews_total} />
+                <HeroNumeral value={data?.reviews_total ?? 0} />
               </p>
               <p className="mt-1 text-[11px] font-semibold text-ink/60">reviews indexed</p>
               <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
@@ -428,7 +822,7 @@ export default function AdminOverviewPage() {
             </div>
             <div>
               <p className="text-[30px] font-bold tabular-nums leading-none text-ink">
-                <HeroNumeral value={data.posts_total} />
+                <HeroNumeral value={data?.posts_total ?? 0} />
               </p>
               <p className="mt-1 text-[11px] font-semibold text-ink/60">posts created</p>
               <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
@@ -437,16 +831,17 @@ export default function AdminOverviewPage() {
             </div>
             <div>
               <p className="text-[30px] font-bold tabular-nums leading-none text-ink">
-                <HeroNumeral value={data.databanks_total} />
+                <HeroNumeral value={data?.databanks_total ?? 0} />
               </p>
               <p className="mt-1 text-[11px] font-semibold text-ink/60">databanks</p>
               <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
-                {fmtNum(data.documents_total)} docs · {docsPerBank >= 10 ? docsPerBank.toFixed(0) : docsPerBank.toFixed(1)}/bank
+                {fmtNum(data?.documents_total)} docs ·{" "}
+                {docsPerBank >= 10 ? docsPerBank.toFixed(0) : docsPerBank.toFixed(1)}/bank
               </p>
             </div>
             <div>
               <p className="text-[30px] font-bold tabular-nums leading-none text-ink">
-                <HeroNumeral value={data.outbox_pending} />
+                <HeroNumeral value={data?.outbox_pending ?? 0} />
               </p>
               <p className="mt-1 text-[11px] font-semibold text-ink/60">queued to send</p>
               <p className="mt-0.5 text-[11px] tabular-nums text-ink/40">
@@ -463,7 +858,10 @@ export default function AdminOverviewPage() {
               <div className="mt-2 space-y-1.5">
                 {postsEntries.slice(0, 4).map(([status, count]) => (
                   <div key={status} className="flex items-center gap-2">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[status] ?? "bg-ink/20"}`} aria-hidden />
+                    <span
+                      className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[status] ?? "bg-ink/20"}`}
+                      aria-hidden
+                    />
                     <span className="w-20 shrink-0 text-[11px] font-medium capitalize text-ink/60">{status}</span>
                     <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink/[0.06]">
                       <div
@@ -471,18 +869,20 @@ export default function AdminOverviewPage() {
                         style={{ width: barsIn ? `${Math.max(4, (count / postsTotal) * 100)}%` : "0%" }}
                       />
                     </div>
-                    <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-ink/50">{fmtNum(count)}</span>
+                    <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-ink/50">
+                      {fmtNum(count)}
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
           )}
           <p className="mt-4 border-t border-ink/[0.06] pt-3 text-[12px] leading-relaxed text-ink/60">
-            {data.reviews_total === 0 && data.posts_total === 0 ? (
+            {data?.reviews_total === 0 && data?.posts_total === 0 ? (
               <>No content yet — tenants need connected listings to sync reviews and create posts.</>
-            ) : data.reviews_total === 0 ? (
+            ) : data?.reviews_total === 0 ? (
               <>Posts exist but no reviews synced. Check listing connections.</>
-            ) : data.posts_total === 0 ? (
+            ) : data?.posts_total === 0 ? (
               <>Reviews syncing but no posts created. Tenants may need onboarding.</>
             ) : (
               <>
@@ -502,7 +902,7 @@ export default function AdminOverviewPage() {
 
         <section
           aria-labelledby="ops-heading"
-          className="admin-rise rounded-[6px] border-2 border-white bg-white/85 p-5 lg:col-span-2"
+          className="admin-rise panel p-5 lg:col-span-2"
           style={{ animationDelay: "280ms" }}
         >
           <h2 id="ops-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">
@@ -512,7 +912,7 @@ export default function AdminOverviewPage() {
             <div className="flex items-baseline justify-between gap-2 border-b border-ink/[0.06] pb-3">
               <dt className="text-[12px] font-medium text-ink/55">Delivery queue</dt>
               <dd className="text-[13px] font-bold tabular-nums text-ink">
-                {fmtNum(data.outbox_pending)} pending
+                {fmtNum(data?.outbox_pending)} pending
               </dd>
             </div>
             <div className="flex items-baseline justify-between gap-2 border-b border-ink/[0.06] pb-3">
@@ -523,15 +923,15 @@ export default function AdminOverviewPage() {
             </div>
             <div className="flex items-baseline justify-between gap-2">
               <dt className="text-[12px] font-medium text-ink/55">Listing sync</dt>
-              <dd className="text-right text-[13px] font-bold text-ink" title={fmtDate(data.last_synced_at)}>
-                {fmtRelative(data.last_synced_at)}
+              <dd className="text-right text-[13px] font-bold text-ink" title={fmtDate(data?.last_synced_at ?? null)}>
+                {fmtRelative(data?.last_synced_at ?? null)}
               </dd>
             </div>
           </dl>
-          <p className="mt-3 rounded-xl bg-ink/[0.03] px-3 py-2.5 text-[11px] leading-relaxed text-ink/55 ring-1 ring-ink/[0.05]">
+          <p className="mt-3 rounded-[2px] bg-ink/[0.03] px-3 py-2.5 text-[11px] leading-relaxed text-ink/55 ring-1 ring-ink/[0.05]">
             {problems > 0 ? (
               <>Failures are losing tenant value every hour — open the logs, oldest first.</>
-            ) : data.outbox_pending >= 25 ? (
+            ) : (data?.outbox_pending ?? 0) >= 25 ? (
               <>Queue is filling faster than it drains — check worker throughput before it becomes failures.</>
             ) : (
               <>All quiet. The next thing to watch is the 7-day sign-up line in the funnel above.</>
@@ -539,17 +939,16 @@ export default function AdminOverviewPage() {
           </p>
           <Link
             href="/logs"
-            className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
+            className="mt-3 inline-flex w-full items-center justify-center rounded-[2px] border border-ink/[0.08] bg-[var(--ui-surface)]px-3 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet"
           >
             Open logs →
           </Link>
         </section>
       </div>
 
-      {/* subtle footer */}
+      {/* footer */}
       <p className="pb-2 text-center text-[11px] text-ink/30">
-        All counts live from PostgreSQL · No caching · Refresh to re-query · Read-only admin.
-        {error && <span className="text-amber-600"> · Last refresh had an error: {error}</span>}
+        All counts live from PostgreSQL · No caching · Live card polls every 15s · Read-only admin.
       </p>
     </div>
   );

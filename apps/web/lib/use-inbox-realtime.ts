@@ -2,7 +2,7 @@
 
 import { API_BASE } from "./api-base";
 import { useEffect, useRef } from "react";
-import { getAccessToken, refreshSession } from "@/lib/auth-context";
+import { refreshSession } from "@/lib/auth-context";
 
 const API = API_BASE;
 
@@ -18,6 +18,27 @@ export interface NotificationPayload {
   created_at?: string | null;
 }
 
+/** Ticket lifecycle changes. The payload identifies the row, not its
+ *  contents — subscribers refetch rather than render from it, so a stale
+ *  field can never render a wrong ticket. */
+export type ReviewIssueAction =
+  | "created"
+  | "updated"
+  | "customer_returned"
+  | "handoff_minted";
+
+export interface ReviewIssueEvent {
+  id?: string | null;
+  ticket_number?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  needs_attention?: boolean;
+  primary_category?: string | null;
+  subcategory?: string | null;
+  rating?: number | null;
+  has_handoff_code?: boolean;
+}
+
 export interface InboxRealtimeEvent {
   type:
     | "message"
@@ -26,6 +47,7 @@ export interface InboxRealtimeEvent {
     | "comment_updated"
     | "comment_deleted"
     | "notification"
+    | "review_issue"
     | "typing"
     | "ping";
   notification?: NotificationPayload;
@@ -51,6 +73,9 @@ export interface InboxRealtimeEvent {
   author_id?: string | null;
   author_name?: string | null;
   hidden?: boolean;
+  /* review ticket lifecycle: one ticket changed, refetch to see it */
+  action?: ReviewIssueAction;
+  issue?: ReviewIssueEvent;
 }
 
 /** Subscribe to live inbox events; auto-reconnects with backoff. */
@@ -68,20 +93,9 @@ export function useInboxRealtime(onEvent: (e: InboxRealtimeEvent) => void) {
 
     function connect() {
       if (closed) return;
-      const token = getAccessToken();
-      if (!token) {
-        // Cookie-only session (the state right after any reload): /auth/me
-        // and every apiFetch succeed on cookies, so nothing else ever mints
-        // a bearer token — we have to ask. refreshSession is deduped
-        // app-wide; back off while the session is truly gone.
-        void refreshSession().then(() => {
-          if (closed) return;
-          if (getAccessToken()) connect();
-          else timer = setTimeout(connect, 5000);
-        });
-        return;
-      }
-      const url = `${API.replace(/^http/, "ws")}/api/v1/inbox/ws?token=${encodeURIComponent(token)}`;
+      // Access token travels as httpOnly cookie — the browser sends it
+      // automatically on same-origin WebSocket connections. No query param needed.
+      const url = `${API.replace(/^http/, "ws")}/api/v1/inbox/ws`;
       ws = new WebSocket(url);
       ws.onopen = () => { attempt = 0; };
       ws.onmessage = (ev) => {

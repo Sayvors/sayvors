@@ -17,6 +17,7 @@ const en = {
     connect: "Connect",
     channels: "Channels",
     manage: "Manage",
+    publishPost: "Publish",
     connectChannel: "Connect a channel",
     connectMore: "Connect more",
     autoReply: "Auto-Reply",

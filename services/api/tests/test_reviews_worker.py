@@ -474,3 +474,58 @@ async def test_dismissed_review_not_redrafted(db, channel_id, config_id, monkeyp
     rows = await _reply_rows(db, channel_id, "ggreview-1")
     assert len(rows) == 1
     assert rows[0].status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_model_resolution_supplies_required_rating(db, monkeypatch):
+    """Model resolution must not be silently skipped by an invalid request.
+
+    ReviewEngineRequest requires a rating even though model resolution only
+    reads model/channel_id. The worker used to build it without rating, catch
+    the validation error, and pass None into the pipeline -- producing the
+    opaque "ValueError: no model" on every review.
+    """
+    from app.modules.review_engine import graph as review_graph
+    from app.modules.review_engine import service as review_service
+
+    channel = Channel(
+        id="11111111-1111-1111-1111-111111111111",
+        user_id="test-user-0000-0000-0000-000000000001",
+        platform="google_reviews",
+        platform_user_id="demo-acc-123",
+        display_name="Test Burgers",
+        status="active",
+        access_token=encrypt_token("fake-access-token"),
+        metadata_json='{"location_id": "demo-loc-456", "account_id": "demo-acc-123"}',
+    )
+    config = AutoReplyConfig(
+        id="22222222-2222-2222-2222-222222222222",
+        channel_id=channel.id,
+        enabled=True,
+        tone="friendly",
+        min_rating_auto=4,
+        model=None,
+    )
+    db.add_all([channel, config])
+    await db.commit()
+
+    captured = {}
+
+    async def _resolve(req, tenant_id, session):
+        captured["resolved"] = True
+        captured["resolver_rating"] = req.rating
+        return "openai:gpt-4o-mini", "channel"
+
+    async def _pipeline(session, **state):
+        captured.update(state)
+        return {}
+
+    monkeypatch.setattr(review_service, "_resolve_engine_model", _resolve)
+    monkeypatch.setattr(review_graph, "run_review_pipeline", _pipeline)
+    _install_fakes(monkeypatch, [_review(rating=2)])
+
+    await reviews_worker.process_channel(db, channel, config)
+
+    assert captured["resolved"] is True
+    assert captured["resolver_rating"] == 2
+    assert captured["model"] == "openai:gpt-4o-mini"

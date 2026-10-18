@@ -1,9 +1,10 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -100,6 +101,7 @@ class ChannelMessage(Base):
     # inbox groups those into one "Unknown" thread rather than dropping them,
     # because they still contain the real conversation text.
     contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # Best-known display name. WhatsApp only sends a profile name on some
     # payloads, so this is often NULL and the UI falls back to the phone.
     contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -397,6 +399,35 @@ class LeadAction(Base):
     )
 
 
+class LeadDigestSend(Base):
+    """One pending-leads digest, per tenant, per local calendar day.
+
+    Exists so "email this tenant once a day" is enforced by the database rather
+    than by a check-then-insert. Several workers can run the sweep and one can
+    restart mid-send; with UNIQUE (tenant_id, digest_date) a second send is not
+    a race to be guarded but an insert that cannot happen.
+
+    digest_date is the tenant's LOCAL date. A tenant in Riyadh gets theirs on
+    their morning, and "already sent today" stays one indexed lookup.
+    """
+
+    __tablename__ = "lead_digest_sends"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "digest_date", name="uq_lead_digest_sends_tenant_date"),
+        Index("ix_lead_digest_sends_tenant_date", "tenant_id", "digest_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    digest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # How many leads the email listed. Retained so a 0-lead send is visibly
+    # wrong rather than a silent no-op.
+    lead_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class AutoReplyConfig(Base):
     """Per-channel auto-reply settings (Phase 1: Google Reviews)."""
 
@@ -440,6 +471,15 @@ class AutoReplyConfig(Base):
     promo_links: Mapped[bool] = mapped_column(Boolean, default=False)
     promo_only_relevant: Mapped[bool] = mapped_column(Boolean, default=True)
     promo_max_ctas: Mapped[int] = mapped_column(Integer, default=1)
+    # Offer needs-attention reviewers a wa.me deep link (prefilled with the
+    # issue's handoff code) in the public reply, so the WhatsApp assistant
+    # greets them with the ticket already known. The link publishes the
+    # tenant's WhatsApp number on the listing, so this is opt-out — default ON
+    # because the recovery loop is the point, OFF for tenants who must not
+    # publish the line.
+    handoff_link_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
     # Polling lease (atomic claim across worker instances)
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     polling_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -542,6 +582,61 @@ class ReviewReply(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
+class ReviewIssue(Base):
+    """A classified Google review — issue, subcategory, intent, sentiment,
+    priority, status. One row per review that we have parsed.
+
+    This is the atom we later hang the WhatsApp handoff off of. It also lets
+    the phone-friendly 'Status: Review' state exist at all — the dashboard can
+    show the state of every customer-facing issue without reopening review
+    threads.
+
+    primary_category is one of the 12 fixed choices defined in
+    review_engine/issues.py. subcategory is tenant-defined (per industry list)
+    with 'other' as fallback. subcategory_detail is free text when a tenant
+    wants a richer record.
+    """
+
+    __tablename__ = "review_issues"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    channel_id: Mapped[str] = mapped_column(String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True, nullable=False)
+    review_reply_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("review_replies.id", ondelete="CASCADE"), nullable=True, index=True)
+    review_id: Mapped[str] = mapped_column(String(500), index=True, nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    primary_category: Mapped[str] = mapped_column(String(60), nullable=False, default="other", server_default="other")
+    subcategory: Mapped[str] = mapped_column(String(100), nullable=False, default="other", server_default="other")
+    subcategory_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Defaults must be members of review_engine.classification.INTENTS /
+    # SENTIMENTS — "question"/"neutral" are not, and a row holding either would
+    # fail ReviewClassification.validate().
+    intent: Mapped[str] = mapped_column(String(40), nullable=False, default="ask_question", server_default="ask_question")
+    sentiment: Mapped[str] = mapped_column(String(20), nullable=False, default="mixed", server_default="mixed")
+    priority: Mapped[str] = mapped_column(String(10), nullable=False, default="normal", server_default="normal")
+    needs_attention: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="new", server_default="new")
+    reviewer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extractor_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Sequential per tenant, assigned by review_engine.tickets.persist_issue
+    # only to issues that need attention. NULL for praise / neutral chatter, so
+    # a ticket number always means "a human owes this customer something".
+    # Unique per (tenant_id, ticket_number) -- NULLs do not collide in Postgres
+    # or SQLite unique indexes, so unnumbered issues stack freely.
+    ticket_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    handoff_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    def summary_line(self) -> str:
+        """One-line ticket summary for a returning customer's short-circuit reply."""
+        tag = self.primary_category.replace("_", " ").title()
+        return tag if not self.summary else f"{tag} -- {self.summary}"
+
+
+
+
 
 class WhatsAppThreadState(Base):
     """Per-conversation stats for one WhatsApp customer.
@@ -563,7 +658,8 @@ class WhatsAppThreadState(Base):
     channel_id: Mapped[str] = mapped_column(
         ForeignKey("channels.id", ondelete="CASCADE"), index=True
     )
-    contact_phone: Mapped[str] = mapped_column(String(32), index=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # Customer's language as detected from their own words ("en", "ar",
     # "ur", "ps", "hi", "bn", ...). Drives the voice-note language.
     language: Mapped[str] = mapped_column(String(16), default="en")

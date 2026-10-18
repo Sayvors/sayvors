@@ -65,10 +65,10 @@ function CompactArea({ points }: { points: { x: string; y: number }[] }) {
           </g>
         );
       })}
-      <path d={area} fill="#5b2d8e" opacity={0.1} />
-      <path d={line} fill="none" stroke="#5b2d8e" strokeWidth={1.7} strokeLinejoin="round" />
+      <path d={area} opacity={0.1} style={{ fill: "var(--ui-ink)" }} />
+      <path d={line} fill="none" strokeWidth={1.7} strokeLinejoin="round" style={{ stroke: "var(--ui-ink)" }} />
       {points.map((p, i) => (
-        <circle key={i} cx={px(i)} cy={py(p.y)} r={1.4} fill="#5b2d8e">
+        <circle key={i} cx={px(i)} cy={py(p.y)} r={1.4} style={{ fill: "var(--ui-ink)" }}>
           <title>{`${p.x}: ${p.y.toLocaleString()} tokens · ${points[i] ? "" : ""}`}</title>
         </circle>
       ))}
@@ -139,7 +139,7 @@ function VoiceDailyBars({ days }: { days: { day: string; notes: number; chars: n
         const x = PAD + slot * i + (slot - bw) / 2;
         return (
           <g key={d.day}>
-            <rect x={x.toFixed(1)} y={(BASE - h).toFixed(1)} width={bw.toFixed(1)} height={h.toFixed(1)} rx={Math.min(3, bw / 2)} fill="#5b2d8e" opacity={d.notes ? 0.85 : 0.15}>
+            <rect x={x.toFixed(1)} y={(BASE - h).toFixed(1)} width={bw.toFixed(1)} height={h.toFixed(1)} rx={Math.min(3, bw / 2)} opacity={d.notes ? 0.85 : 0.15} style={{ fill: "var(--ui-ink)" }}>
               <title>{`${d.day}: ${d.notes} notes · ${d.chars.toLocaleString()} chars`}</title>
             </rect>
           </g>
@@ -268,12 +268,12 @@ export default function UsagePage() {
             Who is actually advancing — heavy users, rising adopters, and quiet tenants to nudge. Compact, actionable.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5 rounded-xl bg-white p-1 ring-1 ring-ink/[0.06]">
+        <div className="flex shrink-0 items-center gap-1.5 rounded-[2px] bg-[var(--ui-surface)] p-1 ring-1 ring-ink/[0.06]">
           {[7, 30, 90].map((d) => (
             <button
               key={d}
               onClick={() => setDays(d)}
-              className={`rounded-lg px-3 py-1 text-[11px] font-bold transition ${days === d ? "bg-deep-violet text-white shadow-sm" : "text-ink/55 hover:bg-ink/[0.04] hover:text-ink"}`}
+              className={`rounded-[2px] px-3 py-1 text-[11px] font-bold transition ${days === d ? "bg-deep-violet text-white" : "text-ink/55 hover:bg-ink/[0.04] hover:text-ink"}`}
             >
               {d}d
             </button>
@@ -284,11 +284,11 @@ export default function UsagePage() {
       {loading ? (
         <div className="grid gap-2.5 sm:grid-cols-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-[76px] animate-pulse rounded-[6px] border-2 border-white bg-white/60" />
+            <div key={i} className="panel h-[76px] animate-pulse" />
           ))}
         </div>
       ) : error ? (
-        <div className="rounded-[6px] border-2 border-white bg-white/80 p-8 text-center">
+        <div className="panel p-8 text-center">
           <p className="text-[13px] text-ink/60">{error}</p>
           <button onClick={() => void load(days)} className="btn-primary mt-3 !py-1.5 text-[12px]">Retry</button>
         </div>
@@ -302,7 +302,7 @@ export default function UsagePage() {
               { label: "Avg / call", value: data.totals.calls ? fmt(Math.round(data.totals.total_tokens / data.totals.calls)) : "—", sub: `${fmt(data.totals.total_tokens)} in ${days}d` },
               { label: "Peak day", value: fmt(Math.max(0, ...data.daily.map((d) => d.total_tokens))), sub: data.daily.reduce((m, d) => (d.total_tokens > m.total_tokens ? d : m), data.daily[0] ?? { day: "—", total_tokens: 0 })?.day?.slice(5) ?? "—" },
             ].map((c) => (
-              <div key={c.label} className="rounded-[6px] border-2 border-white bg-white/80 px-3.5 py-3">
+              <div key={c.label} className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</p>
                 <p className="mt-1 text-[18px] font-bold leading-none tabular-nums text-ink">{c.value}</p>
                 <p className="mt-1 text-[11px] leading-none text-ink/45">{c.sub}</p>
@@ -314,7 +314,7 @@ export default function UsagePage() {
           {insights && (
             <div className="grid gap-2.5 lg:grid-cols-4">
               {/* Concentration */}
-              <div className="rounded-[6px] border-2 border-white bg-white/85 px-3.5 py-3">
+              <div className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   <span className="h-1.5 w-1.5 rounded-full bg-violet-500" aria-hidden /> Concentration
                 </p>
@@ -332,7 +332,7 @@ export default function UsagePage() {
               </div>
 
               {/* Engagement / dormancy */}
-              <div className="rounded-[6px] border-2 border-white bg-white/85 px-3.5 py-3">
+              <div className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   <span className={`h-1.5 w-1.5 rounded-full ${insights.dormant > 0 ? "bg-amber-500" : "bg-emerald-500"}`} aria-hidden /> Engagement
                 </p>
@@ -350,7 +350,7 @@ export default function UsagePage() {
               </div>
 
               {/* Momentum */}
-              <div className="rounded-[6px] border-2 border-white bg-white/85 px-3.5 py-3">
+              <div className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   <span className={`h-1.5 w-1.5 rounded-full ${insights.growth >= 0 ? "bg-emerald-500" : "bg-red-500"}`} aria-hidden /> Momentum
                 </p>
@@ -367,7 +367,7 @@ export default function UsagePage() {
               </div>
 
               {/* Efficiency */}
-              <div className="rounded-[6px] border-2 border-white bg-white/85 px-3.5 py-3">
+              <div className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   <span className={`h-1.5 w-1.5 rounded-full ${insights.slow ? "bg-amber-500" : "bg-sky-500"}`} aria-hidden /> Efficiency
                 </p>
@@ -384,7 +384,7 @@ export default function UsagePage() {
 
           {/* compact two-col: daily + models */}
           <div className="grid gap-3 lg:grid-cols-5">
-            <div className="rounded-[6px] border-2 border-white bg-white/80 p-3.5 lg:col-span-3">
+            <div className="panel p-3.5 lg:col-span-3">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h2 className="text-[13px] font-bold leading-none text-ink">Daily tokens</h2>
@@ -393,14 +393,14 @@ export default function UsagePage() {
                 <span className="rounded-full bg-ink/[0.04] px-2 py-1 text-[11px] font-semibold tabular-nums text-ink/50">{data.daily.length} days</span>
               </div>
               {data.daily.length === 0 ? (
-                <p className="mt-4 rounded-xl bg-ink/[0.03] px-3 py-6 text-center text-[11px] text-ink/40">No daily data.</p>
+                <p className="mt-4 rounded-[2px] bg-ink/[0.03] px-3 py-6 text-center text-[11px] text-ink/40">No daily data.</p>
               ) : (
                 <CompactArea points={data.daily.map((d) => ({ x: d.day.slice(5), y: d.total_tokens }))} />
               )}
               <p className="mt-2 text-[11px] text-ink/30">{insights?.growth !== undefined && insights.growth >= 0 ? "Progress is tracked daily — watch for flat lines indicating stalled tenants." : ""}</p>
             </div>
 
-            <div className="rounded-[6px] border-2 border-white bg-white/80 p-3.5 lg:col-span-2">
+            <div className="panel p-3.5 lg:col-span-2">
               <h2 className="text-[13px] font-bold leading-none text-ink">Top models</h2>
               <p className="mt-1 text-[11px] leading-none text-ink/45">By token share — where people get value</p>
               <div className="mt-3 space-y-2">
@@ -419,7 +419,7 @@ export default function UsagePage() {
                 {data.per_model.length > 5 && <p className="pt-1 text-[11px] text-ink/35">+{data.per_model.length - 5} more models</p>}
               </div>
               {insights?.leader && (
-                <p className="mt-3 rounded-xl bg-violet-50 px-2.5 py-2 text-[11px] leading-snug text-violet-800 ring-1 ring-violet-100">
+                <p className="mt-3 rounded-[2px] bg-violet-50 px-2.5 py-2 text-[11px] leading-snug text-violet-800 ring-1 ring-violet-100">
                   Leader <b>{insights.leader.model.split(":").pop()}</b> drives {insights.leaderShare}% of tokens — ensure it stays fast & cheap.
                 </p>
               )}
@@ -427,7 +427,7 @@ export default function UsagePage() {
           </div>
 
           {/* voice models — TTS engine usage with bar charts */}
-          <div className="rounded-[6px] border-2 border-white bg-white/80 p-3.5">
+          <div className="panel p-3.5">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h2 className="text-[13px] font-bold leading-none text-ink">Voice models</h2>
@@ -445,11 +445,11 @@ export default function UsagePage() {
               )}
             </div>
             {voiceError && !voice ? (
-              <p className="mt-3 rounded-xl bg-ink/[0.03] px-3 py-4 text-center text-[11px] text-ink/40">
+              <p className="mt-3 rounded-[2px] bg-ink/[0.03] px-3 py-4 text-center text-[11px] text-ink/40">
                 Voice usage unavailable ({voiceError}) — restart the API to pick up the voice metering endpoint.
               </p>
             ) : voice && voice.totals.calls === 0 ? (
-              <p className="mt-3 rounded-xl bg-ink/[0.03] px-3 py-4 text-center text-[11px] text-ink/40">
+              <p className="mt-3 rounded-[2px] bg-ink/[0.03] px-3 py-4 text-center text-[11px] text-ink/40">
                 No voice notes in this period — enable voice replies per tenant to see engine usage here.
               </p>
             ) : voice ? (
@@ -461,7 +461,7 @@ export default function UsagePage() {
                     { label: "Engines used", value: String(voice.totals.active_engines), sub: `${voice.per_engine.length} configured rows` },
                     { label: "Avg latency", value: fmtMs(voice.totals.avg_latency_ms), sub: "per synthesis" },
                   ].map((c) => (
-                    <div key={c.label} className="rounded-xl bg-ink/[0.02] px-3 py-2 ring-1 ring-ink/[0.04]">
+                    <div key={c.label} className="rounded-[2px] bg-ink/[0.02] px-3 py-2 ring-1 ring-ink/[0.04]">
                       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</p>
                       <p className="mt-0.5 text-[16px] font-bold leading-none tabular-nums text-ink">{c.value}</p>
                       <p className="mt-1 text-[11px] leading-none text-ink/45">{c.sub}</p>
@@ -476,7 +476,7 @@ export default function UsagePage() {
                   <div className="lg:col-span-2">
                     <h3 className="text-[12px] font-bold text-ink">Daily voice notes</h3>
                     {voice.daily.length === 0 ? (
-                      <p className="mt-3 rounded-xl bg-ink/[0.03] px-3 py-6 text-center text-[11px] text-ink/40">No daily data.</p>
+                      <p className="mt-3 rounded-[2px] bg-ink/[0.03] px-3 py-6 text-center text-[11px] text-ink/40">No daily data.</p>
                     ) : (
                       <VoiceDailyBars days={voice.daily} />
                     )}
@@ -487,7 +487,7 @@ export default function UsagePage() {
           </div>
 
           {/* per tenant — compact table */}
-          <div className="rounded-[6px] border-2 border-white bg-white/80 p-3 sm:p-3.5">
+          <div className="panel p-3 sm:p-3.5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-[13px] font-bold leading-none text-ink">Tenants by progress</h2>
               <div className="flex items-center gap-2">
@@ -501,13 +501,13 @@ export default function UsagePage() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Filter email or id…"
-                    className="w-48 rounded-xl border border-ink/[0.08] bg-white py-1.5 pl-8 pr-3 text-[11px] text-ink placeholder:text-ink/35 outline-none focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/10 sm:w-56"
+                    className="w-48 rounded-[2px] border border-ink/[0.08] bg-[var(--ui-surface)] py-1.5 pl-8 pr-3 text-[11px] text-ink placeholder:text-ink/35 outline-none focus:border-[var(--ui-ink)] sm:w-56"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="mt-3 overflow-x-auto rounded-xl ring-1 ring-ink/[0.06]">
+            <div className="mt-3 overflow-x-auto rounded-[2px] ring-1 ring-ink/[0.06]">
               <table className="w-full text-[11px]">
                 <thead>
                   <tr className="bg-ink/[0.02] text-left text-[10px] uppercase tracking-wide text-ink/40">
@@ -519,7 +519,7 @@ export default function UsagePage() {
                     <th className="px-3 py-2 text-right font-bold">Last active</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-ink/[0.04] bg-white">
+                <tbody className="divide-y divide-ink/[0.04] bg-[var(--ui-surface)]">
                   {tenants.slice(0, 20).map((t) => {
                     const isDormant = t.last_seen ? Date.now() - new Date(t.last_seen).getTime() > 7 * 86400 * 1000 : true;
                     const isTop = insights?.top1?.tenant_id === t.tenant_id;
@@ -558,7 +558,7 @@ export default function UsagePage() {
             </div>
             {tenants.length > 20 && <p className="mt-2 text-center text-[11px] text-ink/35">Showing top 20 by tokens · search to filter · full list {data.per_tenant.length}</p>}
             {data.per_tenant.length > 0 && (
-              <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-ink/[0.02] p-2.5 text-[11px] ring-1 ring-ink/[0.04]">
+              <div className="mt-3 grid grid-cols-3 gap-2 rounded-[2px] bg-ink/[0.02] p-2.5 text-[11px] ring-1 ring-ink/[0.04]">
                 <div className="text-center">
                   <p className="font-bold tabular-nums text-ink">{insights?.buckets.power ?? 0} power</p>
                   <p className="text-ink/40">≥10K</p>

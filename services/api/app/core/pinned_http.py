@@ -43,6 +43,61 @@ class _PinnedBackend(httpcore.SyncBackend):
         )
 
 
+def fetch_pinned_status(url: str, *, timeout: float = 10.0) -> int:
+    """Check that a user-supplied URL is publicly reachable.
+
+    Validates scheme/host (SSRF guard), pins DNS, then connects. Returns the
+    final HTTP status code. Does NOT read the body and does NOT restrict
+    content-type — suitable for image/media URLs that are not crawlable text.
+
+    Each redirect hop is re-validated and re-pinned. Max 3 hops.
+    Raises UnsafeUrlError for blocked URLs; httpcore/ValueError for transport
+    or protocol failures.
+    """
+    timeouts = {"connect": min(5.0, timeout), "read": timeout, "write": 5.0, "pool": 5.0}
+    current = assert_public_http_url(url)
+    for _ in range(MAX_REDIRECT_HOPS + 1):
+        parts = urlparse(current)
+        host = (parts.hostname or "").rstrip(".")
+        ips = resolve_public_ips(host)
+        if not ips:
+            raise UnsafeUrlError(f"host {host!r} resolves to no public IP")
+        host_header = host
+        try:
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+        except ValueError:
+            port = 443 if parts.scheme == "https" else 80
+        if (parts.scheme == "https" and port != 443) or (parts.scheme == "http" and port != 80):
+            host_header = f"{host}:{port}"
+        pool = httpcore.ConnectionPool(network_backend=_PinnedBackend(ips[0]))
+        try:
+            req = httpcore.Request(
+                "HEAD",
+                current,
+                headers=[
+                    (b"user-agent", b"SayvorsBot/1.0"),
+                    (b"host", host_header.encode("utf-8")),
+                    (b"accept", b"*/*"),
+                ],
+                extensions={"timeout": timeouts},
+            )
+            resp = pool.handle_request(req)
+            if resp.status in _REDIRECTS:
+                location = None
+                for name, value in resp.headers:
+                    if name.decode("latin-1").lower() == "location":
+                        location = value.decode("latin-1")
+                        break
+                if not location:
+                    raise ValueError("redirect without location")
+                current = assert_public_http_url(urljoin(current, location))
+                continue
+            return resp.status
+        finally:
+            pool.close()
+    raise ValueError("too many redirects")
+
+
 def _read_text(resp: httpcore.Response) -> str:
     ctype = ""
     length = None
