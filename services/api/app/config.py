@@ -4,6 +4,8 @@ from pydantic import field_validator
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors"
+    DATABASE_READER_URL: str = ""  # empty = reads also hit DATABASE_URL (no replica yet)
+    DB_POOL_MODE: str = "session"  # session | transaction — PgBouncer pool mode
     # AsyncPG pool: workers hold sessions across network calls (Localith,
     # Groq), so size generously and fail fast instead of hanging forever.
     DB_POOL_SIZE: int = 50
