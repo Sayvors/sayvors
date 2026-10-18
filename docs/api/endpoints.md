@@ -424,3 +424,193 @@ GET /health
 ```json
 { "status": "ok" }
 ```
+
+---
+
+## Admin (`/api/v1/admin`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/login` | Admin login (httpOnly cookie) |
+| POST | `/logout` | Admin logout |
+| GET | `/me` | Session check |
+| GET | `/overview` | Platform overview totals |
+| GET | `/overview/stats` | Windowed stats (totals + delta + last 24h + platforms) |
+| GET | `/overview/stats/live` | Live stats (last N minutes, polls every 15s) |
+| GET | `/health` | Per-service health + recent failures |
+| GET | `/tenants` | List tenants |
+| GET | `/tenants/{user_id}` | Tenant detail |
+| GET | `/tenants/{user_id}/usage` | Tenant LLM usage |
+| POST | `/tenants/{user_id}/plan` | Grant plan + credits |
+| GET | `/llm` | LLM provider status |
+| PUT | `/llm/{provider}` | Update provider key/enabled |
+| POST | `/llm/{provider}/test` | Test provider connection |
+| PUT | `/llm/{provider}/models/{model_id}` | Enable/disable model |
+| POST | `/llm/{provider}/models/{model_id}/test` | Test model |
+| GET | `/llm/{provider}/remote-models` | List remote models |
+| GET | `/usage/overview` | Global token metering |
+| GET | `/usage/voice` | Voice TTS metering |
+| GET | `/voice-engines` | List voice engines |
+| POST | `/voice-engines` | Create voice engine |
+| GET | `/voice-engines/fish-voices` | Browse Fish Audio catalog |
+| POST | `/voice-engines/{engine_id}/test` | Test voice engine |
+| PUT | `/voice-engines/{engine_id}` | Update voice engine |
+| DELETE | `/voice-engines/{engine_id}` | Delete voice engine |
+| GET | `/dialects` | List dialects |
+| POST | `/dialects` | Create dialect |
+| DELETE | `/dialects/{code}` | Delete dialect |
+| GET | `/tones` | List tones |
+| POST | `/tones` | Create tone |
+| PUT | `/tones/{code}` | Update tone |
+| DELETE | `/tones/{code}` | Delete tone |
+| GET | `/models` | List saved models |
+| GET | `/llm/{provider}/remote-models` | Remote model list |
+
+### Overview Stats
+```http
+GET /api/v1/admin/overview/stats?window=30d
+Authorization: Bearer <admin_token>
+X-CSRF-Token: ...
+```
+
+Query params: `window` = `24h` \| `7d` \| `30d` \| `90d` \| `1y` (default `30d`)
+
+**Response (200):**
+```json
+{
+  "window": "30d",
+  "window_start": "2026-10-10T13:53:24+00:00",
+  "generated_at": "2026-10-17T13:53:24+00:00",
+  "totals": { "users": 18, "tenants": 16, "businesses": 3, "reviews": 17, "messages": 2, "posts": 1 },
+  "window_delta": { "users": 11, "tenants": 11, "businesses": 0, "reviews": 0, "messages": 2, "messages_in": 1, "messages_out": 1, "ai_replies": 0, "posts": 0 },
+  "last_24h": { "users": 0, "reviews": 0, "messages": 0, "messages_in": 0, "messages_out": 0, "ai_replies": 0 },
+  "platforms": [
+    { "platform": "whatsapp", "label": "WhatsApp", "connected": 4, "connected_total": 4, "messages": 2, "messages_in": 1, "messages_out": 1 },
+    { "platform": "facebook", "label": "Facebook", "connected": 1, "connected_total": 2, "messages": 0, "messages_in": 0, "messages_out": 0 },
+    { "platform": "instagram", "label": "Instagram", "connected": 1, "connected_total": 1, "messages": 0, "messages_in": 0, "messages_out": 0 },
+    { "platform": "x", "label": "X", "connected": 0, "connected_total": 0, "messages": 0, "messages_in": 0, "messages_out": 0 },
+    { "platform": "telegram", "label": "Telegram", "connected": 0, "connected_total": 0, "messages": 0, "messages_in": 0, "messages_out": 0 },
+    { "platform": "linkedin", "label": "LinkedIn", "connected": 0, "connected_total": 0, "messages": 0, "messages_in": 0, "messages_out": 0 },
+    { "platform": "google_reviews", "label": "Google Reviews", "connected": 4, "connected_total": 4, "messages": 0, "messages_in": 0, "messages_out": 0 }
+  ]
+}
+```
+
+### Live Stats
+```http
+GET /api/v1/admin/overview/stats/live?minutes=30
+Authorization: Bearer <admin_token>
+X-CSRF-Token: ...
+```
+
+Query params: `minutes` = `15`–`120` (default `30`)
+
+**Response (200):**
+```json
+{
+  "minutes": 30,
+  "generated_at": "2026-10-17T13:53:24+00:00",
+  "messages": 2,
+  "messages_in": 1,
+  "messages_out": 1,
+  "ai_replies": 0,
+  "new_users": 0,
+  "new_reviews": 0,
+  "businesses_connected": 3,
+  "businesses_disconnected": 0,
+  "active_platforms": 3,
+  "top_platform": "whatsapp"
+}
+```
+
+---
+
+## Storage (`/api/v1/storage`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/upload` | Upload photo/video (returns public URL) |
+| GET | `/objects` | List caller's uploaded media objects |
+| GET | `/objects/{key}` | Fetch metadata for an owned object |
+| PUT | `/objects/{key}` | Replace content at an owned key |
+| DELETE | `/objects/{key}` | Delete an owned object |
+| POST | `/presign` | Create temporary private download URL |
+
+### Upload Object
+```http
+POST /api/v1/storage/upload
+Authorization: Bearer <token>
+X-CSRF-Token: ...
+Content-Type: multipart/form-data
+
+file: <binary>
+```
+
+**Response (200):**
+```json
+{
+  "key": "u1/abc123.jpg",
+  "url": "https://api.example.com/media-files/u1/abc123.jpg",
+  "size": 1024,
+  "content_type": "image/jpeg",
+  "operation": "upload"
+}
+```
+
+Storage backend is selected by env var: `S3_MEDIA_BUCKET`/`S3_DOCS_BUCKET` → S3, `GCS_PUBLIC_BUCKET`/`GCS_PRIVATE_BUCKET` → GCS, otherwise local disk. See `docs/database/README.md` for backend selection details.
+
+---
+
+## Publish (`/api/v1/channels/publish`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/publish` | Publish one post to many destinations (creates jobs) |
+| GET | `/publish/{job_id}` | Poll publish job status |
+
+### Publish Post
+```http
+POST /api/v1/channels/publish
+Authorization: Bearer <token>
+X-CSRF-Token: ...
+Content-Type: application/json
+
+{
+  "media_url": "https://api.example.com/media-files/u1/abc123.jpg",
+  "media_type": "image",
+  "media_key": "u1/abc123.jpg",
+  "caption": "Check out our new menu!",
+  "description": "Full details here.",
+  "scheduled_at": null,
+  "idempotency_key": "publish-123",
+  "destinations": [
+    { "platform": "instagram", "external_asset_id": "17841400000000000", "methods": ["post", "story"] },
+    { "platform": "facebook", "external_asset_id": "123456789", "methods": ["post"] },
+    { "platform": "whatsapp", "external_asset_id": "+15551234567", "methods": ["status"] }
+  ]
+}
+```
+
+**Response (200):**
+```json
+[
+  { "job_id": "uuid-1", "status": "accepted", "lane": "publishing", "created_at": "2026-10-17T13:53:24+00:00" },
+  { "job_id": "uuid-2", "status": "accepted", "lane": "publishing", "created_at": "2026-10-17T13:53:24+00:00" }
+]
+```
+
+Creates one Job per (destination, method) pair on the `publishing` lane. Jobs run asynchronously via the job runner; poll `/publish/{job_id}` for status.
+
+### Publish Status
+```http
+GET /api/v1/channels/publish/{job_id}
+Authorization: Bearer <token>
+X-CSRF-Token: ...
+```
+
+**Response (200):**
+```json
+{ "job_id": "uuid-1", "status": "succeeded", "lane": "publishing", "created_at": "2026-10-17T13:53:24+00:00" }
+```
+
+Status values: `accepted`, `queued`, `running`, `retrying`, `blocked`, `succeeded`, `failed`, `cancelled`, `dead`.

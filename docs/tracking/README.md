@@ -21,7 +21,7 @@ have been consolidated here.
 | Pending product features (PENDING-QUEUE.md) | Facebook section deferred, tone done, multi-location partial | `action-items.md` |
 | Scale fix plan (FIX-PLAN-SCALE.md) | P0–P3 prioritized | `action-items.md` |
 | Deep scan (DEEP-SCAN-REPORT.md) | Overall D+, 47/100 | `source-files/` |
-| Job queue design | **Designed, not built** — Phase 0 pending | `docs/specs/2026-10-10-unified-job-processing-design.md` |
+| Job queue design | **Built (Phase 0+1)** — lanes, handlers, publish endpoint | `docs/specs/2026-10-10-unified-job-processing-design.md` |
 
 ## How to use
 

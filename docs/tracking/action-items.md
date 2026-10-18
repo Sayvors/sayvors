@@ -100,18 +100,20 @@ Source files are referenced by path. Items marked **"For later"** need a product
 
 ## ⚙️ Job queue (unified processing design)
 
-**Status: Designed, not built.** See `docs/specs/2026-10-10-unified-job-processing-design.md`.
+**Status: Built (Phase 0+1 complete).** See `docs/specs/2026-10-10-unified-job-processing-design.md`.
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Unified `jobs` table | `⏸️ Not built` | Replaces 4 de-facto job tables |
-| Topic provisioning with real partitions | `⏸️ Not built` | `app/modules/kafka/topics.py` |
-| Producer hardening (`acks=all`, idempotence) | `⏸️ Not built` | `kafka/client.py` |
-| Consumer manual offset commit | `⏸️ Not built` | Currently auto-commits on timer |
-| Outbox `FOR UPDATE SKIP LOCKED` drain | `⏸️ Not built` | Currently no locking |
-| DLQ + operator replay | `⏸️ Not built` | One TODO in `FIX-PLAN-SCALE.md:132` |
-| Lane consumers (realtime/publishing/media/bulk) | `⏸️ Not built` | `lead_action_worker` is the reference pattern |
-| Migrate `ingest_jobs`, `scrape_jobs`, `stt_jobs`, `tts_jobs` | `⏸️ Not built` | Phase 4 of design |
+| Unified `jobs` table | ✅ Built | `app/modules/jobs/models.py`, migration `z3a4b5c6d7e8` |
+| Topic provisioning with real partitions | ✅ Built | `app/modules/kafka/topics.py` |
+| Producer hardening (`acks=all`, idempotence) | ✅ Built | `app/modules/kafka/client.py` |
+| Consumer manual offset commit | ✅ Built | `app/modules/kafka/client.py` |
+| Outbox `FOR UPDATE SKIP LOCKED` drain | ✅ Built | `app/modules/outbox/worker.py` |
+| DLQ + operator replay | ⏸️ Not built | Phase 2 pending |
+| Lane consumers (realtime/publishing/media/bulk) | ✅ Built | `app/modules/jobs/runner.py` — JobRunner per lane |
+| Migrate `ingest_jobs`, `scrape_jobs`, `stt_jobs`, `tts_jobs` | ⏸️ Not built | Phase 2 of design |
+| `post.publish` job handler | ✅ Built | `app/modules/jobs/handlers/post_publish.py` |
+| `POST /api/v1/channels/publish` endpoint | ✅ Built | `app/modules/channels/publish/router.py` |
 
 ---
 
