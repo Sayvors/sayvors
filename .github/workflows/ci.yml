@@ -66,6 +66,12 @@ jobs:
           TESTING: "true"
           AUTH_RATE_LIMIT_FAIL_CLOSED: "false"
           RUN_BACKGROUND_WORKERS: "false"
+          # Platform app credentials the sign-in endpoint guards check.
+          # Token verification itself is mocked in tests; values are dummies.
+          META_APP_ID: "test-meta-app-id"
+          META_APP_SECRET: "test-meta-app-secret"
+          GOOGLE_CLIENT_ID: "test-google-client-id"
+          GOOGLE_CLIENT_SECRET: "test-google-client-secret"
         run: |
           cd services/api
           python -m pytest tests/ -q

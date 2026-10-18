@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import select, text as sa_text
-from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy.exc import MissingGreenlet, StatementError
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
@@ -149,8 +149,14 @@ async def test_failed_branch_does_not_stop_the_next_branch(db, user_id, monkeypa
     # the failed branch's writes, and precisely why the sync must not read it
     # afterwards. Documented here so nobody "fixes" the snapshot by reading
     # connection.listing_id again.
-    with pytest.raises(MissingGreenlet):
+    #
+    # SQLAlchemy 2.0.x raises the bare MissingGreenlet here; 2.1.x wraps it
+    # in a StatementError (`.orig`). Accept both — the asserted contract is
+    # that the expired caller row cannot be lazily loaded on an AsyncSession.
+    with pytest.raises((MissingGreenlet, StatementError)) as err:
         _ = user.business_type
+    if isinstance(err.value, StatementError):
+        assert isinstance(err.value.orig, MissingGreenlet)
     fresh = (await db.execute(
         select(User).where(User.id == user_id)
     )).scalar_one()
