@@ -19,6 +19,7 @@ from .modules.channels.leads import router as leads_router
 from .modules.channels.review_issues import router as review_issues_router
 from .modules.channels.router import _inbox_router as inbox_router
 from .modules.channels.router import router as channels_router
+from .modules.channels.publish.router import router as publish_router
 from .modules.channels.meta.router import router as meta_router
 from .modules.channels.meta.webhooks.router import router as meta_webhooks_router
 from .modules.redis.router import router as redis_router
@@ -348,6 +349,7 @@ app.include_router(tts_router)
 app.include_router(stt_router)
 app.include_router(llm_router)
 app.include_router(channels_router)
+app.include_router(publish_router)
 app.include_router(leads_router)
 app.include_router(review_issues_router)
 app.include_router(inbox_router)

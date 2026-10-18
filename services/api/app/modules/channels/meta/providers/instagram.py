@@ -567,7 +567,56 @@ class InstagramAdapter(MetaProviderAdapter):
             "cities": buckets.get("cities", []),
             "countries": buckets.get("countries", []),
         }
-    # Meta's IG User reference states it plainly: "Updating: This operation is
+    # ── Publishing ──
+    # IG publish is two-step: create a media container from a public URL,
+    # then publish the container. Images process synchronously; video/Reels
+    # containers are async (status polling) — handled by a later round.
+
+    async def publish_post(
+        self,
+        token: str,
+        asset_id: str,
+        method: str,
+        media_url: str | None,
+        media_type: str | None,
+        caption: str,
+        description: str,
+        scheduled_at: str | None,
+    ) -> dict:
+        """Publish one post to an Instagram business account.
+
+        Two-step: create container from public media_url, then publish it.
+        Only "post" and "story" methods are supported here; "reel" video
+        publishing needs async container status polling (later round).
+        """
+        if method == "reel":
+            raise MetaAPIError(
+                "Instagram Reel publishing needs async container polling "
+                "(not yet wired). Use image 'post' instead.",
+                501,
+            )
+        if not media_url:
+            raise MetaAPIError("Instagram publish requires a public media_url", 400)
+        if not token:
+            raise MetaAPIError("Instagram publish requires an access token", 401)
+
+        # Step 1: create container
+        creation_id = await self.create_media_container(
+            asset_id, token, image_url=media_url, caption=caption[: self.IG_CAPTION_MAX_CHARS],
+        )
+        if not creation_id:
+            raise MetaAPIError("Instagram media container creation returned no id", 502)
+
+        # Step 2: publish container
+        media_id = await self.publish_media_container(asset_id, token, creation_id)
+        return {
+            "provider": "instagram",
+            "media_id": media_id,
+            "method": method,
+            "asset_id": asset_id,
+        }
+
+    # Fields documented on the IG User reference states it plainly: "Updating:
     # not supported." name, biography, website, username and the avatar are all
     # readable and none of them are writable over the Graph API, so there is
     # deliberately no set_business_profile counterpart to WhatsApp's. Do not
