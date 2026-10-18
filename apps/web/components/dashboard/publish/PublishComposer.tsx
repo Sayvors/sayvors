@@ -1,13 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
 import { INK, INK2 } from "@/components/channels/instagram/ui";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
 import ConfirmModal from "./ConfirmModal";
-import { DEFAULT_CROP, PLATFORM_META, type CropState, type MediaState, type PublishTarget } from "./types";
+import {
+  DEFAULT_CROP,
+  METHOD_META,
+  PLATFORM_META,
+  defaultCropFor,
+  methodsFor,
+  type CropState,
+  type MediaState,
+  type PostMethod,
+  type PublishTarget,
+} from "./types";
 import CropFrame from "./CropFrame";
 
 /*
@@ -104,6 +114,9 @@ export default function PublishComposer() {
   /** Crop ids the tenant has actually adjusted — powers the "left to
    *  review" counter (a default framing is fine, but it's unreviewed). */
   const [reviewed, setReviewed] = useState<Set<string>>(new Set());
+  /** Per-network format (post/story/reel/status). Unset = not chosen yet,
+   *  which is what turns a readiness chip amber. */
+  const [formats, setFormats] = useState<Record<string, PostMethod>>({});
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -111,16 +124,30 @@ export default function PublishComposer() {
   // Sync selection with "all connected": flipping the master selects or
   // clears everything; manual edits turn the master off without touching
   // the individual rows.
-  const applyAll = useCallback(
-    (v: boolean) => {
-      setAllConnected(v);
-      setSelected(v ? new Set(usableTargets.map((t) => t.id)) : new Set());
-    },
-    [usableTargets],
-  );
+  /** Every single-format network (WhatsApp → status) gets its format seeded
+   *  on selection so its readiness chip reflects real work left, not a
+   *  choice it doesn't actually have. */
+  const seedFormatsFor = (rows: PublishTarget[]) => {
+    setFormats((prev) => {
+      const next = { ...prev };
+      rows.forEach((t) => {
+        if (next[t.id]) return;
+        const opts = methodsFor(t.platform, media?.type ?? null);
+        if (opts.length === 1) next[t.id] = opts[0];
+      });
+      return next;
+    });
+  };
+
+  const applyAll = (v: boolean) => {
+    setAllConnected(v);
+    setSelected(v ? new Set(usableTargets.map((t) => t.id)) : new Set());
+    if (v) seedFormatsFor(usableTargets);
+  };
 
   const toggleTarget = (t: PublishTarget) => {
     setAllConnected(false);
+    const adding = !selected.has(t.id);
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(t.id)) next.delete(t.id);
@@ -132,11 +159,15 @@ export default function PublishComposer() {
       }
       return next;
     });
+    if (adding) seedFormatsFor([t]);
   };
 
   const loadDemo = () => {
     setTargets(DEMO_TARGETS);
     setSelected(new Set(DEMO_TARGETS.map((t) => t.id)));
+    setFormats(
+      Object.fromEntries(DEMO_TARGETS.map((t) => [t.id, methodsFor(t.platform, null)[0] ?? "post"] as const)),
+    );
   };
 
   const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number) => {
@@ -174,10 +205,50 @@ export default function PublishComposer() {
     setCrops((prev) => ({ ...prev, [id]: { ...DEFAULT_CROP, ...prev[id], ...patch } }));
   };
 
-  const selectedTargets = useMemo(
-    () => targets.filter((t) => selected.has(t.id)),
-    [targets, selected],
-  );
+  /** The stored format if it's still valid for this network + media type,
+   *  else unset — e.g. "reel" dies when the video is swapped for an image. */
+  const formatFor = (t: PublishTarget): PostMethod | undefined => {
+    const m = formats[t.id];
+    return m && methodsFor(t.platform, media?.type ?? null).includes(m) ? m : undefined;
+  };
+
+  const setFormat = (t: PublishTarget, m: PostMethod) => {
+    setFormats((prev) => ({ ...prev, [t.id]: m }));
+    // The crop was framed for the previous format — start it over.
+    setCrops((prev) => ({ ...prev, [t.id]: defaultCropFor(t.platform, m) }));
+    setReviewed((prev) => {
+      if (!prev.has(t.id)) return prev;
+      const next = new Set(prev);
+      next.delete(t.id);
+      return next;
+    });
+  };
+
+  /** Bulk format: apply one format to every selected network that offers it. */
+  const setAllFormats = (m: PostMethod) => {
+    const applicable = selectedTargets.filter((t) => methodsFor(t.platform, media?.type ?? null).includes(m));
+    if (applicable.length === 0) return;
+    setFormats((prev) => {
+      const next = { ...prev };
+      applicable.forEach((t) => {
+        next[t.id] = m;
+      });
+      return next;
+    });
+    setCrops((prev) => {
+      const next = { ...prev };
+      applicable.forEach((t) => {
+        next[t.id] = defaultCropFor(t.platform, m);
+      });
+      return next;
+    });
+    const ids = new Set(applicable.map((t) => t.id));
+    setReviewed((prev) => new Set([...prev].filter((id) => !ids.has(id))));
+  };
+
+  // React Compiler memoizes this automatically — a manual useMemo here
+  // breaks its analysis (preserve-manual-memoization).
+  const selectedTargets = targets.filter((t) => selected.has(t.id));
 
   /** Readiness chip → open the network's row, then scroll to it. */
   const openRow = (id: string) => {
@@ -391,6 +462,9 @@ export default function PublishComposer() {
                   crops={crops}
                   reviewed={reviewed}
                   hasMedia={media !== null}
+                  formatOf={formatFor}
+                  onSetFormat={setFormat}
+                  onSetAllFormats={setAllFormats}
                   onToggleExpanded={toggleExpanded}
                   onSetCrop={setCrop}
                   onCopyCropToAll={copyCropToAll}
@@ -415,13 +489,14 @@ export default function PublishComposer() {
           {selectedTargets.length > 0 && (
             <div className="flex w-full gap-1.5 overflow-x-auto pb-0.5">
               {selectedTargets.map((t) => {
-                const ok = reviewed.has(t.id);
+                const fmt = formatFor(t);
+                const ok = !!fmt && reviewed.has(t.id);
                 return (
                   <button
                     key={t.id}
                     type="button"
                     onClick={() => openRow(t.id)}
-                    title={ok ? `Review ${t.name}` : `${t.name} is still on its default crop`}
+                    title={ok ? `Review ${t.name}` : !fmt ? `${t.name} has no format yet` : `${t.name} is still on its default crop`}
                     className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                       ok
                         ? "border-[var(--ui-line)] bg-[var(--ui-sunken)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
@@ -430,7 +505,9 @@ export default function PublishComposer() {
                   >
                     <PlatformMark platform={t.platform} size={12} />
                     <span className="max-w-[140px] truncate">{t.name}</span>
-                    <span className={ok ? "text-[var(--ui-ink-2)]" : ""}>{crops[t.id]?.key ?? "default"}</span>
+                    <span className={ok ? "text-[var(--ui-ink-2)]" : ""}>
+                      {fmt ? `${METHOD_META[fmt].label} · ${crops[t.id]?.key ?? "default"}` : "no format"}
+                    </span>
                   </button>
                 );
               })}
@@ -512,6 +589,9 @@ function TargetList({
   crops,
   reviewed,
   hasMedia,
+  formatOf,
+  onSetFormat,
+  onSetAllFormats,
   onToggleExpanded,
   onSetCrop,
   onCopyCropToAll,
@@ -525,6 +605,9 @@ function TargetList({
   crops: Record<string, CropState>;
   reviewed: Set<string>;
   hasMedia: boolean;
+  formatOf: (t: PublishTarget) => PostMethod | undefined;
+  onSetFormat: (t: PublishTarget, m: PostMethod) => void;
+  onSetAllFormats: (m: PostMethod) => void;
   onToggleExpanded: (id: string) => void;
   onSetCrop: (id: string) => (patch: Partial<CropState>) => void;
   onCopyCropToAll: (id: string) => void;
@@ -550,12 +633,35 @@ function TargetList({
           )
         )}
       </div>
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--ui-line)] px-5 py-2.5">
+          <span className={`text-[10px] font-bold uppercase tracking-widest ${INK2}`}>Set all formats:</span>
+          {(["post", "story", "reel"] as PostMethod[]).map((m) => {
+            const anySupports = targets.some(
+              (t) => selected.has(t.id) && methodsFor(t.platform, media?.type ?? null).includes(m),
+            );
+            return (
+              <button
+                key={m}
+                type="button"
+                onClick={() => onSetAllFormats(m)}
+                disabled={!anySupports}
+                title={anySupports ? `Set ${METHOD_META[m].label} on every selected network that offers it` : `No selected network offers ${METHOD_META[m].label} right now`}
+                className="rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+              >
+                {METHOD_META[m].label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <ul>
         {nonDemo.map((t) => {
           const isOpen = expanded.has(t.id);
           const crop = crops[t.id] ?? DEFAULT_CROP;
           const chosen = selected.has(t.id);
           const meta = PLATFORM_META[t.platform];
+          const fmt = formatOf(t);
           return (
             <li key={t.id} id={`net-row-${t.id}`}>
               <button
@@ -573,6 +679,15 @@ function TargetList({
                     {chosen ? "" : " · not selected"}
                   </span>
                 </span>
+                {fmt ? (
+                  <span className="shrink-0 rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
+                    {METHOD_META[fmt].label}
+                  </span>
+                ) : (
+                  <span className="shrink-0 rounded-full border border-amber-500/60 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                    format?
+                  </span>
+                )}
                 {crop.key !== "orig" && (
                   <span className="shrink-0 rounded-full bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">
                     {crop.key}
@@ -591,9 +706,28 @@ function TargetList({
               </button>
               {isOpen && (
                 <div id={`crop-panel-${t.id}`} className="border-t border-[var(--ui-line)] bg-[var(--ui-sunken)] px-5 py-4">
+                  <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                    <span className={`text-[10px] font-bold uppercase tracking-widest ${INK2}`}>Format</span>
+                    {methodsFor(t.platform, media?.type ?? null).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => onSetFormat(t, m)}
+                        aria-pressed={fmt === m}
+                        className={`rounded-[8px] px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                          fmt === m
+                            ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
+                            : "border border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink)] hover:bg-[var(--ui-line)]"
+                        }`}
+                      >
+                        {METHOD_META[m].label}
+                      </button>
+                    ))}
+                  </div>
                   <div className="mb-3">
                     <DestinationPreview
                       target={t}
+                      method={fmt ?? "post"}
                       media={media ?? { type: null, url: "" }}
                       caption={caption}
                       description={description}

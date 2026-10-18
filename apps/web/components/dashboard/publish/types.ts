@@ -98,3 +98,37 @@ export const PLATFORM_ORDER: PlatformKey[] = [
   "telegram",
   "snapchat",
 ];
+
+/* ── Formats: what shape this post takes on each network ──────────── */
+
+export type PostMethod = "post" | "story" | "reel" | "status";
+
+export const METHOD_META: Record<PostMethod, { label: string; hint: string }> = {
+  post: { label: "Post", hint: "Feed" },
+  story: { label: "Story", hint: "24h" },
+  reel: { label: "Reel", hint: "Video" },
+  status: { label: "Status", hint: "24h" },
+};
+
+export const PLATFORM_METHODS: Record<PlatformKey, PostMethod[]> = {
+  instagram: ["post", "story", "reel"],
+  facebook: ["post", "story", "reel"],
+  whatsapp: ["status"],
+  linkedin: ["post"],
+  tiktok: ["post"],
+  x: ["post"],
+  telegram: ["post"],
+  snapchat: ["post"],
+};
+
+/** Formats a network offers for the current media type — "reel" needs video. */
+export function methodsFor(platform: PlatformKey, mediaType: MediaKind): PostMethod[] {
+  return PLATFORM_METHODS[platform].filter((m) => m !== "reel" || mediaType === "video");
+}
+
+/** Crop a format starts from: vertical formats go 9:16, feed uses the
+ *  network's own preferred aspect. */
+export function defaultCropFor(platform: PlatformKey, method: PostMethod): CropState {
+  const key: CropState["key"] = method === "post" ? PLATFORM_META[platform].defaultCrop : "9:16";
+  return { key, zoom: 1, x: 0, y: 0 };
+}

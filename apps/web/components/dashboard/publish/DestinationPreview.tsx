@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { CROP_ASPECT } from "./CropFrame";
-import { PLATFORM_META, type CropState, type MediaState, type PublishTarget } from "./types";
+import { METHOD_META, PLATFORM_META, type CropState, type MediaState, type PostMethod, type PublishTarget } from "./types";
 
 /*
- * One preview per destination, laid out the way that network actually
- * shows it. Every variant renders from the same inputs (media + caption +
- * description) so what the tenant reads here is what their audience will
- * see. Crop is visual only — the real pixels get cut at publish time.
+ * One preview per destination AND format, laid out the way that network
+ * actually shows it. Every variant renders from the same inputs (media +
+ * caption + description) so what the tenant reads here is what their
+ * audience will see. Crop is visual only — the real pixels get cut at
+ * publish time.
  *
  * Overlay note (AGENTS.md): story caption scrims and status tints are
  * solid rgba fills, never gradients.
@@ -294,6 +295,61 @@ function WhatsAppStatusPreview({
   );
 }
 
+/* ── Shared vertical chrome: IG/FB stories and reels ──────────────── */
+
+function StoryChrome({
+  viewerLabel,
+  initialSource,
+  media,
+  caption,
+  crop,
+  kind,
+}: {
+  viewerLabel: string;
+  initialSource: string;
+  media: MediaState;
+  caption: string;
+  crop: CropState;
+  kind: "story" | "reel";
+}) {
+  const aspect = aspectFor(crop, 9 / 16);
+  const boxW = 200;
+  const boxH = aspect > 0 ? Math.round(boxW / aspect) : boxW;
+  return (
+    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-black shadow-sm relative" style={{ width: boxW, height: boxH }}>
+      <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={boxW} aspect={aspect} />
+      {media.type && (
+        <>
+          <div aria-hidden className="pointer-events-none absolute left-2.5 right-2.5 top-2.5 flex gap-1">
+            <span className="h-[2.5px] flex-1 rounded-full bg-white" />
+            <span className="h-[2.5px] flex-1 rounded-full bg-white/40" />
+          </div>
+          <div className="pointer-events-none absolute left-2.5 right-2.5 top-6 flex items-center gap-2">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/60 bg-[rgba(0,0,0,0.45)] text-[10px] font-bold text-white">
+              {initialSource.charAt(0).toUpperCase()}
+            </span>
+            <span className="truncate text-[11px] font-bold text-white">{viewerLabel}</span>
+            <span className="ml-auto text-[11px] font-bold text-white/70">&#10005;</span>
+          </div>
+          <span className="pointer-events-none absolute right-2.5 top-12 rounded-full bg-[rgba(0,0,0,0.5)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white/90">
+            {kind === "reel" ? "Reel" : "Story"}
+          </span>
+          {caption && (
+            <p className="absolute bottom-0 left-0 right-0 bg-[rgba(0,0,0,0.55)] px-2.5 py-2 text-[11px] leading-snug text-white">
+              {caption}
+            </p>
+          )}
+        </>
+      )}
+      {!media.type && (
+        <p className="absolute inset-0 flex items-center justify-center px-4 text-center text-[11px] font-semibold text-white/60">
+          Add media — this format frames 9:16
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ── Generic fallback for the neutral main preview + later networks ─ */
 
 function GenericPreview({
@@ -331,12 +387,14 @@ function GenericPreview({
 
 export default function DestinationPreview({
   target,
+  method = "post",
   media,
   caption,
   description,
   crop,
 }: {
   target: PublishTarget | null;
+  method?: PostMethod;
   media: MediaState;
   caption: string;
   description: string;
@@ -345,14 +403,34 @@ export default function DestinationPreview({
   if (target) {
     switch (target.platform) {
       case "instagram":
-        return <InstagramFeedPreview target={target} media={media} caption={caption} crop={crop} />;
+        return method === "post" ? (
+          <InstagramFeedPreview target={target} media={media} caption={caption} crop={crop} />
+        ) : (
+          <StoryChrome
+            kind={method === "story" ? "story" : "reel"}
+            viewerLabel={target.handle ? `@${target.handle}` : target.name}
+            initialSource={target.name || "ig"}
+            media={media}
+            caption={caption}
+            crop={crop}
+          />
+        );
       case "facebook":
-        return (
+        return method === "post" ? (
           <FacebookFeedPreview
             target={target}
             media={media}
             caption={caption}
             description={description}
+            crop={crop}
+          />
+        ) : (
+          <StoryChrome
+            kind={method === "story" ? "story" : "reel"}
+            viewerLabel={target.name}
+            initialSource={target.name || "fb"}
+            media={media}
+            caption={caption}
             crop={crop}
           />
         );
@@ -361,7 +439,7 @@ export default function DestinationPreview({
       default:
         return (
           <GenericPreview
-            label={target.name}
+            label={`${target.name} · ${METHOD_META[method].label}`}
             media={media}
             caption={caption}
             description={description}
