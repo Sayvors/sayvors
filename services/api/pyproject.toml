@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Sayvors API service"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115",
+    # 0.145.0 (released 2026-10-18) dropped the body_limit kwarg used in
+    # app/main.py; 0.144.0 is verified working. Revisit once upstream settles.
+    "fastapi>=0.115,<0.145",
     "uvicorn[standard]>=0.30",
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.30",
