@@ -105,20 +105,24 @@ async def structured_lookup(db, tenant_id: str, bank_ids: list[str],
     from ..rag.models import Databank, Document
 
     if not bank_ids:
+        logger.warning("structured_lookup: no bank_ids for tenant %s", tenant_id)
         return []
     try:
-        async with db.begin_nested():
-            docs = (
-                await db.execute(
-                    select(Document).where(
-                        Document.databank_id.in_(bank_ids),
-                        Document.user_id == tenant_id,
-                        Document.file_type == "csv",
-                    )
+        docs = (
+            await db.execute(
+                select(Document).where(
+                    Document.databank_id.in_(bank_ids),
+                    Document.user_id == tenant_id,
+                    Document.file_type == "csv",
                 )
-            ).scalars().all()
+            )
+        ).scalars().all()
     except Exception as e:
-        logger.debug("Structured lookup doc scan failed: %s", e)
+        logger.warning("Structured lookup doc scan failed: %s", e)
+        return []
+
+    if not docs:
+        logger.warning("structured_lookup: no csv docs found for banks %s", bank_ids)
         return []
 
     q_terms = _terms(query)
@@ -128,7 +132,8 @@ async def structured_lookup(db, tenant_id: str, bank_ids: list[str],
     for doc in docs:
         try:
             content = get_doc(doc.databank_id, f"{doc.id}.{doc.file_type}")
-        except FileNotFoundError:
+        except FileNotFoundError as e:
+            logger.warning("structured_lookup: file not found %s", e)
             continue
         try:
             text = content.decode("utf-8", errors="replace").replace("\ufeff", "")
@@ -161,7 +166,7 @@ async def structured_lookup(db, tenant_id: str, bank_ids: list[str],
                 if len(hits) >= limit * 3:
                     break
         except Exception as e:
-            logger.debug("Structured lookup failed for doc %s: %s", doc.id, e)
+            logger.warning("Structured lookup failed for doc %s: %s", doc.id, e)
             continue
     hits.sort(key=lambda h: h[1], reverse=True)
     return hits[:limit]
