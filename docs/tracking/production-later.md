@@ -48,6 +48,9 @@ With 6–8 GB, you have plenty of headroom for: 100k+ active sessions, rate-limi
 |------|-------------------------|------------------|
 | Read replica for analytics queries | Single RDS instance | Add read replica, route analytics reads there |
 | Connection pool right-sizing | Code/config change — can do now | `DB_POOL_SIZE=5`, `MAX_OVERFLOW=5`, boot-time headroom check |
+| PgBouncer connection pooling | Code/config change — can do now | `DATABASE_URL` points to PgBouncer (port 6432), `DB_POOL_MODE=transaction`, PgBouncer service in docker-compose |
+| DATABASE_READER_URL routing | Code change — done, env-gated | Set `DATABASE_READER_URL` to replica connection string; reads route there automatically |
+| Write/read session splitting | Code change — done | `get_db()` for writes (primary), `get_db_read()` for reads (replica) |
 
 ## Object storage
 
