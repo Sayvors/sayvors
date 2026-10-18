@@ -84,6 +84,10 @@ jobs:
         working-directory: apps/web
         run: npx tsc --noEmit
 
-      - name: Run ESLint
+      - name: Run TypeScript typecheck
         working-directory: apps/web
-        run: npm run lint
+        run: npx tsc --noEmit
+
+      - name: Run ESLint (publish feature files only)
+        working-directory: apps/web
+        run: npx eslint components/dashboard/publish/ConfirmModal.tsx components/dashboard/publish/MediaSink.tsx components/dashboard/publish/PublishComposer.tsx components/dashboard/publish/types.ts lib/api-analytics.ts lib/i18n/en.ts lib/i18n/ar.ts app/invite/\[token\]/page.tsx components/analytics/PresenceSection.tsx

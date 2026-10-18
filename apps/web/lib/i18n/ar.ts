@@ -367,6 +367,7 @@ const ar: Dict = {
       bookings: "الحجوزات",
       reviewsMetric: "التقييمات",
       repliesMetric: "الردود",
+      customerActions: "إجراءات العملاء",
       totalLabel: "الإجمالي",
       perBranchDay: "متوسط لكل فرع في اليوم",
       dailyAvg: "متوسط يومي",

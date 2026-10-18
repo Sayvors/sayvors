@@ -58,6 +58,7 @@ export interface TimeseriesPoint {
   direction_requests: number;
   messages?: number;
   bookings?: number;
+  customer_actions?: number;
 }
 
 export interface ReviewMeaning {

@@ -113,6 +113,17 @@ def fetch_all_items(listing_id: str, limit: int = 50, api_key: str | None = None
 
 # ── Publishing ───────────────────────────────────────────────────────
 
+def _post(
+    path: str,
+    body: dict | None = None,
+    timeout: int = 60,
+    api_key: str | None = None,
+) -> list[dict] | dict:
+    """Low-level POST to EmbedSocial. Tests monkeypatch this."""
+    _require_api_key(api_key)
+    raise EmbedSocialError("EmbedSocial _post not implemented without a live account.")
+
+
 def publish_media_post(
     listing_id: str,
     *,
