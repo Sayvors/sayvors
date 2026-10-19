@@ -48,12 +48,18 @@ class OutboxWorker:
             try:
                 now = asyncio.get_event_loop().time()
 
-                # Periodic cleanup of old sent events
+                # Periodic cleanup of old sent events + retention for growing tables
                 if now - last_cleanup > CLEANUP_INTERVAL:
                     from .service import cleanup_sent_events
                     deleted = await cleanup_sent_events()
                     if deleted:
                         logger.info("Outbox cleanup: deleted %d sent events", deleted)
+                    # Retention: prune old rows from unbounded tables
+                    from ..retention import cleanup_all
+                    counts = await cleanup_all()
+                    for table, n in counts.items():
+                        if n and n > 0:
+                            logger.info("Retention cleanup: deleted %d %s", n, table)
                     last_cleanup = now
 
                 # If Kafka is down, periodically try to reconnect
