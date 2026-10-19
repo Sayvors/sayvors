@@ -628,7 +628,7 @@
       <li>SEC-M1: No account deletion / GDPR export despite storing end-customer PII</li>
       <li>SEC-M2: Message content, contact phones, webhook secrets stored plaintext; only OAuth tokens encrypted</li>
       <li>SEC-M3: Legacy webhook rate limit is global per platform (100/min shared by ALL tenants)</li>
-      <li>SEC-M5: Reviewer-photo download lacks SSRF guard</li>
+      <li>SEC-M5: Reviewer-photo download SSRF gap — <strong>fixed</strong>: replaced unpinned httpx.get() with fetch_pinned_bytes (DNS pinning + per-hop redirect validation)</li>
       <li>SEC-M6: Lead pipeline moves gated on channels.view instead of channels.edit</li>
       <li>SEC-M7: Notification settings PATCH writes owner's user row when employee calls it</li>
       <li>SEC-M8: CSP allows 'unsafe-inline' scripts in production</li>

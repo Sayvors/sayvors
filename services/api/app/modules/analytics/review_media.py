@@ -20,10 +20,9 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-import httpx
 
 from ...config import settings
-from ...core.pinned_http import assert_public_http_url, fetch_pinned_status
+from ...core.pinned_http import assert_public_http_url, fetch_pinned_bytes, fetch_pinned_status
 from ...core.storage import media_configured, put_media
 
 logger = logging.getLogger(__name__)
@@ -86,15 +85,12 @@ async def _download(url: str) -> tuple[bytes, str] | None:
     except Exception as e:
         logger.debug("review media download failed %s: %s", url[:80], type(e).__name__)
         return None
-    # Reachability confirmed; fetch the actual bytes with a second guarded
-    # request. httpx here only reads already-validated, pinned URL.
+    # Fetch the actual bytes with DNS pinning + per-hop redirect validation
+    # (no DNS rebinding, no redirect-based SSRF). Runs off the event loop.
     try:
-        async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                logger.debug("review media download %s -> %s", url[:80], resp.status_code)
-                return None
-            data = resp.content
+        data = await asyncio.to_thread(
+            fetch_pinned_bytes, url, timeout=DOWNLOAD_TIMEOUT, max_bytes=MAX_MEDIA_BYTES,
+        )
     except Exception as e:
         logger.debug("review media download failed %s: %s", url[:80], type(e).__name__)
         return None
