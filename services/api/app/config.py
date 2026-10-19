@@ -8,9 +8,11 @@ class Settings(BaseSettings):
     DB_POOL_MODE: str = "session"  # session | transaction — PgBouncer pool mode
     # AsyncPG pool: workers hold sessions across network calls (Localith,
     # Groq), so size generously and fail fast instead of hanging forever.
-    DB_POOL_SIZE: int = 50
-    DB_POOL_MAX_OVERFLOW: int = 50
+    DB_POOL_SIZE: int = 5
+    DB_POOL_MAX_OVERFLOW: int = 5
     DB_POOL_TIMEOUT_SECONDS: int = 30
+    DB_STATEMENT_TIMEOUT_MS: int = 30000  # 30s — kills runaway queries
+    DB_IDLE_IN_TX_TIMEOUT_MS: int = 60000  # 60s — kills stuck transactions
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_EXPIRATION_MINUTES: int = 15
