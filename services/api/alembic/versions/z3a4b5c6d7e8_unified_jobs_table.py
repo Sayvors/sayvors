@@ -29,16 +29,19 @@ def upgrade() -> None:
         "databank.ingest", "scrape.url",
         "stt.job", "tts.job",
         name="job_type",
+        create_type=False,
     )
     job_lane_enum = sa.Enum(
         "realtime", "publishing", "media", "bulk",
         name="job_lane",
+        create_type=False,
     )
     job_status_enum = sa.Enum(
         "accepted", "queued", "running", "retrying",
         "blocked", "succeeded", "failed",
         "cancelled", "dead",
         name="job_status",
+        create_type=False,
     )
     job_type_enum.create(op.get_bind(), checkfirst=True)
     job_lane_enum.create(op.get_bind(), checkfirst=True)
