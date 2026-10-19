@@ -78,6 +78,9 @@ class ChannelMessage(Base):
         # Thread lookup scans (channel_id, contact_phone) newest-first, and the
         # inbox needs it to be a real index rather than a table scan.
         Index("ix_channel_messages_thread", "channel_id", "contact_phone", "created_at"),
+        # Inbox GROUP BY on (contact_phone_hash, channel_id) + ORDER BY
+        # max(created_at) — composite index avoids full table scan.
+        Index("ix_channel_messages_inbox", "channel_id", "contact_phone_hash", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
