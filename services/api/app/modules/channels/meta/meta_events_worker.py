@@ -121,7 +121,7 @@ async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List
     query = text("""
         SELECT id, event_type, payload, topic, attempts, next_retry_at
         FROM event_outbox
-        WHERE status = 'pending'
+        WHERE status IN ('pending', 'failed')
           AND event_type LIKE 'meta.%'
           AND (next_retry_at IS NULL OR next_retry_at <= :now)
         ORDER BY created_at ASC
@@ -225,7 +225,7 @@ async def _process_event(db, event_data: Dict[str, Any]) -> bool:
 async def _mark_event_sent(db, event_id: str) -> None:
     """Mark event as successfully sent."""
     await db.execute(
-        text("UPDATE event_outbox SET status = 'sent', last_error = NULL WHERE id = :id"),
+        text("UPDATE event_outbox SET status = 'sent', last_error = NULL, lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
         {"id": event_id}
     )
     await db.commit()
@@ -234,7 +234,7 @@ async def _mark_event_sent(db, event_id: str) -> None:
 async def _mark_event_ambiguous(db, event_id: str) -> None:
     """Mark event as ambiguous (delivered but not confirmed)."""
     await db.execute(
-        text("UPDATE event_outbox SET status = 'ambiguous' WHERE id = :id"),
+        text("UPDATE event_outbox SET status = 'ambiguous', lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
         {"id": event_id}
     )
     await db.commit()
@@ -248,14 +248,15 @@ async def _mark_event_failed(db, event_id: str, error: str, retry: bool = True) 
             text("""
                 UPDATE event_outbox
                 SET status = 'failed', attempts = attempts + 1,
-                    last_error = :error, next_retry_at = :next_retry
+                    last_error = :error, next_retry_at = :next_retry,
+                    lease_owner = NULL, lease_expires_at = NULL
                 WHERE id = :id
             """),
             {"id": event_id, "error": str(error)[:500], "next_retry": datetime.now(timezone.utc) + timedelta(seconds=300)}
         )
     else:
         await db.execute(
-            text("UPDATE event_outbox SET status = 'dead', last_error = :error WHERE id = :id"),
+            text("UPDATE event_outbox SET status = 'dead', last_error = :error, lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
             {"id": event_id, "error": str(error)[:500]}
         )
     await db.commit()
