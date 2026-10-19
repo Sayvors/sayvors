@@ -95,6 +95,10 @@ async def channel_id(db, user_id):
 
 @pytest_asyncio.fixture
 async def config_id(db, channel_id):
+    # approval_mode defaults to "approval" (SEC-H2 / launch blocker 04: AI
+    # never auto-posts to Google without the merchant opting in). This fixture
+    # represents an opted-in tenant so the auto-post paths are exercised;
+    # tests that cover the approval gate set it back to "approval" explicitly.
     config = AutoReplyConfig(
         id="test-config-0000-0000-0000-000000000001",
         channel_id=channel_id,
@@ -102,6 +106,7 @@ async def config_id(db, channel_id):
         tone="friendly",
         min_rating_auto=4,
         model="openai:gpt-4o-mini",
+        approval_mode="auto",
     )
     db.add(config)
     await db.commit()

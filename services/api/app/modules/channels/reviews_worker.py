@@ -52,6 +52,68 @@ def _channel_meta(channel: Channel) -> dict:
         return {}
 
 
+def _channel_health(channel: Channel) -> dict:
+    """Read the per-channel health block from metadata_json.
+
+    Tracks consecutive poll failures so a struggling channel (e.g. Google
+    returning sustained 429s) gets backed off instead of hammered on every
+    cycle. Stored under the ``health`` key of the channel's metadata JSON —
+    no schema migration required.
+    """
+    return _channel_meta(channel).get("health", {})
+
+
+def _is_in_health_backoff(channel: Channel, now: datetime) -> bool:
+    """True when this channel's health backoff window hasn't elapsed yet."""
+    health = _channel_health(channel)
+    until = health.get("backoff_until")
+    if not until:
+        return False
+    try:
+        return datetime.fromisoformat(until) > now
+    except (ValueError, TypeError):
+        return False
+
+
+async def _update_channel_health(
+    db: AsyncSession, channel: Channel, success: bool, error_code: str | None = None
+) -> None:
+    """Persist per-channel health after a poll attempt.
+
+    Success resets the failure counter; failure increments it and schedules
+    an exponential backoff (2^failures minutes, capped at 24h) so a channel
+    Google is rate-limiting gets breathing room instead of being retried
+    every poll cycle.
+    """
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        meta = {}
+
+    health = meta.get("health", {})
+    ts = datetime.now(timezone.utc).isoformat()
+
+    if success:
+        health["consecutive_failures"] = 0
+        health["last_success_at"] = ts
+        health.pop("last_failure_code", None)
+        health.pop("backoff_until", None)
+    else:
+        failures = int(health.get("consecutive_failures", 0)) + 1
+        health["consecutive_failures"] = failures
+        health["last_failure_at"] = ts
+        if error_code:
+            health["last_failure_code"] = error_code
+        backoff_minutes = min(2 ** failures, 1440)  # cap at 24h
+        health["backoff_until"] = (
+            datetime.now(timezone.utc) + timedelta(minutes=backoff_minutes)
+        ).isoformat()
+
+    meta["health"] = health
+    channel.metadata_json = json.dumps(meta)
+    db.add(channel)
+
+
 async def _claim_channel(db: AsyncSession, config_id: str, last_polled_at) -> bool:
     """Atomically claim a channel for polling (multi-instance safe)."""
     now = datetime.now(timezone.utc)
@@ -743,6 +805,17 @@ async def poll_once() -> dict:
         for channel, config in rows:
             if not await _claim_channel(db, config.id, config.last_polled_at):
                 continue  # another instance has it
+
+            # Channel health backoff: a channel Google is rate-limiting gets
+            # breathing room instead of being retried every poll cycle.
+            if _is_in_health_backoff(channel, now):
+                logger.info(
+                    "Channel %s in health backoff — skipping this poll pass",
+                    channel.id,
+                )
+                await _release_channel(db, config.id)
+                continue
+
             totals["channels"] += 1
             try:
                 stats = await process_channel(db, channel, config)
@@ -751,6 +824,9 @@ async def poll_once() -> dict:
             except Exception as e:
                 logger.error("Poll failed for channel %s: %s", channel.id, e)
                 totals["errors"] += 1
+                await _update_channel_health(db, channel, False, type(e).__name__)
+            else:
+                await _update_channel_health(db, channel, True)
             finally:
                 await _release_channel(db, config.id)
 

@@ -15,7 +15,8 @@ def _canned_reply_generation(monkeypatch):
 
     async def _fake(config, channel, rating, text, reviewer_name, db,
                     review_id=None, attempt=1, previous_draft=None):
-        return f"canned reply ({rating}) try {attempt} to: {text}"
+        # Returns (text, needs_review) — generate_auto_reply's contract.
+        return f"canned reply ({rating}) try {attempt} to: {text}", False
 
     monkeypatch.setattr(rr, "generate_auto_reply", _fake)
 
@@ -168,7 +169,9 @@ async def test_autoreply_config_default(client, channel_id):
     assert r.status_code == 200
     body = r.json()
     assert body["enabled"] is False
-    assert body["approval_mode"] == "auto"
+    # Default is "approval" — AI never auto-posts to Google without the
+    # merchant opting in (SEC-H2 / launch blocker 04).
+    assert body["approval_mode"] == "approval"
 
 
 @pytest.mark.asyncio
