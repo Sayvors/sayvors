@@ -91,3 +91,4 @@ With 6–8 GB, you have plenty of headroom for: 100k+ active sessions, rate-limi
 | SEC-H1 SSRF fix | `meta/router.py:1507–1553` | Code only |
 | CI test gating | `.github/workflows/` | Code only |
 | OPS-1 backups (RDS PITR) | AWS console | Config only |
+| **Blocker 06 — Backup & restore story** | Needs production VM | RDS PITR on + 7-day retention, nightly pg_dump → S3 (30-day retention), rehearse one restore into scratch DB, write runbook. See launch-readiness-report.html #06. |
