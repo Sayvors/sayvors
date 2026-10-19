@@ -528,9 +528,8 @@ async def inbox_ws(websocket: WebSocket):
     finally:
         beat.cancel()
         try:
-            await pubsub.unsubscribe()
-            await pubsub.close()
-            await client.close()
+            from .realtime import unsubscribe_inbox
+            await unsubscribe_inbox(tenant_key, pubsub._queue)
         except Exception:
             pass
 
