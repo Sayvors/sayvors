@@ -346,10 +346,38 @@
     <a href="#blockers">Launch blockers</a>
     <a href="#scale">Scale gaps</a>
     <a href="#security">Security &amp; ops</a>
+    <a href="#scorecard">Scorecard</a>
     <a href="#plan">15-day plan</a>
     <a href="#solid">What's solid</a>
+    <a href="#method">Method</a>
   </nav>
 </header>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SCORECARD BY SURFACE
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="scorecard">
+  <h2>Scorecard by surface</h2>
+  <p class="section-sub">Verified in code, not just claimed in the old audit docs.</p>
+  <div class="cards2">
+    <div class="card">
+      <h3>Backend <span class="chip crit">1 critical</span> <span class="chip warn">3 high</span></h3>
+      <p><strong>Architecture is right, execution has ceilings.</strong> Every background job runs as asyncio loops in one container. The AI-reply path (the product's core) is one strictly sequential Kafka consumer — one slow LLM call stalls every tenant's customers. The hottest dashboard read fires up to ~1,500 queries per request; every inbound message does an unindexed full-table dedupe scan. DB pool allows 100 connections per process against a small RDS class; no statement timeout anywhere.</p>
+    </div>
+    <div class="card">
+      <h3>Frontend <span class="chip warn">Operable, unobservable</span></h3>
+      <p><strong>Clean deps, zero safety net.</strong> No Sentry, no analytics, no web-vitals — client crashes are invisible. No react-query/SWR: 169 hand-rolled effects refetch on every navigation, and the global bell polls every 45s per open tab (~22k QPS of pure baseline at 1M DAU). Realtime inbox appends WS messages to state forever; no list virtualization anywhere. Zero automated tests. XSS surface is genuinely clean.</p>
+    </div>
+    <div class="card">
+      <h3>Admin <span class="chip warn">Three copies, one password</span></h3>
+      <p><strong>The same admin API has two independent frontends</strong> (<code>apps/admin</code> and <code>apps/web/app/admin</code>) that will drift; the in-web one is gated by a client-side sessionStorage hint on the main app origin. One shared <code>ADMIN_PASSWORD_HASH</code> for all operators — no named accounts, no audit trail of who did what. Backend admin endpoints themselves are properly gated (admin JWT type, cookie + <code>X-Requested-With</code>, lockout).</p>
+    </div>
+    <div class="card">
+      <h3>Infrastructure <span class="chip crit">Single box, zero DR</span></h3>
+      <p><strong>One t3.small (2 GB) runs API + worker + Redis + Kafka + TLS ingress.</strong> Its failure kills auth (Redis fail-closed), messaging, and ingestion simultaneously. Kafka is a single broker, replication factor 1. CI builds deploy images without running a single test. The deployed <code>staging</code> branch is two weeks behind <code>development</code> — the worker split you approved isn't actually deployed; loops still run inside both uvicorn workers, racing each other.</p>
+    </div>
+  </div>
+</section>
 
 <!-- ═══════════════════════════════════════════════════════════════
      P0 — LAUNCH BLOCKERS
@@ -753,6 +781,15 @@
   </table>
   </div>
   <p class="note">The platform would not survive 1% of the target message rate today — and the first thing to fall over would be customer replies, the core promise.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     METHOD AND LIMITS
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="method">
+  <h2>Method and limits</h2>
+  <p class="section-sub">Four parallel code audits (backend scalability, security, frontend + admin, infrastructure) plus a review of the approved unified job processing design and its Round-4 audit, all read-only against the working tree. Every finding carries a file:line anchor; effort figures are estimates for one senior developer with AI pairing.</p>
+  <p><strong>Not verified by this audit:</strong> the actual RDS console state (backups, instance class, <code>max_connections</code>), real traffic numbers, Vercel plan limits, Meta rate-limit headroom, and — until the k6 run in Phase C — any actual load capacity. The audit's load model is assumption, clearly labeled as such.</p>
 </section>
 
 <footer>
