@@ -156,25 +156,6 @@ services:
       start_period: 30s
     mem_limit: 640m
 
-  pgbouncer:
-    image: bitnami/pgbouncer:latest
-    container_name: sayvors-pgbouncer
-    restart: unless-stopped
-    ports:
-      - "6432:6432"
-    environment:
-      - PGBOUNCER_PASSWORD=${PGBOUNCER_PASSWORD}
-      - PGBOUNCER_POSTGRES_HOST=${PGBOUNCER_POSTGRES_HOST}
-      - PGBOUNCER_POSTGRES_PORT=${PGBOUNCER_POSTGRES_PORT:-5432}
-      - PGBOUNCER_POSTGRES_DATABASE=${PGBOUNCER_POSTGRES_DATABASE}
-      - PGBOUNCER_POOL_MODE=transaction
-      - PGBOUNCER_DEFAULT_POOL_SIZE=100
-      - PGBOUNCER_MAX_CLIENT_CONN=400
-      - PGBOUNCER_LISTEN_ADDR=*
-      - PGBOUNCER_LISTEN_PORT=6432
-      - PGBOUNCER_AUTH_TYPE=md5
-    mem_limit: 256m
-
 volumes:
   caddy_data:
   caddy_config:

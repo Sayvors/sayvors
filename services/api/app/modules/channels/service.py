@@ -556,7 +556,7 @@ async def list_inbox_threads(
     stmt = (
         select(
             ChannelMessage.contact_phone_hash,
-            ChannelMessage.contact_phone,
+            func.max(ChannelMessage.contact_phone).label("contact_phone"),
             ChannelMessage.channel_id,
             func.max(ChannelMessage.created_at).label("last_at"),
             func.count(ChannelMessage.id).label("total"),
