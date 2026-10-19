@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  # Staging only. The deploy-staging ci-gate waits for these check-runs on
+  # the pushed commit, so one run per merge to staging is all it needs.
+  # Development pushes and PRs run nothing — they cost minutes and nothing
+  # consumes them.
   push:
     branches: [staging]
-  pull_request:
-    branches: [development, staging]
 
 concurrency:
   group: ci-${{ github.ref }}

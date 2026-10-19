@@ -71,16 +71,16 @@ async def test_429_retries_with_exponential_backoff(monkeypatch):
     _sleep_stub.slept.clear()
 
     transport_script = [
-        (429, {}, b'{"error": "rate limited"}'),
+        (429, {"Retry-After": "0"}, b'{"error": "rate limited"}'),
         (200, {}, b'{"reviews": []}'),
     ]
     client = _make_client(transport_script)
 
     resp = await client._authed_request("GET", "https://example.com/reviews")
     assert resp.status_code == 200
-    # One backoff sleep was recorded (jittered, so just check it's > 0)
+    # One backoff sleep recorded; Retry-After "0" means retry immediately.
     assert len(_sleep_stub.slept) == 1
-    assert _sleep_stub.slept[0] > 0
+    assert _sleep_stub.slept[0] == 0.0
 
 
 @pytest.mark.asyncio
