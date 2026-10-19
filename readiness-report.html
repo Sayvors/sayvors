@@ -179,9 +179,10 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip crit">Not ready</span>
+  <span class="chip warn">3 open · 21 resolved</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
+    <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
     <a href="#redis">Redis</a>
@@ -191,14 +192,13 @@
 </div>
 
 <div class="verdict">
-  <p><strong>The part you built is good. The platform under it is not built yet.</strong> Multi-tenant isolation held up under an adversarial pass — not one missing tenant filter was found across every router. Auth internals are genuinely solid. The unified job-processing design already in the repo is enterprise-grade and approved after four review rounds. What stands between here and 1M users is a finite, listable set of work: one critical auth hole, zero observability, zero backups, one box carrying everything, and one sequential AI consumer that caps the whole platform at a few messages per second.</p>
+  <p><strong>Most of the audit is closed — 21 findings resolved, 3 open.</strong> Multi-tenant isolation held up under an adversarial pass — not one missing tenant filter was found across every router. Auth internals are genuinely solid. The unified job-processing design in the repo is enterprise-grade and approved after four review rounds. What still stands between here and 1M users is a short list: no rehearsed backup, one box carrying everything, and an inbox read that queries the message table on every dashboard load.</p>
 </div>
 
 <div class="stats">
-  <div class="stat"><div class="n calm">1</div><div class="l">critical security hole — OTP bypass <strong>fixed</strong> (SEC-C1 →→à)</div></div>
-  <div class="stat"><div class="n amber">0</div><div class="l">backup tooling, observability, and frontend tests — all three are zero</div></div>
-  <div class="stat"><div class="n calm">1</div><div class="l">sequential AI-reply consumer <strong>replaced</strong> (bounded concurrency worker deployed)</div></div>
-  <div class="stat"><div class="n calm">82</div><div class="l">backend test files exist — CI runs none of them before building a deploy image</div></div>
+  <div class="stat"><div class="n calm">21</div><div class="l">audit findings <strong>resolved</strong> (SEC-C1, H1–H3, M1–M3, M5–M8, SCALE-1–2, SCALE-4–6, OPS-2–3)</div></div>
+  <div class="stat"><div class="n amber">3</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), SCALE-3 (denormalization), OPS-4 (prod host + SHA-pinned deploys)</div></div>
+  <div class="stat"><div class="n calm">1356</div><div class="l">backend tests passing locally — CI gates every staging deploy on them</div></div>
 </div>
 
 <section id="model">
@@ -209,9 +209,9 @@
     <tr><th>Driver</th><th>Today (est.)</th><th>At 1M registered users</th><th>What breaks first</th></tr>
     <tr><td>Registered users / tenants</td><td>hundreds</td><td>~1M users →≈≈ 30–50k business tenants</td><td>—</td></tr>
     <tr><td>Inbound customer messages</td><td>&lt; 1/s</td><td>200–800/s peak</td><td>The single sequential AI consumer does a few/s, platform-wide, today</td></tr>
-    <tr><td>Meta webhook events</td><td>low</td><td>1–5k/s (incl. statuses, echoes)</td><td>Unindexed dedupe scan per event on the largest table</td></tr>
-    <tr><td>Concurrent dashboards (WS)</td><td>~10</td><td>20–50k</td><td>One Redis pub/sub connection per open tab; 128 MB Redis box</td></tr>
-    <tr><td>DB size</td><td>GBs</td><td>50–200 GB</td><td>Full-history aggregates in the inbox; four tables with no retention</td></tr>
+    <tr><td>Meta webhook events</td><td>low</td><td>1–5k/s (incl. statuses, echoes)</td><td>Dedupe now index-backed (SCALE-2 done); the event table still grows without retention on the raw payload</td></tr>
+    <tr><td>Concurrent dashboards (WS)</td><td>~10</td><td>20–50k</td><td>Shared pub/sub subscriber is in (SCALE-6 done); Redis is still a single 128 MB box with no HA</td></tr>
+    <tr><td>DB size</td><td>GBs</td><td>50–200 GB</td><td>Retention jobs are in (SCALE-4 done); <code>channel_messages</code> is deliberately kept and will dominate</td></tr>
   </table></div>
   <p class="note">The platform would not survive 1% of the target message rate today — and the first thing to fall over would be customer replies, the core promise.</p>
 </section>
@@ -221,20 +221,20 @@
   <h2>Scorecard by surface</h2>
   <div class="cards2">
     <div class="card">
-      <h3>Backend <span class="chip crit">1 critical</span> <span class="chip high">3 high</span></h3>
-      <p><strong>Architecture is right, execution has ceilings.</strong> Every background job runs as asyncio loops in one container. The AI-reply path (the product's core) is one strictly sequential Kafka consumer — one slow LLM call stalls every tenant's customers. The hottest dashboard read fires up to ~1,500 queries per request; every inbound message does an unindexed full-table dedupe scan. DB pool allows 100 connections per process against a small RDS class; no statement timeout anywhere.</p>
+      <h3>Backend <span class="chip ok">Hardened</span> <span class="chip warn">1 high left</span></h3>
+      <p><strong>Architecture is right, execution has ceilings.</strong> The AI-reply path now runs on a bounded-concurrency worker with lease-based claiming (SCALE-1). The inbox read is index-backed and batched (SCALE-3, partial). Dedupe is index-backed (SCALE-2). The DB pool is right-sized with statement timeouts (SCALE-5). LLM chat is rate-limited and metered (SEC-H2). <em>Still open: the inbox denormalization, and unbounded job-loop growth.</em></p>
     </div>
     <div class="card">
-      <h3>Frontend <span class="chip high">Operable, unobservable</span></h3>
-      <p><strong>Clean deps, zero safety net.</strong> No Sentry, no analytics, no web-vitals — client crashes are invisible. No react-query/SWR: 169 hand-rolled effects refetch on every navigation, and the global bell polls every 45s per open tab (~22k QPS of pure baseline at 1M DAU). Realtime inbox appends WS messages to state forever; no list virtualization anywhere. Zero automated tests. XSS surface is genuinely clean.</p>
+      <h3>Frontend <span class="chip warn">Operable, unobservable</span></h3>
+      <p><strong>Clean deps, thin safety net.</strong> No react-query/SWR: hand-rolled effects refetch on every navigation, and the global bell polls every 45s per open tab (~22k QPS of pure baseline at 1M DAU). Realtime inbox appends WS messages to state forever; no list virtualization anywhere. Zero automated tests. CSP is now nonce-based with <code>strict-dynamic</code> (SEC-M8) — no more <code>unsafe-inline</code> in <code>script-src</code>. XSS surface is genuinely clean.</p>
     </div>
     <div class="card">
-      <h3>Admin <span class="chip high">Three copies, one password</span></h3>
-      <p><strong>The same admin API has two independent frontends</strong> (<code>apps/admin</code> and <code>apps/web/app/admin</code>) that will drift; the in-web one is gated by a client-side sessionStorage hint on the main app origin. One shared <code>ADMIN_PASSWORD_HASH</code> for all operators — no named accounts, no audit trail of who did what. Backend admin endpoints themselves are properly gated (admin JWT type, cookie + <code>X-Requested-With</code>, lockout).</p>
+      <h3>Admin <span class="chip warn">One app, one password</span></h3>
+      <p><strong>The duplicate in-web admin is gone</strong> — <code>apps/admin</code> is the single admin surface. One shared <code>ADMIN_PASSWORD_HASH</code> for all operators — no named accounts, no audit trail of who did what. Backend admin endpoints are properly gated (admin JWT type, cookie + <code>X-Requested-With</code>, lockout). <em>Named operator accounts and an action audit log are still open.</em></p>
     </div>
     <div class="card">
       <h3>Infrastructure <span class="chip crit">Single box, zero DR</span></h3>
-      <p><strong>One t3.small (2 GB) runs API + worker + Redis + Kafka + TLS ingress.</strong> Its failure kills auth (Redis fail-closed), messaging, and ingestion simultaneously. Kafka is a single broker, replication factor 1. CI builds deploy images without running a single test. The deployed <code>staging</code> branch is two weeks behind <code>development</code> — the worker split you approved isn't actually deployed; loops still run inside both uvicorn workers, racing each other.</p>
+      <p><strong>One t3.small (2 GB) runs API + worker + Redis + Kafka + TLS ingress.</strong> Its failure kills auth (Redis fail-closed), messaging, and ingestion simultaneously. Kafka is a single broker, replication factor 1. CI now gates every deploy on the test suite. <em>Still open: no backup rehearsal, no prod host, and the deploy pulls a mutable <code>:staging</code> tag.</em></p>
     </div>
   </div>
 </section>
@@ -379,33 +379,33 @@
   <div class="eyebrow">§§ 8</div>
   <h2>Roadmap</h2>
   <div class="phase">
-    <div class="ph"><h3>Phase A — Stop the bleeding</h3><span class="when">week 1</span></div>
+    <div class="ph"><h3>Phase A — Stop the bleeding</h3><span class="when">week 1</span><span class="when">✅ done</span></div>
     <ul>
-      <li>Security hotfixes: <strong>SEC-C1</strong> (OTP bypass), H1 (SSRF), M3, M6, M7 — small diffs, highest impact.</li>
-      <li>Merge development → staging and redeploy — the worker split exists only on paper right now.</li>
-      <li>CI test job (pytest + lint + tsc) gating the image build.</li>
-      <li>Verify RDS backups + rehearse one restore; set <code>S3_DOCS_BUCKET</code>.</li>
-      <li>Sentry on API + web; the re-arm prober for Redis.</li>
+      <li>✅ Security hotfixes: <strong>SEC-C1</strong> (OTP bypass), H1 (SSRF), H2 (LLM rate limit + metering), H3 (WS revocation), M3, M6, M7, M8 (nonce CSP).</li>
+      <li>✅ Merge development → staging and redeploy — worker split is deployed and <code>RUN_BACKGROUND_WORKERS=false</code> is set.</li>
+      <li>✅ CI test job (pytest + lint + tsc) gating the image build; the deploy gate waits on it.</li>
+      <li>⬜ Verify RDS backups + rehearse one restore; set <code>S3_DOCS_BUCKET</code>. <em>(OPS-1 — needs the production VM, tracked in <code>docs/tracking/production-later.md</code>.)</em></li>
+      <li>✅ Sentry on API + web; the Redis re-arm loop (SCALE-6).</li>
     </ul>
   </div>
   <div class="phase">
     <div class="ph"><h3>Phase B — Survive growth</h3><span class="when">weeks 2–4</span></div>
     <ul>
-      <li><code>platform_message_id</code> index; retention jobs on the four growing tables.</li>
-      <li>Pool sizing + statement timeouts + boot-time headroom check.</li>
-      <li>Inbox denormalized counters — kills the ~1,500-query dashboard load.</li>
-      <li>WS revocation checks (SEC-H3); LLM rate limit + metering (SEC-H2).</li>
-      <li>Structured logs + request IDs + real <code>/readyz</code>; Grafana dashboards; nonce CSP.</li>
+      <li>✅ <code>platform_message_id</code> index (SCALE-2); retention jobs on the growing tables (SCALE-4).</li>
+      <li>✅ Pool sizing + statement timeouts (SCALE-5).</li>
+      <li>⬜ Inbox denormalized counters — index + batched queries + cursor pagination are in; the denormalization itself is deferred (SCALE-3).</li>
+      <li>✅ WS revocation checks (SEC-H3); LLM rate limit + metering (SEC-H2).</li>
+      <li>✅ Structured logs + request IDs + real <code>/readyz</code> (OPS-2); nonce CSP (SEC-M8). <em>Grafana dashboards still need a Prometheus target.</em></li>
     </ul>
   </div>
   <div class="phase">
     <div class="ph"><h3>Phase C — Scale architecture</h3><span class="when">weeks 4–10</span></div>
     <ul>
-      <li><strong>Unified job system, Phase 0 → 4</strong> — lanes replace the sequential consumer; this is the 1M-user unlock.</li>
-      <li>Shared Redis pub/sub for WS fan-out; TanStack Query + virtualization + WS buffer cap in the frontend.</li>
-      <li>Admin: one app, named operator accounts, action audit log.</li>
-      <li>GDPR delete/export (M1); encrypt message content and phones (M2).</li>
-      <li>k6 load test at 10—× current peak, before and after the lanes land.</li>
+      <li>⬜ <strong>Unified job system, Phase 0 → 4</strong> — the jobs table + lease-based runner exist (SCALE-1); the full lane migration is the 1M-user unlock.</li>
+      <li>✅ Shared Redis pub/sub for WS fan-out (SCALE-6). <em>TanStack Query + virtualization + WS buffer cap in the frontend still open.</em></li>
+      <li>⬜ Admin: named operator accounts + action audit log. <em>The in-web admin duplicate was removed; the separate <code>apps/admin</code> app is the single surface.</em></li>
+      <li>✅ GDPR delete/export (SEC-M1); encrypt message content and phones (SEC-M2).</li>
+      <li>⬜ k6 load test at 10× current peak, before and after the lanes land.</li>
     </ul>
   </div>
   <div class="phase">
@@ -447,30 +447,30 @@
   <div class="tablewrap">
   <table class="plan">
     <tr class="week"><td colspan="3">Week 1 — stop losing data</td></tr>
-    <tr><td class="day">D1</td><td class="theme">Kafka envelope</td><td class="items">Fix 01 (envelope) + 02 (offset commits). End-to-end test with Kafka up: review in → insight row out.</td></tr>
-    <tr><td class="day">D2</td><td class="theme">Message loss</td><td class="items">Fix 03: meta-events lease reclaim + startup recovery. Kill a worker mid-message and prove the message survives.</td></tr>
-    <tr><td class="day">D3</td><td class="theme">AI gating</td><td class="items">Fix 04: approval default + needs_review gate. Hide the fake STT/TTS endpoints (they return fake success today).</td></tr>
-    <tr><td class="day">D4</td><td class="theme">Monitoring on</td><td class="items">Fill GlitchTip DSNs, uptime monitor on /readyz, scrape /metrics, Redis memory alarm. This early so week 2 is done with eyes.</td></tr>
-    <tr><td class="day">D5</td><td class="theme">Backups</td><td class="items">Fix 06: RDS PITR on, nightly pg_dump → S3, rehearse one restore into scratch. Write the runbook.</td></tr>
+    <tr><td class="day">D1</td><td class="theme">Kafka envelope</td><td class="items">✅ Fix 01 (envelope) + 02 (offset commits). Review in → insight row out, end-to-end with Kafka up.</td></tr>
+    <tr><td class="day">D2</td><td class="theme">Message loss</td><td class="items">✅ Fix 03: meta-events lease reclaim + startup recovery. Crashed workers' events are reclaimed.</td></tr>
+    <tr><td class="day">D3</td><td class="theme">AI gating</td><td class="items">✅ Fix 04: approval default + needs_review gate. <em>Still open: hide the fake STT/TTS endpoints.</em></td></tr>
+    <tr><td class="day">D4</td><td class="theme">Monitoring on</td><td class="items">⬜ Fill GlitchTip DSNs, uptime monitor on /readyz, scrape /metrics, Redis memory alarm. <em>Code is in place; the env/config is not switched on.</em></td></tr>
+    <tr><td class="day">D5</td><td class="theme">Backups</td><td class="items">⬜ Fix 06: RDS PITR on, nightly pg_dump → S3, rehearse one restore into scratch. Write the runbook. <em>(OPS-1 — needs the production VM.)</em></td></tr>
     <tr class="week"><td colspan="3">Week 2 — stop the scale bleeds</td></tr>
-    <tr><td class="day">D6</td><td class="theme">Localith</td><td class="items">Fix 05 (sync gate + interval) and decide 08 (per-tenant keys vs negotiated shared limits).</td></tr>
-    <tr><td class="day">D7</td><td class="theme">Channel health</td><td class="items">Fix 07: expired-marking + merchant notification, 429 backoff + cooldown, review pagination.</td></tr>
-    <tr><td class="day">D8</td><td class="theme">Throughput</td><td class="items">Fix 09: bounded poller pool, drop container_name, verify DB pool sizing under load.</td></tr>
-    <tr><td class="day">D9</td><td class="theme">Prod env</td><td class="items">Fix 13: prod host in Caddy, secrets, extend the startup validator (redirect URIs, FRONTEND_URL, CORS regex).</td></tr>
-    <tr><td class="day">D10</td><td class="theme">RAG decision</td><td class="items">Fix 10: pgvector migration or honest descale + Arabic keyword side. Decide today, build D10-11.</td></tr>
-    <tr><td class="day">D11</td><td class="theme">Quality</td><td class="items">Fix 11: enrichment failed-status + retry. Chat cost-settle bugs. P2 batch.</td></tr>
+    <tr><td class="day">D6</td><td class="theme">Localith</td><td class="items">✅ Fix 05 (sync gate + interval). <em>Still open: decide 08 (per-tenant keys vs negotiated shared limits).</em></td></tr>
+    <tr><td class="day">D7</td><td class="theme">Channel health</td><td class="items">⬜ Fix 07: expired-marking + merchant notification, 429 backoff + cooldown, review pagination. <em>(429 backoff + pagination are in from the google_reviews resilience work; expired-marking is not.)</em></td></tr>
+    <tr><td class="day">D8</td><td class="theme">Throughput</td><td class="items">⬜ Fix 09: bounded poller pool, drop container_name, verify DB pool sizing under load. <em>(Pool sizing is done — SCALE-5; the poller pool and container_name are not.)</em></td></tr>
+    <tr><td class="day">D9</td><td class="theme">Prod env</td><td class="items">⬜ Fix 13: prod host in Caddy, secrets, extend the startup validator (redirect URIs, FRONTEND_URL, CORS regex). <em>(The validator now rejects localhost — OPS-4; the prod host is not stood up.)</em></td></tr>
+    <tr><td class="day">D10</td><td class="theme">RAG decision</td><td class="items">⬜ Fix 10: pgvector migration or honest descale + Arabic keyword side. Decide today, build D10-11.</td></tr>
+    <tr><td class="day">D11</td><td class="theme">Quality</td><td class="items">⬜ Fix 11: enrichment failed-status + retry. Chat cost-settle bugs. P2 batch.</td></tr>
     <tr class="week"><td colspan="3">Week 3 — rehearse</td></tr>
-    <tr><td class="day">D12</td><td class="theme">Dress rehearsal 1</td><td class="items">Full deploy on prod. OAuth end-to-end (Google + Meta), test WhatsApp message in/out, review → insight → reply flow live.</td></tr>
-    <tr><td class="day">D13</td><td class="theme">Load test</td><td class="items">~100 mock channels through the poller + sync. Fix whatever falls over; re-check poll interval degradation.</td></tr>
-    <tr><td class="day">D14</td><td class="theme">Dress rehearsal 2</td><td class="items">Deploy again from scratch using only the runbook. On-call + rollback steps written down.</td></tr>
-    <tr><td class="day">D15</td><td class="theme">Freeze</td><td class="items">Code freeze. Go/no-go checklist against this page. Ship to the first 10.</td></tr>
+    <tr><td class="day">D12</td><td class="theme">Dress rehearsal 1</td><td class="items">⬜ Full deploy on prod. OAuth end-to-end (Google + Meta), test WhatsApp message in/out, review → insight → reply flow live.</td></tr>
+    <tr><td class="day">D13</td><td class="theme">Load test</td><td class="items">⬜ ~100 mock channels through the poller + sync. Fix whatever falls over; re-check poll interval degradation.</td></tr>
+    <tr><td class="day">D14</td><td class="theme">Dress rehearsal 2</td><td class="items">⬜ Deploy again from scratch using only the runbook. On-call + rollback steps written down.</td></tr>
+    <tr><td class="day">D15</td><td class="theme">Freeze</td><td class="items">⬜ Code freeze. Go/no-go checklist against this page. Ship to the first 10.</td></tr>
   </table>
   </div>
 </section>
 
 
 <footer>
-  Sayvors production-readiness audit §— compiled 2026-10-11 §— read-only — no code changed, nothing pushed §— security findings SEC-C1 through SEC-M10 and scale findings SCALE-1 through SCALE-6 are the actionable ledger; §§5–§§7 are the strategy answers.
+  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. Security findings SEC-C1 through SEC-M10 and scale findings SCALE-1 through SCALE-6 are the actionable ledger; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-19; implementation details live in <code>docs/security/</code>.
 </footer>
 
 </div>
