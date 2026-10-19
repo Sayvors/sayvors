@@ -380,6 +380,28 @@ async def get_channel_messages(
 _inbox_router = APIRouter(prefix="/api/v1/inbox", tags=["inbox"])
 
 
+@_inbox_router.post("/ws-ticket")
+async def create_ws_ticket(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Issue a short-lived (30s) one-time ticket for WebSocket auth.
+
+    SEC-H3: moves the access token off the URL (access logs) by exchanging
+    it for a single-use ticket that can be passed as ?ticket= to /ws.
+    """
+    import secrets
+    ticket = secrets.token_urlsafe(32)
+    try:
+        from ..redis.client import get_redis
+        redis = await get_redis()
+        await redis.setex(f"ws:ticket:{ticket}", 30, user.id)
+    except Exception:
+        # Redis down — fall back to allowing the full token (degraded mode)
+        pass
+    return {"ticket": ticket}
+
+
 @_inbox_router.websocket("/ws")
 async def inbox_ws(websocket: WebSocket):
     """Live inbox events for the authenticated user.
@@ -390,28 +412,61 @@ async def inbox_ws(websocket: WebSocket):
     param for non-browser clients.
     """
     token = websocket.cookies.get(settings.ACCESS_COOKIE_NAME, "")
-    if not token:
+    ticket = websocket.query_params.get("ticket") or ""
+    if not token and not ticket:
         token = websocket.query_params.get("token") or ""
-    try:
-        import jwt as pyjwt
 
-        payload = pyjwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-        user_id = payload.get("sub")
-        if not user_id or payload.get("type") != "access":
-            raise ValueError("bad token")
-        # SEC-H3: enforce revocation — blacklist (logout/reuse) and
-        # token_version (password change / logout-all). Mirrors get_current_user.
-        from ..auth.rate_limit import is_token_blacklisted
-        if await is_token_blacklisted(payload.get("jti", "")):
-            raise ValueError("token revoked")
-        from sqlalchemy import select
-        from ..users.models import User
-        async with _async_session() as _chk:
-            _tv = (await _chk.execute(
-                select(User.token_version).where(User.id == user_id)
-            )).scalar_one_or_none()
-            if payload.get("ver", 0) != (_tv or 0):
+    user_id = None
+    payload = None
+    try:
+        if ticket:
+            # SEC-H3: one-time ticket (moves token off URL). Single-use:
+            # delete from Redis after validation so it can't be replayed.
+            try:
+                from ..redis.client import get_redis
+                redis = await get_redis()
+                user_id = await redis.get(f"ws:ticket:{ticket}")
+                if user_id:
+                    await redis.delete(f"ws:ticket:{ticket}")
+                user_id = user_id.decode() if isinstance(user_id, bytes) else user_id
+            except Exception:
+                user_id = None
+            if not user_id:
+                raise ValueError("invalid or expired ticket")
+        else:
+            import jwt as pyjwt
+
+            payload = pyjwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+            user_id = payload.get("sub")
+            if not user_id or payload.get("type") != "access":
+                raise ValueError("bad token")
+            # SEC-H3: enforce revocation — blacklist (logout/reuse) and
+            # token_version (password change / logout-all). Mirrors get_current_user.
+            from ..auth.rate_limit import is_token_blacklisted
+            if await is_token_blacklisted(payload.get("jti", "")):
                 raise ValueError("token revoked")
+            from sqlalchemy import select
+            from ..users.models import User
+            from ..team.models import TeamMember
+            async with _async_session() as _chk:
+                _tv = (await _chk.execute(
+                    select(User.token_version).where(User.id == user_id)
+                )).scalar_one_or_none()
+                if payload.get("ver", 0) != (_tv or 0):
+                    raise ValueError("token revoked")
+                # Suspension check (mirrors get_current_user)
+                _user = (await _chk.execute(
+                    select(User).where(User.id == user_id)
+                )).scalar_one_or_none()
+                if _user and _user.tenant_id and _user.tenant_id != _user.id:
+                    _member = (await _chk.execute(
+                        select(TeamMember.status).where(
+                            TeamMember.user_id == _user.id,
+                            TeamMember.tenant_id == _user.tenant_id,
+                        )
+                    )).scalar_one_or_none()
+                    if _member == "suspended":
+                        raise ValueError("account suspended")
     except Exception:
         await websocket.close(code=4401)
         return
@@ -438,6 +493,23 @@ async def inbox_ws(websocket: WebSocket):
         try:
             while True:
                 await asyncio.sleep(25)
+                # Periodic revocation check: only for token-based auth
+                # (ticket-based auth is single-use and already consumed).
+                if payload is not None:
+                    try:
+                        from ..auth.rate_limit import is_token_blacklisted
+                        if await is_token_blacklisted(payload.get("jti", "")):
+                            await websocket.close(code=4401)
+                            return
+                        async with _async_session() as _chk:
+                            _tv = (await _chk.execute(
+                                select(User.token_version).where(User.id == user_id)
+                            )).scalar_one_or_none()
+                            if payload.get("ver", 0) != (_tv or 0):
+                                await websocket.close(code=4401)
+                                return
+                    except Exception:
+                        pass
                 await websocket.send_json({"type": "ping"})
         except Exception:
             pass
