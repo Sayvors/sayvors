@@ -1,5 +1,19 @@
 # Daily Progress Report
 
+## 2026-10-19 (security + ops)
+- Meta-events worker cleanup: retry cap with exponential backoff (MAX_RETRIES=5, base 300s, cap 7200s), worker_id reused from startup, dead _process_batch removed, lease columns cleared on terminal states, failed events now retried. 29 tests pass.
+- SEC-H3: full WebSocket auth — on-connect blacklist + token_version + suspension, periodic re-check in heartbeat, one-time ticket endpoint. 3e32246 + 5c2f7fe.
+- SEC-M5: reviewer-photo download SSRF fix (fetch_pinned_bytes). 1a92076.
+- SEC-M3: per-channel webhook rate limit. 05d6bb0.
+- SEC-M6: lead RBAC channels.edit. 05d6bb0.
+- SEC-M7: notification settings keyed by actor. 73a674b.
+- SEC-M8: nonce-based CSP in middleware. 1ada62f.
+- SCALE-2: platform_message_id index. e4de215.
+- SCALE-3: composite index + batching + cursor pagination. 8b6665f, 5788049, 4d93084.
+- SCALE-4: retention cleanup (webhook events, notifications, usage events). 66d006b.
+- SEC-H1: verified already fixed (cda3963).
+- SEC-H2: verified already implemented (e900441).
+
 ## 2026-10-19 (security)
 - SEC-H2: Verified LLM rate limit + metering already implemented (commit e900441). Rate limit 60 req/min per tenant (fail-open), budget reserve/settle before/after provider call, usage recorded via record_usage_event() in LLMProvider.complete(). 7 budget tests pass.
 - SEC-H1: Verified media publishing SSRF guard already in place (commit cda3963) — `_assert_media_fetchable` uses `assert_public_http_url` + `fetch_pinned_status` (DNS pinning, per-hop redirect validation, no status code echoing)
