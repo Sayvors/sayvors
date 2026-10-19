@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Sayvors Launch Readiness — Consolidated Audit</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Public+Sans:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  /* ── Design plan ──────────────────────────────────────────────
+     Consolidated launch document merging the 15-day launch plan
+     (launch-readiness-report) and the 1M-user readiness audit
+     (readiness-report). Single severity language: red=critical/
+     blocker, amber=high/scale, violet=medium, green=solid.      */
+  :root {
+    --paper: #F6F6F3;
+    --card: #FFFFFF;
+    --ink: #1A1E25;
+    --muted: #59616D;
+    --line: #E1E2DC;
+    --violet: #3D1D6E;
+    --violet-soft: #ECE7F6;
+    --red: #A8281F;
+    --red-soft: #F9E9E7;
+    --amber: #8A6207;
+    --amber-soft: #F8F0DA;
+    --green: #17603F;
+    --green-soft: #E3F1E9;
+    --blue: #1F5F8B;
+    --blue-soft: #E5EEF5;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #13161B;
+      --card: #1B1F26;
+      --ink: #E7E9EC;
+      --muted: #9BA3AF;
+      --line: #2C313A;
+      --violet: #B79FF5;
+      --violet-soft: #262038;
+      --red: #F0A9A4;
+      --red-soft: #38201D;
+      --amber: #E2C175;
+      --amber-soft: #332B14;
+      --green: #85D0A9;
+      --green-soft: #1A3227;
+      --blue: #8FB8D8;
+      --blue-soft: #1A2A38;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #13161B;
+    --card: #1B1F26;
+    --ink: #E7E9EC;
+    --muted: #9BA3AF;
+    --line: #2C313A;
+    --violet: #B79FF5;
+    --violet-soft: #262038;
+    --red: #F0A9A4;
+    --red-soft: #38201D;
+    --amber: #E2C175;
+    --amber-soft: #332B14;
+    --green: #85D0A9;
+    --green-soft: #1A3227;
+    --blue: #8FB8D8;
+    --blue-soft: #1A2A38;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Public Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 0 max(48px, env(safe-area-inset-bottom, 0px));
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+
+  header.mast {
+    border-bottom: 1px solid var(--line);
+    padding-block: 40px 28px;
+  }
+  .eyebrow {
+    font-family: "Archivo", sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--violet);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: "Archivo", sans-serif;
+    font-size: clamp(30px, 5.5vw, 44px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.08;
+    text-wrap: balance;
+    margin: 0 0 14px;
+  }
+  .verdict { font-size: 16.5px; max-width: 72ch; margin: 0; }
+  .verdict strong { color: var(--violet); }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin: 26px 0 0;
+  }
+  .tile {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 12px;
+  }
+  .tile .n {
+    font-family: "Archivo", sans-serif;
+    font-weight: 800;
+    font-size: 30px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .tile.p0 .n { color: var(--red); }
+  .tile.p1 .n { color: var(--amber); }
+  .tile.p2 .n { color: var(--muted); }
+  .tile.p3 .n { color: var(--blue); }
+  .tile .t {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-top: 5px;
+  }
+  @media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+
+  nav.toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 22px 0 0;
+  }
+  nav.toc a {
+    font-family: "Archivo", sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    color: var(--ink);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 14px;
+  }
+  nav.toc a:hover { border-color: var(--violet); color: var(--violet); }
+
+  section { padding-block: 34px 6px; }
+  h2 {
+    font-family: "Archivo", sans-serif;
+    font-size: 21px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+  }
+  .section-sub { color: var(--muted); font-size: 13.5px; margin: 0 0 20px; max-width: 72ch; }
+
+  article.finding {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left-width: 4px;
+    border-radius: 12px;
+    padding: 18px 20px 16px;
+    margin-bottom: 12px;
+  }
+  article.p0 { border-left-color: var(--red); }
+  article.p1 { border-left-color: var(--amber); }
+  article.p2 { border-left-color: var(--line); }
+  article.p3 { border-left-color: var(--blue); }
+  .f-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .f-id {
+    font-family: "Archivo", sans-serif;
+    font-weight: 800;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .chip {
+    font-family: "Archivo", sans-serif;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-radius: 999px;
+    padding: 2px 9px;
+  }
+  .chip.crit { background: var(--red-soft); color: var(--red); }
+  .chip.warn { background: var(--amber-soft); color: var(--amber); }
+  .chip.minor { background: var(--violet-soft); color: var(--violet); }
+  .chip.info { background: var(--blue-soft); color: var(--blue); }
+  .chip.effort { background: transparent; border: 1px solid var(--line); color: var(--muted); text-transform: none; letter-spacing: 0.02em; font-size: 11px; }
+  .chip.fixed { background: var(--green-soft); color: var(--green); }
+  h3 {
+    font-family: "Archivo", sans-serif;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+  article p { margin: 0 0 8px; font-size: 14px; }
+  article p:last-child { margin-bottom: 0; }
+  .fix {
+    border-top: 1px dashed var(--line);
+    margin-top: 10px;
+    padding-top: 9px;
+    font-size: 13.5px;
+  }
+  .fix .lbl {
+    font-family: "Archivo", sans-serif;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-right: 6px;
+  }
+  code {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    background: var(--violet-soft);
+    color: var(--violet);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  .refs { margin: 8px 0 0; padding: 0; list-style: none; }
+  .refs li {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 11.5px;
+    color: var(--muted);
+    padding: 1px 0;
+    overflow-wrap: anywhere;
+  }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  table.plan { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13.5px; }
+  table.plan th {
+    font-family: "Archivo", sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 14px;
+  }
+  table.plan td { border-bottom: 1px solid var(--line); padding: 10px 14px; vertical-align: top; }
+  table.plan tr:last-child td { border-bottom: none; }
+  td.day {
+    font-family: "Archivo", sans-serif;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  td.theme { font-weight: 700; white-space: nowrap; }
+  td.items { color: var(--muted); min-width: 0; }
+  tr.week td { background: var(--violet-soft); font-family: "Archivo", sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--violet); padding-block: 6px; }
+
+  ul.solid {
+    margin: 0; padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 20px;
+  }
+  @media (max-width: 620px) { ul.solid { grid-template-columns: 1fr; } }
+  ul.solid li {
+    position: relative;
+    padding-left: 24px;
+    font-size: 13.5px;
+  }
+  ul.solid li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--green);
+    font-weight: 700;
+  }
+
+  .scale-note {
+    background: var(--violet-soft);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    font-size: 14px;
+  }
+  .scale-note p { margin: 0 0 6px; }
+  .scale-note p:last-child { margin: 0; }
+
+  footer {
+    border-top: 1px solid var(--line);
+    margin-top: 34px;
+    padding-top: 16px;
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  :focus-visible { outline: 3px solid var(--violet); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">Consolidated production audit · 19 Oct 2026 · 15 days to launch</p>
+  <h1>Sayvors launch readiness</h1>
+  <p class="verdict">
+    Merged from two parallel audits: the 15-day launch plan (data-loss blockers, scale gaps, small items) and
+    the 1M-user readiness audit (security, scalability, infrastructure, ops). Verdict:
+    <strong>security and auth are in genuinely good shape</strong>; last year's audit findings are fixed and
+    enforced by a fail-closed startup gate. The launch risk is <strong>operational</strong>: three pipeline bugs
+    that lose or drop data, an AI auto-posting default you may not have chosen on purpose, no backups story,
+    and no monitoring actually switched on. None of it needs re-architecture. All of it fits in 15 days if the
+    order below holds.
+  </p>
+  <div class="tiles">
+    <div class="tile p0"><div class="n">4</div><div class="t">Launch blockers — fix in week 1 (2 fixed)</div></div>
+    <div class="tile p1"><div class="n">8</div><div class="t">Scale gaps — needed for 1000 businesses</div></div>
+    <div class="tile p2"><div class="n">10+</div><div class="t">Small items — batch at the end</div></div>
+    <div class="tile p3"><div class="n">14</div><div class="t">Security &amp; ops findings — tracked</div></div>
+  </div>
+  <nav class="toc">
+    <a href="#blockers">Launch blockers</a>
+    <a href="#scale">Scale gaps</a>
+    <a href="#security">Security &amp; ops</a>
+    <a href="#plan">15-day plan</a>
+    <a href="#solid">What's solid</a>
+  </nav>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     P0 — LAUNCH BLOCKERS
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="blockers">
+  <h2>P0 — launch blockers</h2>
+  <p class="section-sub">These lose data or publish AI text without review. At 10 businesses or 10,000, you don't launch with these open.</p>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">01</span><span class="chip fixed">Fixed</span><span class="chip effort">done</span></div>
+    <h3>The reviews→analytics pipeline is dead whenever Kafka is running</h3>
+    <p><strong>Fixed:</strong> outbox worker now wraps payload as <code>{"event_type": ..., "payload": ...}</code> so the analytics consumer dispatches correctly. Consumer calls <code>commit()</code> after each message. Pushed as <code>eb99563</code>.</p>
+    <p>The outbox worker sends the bare event payload to Kafka, but the analytics consumer dispatches on an <code>event_type</code> field inside the message value. It finds nothing, logs "unrelated event type" at debug level, and drops the event — while the outbox row is marked sent, so it never retries. Every review that arrives through the normal (Kafka-up) path gets no insight row, no sentiment, no rollups, no replied-tracking. The pipeline only works today in the Kafka-down fallback path, which wraps events correctly.</p>
+    <ul class="refs">
+      <li>outbox/worker.py:110 — sends json.dumps(event.payload)</li>
+      <li>analytics/consumer.py:371-374 — expects event.get("event_type") in the value</li>
+      <li>analytics/consumer.py:398-435 — the fallback path that wraps correctly</li>
+    </ul>
+    <div class="fix"><span class="lbl">Fix</span>Wrap the Kafka value as <code>{"event_type": …, "payload": …}</code> in the outbox sender (or make the consumer unwrap bare payloads), then run one end-to-end test with Kafka up: new review → ReviewInsight row appears.</div>
+  </article>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">02</span><span class="chip fixed">Fixed</span><span class="chip effort">done</span></div>
+    <h3>Kafka offsets are never committed — every deploy replays the entire topic</h3>
+    <p><strong>Fixed:</strong> consumer now calls <code>consumer.commit()</code> after each message reaches terminal state. Pushed as <code>eb99563</code>.</p>
+    <p>The consumer is created with <code>enable_auto_commit=False</code> but never calls <code>commit()</code>. Combined with <code>auto_offset_reset="earliest"</code>, every restart or rebalance re-reads the whole retained topic. Handlers are idempotent so results stay correct, but the replay itself becomes your deploy-day load event, and it grows with topic age.</p>
+    <ul class="refs">
+      <li>kafka/client.py:80 — enable_auto_commit=False</li>
+      <li>analytics/consumer.py:463-466 — the loop with no commit</li>
+    </ul>
+    <div class="fix"><span class="lbl">Fix</span>Commit the offset after each message reaches durable terminal-or-retry state — the exact rule the consumer design doc already states.</div>
+  </article>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">03</span><span class="chip crit">Blocker</span><span class="chip effort">~1 day</span></div>
+    <h3>Inbound WhatsApp/Instagram/Facebook messages are silently lost on worker restart</h3>
+    <p>The meta-events worker claims a message by setting status <code>processing</code> and committing — and never reclaims it. The code comment says lease management is skipped "until migration adds the columns", but that migration already shipped. A worker crash or redeploy mid-message leaves inbound customer messages stuck in <code>processing</code> forever. For a messaging product this is the most user-visible failure possible.</p>
+    <ul class="refs">
+      <li>channels/meta_events_worker.py:107-110 — "we skip lease management"</li>
+      <li>modules/jobs/ runner already has the expired-lease reclaim pattern to copy</li>
+    </ul>
+    <div class="fix"><span class="lbl">Fix</span>Reuse the JobRunner lease-expiry reclaim: on startup and periodically, reset stale <code>processing</code> rows past the lease deadline back to pending.</div>
+  </article>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">04</span><span class="chip crit">Blocker · decision</span><span class="chip effort">hours</span></div>
+    <h3>AI replies auto-post to Google by default — and ignore the engine's own "needs review" verdict</h3>
+    <p><code>approval_mode</code> defaults to <code>auto</code>, so every 4–5★ review gets an AI-generated reply posted live with no human in the loop. Worse: when the reply engine itself flags a draft as <code>needs_review</code> (off-topic, failed validation), the worker never checks that flag — the post decision is made purely from rating + mode, so flagged replies still go out on a 4★ review. This is public, brand-facing, unreviewed AI content on day one.</p>
+    <ul class="refs">
+      <li>channels/models.py:446-451 — approval_mode default "auto"</li>
+      <li>channels/reviews_worker.py:653-697 — posts on rating + mode only</li>
+      <li>review_engine/service.py:532-538 — the needs_review verdict nobody reads</li>
+    </ul>
+    <div class="fix"><span class="lbl">Fix</span>Flip the default to <code>approval</code> and make the worker refuse to auto-post any draft whose engine verdict is <code>needs_review</code>. Merchants who want full auto can opt back in, knowingly.</div>
+  </article>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">05</span><span class="chip crit">Blocker at scale</span><span class="chip effort">~1 day</span></div>
+    <h3>Localith sync re-enqueues every review of every listing, every 60 seconds</h3>
+    <p>The third sync loop enqueues <code>review.discovered</code> for all items with no done/content gate, and the fetch pulls full review history every pass — each event its own INSERT and commit. At 1000 listings × ~200 reviews that is on the order of 200k outbox rows per minute. It buries the outbox, Kafka, and the consumer long before you reach 1000 businesses; even at 50 businesses it's measurable waste.</p>
+    <ul class="refs">
+      <li>localith/service.py:1243-1275 — the ungated loop</li>
+      <li>embedsocial.py:194-208 — fetch_all_items pulls all reviews every pass</li>
+      <li>reviews_worker.py:253-267 — the native path's gate, to mirror</li>
+    </ul>
+    <div class="fix"><span class="lbl">Fix</span>Gate the re-enqueue on enrichment status + unchanged content (same check the native path uses), and raise the sync interval — reviews don't need a 60-second SLA.</div>
+  </article>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">06</span><span class="chip crit">Blocker · ops</span><span class="chip effort">1–2 days incl. rehearsal</span></div>
+    <h3>There is no backup story beyond "RDS PITR, configured in the console" — and it has never been rehearsed</h3>
+    <p>Zero pg_dump tooling, no restore runbook, Kafka and Redis on unbacked single-box volumes. The checklist notes two migration incidents have already happened. One bad migration on an unrehearsed-restore database is the business-ending scenario, and it's fully preventable inside the timeline.</p>
+    <div class="fix"><span class="lbl">Fix</span>Turn on RDS PITR now, add a nightly pg_dump to the existing S3 bucket with 30-day retention, and actually rehearse one restore into a scratch database. Write the runbook down.</div>
+  </article>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SECURITY & OPS — from readiness-report, marked critical
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="security">
+  <h2>P0 — security &amp; ops findings (critical)</h2>
+  <p class="section-sub">From the 1M-user readiness audit. These are launch-critical security and operational gaps.</p>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">SEC-C1</span><span class="chip fixed">Fixed</span><span class="chip effort">done</span></div>
+    <h3>OTP verification bypass → account takeover</h3>
+    <p><code>verify-otp</code> validated the code only when the account is unverified; for any already-verified user it skipped the check and minted a full session. Knowing an email was enough. <strong>Fixed: rejects OTP login for verified accounts with clear message.</strong></p>
+    <ul class="refs"><li>auth/service.py:739-768, router.py:380-398</li><li>tests/test_verify_otp.py (4 tests pass)</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Guard + tests shipped. Done.</div>
+  </article>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">OPS-1</span><span class="chip crit">Blocker · ops</span><span class="chip effort">1-2 days</span></div>
+    <h3>No backups, no restore path, anywhere</h3>
+    <p>No pg_dump, WAL tooling, or runbook in the repo; the "strategy" doc describes Kubernetes infrastructure that doesn't exist. Two migration incidents already happened on staging. One bad migration on an unrehearsed-restore database is the business-ending scenario.</p>
+    <ul class="refs"><li>docs/security/infrastructure.md:497-513</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Turn on RDS PITR now, nightly pg_dump → S3 with 30-day retention, rehearse one restore into scratch. Write the runbook.</div>
+  </article>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">OPS-2</span><span class="chip fixed">Fixed</span><span class="chip effort">done</span></div>
+    <h3>Observability in place</h3>
+    <p>Sentry/GlitchTip on backend + frontend, JSON structured logging with request_id/tenant_id, Request-ID middleware, real <code>/readyz</code> probing DB/Redis/Kafka, container HEALTHCHECKs on both Dockerfiles, and a Prometheus <code>/metrics</code> endpoint on the API.</p>
+    <ul class="refs"><li>app/observability.py, app/main.py, services/api/Dockerfile, apps/web/Dockerfile</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Done — GlitchTip DSN + structured logs + request IDs + /readyz HEALTHCHECKs + /metrics endpoint.</div>
+  </article>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">OPS-3</span><span class="chip crit">Blocker</span><span class="chip effort">1-2 days</span></div>
+    <h3>CI runs no tests</h3>
+    <p>82 backend test files, zero executed before an image ships; deploys are a manual SSH ritual off a mutable <code>:staging</code> tag.</p>
+    <ul class="refs"><li>.github/workflows/deploy-staging.yml</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Test + lint + typecheck job gating the build; deploy pinned sha tags.</div>
+  </article>
+
+  <article class="finding p0">
+    <div class="f-head"><span class="f-id">OPS-4</span><span class="chip crit">Blocker</span><span class="chip effort">~half day</span></div>
+    <h3>Deployed topology is stale</h3>
+    <p>The <code>staging</code> branch (what runs) predates the worker split and doesn't set <code>RUN_BACKGROUND_WORKERS=false</code> — loops run inside both uvicorn workers, racing each other.</p>
+    <ul class="refs"><li>git: staging@00a40ff vs development@3882ef2</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Merge development → staging and redeploy; make staging fast-forward-only.</div>
+  </article>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     P1 — SCALE GAPS
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="scale">
+  <h2>P1 — scale &amp; production gaps</h2>
+  <p class="section-sub">Fine at 10 businesses; each of these hurts on the way to 1000.</p>
+
+  <div class="scale-note">
+    <p><strong>The honest scaling statement:</strong> the current single t3.small box (api + worker + Redis + single-broker Kafka + Caddy) will comfortably serve your launch cohort of ~10 businesses. It will not serve 1000 — not because of raw capacity, but because items 07–13 below turn into incidents: throttled shared API keys, invisible dead channels, and a worker that physically cannot scale out (<code>container_name</code> in the compose file blocks <code>--scale</code>).</p>
+  </div>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">07</span><span class="chip warn">Scale</span><span class="chip effort">~1 day</span></div>
+    <h3>Google channels are never marked expired, and there is no 429/backoff handling</h3>
+    <p>A merchant who revokes access in their Google account keeps channel status <code>active</code> forever; the poller re-fails every 5 minutes indefinitely and the UI never prompts reconnection. And the Google client handles only 401-retry-once — no 429/Retry-After, no backoff, no per-channel cooldown.</p>
+    <ul class="refs"><li>channels/google_reviews.py:256-285 — _authed_request, 401-only</li><li>channels/meta/oauth.py:102 — the expired-write that exists for Meta but not Google</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Repeated refresh failure → mark channel <code>expired</code> + notify merchant to reconnect. Add backoff with a per-channel error cooldown.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">08</span><span class="chip warn">Scale · concentration</span><span class="chip effort">decision + config</span></div>
+    <h3>All tenants ride one shared Localith/EmbedSocial API key</h3>
+    <p>Per-tenant keys exist but are optional; by default every business syncs through one provider account. That account is a single point of failure and the first thing EmbedSocial throttles — and with the 60-second sync interval, you'd be the one triggering it.</p>
+    <div class="fix"><span class="lbl">Fix</span>Decide the launch posture: mandate per-tenant keys at onboarding, or negotiate provider limits and keep the shared key with monitoring + the interval raise from blocker 05.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">09</span><span class="chip warn">Scale</span><span class="chip effort">~1-2 days</span></div>
+    <h3>The review poller is serial and fetches one page of 50 reviews</h3>
+    <p>One asyncio task processes all due channels sequentially; per new review that's LLM calls + posting + up to 6s of read-back sleeps. At 1000 channels a pass takes hours. And <code>list_reviews</code> has no pagination loop — a business with a >50-review burst silently loses the overflow. The atomic lease does allow running N worker instances; nothing stops you adding replicas except the compose file.</p>
+    <ul class="refs"><li>channels/reviews_worker.py:742-754 — sequential pass</li><li>channels/google_reviews.py:396-397 — single page of 50</li><li>docker-compose.prod.yml:86 — container_name blocks --scale</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Bound a small worker pool over claimed channels, add the pagination loop, drop <code>container_name</code> so 2-3 worker replicas can share the load.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">10</span><span class="chip warn">Scale · quality</span><span class="chip effort">2-3 days or descope</span></div>
+    <h3>RAG vector search is structurally blind past ~90 chunks — and keyword search doesn't work in Arabic/Urdu</h3>
+    <p>Vector search loads only the first <code>top_k*3</code> chunks <code>ORDER BY seq</code> and does pure-Python cosine over that prefix; embeddings live in JSON text columns with no pgvector. Any databank bigger than ~90 chunks has most of its content invisible, silently. The keyword half is <code>to_tsvector('english')</code> computed on the fly, with no GIN index and no usefulness for Arabic or Urdu — your core languages.</p>
+    <ul class="refs"><li>rag/search.py:17-51 — the prefix-window cosine</li><li>rag/models.py:70 — embeddings as JSON text</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Decide by day 10: migrate to pgvector (best), or descope honestly — cap databank sizes, widen the window, and add an Arabic-aware keyword side — and adjust the marketing claim to match. A silent recall collapse is worse than a smaller feature.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">11</span><span class="chip warn">Quality</span><span class="chip effort">~half day</span></div>
+    <h3>Enrichment failures are invisible — LLM failures silently store heuristics as "done"</h3>
+    <p><code>enrichment_status="failed"</code> is never written anywhere. When the LLM call fails, the catch returns a deterministic heuristic and the row is stored as <code>done</code>, indistinguishable from real LLM output. There is no retry, no DLQ, and no way to know enrichment quality degraded — free-plan tenants hit this on every review via the 402 budget path.</p>
+    <ul class="refs"><li>analytics/enrichment.py:174-176 — catch → heuristic</li><li>analytics/enrichment.py:28 — hardcoded groq model, bypassing admin model curation</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Write the <code>failed</code> status with a retry count, surface it in admin stats, and add one retry before falling back to heuristics.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">12</span><span class="chip warn">Infra</span><span class="chip effort">1-2 days</span></div>
+    <h3>Single small box, Kafka replication factor 1, and monitoring that exists in code but isn't switched on</h3>
+    <p>One OOM kills api, worker, Redis, and Kafka together; Kafka RF=1 means a broker disk issue pauses the whole pipeline; Redis (fail-closed auth) has 128 MB and no memory alarm — a full Redis is a total login outage. Meanwhile <code>/metrics</code> is served but scraped by nothing, and GlitchTip DSNs default to empty, so error tracking is off. You will learn about outages from customers.</p>
+    <ul class="refs"><li>docker-compose.prod.yml:123,133-157 — Redis noeviction, Kafka RF=1</li><li>deploy/env.prod.example — empty GlitchTip DSNs</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>For launch: fill the DSNs, point any hosted uptime monitor at /readyz, scrape /metrics with even a single-node Prometheus, add a Redis memory alarm. Worker on its own box removes the shared-OOM risk. Kafka RF=1 is acceptable at launch if documented; revisit for 1000.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">13</span><span class="chip warn">Deploy</span><span class="chip effort">1 day + rehearsal</span></div>
+    <h3>The production environment doesn't exist yet — and OAuth redirect URIs can silently ship as localhost</h3>
+    <p>Caddy serves exactly one host: <code>api.staging.sayvors.com</code>. The compose file's own header says staging. apps/admin has no Dockerfile and no documented deploy path; apps/web is "on Vercel" per a compose comment. Most treacherous: <code>GOOGLE_REVIEWS_REDIRECT_URI</code>, <code>META_OAUTH_REDIRECT_URI</code>, and <code>FRONTEND_URL</code> default to localhost and are <em>not</em> checked by <code>validate_production_settings()</code> — forgetting them breaks both OAuth flows with no error at startup.</p>
+    <ul class="refs"><li>config.py:140,200 — localhost redirect URI defaults</li><li>config.py:246-280 — the prod gate that skips them</li><li>deploy/Caddyfile — staging host only</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Extend the startup gate to reject localhost in redirect URIs, FRONTEND_URL, and the CORS regex. Stand up the prod host, secrets, ALLOWED_HOSTS/CORS, and an apps/admin deploy story before rehearsal day.</div>
+  </article>
+
+  <!-- Security findings from readiness-report -->
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">SEC-H1</span><span class="chip warn">High</span><span class="chip effort">~1 day</span></div>
+    <h3>SSRF in media publishing</h3>
+    <p>The IG/FB publish probe fetches tenant-supplied URLs with redirects and no guard, and echoes upstream status codes.</p>
+    <ul class="refs"><li>meta/router.py:1507-1553, 1600, 2133</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Route through the existing <code>fetch_pinned</code> guard; stop reflecting status.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">SEC-H2</span><span class="chip warn">High</span><span class="chip effort">2-3 days</span></div>
+    <h3>LLM chat: no rate limit, no metering</h3>
+    <p><code>/llm/chat</code> and stream have no limiter and never debit credits — unlimited provider spend on any free token.</p>
+    <ul class="refs"><li>llm/router.py:180-260</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Apply the existing Redis limiter + debit <code>ai_credit_cents</code> before each call.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">SEC-H3</span><span class="chip warn">High</span><span class="chip effort">2-4 days</span></div>
+    <h3>WebSocket auth skips revocation</h3>
+    <p>The inbox WS checks only the token type — ignores logout blacklist, password-reset invalidation, suspension. Token also rides the URL (access logs).</p>
+    <ul class="refs"><li>channels/router.py:381-444</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Run blacklist + <code>token_version</code> checks on connect and periodically; move token to a short-lived one-time ticket.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">SCALE-2</span><span class="chip warn">High</span><span class="chip effort">~1 day</span></div>
+    <h3>Unindexed <code>platform_message_id</code></h3>
+    <p>Every webhook event dedupes with a full scan of the largest table — O(N) per message, forever.</p>
+    <ul class="refs"><li>channels/models.py:86; 7 call sites in meta/consumer.py</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Index (ideally unique) + verify with the job system's idempotency work.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">SCALE-3</span><span class="chip warn">High</span><span class="chip effort">3-5 days</span></div>
+    <h3>Inbox N+1: up to ~1,500 queries per dashboard load</h3>
+    <p>Full-history GROUP BY (ILIKE scan when searching) + 3 queries per thread + full-history <code>count(*)</code>.</p>
+    <ul class="refs"><li>channels/service.py:433-604, 396-399</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Denormalize <code>last_message_at</code>/<code>unread_count</code> onto the channel row; cursor pagination.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">SCALE-4</span><span class="chip warn">Med</span><span class="chip effort">2-3 days</span></div>
+    <h3>No retention on <code>meta_webhook_events</code>, <code>channel_messages</code>, <code>notifications</code>, <code>llm_usage_events</code></h3>
+    <p>Full raw JSON per event, unbounded growth. Retention jobs (webhook events 7-30d; usage events aggregate then prune).</p>
+    <ul class="refs"><li>webhooks/router.py:97-108</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Retention jobs (webhook events 7-30d; usage events aggregate then prune).</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">SCALE-5</span><span class="chip warn">Med</span><span class="chip effort">~1 day</span></div>
+    <h3>DB pool: 100 connections per process vs a small RDS class; no statement timeout</h3>
+    <p>A runaway query holds a slot for 30s+ and saturation becomes site-wide hangs.</p>
+    <ul class="refs"><li>config.py:8-10</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Pool 5+5 per process, <code>statement_timeout</code>/<code>idle_in_transaction_timeout</code>, boot-time headroom check.</div>
+  </article>
+
+  <article class="finding p1">
+    <div class="f-head"><span class="f-id">SCALE-6</span><span class="chip warn">Med</span><span class="chip effort">2-3 days</span></div>
+    <h3>Every open inbox tab holds a dedicated Redis pub/sub connection; unpooled client; boot-time blip permanently disables Redis</h3>
+    <p>The re-arm function has zero callers — Redis down = nobody logs in.</p>
+    <ul class="refs"><li>channels/realtime.py:28-43; redis/client.py:63-71</li></ul>
+    <div class="fix"><span class="lbl">Fix</span>Shared subscriber + local fan-out; pool the client; background prober that re-arms.</div>
+  </article>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     P2 — SMALL ITEMS
+     ═══════════════════════════════════════════════════════════════ -->
+<section>
+  <h2>P2 — small items (batch on day 11)</h2>
+  <p class="section-sub">Each is minutes to hours; none blocks launch alone, together they're a day.</p>
+  <article class="finding p2">
+    <ul class="refs" style="font-size:12.5px">
+      <li>Webhook replay protection absent (timestamp/nonce) — channels/router.py</li>
+      <li>Password policy is min-length 8 only — auth/schemas.py</li>
+      <li>Signup leaks email existence (409 enumeration) — auth/router.py:161</li>
+      <li>users.created_at unindexed — will slow admin growth queries at 100k users</li>
+      <li>No pip-audit / npm audit in CI — 30-minute add</li>
+      <li>Kafka dispatch topics written but never consumed (JobRunner) — unbounded disk growth</li>
+      <li>google-business-events and metrics-events emitted to topics with no consumer anywhere</li>
+      <li>Chat settle: streamed chats always settle to $0; /chat settle mis-parses model family → price 0; double reservation per message</li>
+      <li>Review watermark uses strict &lt;= boundary — an edge review can be skipped</li>
+      <li>GOOGLE_REVIEWS_MOCK=true in prod silently disables all review persistence — add it to the startup gate</li>
+      <li>SEC-M1: No account deletion / GDPR export despite storing end-customer PII</li>
+      <li>SEC-M2: Message content, contact phones, webhook secrets stored plaintext; only OAuth tokens encrypted</li>
+      <li>SEC-M3: Legacy webhook rate limit is global per platform (100/min shared by ALL tenants)</li>
+      <li>SEC-M5: Reviewer-photo download lacks SSRF guard</li>
+      <li>SEC-M6: Lead pipeline moves gated on channels.view instead of channels.edit</li>
+      <li>SEC-M7: Notification settings PATCH writes owner's user row when employee calls it</li>
+      <li>SEC-M8: CSP allows 'unsafe-inline' scripts in production</li>
+    </ul>
+  </article>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     15-DAY PLAN
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="plan">
+  <h2>The 15-day plan</h2>
+  <p class="section-sub">Ordered so the data-loss class is gone in week 1 and the last three days are rehearsal, not building.</p>
+  <div class="tablewrap">
+  <table class="plan">
+    <tr class="week"><td colspan="3">Week 1 — stop losing data</td></tr>
+    <tr><td class="day">D1</td><td class="theme">Kafka envelope</td><td class="items">Fix 01 (envelope) + 02 (offset commits). End-to-end test with Kafka up: review in → insight row out.</td></tr>
+    <tr><td class="day">D2</td><td class="theme">Message loss</td><td class="items">Fix 03: meta-events lease reclaim + startup recovery. Kill a worker mid-message and prove the message survives.</td></tr>
+    <tr><td class="day">D3</td><td class="theme">AI gating</td><td class="items">Fix 04: approval default + needs_review gate. Hide the fake STT/TTS endpoints (they return fake success today).</td></tr>
+    <tr><td class="day">D4</td><td class="theme">Monitoring on</td><td class="items">Fill GlitchTip DSNs, uptime monitor on /readyz, scrape /metrics, Redis memory alarm. This early so week 2 is done with eyes.</td></tr>
+    <tr><td class="day">D5</td><td class="theme">Backups</td><td class="items">Fix 06: RDS PITR on, nightly pg_dump → S3, rehearse one restore into scratch. Write the runbook.</td></tr>
+    <tr class="week"><td colspan="3">Week 2 — stop the scale bleeds</td></tr>
+    <tr><td class="day">D6</td><td class="theme">Localith</td><td class="items">Fix 05 (sync gate + interval) and decide 08 (per-tenant keys vs negotiated shared limits).</td></tr>
+    <tr><td class="day">D7</td><td class="theme">Channel health</td><td class="items">Fix 07: expired-marking + merchant notification, 429 backoff + cooldown, review pagination.</td></tr>
+    <tr><td class="day">D8</td><td class="theme">Throughput</td><td class="items">Fix 09: bounded poller pool, drop container_name, verify DB pool sizing under load.</td></tr>
+    <tr><td class="day">D9</td><td class="theme">Prod env</td><td class="items">Fix 13: prod host in Caddy, secrets, extend the startup validator (redirect URIs, FRONTEND_URL, CORS regex).</td></tr>
+    <tr><td class="day">D10</td><td class="theme">RAG decision</td><td class="items">Fix 10: pgvector migration or honest descale + Arabic keyword side. Decide today, build D10-11.</td></tr>
+    <tr><td class="day">D11</td><td class="theme">Quality</td><td class="items">Fix 11: enrichment failed-status + retry. Chat cost-settle bugs. P2 batch.</td></tr>
+    <tr class="week"><td colspan="3">Week 3 — rehearse</td></tr>
+    <tr><td class="day">D12</td><td class="theme">Dress rehearsal 1</td><td class="items">Full deploy on prod. OAuth end-to-end (Google + Meta), test WhatsApp message in/out, review → insight → reply flow live.</td></tr>
+    <tr><td class="day">D13</td><td class="theme">Load test</td><td class="items">~100 mock channels through the poller + sync. Fix whatever falls over; re-check poll interval degradation.</td></tr>
+    <tr><td class="day">D14</td><td class="theme">Dress rehearsal 2</td><td class="items">Deploy again from scratch using only the runbook. On-call + rollback steps written down.</td></tr>
+    <tr><td class="day">D15</td><td class="theme">Freeze</td><td class="items">Code freeze. Go/no-go checklist against this page. Ship to the first 10.</td></tr>
+  </table>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     WHAT'S SOLID
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="solid">
+  <h2>What's already solid — don't redo it</h2>
+  <p class="section-sub">Verified in code, not just claimed in the old audit docs.</p>
+  <ul class="solid">
+    <li>Auth hardening: token revocation + versioning, httpOnly cookie session, OTP brute-force locks, fail-closed rate limiting, XFF spoofing fix</li>
+    <li>Fail-closed production startup gate (JWT length, encryption keys, CORS, email guards)</li>
+    <li>Fernet-encrypted channel tokens and LLM keys, DB-only, admin kill-switches</li>
+    <li>Per-call LLM metering + reserve/settle credit wallet</li>
+    <li>Reply engine: 693-line rule validator, prompt-injection firewall, evidence grounding, post-post read-back verification</li>
+    <li>Transactional outbox with Kafka-down DB fallback, exponential backoff, dead-letter status</li>
+    <li>Tenant isolation in every consumer (channel owner re-resolved from DB, Kafka payloads untrusted)</li>
+    <li>Localith removal circuit breaker (2 misses + ratio guard before hiding reviews)</li>
+    <li>CI: pytest on real Postgres/Redis, tsc, gitleaks secret scan, image build on green</li>
+    <li>Health/readiness endpoints, request-ID middleware, structured logging, worker/API split</li>
+    <li>Multi-tenant isolation: adversarial pass found no missing tenant filter across every router</li>
+    <li>Auth internals: bcrypt-12, refresh rotation with family-wide reuse detection, device binding, revocation generations</li>
+    <li>Webhooks: HMAC verification fail-closed over raw body before parsing; DB-level delivery dedupe</li>
+    <li>SSRF guard primitive exists (fetch_pinned) — gaps are places that don't use it yet</li>
+    <li>Uploads: magic-byte sniffing incl. polyglot rejection; traversal-guarded storage keys</li>
+    <li>Frontend hygiene: zero dangerouslySetInnerHTML, safe markdown renderer, noopener on all target="_blank", strict TS build gate</li>
+    <li>Unified job processing design: enterprise-grade, 4 review rounds, honest limits stated</li>
+  </ul>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     BUY VS BUILD
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="buybuild">
+  <h2>Buy vs build</h2>
+  <p class="section-sub">Everything beneath the differentiator logic (Meta/Google channels, LLM routing, the outbox pattern) is commodity — buy it. Monthly figures are ballpark.</p>
+  <div class="tablewrap">
+  <table class="plan">
+    <tr><th>Need</th><th>Decision</th><th>What exactly</th><th>~Cost</th></tr>
+    <tr><td>Database durability</td><td><span class="chip info">Buy</span></td><td>RDS is already external — verify PITR is enabled, retention &ge; 7 days, alarms on connections/disk; rehearse one restore.</td><td class="num">~$0 new</td></tr>
+    <tr><td>Redis HA</td><td><span class="chip info">Buy</span> <span class="chip minor">+ code</span></td><td>ElastiCache replication group (multi-AZ). Until then: enable AOF, raise to 1-2 GB, add memory alarm, ship re-arm prober.</td><td class="num">$30-80/mo</td></tr>
+    <tr><td>Error tracking</td><td><span class="chip info">Buy</span></td><td>Sentry for API + web + admin. Single highest-leverage purchase on the list.</td><td class="num">$0-26/mo</td></tr>
+    <tr><td>Metrics / dashboards</td><td><span class="chip info">Buy</span></td><td>Grafana Cloud free tier or CloudWatch: API p95s, queue lag, Redis memory, DB connections, WS count, Kafka lag.</td><td class="num">$0-40/mo</td></tr>
+    <tr><td>Second box / AZ</td><td><span class="chip info">Buy</span></td><td>One t3.small carries everything. One OOM kills auth, messaging, ingestion together.</td><td class="num">$30-60/mo</td></tr>
+    <tr><td>Object storage</td><td><span class="chip info">Buy</span></td><td>S3 already coded as backend — set S3_DOCS_BUCKET. Today private customer docs live on the box's local volume.</td><td class="num">~$5/mo</td></tr>
+    <tr><td>Managed Kafka (later)</td><td><span class="chip info">Buy, later</span></td><td>Single-broker RF=1 fine for staging, not production truth. MSK 3-broker when traffic justifies.</td><td class="num">$150+/mo when due</td></tr>
+    <tr><td>Load testing</td><td><span class="chip info">Buy</span></td><td>k6 (free, open source): one scripted peak-hour profile, run before and after Phase C.</td><td class="num">$0</td></tr>
+    <tr><td>CI test gating</td><td><span class="chip minor">Code</span></td><td>One workflow job: pytest + eslint + tsc before the image builds. 82 test files already written.</td><td class="num">1-2 days eng</td></tr>
+    <tr><td>Query performance</td><td><span class="chip minor">Code</span></td><td>Indexes, inbox denormalization, retention jobs, statement timeouts.</td><td class="num">~1-2 wks</td></tr>
+    <tr><td>Admin consolidation</td><td><span class="chip minor">Code</span></td><td>Keep apps/admin, delete in-web /admin, replace shared password with named operator accounts + audit log.</td><td class="num">3-5 days</td></tr>
+    <tr><td>Frontend data layer</td><td><span class="chip minor">Code</span></td><td>TanStack Query (kills refetch storms), list virtualization, WS buffer cap, Sentry + web-vitals.</td><td class="num">1-2 wks</td></tr>
+  </table>
+  </div>
+  <p class="note">Total new spend: roughly <strong>$70-210/month</strong> buys durability, HA, and eyes-on-production. Everything else on the critical path is engineering you already have a design for.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     QUEUE / REDIS / KAFKA STRATEGY
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="strategy">
+  <h2>Infrastructure strategy</h2>
+  <p class="section-sub">Queue, Redis, and Kafka — what to buy, what to build, what to keep.</p>
+
+  <h3>Queue system — build as designed</h3>
+  <p>The repo's own <strong>Unified Job Processing design</strong> (four review rounds, "Ready for Phase 0") is the right architecture. PostgreSQL <code>jobs</code> table owns execution truth; Kafka owns dispatch only; Redis owns admission control. No Celery, no Temporal, no second broker. The design directly fixes the worst findings: sequential AI consumer becomes a <code>realtime</code> lane with bounded concurrency (8) that scales linearly; outbox drain gets <code>FOR UPDATE SKIP LOCKED</code>; retries get mandatory jitter; 429s become <code>blocked</code> state instead of lost messages.</p>
+
+  <h3>Redis strategy</h3>
+  <p>Redis is <strong>authentication infrastructure</strong>, not a cache. Rate limits, JWT blacklist, sessions, OTPs live there; auth fails closed. Target state: background prober re-arming Redis after blips, AOF enabled, 1-2 GB, memory alarm at 75%, then ElastiCache multi-AZ. Cache hot reads (LLM model registry 60s, FB profiles). Move aggregates to write path. Shared subscriber per process instead of one Redis connection per open tab. Redis must never own message content, job state, or anything that can't be lost.</p>
+
+  <h3>Kafka usage</h3>
+  <p>Keep it — for dispatch, and only dispatch. Three things are wrong today, all fixed in the approved plan: durability is theater (auto-commit offsets, acks=1 no idempotence, single broker RF=1); topics auto-created at 1 partition (zero throughput from --scale); safety net is already Postgres (outbox drain fallback means a broker outage loses nothing). What Kafka should never do here: priority, delay, or scheduling (jobs table owns all three), WebSocket fan-out (Redis), or anything request/response.</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     1M-USER LOAD MODEL
+     ═══════════════════════════════════════════════════════════════ -->
+<section id="loadmodel">
+  <h2>1M-user load model</h2>
+  <p class="section-sub">What "1 million users" means in load. Assumptions clearly labeled; correct them and the numbers move, the ordering does not.</p>
+  <div class="tablewrap">
+  <table class="plan">
+    <tr><th>Driver</th><th>Today (est.)</th><th>At 1M registered users</th><th>What breaks first</th></tr>
+    <tr><td>Registered users / tenants</td><td>hundreds</td><td>~1M users ≈ 30-50k business tenants</td><td>—</td></tr>
+    <tr><td>Inbound customer messages</td><td>&lt; 1/s</td><td>200-800/s peak</td><td>The single sequential AI consumer does a few/s, platform-wide, today</td></tr>
+    <tr><td>Meta webhook events</td><td>low</td><td>1-5k/s (incl. statuses, echoes)</td><td>Unindexed dedupe scan per event on the largest table</td></tr>
+    <tr><td>Concurrent dashboards (WS)</td><td>~10</td><td>20-50k</td><td>One Redis pub/sub connection per open tab; 128 MB Redis box</td></tr>
+    <tr><td>DB size</td><td>GBs</td><td>50-200 GB</td><td>Full-history aggregates in the inbox; four tables with no retention</td></tr>
+  </table>
+  </div>
+  <p class="note">The platform would not survive 1% of the target message rate today — and the first thing to fall over would be customer replies, the core promise.</p>
+</section>
+
+<footer>
+  Consolidated from two parallel audits: (1) Sayvors launch readiness — 15-day plan, P0/P1/P2 findings, verified 2026-10-19 against the working tree; (2) Sayvors 1M-user readiness — security/scale/ops audit, compiled 2026-10-11 (read-only, no code changed). File paths relative to services/api/app/ unless noted. Line numbers drift — the behavior descriptions are the durable part.
+</footer>
+
+</div>
+</body>
+</html>

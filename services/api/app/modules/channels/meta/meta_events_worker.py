@@ -104,10 +104,19 @@ async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List
     """
     now = datetime.now(timezone.utc)
 
-    # Release expired leases (mark as pending again)
-    # This requires lease columns to exist in event_outbox
-    # For now, we skip lease management until migration adds the columns
-    # The query below uses status='pending' and FOR UPDATE SKIP LOCKED
+    # Release expired leases back to pending so crashed workers' claims are
+    # reclaimed (mirrors JobRunner lease-expiry pattern).
+    await db.execute(
+        text("""
+            UPDATE event_outbox
+            SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL
+            WHERE status = 'processing'
+              AND event_type LIKE 'meta.%'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < :now
+        """),
+        {"now": now},
+    )
 
     query = text("""
         SELECT id, event_type, payload, topic, attempts, next_retry_at
@@ -124,10 +133,14 @@ async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List
 
     events = []
     for row in rows:
-        # Mark as claimed by updating status to 'processing'
+        # Mark as claimed by updating status to 'processing' with a lease.
         await db.execute(
-            text("UPDATE event_outbox SET status = 'processing' WHERE id = :id"),
-            {"id": row["id"]}
+            text("""
+                UPDATE event_outbox
+                SET status = 'processing', lease_owner = :worker, lease_expires_at = :lease
+                WHERE id = :id
+            """),
+            {"id": row["id"], "worker": worker_id, "lease": now + timedelta(seconds=LEASE_SECONDS)},
         )
         events.append(dict(row))
 

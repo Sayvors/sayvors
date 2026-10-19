@@ -447,7 +447,7 @@ class AutoReplyConfig(Base):
     # "auto" = post above min_rating_auto, queue below.
     # "approval" = every reply waits for human approval.
     approval_mode: Mapped[str] = mapped_column(
-        Enum("auto", "approval", name="reply_approval_mode"), default="auto"
+        Enum("auto", "approval", name="reply_approval_mode"), default="approval"
     )
     # When a reviewer edits a review we already answered, the follow-up
     # reply waits for human approval by default. True = the follow-up may

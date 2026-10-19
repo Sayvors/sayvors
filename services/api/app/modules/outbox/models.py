@@ -19,6 +19,10 @@ class EventOutbox(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     topic: Mapped[str] = mapped_column(String(100), default="auth-events")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

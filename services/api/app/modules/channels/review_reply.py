@@ -263,9 +263,10 @@ async def generate_auto_reply(
             _mock_reply(rating, review_text, reviewer_name),
             db, channel, review_id, review_text, config=config,
         )
-        return await _append_sales_link(
+        final = await _append_sales_link(
             mock_text, db, channel, review_id, review_text, config=config
         )
+        return final, False
 
     from ..review_engine.schemas import ReviewEngineRequest
     from ..review_engine.service import process_review
@@ -295,6 +296,14 @@ async def generate_auto_reply(
     with_handoff = await _append_handoff_link(
         cleaned, db, channel, review_id, review_text, config=config
     )
-    return await _append_sales_link(
+    final_text = await _append_sales_link(
         with_handoff, db, channel, review_id, review_text, config=config
     )
+    # Surface the engine's needs_review verdict so callers (e.g. the
+    # reviews worker) can gate auto-posting on it.
+    _validation = getattr(resp, "validation", None)
+    _relevance = getattr(resp, "relevance", None)
+    _passed = getattr(_validation, "passed", True)
+    _off_topic = getattr(_relevance, "verdict", None) == "off_topic"
+    needs_review = not (_passed and not _off_topic)
+    return final_text, needs_review

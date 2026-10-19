@@ -1580,7 +1580,7 @@ async def generate_reply_for_review(
         reply_text = custom_text
     else:
         try:
-            reply_text = await generate_auto_reply(
+            reply_text, _ = await generate_auto_reply(
                 config, channel, body.rating, body.review_text,
                 body.reviewer_name, db, review_id=body.review_id,
             )
@@ -1674,7 +1674,7 @@ async def regenerate_reply(
 
     # The model knows this is a rejected draft so it writes a fresh variation.
     try:
-        reply.reply_text = await generate_auto_reply(
+        reply.reply_text, _ = await generate_auto_reply(
             config, SimpleNamespace(id=channel_id, user_id=ctx.user.id),
             reply.rating, reply.review_text, reply.reviewer_name, db,
             review_id=(reply.review_id or "")[:120] or None,
@@ -1723,7 +1723,7 @@ async def retry_failed_reply(
 
         attempt += 1
         try:
-            reply.reply_text = await generate_auto_reply(
+            reply.reply_text, _ = await generate_auto_reply(
                 config, SimpleNamespace(id=channel_id, user_id=ctx.user.id),
                 reply.rating, reply.review_text, reply.reviewer_name, db,
                 review_id=(reply.review_id or "")[:120] or None,
@@ -1946,7 +1946,7 @@ async def test_review_pipeline(
     try:
         from .review_reply import generate_auto_reply
 
-        reply_preview = await generate_auto_reply(
+        reply_preview, _ = await generate_auto_reply(
             config,
             channel,
             body.rating,
