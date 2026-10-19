@@ -1,6 +1,7 @@
 # Daily Progress Report
 
 ## 2026-10-19 (security)
+- SEC-H2: Verified LLM rate limit + metering already implemented (commit e900441). Rate limit 60 req/min per tenant (fail-open), budget reserve/settle before/after provider call, usage recorded via record_usage_event() in LLMProvider.complete(). 7 budget tests pass.
 - SEC-H1: Verified media publishing SSRF guard already in place (commit cda3963) — `_assert_media_fetchable` uses `assert_public_http_url` + `fetch_pinned_status` (DNS pinning, per-hop redirect validation, no status code echoing)
 - SEC-M5: Fixed reviewer-photo download SSRF gap — replaced unpinned `httpx.AsyncClient.get(follow_redirects=True)` with new `fetch_pinned_bytes()` (DNS pinning + per-hop redirect validation + size cap). Removed unused `httpx` import.
 - Added `fetch_pinned_bytes()` to `core/pinned_http.py` — binary variant of `fetch_pinned` for image/media downloads
