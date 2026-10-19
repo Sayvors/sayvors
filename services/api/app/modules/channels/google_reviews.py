@@ -9,7 +9,9 @@ replies are posted via `reviews/{id}:replyUpdate`.
 Required OAuth scope: https://www.googleapis.com/auth/business.manage
 """
 import asyncio
+import json
 import logging
+import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -33,6 +35,12 @@ GOOGLE_SCOPES = [
 ]
 
 TIMEOUT = 15.0
+
+# ── Request resilience ──────────────────────────────────────────────
+MAX_REQUEST_ATTEMPTS = 6          # 1 initial attempt + 5 retries
+INITIAL_BACKOFF_SECONDS = 1.0     # starting backoff for 429 retries
+MAX_BACKOFF_SECONDS = 60.0        # ceiling on computed backoff
+MAX_REVIEW_PAGES = 10             # safety cap: 10 x 50 = 500 reviews per poll
 
 
 def build_auth_url(state: str, redirect_uri: str) -> str:
@@ -254,13 +262,19 @@ class GoogleReviewsClient:
         return {"Authorization": f"Bearer {self._access_token}"}
 
     async def _authed_request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        """Issue a request, transparently refreshing on 401 and retrying once.
+        """Issue a request, transparently refreshing on 401 and backing off on 429.
 
-        Handles three expiry paths in one place:
+        Handles three expiry/limit paths in one place:
           1. Proactive refresh when token_expires_at is set and within leeway.
           2. Reactive refresh when Google returns 401 (token revoked / expired
              server-side despite our local view).
-          3. Persistence of the new token via the registered persister.
+          3. Exponential-backoff retry with jitter when Google returns 429
+             (rate limit), honouring the `Retry-After` header when present.
+
+        Persistence of the new token via the registered persister happens on
+        successful 401 recovery. All retries are bounded by
+        MAX_REQUEST_ATTEMPTS so a single hung channel cannot stall a worker
+        pass indefinitely.
         """
         if self._needs_refresh():
             try:
@@ -270,19 +284,64 @@ class GoogleReviewsClient:
                 # try once more below.
                 pass
 
-        resp = await self._http.request(method, url, headers=self._headers(), **kwargs)
-        if resp.status_code != 401:
-            return resp
+        last_resp: httpx.Response | None = None
+        for attempt in range(1, MAX_REQUEST_ATTEMPTS + 1):
+            resp = await self._http.request(method, url, headers=self._headers(), **kwargs)
 
-        # One-shot retry: refresh and re-issue.
-        try:
-            await self.refresh_access_token()
-        except GoogleReviewsError as e:
+            if resp.status_code not in (401, 429):
+                return resp
+
+            last_resp = resp
+
+            if resp.status_code == 401:
+                # One-shot retry: refresh and re-issue immediately.
+                try:
+                    await self.refresh_access_token()
+                except GoogleReviewsError as e:
+                    raise GoogleReviewsError(
+                        f"401 from Google and refresh failed: {e}", 401
+                    ) from e
+                continue
+
+            # 429 rate limit — back off before retrying.
+            if attempt >= MAX_REQUEST_ATTEMPTS:
+                break
+
+            wait = self._compute_backoff(resp, attempt)
+            logger.warning(
+                "429 rate limited on %s %s — retrying in %.1fs (attempt %d/%d)",
+                method, url, wait, attempt, MAX_REQUEST_ATTEMPTS,
+            )
+            await asyncio.sleep(wait)
+
+        # Exhausted all attempts — surface the last response so callers can
+        # distinguish a permanent rejection (403/400) from a transient limit.
+        if last_resp is not None:
+            body = last_resp.text[:300]
             raise GoogleReviewsError(
-                f"401 from Google and refresh failed: {e}", 401
-            ) from e
+                f"{last_resp.status_code} from Google after {MAX_REQUEST_ATTEMPTS} attempts: {body}",
+                last_resp.status_code,
+            )
+        raise GoogleReviewsError(
+            f"Request failed after {MAX_REQUEST_ATTEMPTS} attempts", 502
+        )
 
-        return await self._http.request(method, url, headers=self._headers(), **kwargs)
+    def _compute_backoff(self, resp: httpx.Response, attempt: int) -> float:
+        """Seconds to wait before the next 429 retry.
+
+        Honours the `Retry-After` header when present (seconds or HTTP-date).
+        Otherwise uses exponential backoff with jitter: base * 2^(attempt-1),
+        clamped to MAX_BACKOFF_SECONDS, with ±25% jitter so thundering herds
+        don't re-synchronize after a rate-limit window clears.
+        """
+        retry_after = resp.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                pass  # not a delta-seconds value — fall through below
+        raw = min(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)), MAX_BACKOFF_SECONDS)
+        return raw * (0.75 + 0.5 * random.random())
     # ── Locations ────────────────────────────────────────
 
     async def list_locations(self, account_id: str) -> list[dict]:
@@ -387,44 +446,58 @@ class GoogleReviewsClient:
     async def list_reviews(
         self, account_id: str, location_id: str, updated_after: datetime | None = None
     ) -> list[GoogleReview]:
-        """Fetch reviews for a location, newest-updated first.
+        """Fetch all reviews for a location, following pagination pages.
 
         Google v4 does not support server-side filtering by updateTime, so we
-        fetch a bounded page (pageSize) and filter client-side.
+        page through results (pageSize 50 per request) and filter client-side.
+        A safety cap of MAX_REVIEW_PAGES prevents runaway loops on locations
+        with very large review histories.
         """
         url = f"{GBP_REVIEWS_API}/accounts/{account_id}/locations/{location_id}/reviews"
-        params: dict = {"pageSize": 50}
-        resp = await self._authed_request("GET", url, params=params)
-        if resp.status_code != 200:
-            raise GoogleReviewsError(
-                f"list_reviews failed: {resp.status_code}", resp.status_code
-            )
+        page_token: str | None = None
 
-        reviews: list[GoogleReview] = []
-        for r in resp.json().get("reviews", []):
-            updated = None
-            if r.get("updateTime"):
-                try:
-                    updated = datetime.fromisoformat(
-                        r["updateTime"].replace("Z", "+00:00")
-                    )
-                except ValueError:
-                    pass
-            if updated_after and updated and updated <= updated_after:
-                continue
-            reviews.append(
-                GoogleReview(
-                    review_id=r.get("name", ""),
-                    rating=_parse_rating(r.get("rating", 5)),
-                    text=(r.get("comment") or "") or None,
-                    reviewer_name=(r.get("reviewer") or {}).get("displayName"),
-                    updated_at=updated,
-                    has_reply=bool(r.get("reviewReply")),
-                    reviewer_photo_url=_photo_url((r.get("reviewer") or {}).get("profilePhotoUrl")),
-                    media=_parse_media(r.get("reviewMediaItems")),
+        all_reviews: list[GoogleReview] = []
+        for _ in range(MAX_REVIEW_PAGES):
+            params: dict = {"pageSize": 50}
+            if page_token:
+                params["pageToken"] = page_token
+
+            resp = await self._authed_request("GET", url, params=params)
+            if resp.status_code != 200:
+                raise GoogleReviewsError(
+                    f"list_reviews failed: {resp.status_code}", resp.status_code
                 )
-            )
-        return reviews
+
+            data = resp.json()
+            for r in data.get("reviews", []):
+                updated = None
+                if r.get("updateTime"):
+                    try:
+                        updated = datetime.fromisoformat(
+                            r["updateTime"].replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        pass
+                if updated_after and updated and updated <= updated_after:
+                    continue
+                all_reviews.append(
+                    GoogleReview(
+                        review_id=r.get("name", ""),
+                        rating=_parse_rating(r.get("rating", 5)),
+                        text=(r.get("comment") or "") or None,
+                        reviewer_name=(r.get("reviewer") or {}).get("displayName"),
+                        updated_at=updated,
+                        has_reply=bool(r.get("reviewReply")),
+                        reviewer_photo_url=_photo_url((r.get("reviewer") or {}).get("profilePhotoUrl")),
+                        media=_parse_media(r.get("reviewMediaItems")),
+                    )
+                )
+
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+        return all_reviews
 
     async def reply_to_review(self, review_id: str, comment: str) -> None:
         """Post (or update) the merchant reply on a review."""

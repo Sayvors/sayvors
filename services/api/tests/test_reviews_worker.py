@@ -61,7 +61,8 @@ def _install_fakes(monkeypatch, reviews, generate=None):
 
     async def _generate(config, channel, rating, text, reviewer_name, db,
                        review_id=None, attempt=1, previous_draft=None):
-        return f"fresh AI draft (try {attempt})"
+        # Returns (text, needs_review) — generate_auto_reply's contract.
+        return f"fresh AI draft (try {attempt})", False
 
     monkeypatch.setattr(reviews_worker, "generate_auto_reply", generate or _generate)
 
