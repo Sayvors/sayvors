@@ -1,5 +1,12 @@
 # Daily Progress Report
 
+## 2026-10-19 (security)
+- SEC-H1: Verified media publishing SSRF guard already in place (commit cda3963) — `_assert_media_fetchable` uses `assert_public_http_url` + `fetch_pinned_status` (DNS pinning, per-hop redirect validation, no status code echoing)
+- SEC-M5: Fixed reviewer-photo download SSRF gap — replaced unpinned `httpx.AsyncClient.get(follow_redirects=True)` with new `fetch_pinned_bytes()` (DNS pinning + per-hop redirect validation + size cap). Removed unused `httpx` import.
+- Added `fetch_pinned_bytes()` to `core/pinned_http.py` — binary variant of `fetch_pinned` for image/media downloads
+- Updated `docs/tracking/SEC-M5-REVIEWER-PHOTO.md` note: SSRF gap closed, remaining work is media storage migration to S3
+- Tests: pinned_http 34/34, fetch_guard 42/42, review_media 20/20 — all pass
+
 ## 2026-10-17
 - Docs and tracking updated
 - Job queue Phase 0 implemented
