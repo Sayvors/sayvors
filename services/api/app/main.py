@@ -12,6 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import settings
 from .modules.auth.router import router as auth_router
+from .modules.users.account import router as account_router
 from .modules.tts.router import router as tts_router
 from .modules.stt.router import router as stt_router
 from .modules.llm.router import router as llm_router
@@ -345,6 +346,7 @@ if settings.ALLOWED_HOSTS:
 # here. Re-importing them lower down shadowed nothing but left two copies of
 # every import to keep in sync.
 app.include_router(auth_router)
+app.include_router(account_router)
 app.include_router(tts_router)
 app.include_router(stt_router)
 app.include_router(llm_router)
