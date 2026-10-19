@@ -467,7 +467,7 @@ async def test_schedule_followup_moves_stage_and_sets_next_action(db, channel_id
     action = await le.schedule_followup(
         db, lead=lead, channel_id=channel_id, contact_id="sched-1",
         platform="whatsapp", guard_message_id="s1",
-        question="How many boxes?", settings=None,
+        question="How many boxes?", settings={"quiet_start_hour": 0, "quiet_end_hour": 0},
     )
     assert action is not None
     assert action.attempt == 1
