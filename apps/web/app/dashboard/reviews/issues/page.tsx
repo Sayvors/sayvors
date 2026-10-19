@@ -116,19 +116,23 @@ export default function ReviewTicketsPage() {
       unresolved: issues.filter((i) => UNRESOLVED.has(i.status)).length,
       attention: issues.filter((i) => i.needs_attention && UNRESOLVED.has(i.status)).length,
       resolved: issues.filter((i) => !UNRESOLVED.has(i.status)).length,
+      urgent: issues.filter((i) => (i.priority === "urgent" || i.priority === "high") && UNRESOLVED.has(i.status)).length,
     }),
     [issues],
   );
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return issues.filter((i) => {
-      if (statusFilter && i.status !== statusFilter) return false;
-      if (!needle) return true;
-      return [i.ticket_number, i.handoff_code, i.reviewer_name, i.review_text, i.summary, i.primary_category, i.subcategory, i.subcategory_detail]
-        .filter(Boolean)
-        .some((v) => (v as string).toLowerCase().includes(needle));
-    });
+    const priorityRank: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+    return issues
+      .filter((i) => {
+        if (statusFilter && i.status !== statusFilter) return false;
+        if (!needle) return true;
+        return [i.ticket_number, i.handoff_code, i.reviewer_name, i.review_text, i.summary, i.primary_category, i.subcategory, i.subcategory_detail]
+          .filter(Boolean)
+          .some((v) => (v as string).toLowerCase().includes(needle));
+      })
+      .sort((a, b) => (priorityRank[a.priority] ?? 2) - (priorityRank[b.priority] ?? 2));
   }, [issues, statusFilter, q]);
 
   const open = openId ? issues.find((i) => i.id === openId) ?? null : null;
@@ -156,17 +160,21 @@ export default function ReviewTicketsPage() {
         )}
 
         {/* ── the queue in one line ──────────────────────────── */}
-        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <div className="mt-5 grid gap-3 sm:grid-cols-4">
           {(
             [
               ["Unresolved", stats.unresolved],
               ["Waiting on you", stats.attention],
+              ["Urgent", stats.urgent],
               ["Resolved", stats.resolved],
             ] as [string, number][]
           ).map(([k, v]) => (
-            <div key={k} className="ui-panel px-4 py-3">
+            <div
+              key={k}
+              className={`ui-panel px-4 py-3 ${k === "Urgent" && v > 0 ? "border-red-500" : ""}`}
+            >
               <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">{k}</div>
-              <div className="mt-1 text-[24px] font-bold leading-none tabular-nums text-[var(--ui-ink)]">{v.toLocaleString()}</div>
+              <div className={`mt-1 text-[24px] font-bold leading-none tabular-nums ${k === "Urgent" && v > 0 ? "text-red-600" : "text-[var(--ui-ink)]"}`}>{v.toLocaleString()}</div>
             </div>
           ))}
         </div>
@@ -222,7 +230,13 @@ export default function ReviewTicketsPage() {
                 key={i.id}
                 type="button"
                 onClick={() => setOpenId(i.id)}
-                className="block w-full px-4 py-3.5 text-left transition hover:bg-[var(--ui-sunken)]"
+                className={`block w-full px-4 py-3.5 text-left transition hover:bg-[var(--ui-sunken)] ${
+                  i.priority === "urgent"
+                    ? "border-l-4 border-red-500 bg-red-50"
+                    : i.priority === "high"
+                      ? "border-l-4 border-amber-500 bg-amber-50"
+                      : ""
+                }`}
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{i.ticket_number ?? "Unticketed"}</span>
