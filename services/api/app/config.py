@@ -267,6 +267,14 @@ def validate_production_settings() -> None:
         errors.append("ALLOWED_HOSTS must list explicit production hosts (no wildcard)")
     if not settings.CORS_ORIGINS or any("localhost" in o for o in settings.CORS_ORIGINS):
         errors.append("CORS_ORIGINS must list the real frontend origin(s), not localhost")
+    if settings.CORS_ORIGIN_REGEX and "localhost" in settings.CORS_ORIGIN_REGEX:
+        errors.append("CORS_ORIGIN_REGEX must not reference localhost in production")
+    if "localhost" in settings.FRONTEND_URL:
+        errors.append("FRONTEND_URL must not reference localhost in production")
+    if "localhost" in settings.GOOGLE_REVIEWS_REDIRECT_URI:
+        errors.append("GOOGLE_REVIEWS_REDIRECT_URI must not reference localhost in production")
+    if "localhost" in settings.META_OAUTH_REDIRECT_URI:
+        errors.append("META_OAUTH_REDIRECT_URI must not reference localhost in production")
     if settings.EMAIL_SEND_ALLOW_ANY_RECIPIENT:
         errors.append("EMAIL_SEND_ALLOW_ANY_RECIPIENT must stay off (open-relay guard)")
     if settings.RAG_DB_ALLOW_PRIVATE_HOSTS:
