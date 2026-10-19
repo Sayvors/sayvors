@@ -173,7 +173,7 @@ async def list_leads(
 async def update_lead(
     lead_id: str,
     body: LeadUpdate,
-    ctx: TenantContext = Depends(require_perm("channels.view")),
+    ctx: TenantContext = Depends(require_perm("channels.edit")),
     db: AsyncSession = Depends(get_db),
 ) -> LeadOut:
     lead = (

@@ -680,10 +680,6 @@ async def channel_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    # ── Rate limit ──
-    if not settings.TESTING and not await rate_limit(f"webhook:{platform}", 100, 60):
-        return Response(status_code=429, content="Too many requests")
-
     # ── Enforce body size limit ──
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > MAX_WEBHOOK_BODY_BYTES:
@@ -725,14 +721,26 @@ async def channel_webhook(
         )
         return Response(status_code=503, content="Webhook secret not configured")
 
-    verified = False
+    verified_channel = None
     for channel in secret_channels:
         if await verify_webhook_signature(platform, raw_body, signature or "", channel):
-            verified = True
+            verified_channel = channel
             break
-    if not verified:
+    if verified_channel is None:
+        # Unverified traffic (forged/unsigned): apply a per-IP rate limit
+        # to prevent brute-force signature probing.
+        if not settings.TESTING:
+            client_ip = request.client.host if request.client else "unknown"
+            if not await rate_limit(f"webhook:unverified:{platform}:{client_ip}", 20, 60):
+                return Response(status_code=429, content="Too many requests")
         logger.warning("Webhook signature verification failed for platform=%s", platform)
         return Response(status_code=403, content="Invalid signature")
+
+    # ── Rate limit (per verified channel, not global per platform) ──
+    if not settings.TESTING and not await rate_limit(
+        f"webhook:{platform}:{verified_channel.id}", 100, 60
+    ):
+        return Response(status_code=429, content="Too many requests")
 
     # ── Parse and dispatch ──
     try:
