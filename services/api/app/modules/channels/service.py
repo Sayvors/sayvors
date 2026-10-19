@@ -506,6 +506,7 @@ async def list_inbox_threads(
     db: AsyncSession,
     search: str | None = None,
     limit: int = 100,
+    cursor: str | None = None,
 ) -> list[dict]:
     """Threads across every channel the user owns, newest activity first.
 
@@ -564,6 +565,14 @@ async def list_inbox_threads(
         .where(ChannelMessage.channel_id.in_(channel_ids))
         .group_by(ChannelMessage.contact_phone_hash, ChannelMessage.channel_id)
     )
+    if cursor:
+        try:
+            cursor_dt = datetime.fromisoformat(cursor)
+            if cursor_dt.tzinfo is None:
+                cursor_dt = cursor_dt.replace(tzinfo=timezone.utc)
+            stmt = stmt.having(func.max(ChannelMessage.created_at) < cursor_dt)
+        except (ValueError, TypeError):
+            pass
     stmt = stmt.order_by(func.max(ChannelMessage.created_at).desc()).limit(limit)
 
     summaries = (await db.execute(stmt)).all()
