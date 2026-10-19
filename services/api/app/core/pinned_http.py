@@ -120,6 +120,67 @@ def _read_text(resp: httpcore.Response) -> str:
     return bytes(body).decode("utf-8", errors="ignore")
 
 
+def fetch_pinned_bytes(url: str, *, timeout: float = 20.0, user_agent: str = "SayvorsBot/1.0",
+                       max_bytes: int = 8 * 1024 * 1024) -> bytes:
+    """GET a user-supplied URL with SSRF validation + DNS pinning, returning raw bytes.
+
+    Same security guarantees as fetch_pinned (DNS pinning, per-hop redirect
+    validation, SSRF guard) but returns raw bytes instead of decoded text.
+    Suitable for image/media downloads. Raises UnsafeUrlError (ValueError) for
+    blocked URLs, ValueError for oversize/too-many-redirects, and httpcore
+    exceptions for transport failures.
+    """
+    timeouts = {"connect": min(10.0, timeout), "read": timeout, "write": 10.0, "pool": 10.0}
+    current = assert_public_http_url(url)
+    for _ in range(MAX_REDIRECT_HOPS + 1):
+        parts = urlparse(current)
+        host = (parts.hostname or "").rstrip(".")
+        ips = resolve_public_ips(host)
+        if not ips:
+            raise UnsafeUrlError(f"host {host!r} resolves to no public IP")
+        host_header = host
+        try:
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+        except ValueError:
+            port = 443 if parts.scheme == "https" else 80
+        if (parts.scheme == "https" and port != 443) or (parts.scheme == "http" and port != 80):
+            host_header = f"{host}:{port}"
+        pool = httpcore.ConnectionPool(network_backend=_PinnedBackend(ips[0]))
+        try:
+            req = httpcore.Request(
+                "GET",
+                current,
+                headers=[
+                    (b"user-agent", user_agent.encode("utf-8")),
+                    (b"host", host_header.encode("utf-8")),
+                    (b"accept", b"*/*"),
+                ],
+                extensions={"timeout": timeouts},
+            )
+            resp = pool.handle_request(req)
+            if resp.status in _REDIRECTS:
+                location = None
+                for name, value in resp.headers:
+                    if name.decode("latin-1").lower() == "location":
+                        location = value.decode("latin-1")
+                        break
+                if not location:
+                    raise ValueError("redirect without location")
+                current = assert_public_http_url(urljoin(current, location))
+                continue
+            if resp.status >= 400:
+                raise ValueError(f"fetch failed with status {resp.status}")
+            body = bytearray()
+            for chunk in resp.stream:
+                body += chunk
+                if len(body) > max_bytes:
+                    raise ValueError("response exceeds size limit")
+            return bytes(body)
+        finally:
+            pool.close()
+    raise ValueError("too many redirects")
+
+
 def fetch_pinned(url: str, *, timeout: float = 20.0, user_agent: str = "SayvorsBot/1.0") -> str:
     """GET a user-supplied URL with SSRF validation + DNS pinning.
 

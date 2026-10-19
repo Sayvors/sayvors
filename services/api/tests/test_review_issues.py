@@ -925,7 +925,7 @@ async def test_generate_auto_reply_appends_the_link(db, channel_id, user_id, mon
     monkeypatch.setattr(svc, "process_review", fake_process)
     monkeypatch.setattr(settings, "GOOGLE_REVIEWS_MOCK", False)
 
-    out = await generate_auto_reply(
+    out, _ = await generate_auto_reply(
         SimpleNamespace(model=None), ch, 1, "The food was cold", "Ali",
         db, review_id="r",
     )
@@ -955,7 +955,7 @@ async def test_mock_auto_reply_still_appends_the_link(
 
     monkeypatch.setattr(settings, "GOOGLE_REVIEWS_MOCK", True)
 
-    out = await generate_auto_reply(
+    out, _ = await generate_auto_reply(
         SimpleNamespace(model=None, handoff_link_enabled=True), ch, 1,
         "The food was cold", "Ali", db, review_id="r",
     )
@@ -999,7 +999,7 @@ async def test_generate_auto_reply_appends_generic_sales_link(
     monkeypatch.setattr(svc, "process_review", fake_process)
     monkeypatch.setattr(settings, "GOOGLE_REVIEWS_MOCK", False)
 
-    out = await generate_auto_reply(
+    out, _ = await generate_auto_reply(
         SimpleNamespace(model=None, handoff_link_enabled=True), ch, 5,
         "Great service, can you tell me about the premium deal?", "Sara", db,
         review_id="r",
@@ -1061,7 +1061,7 @@ async def test_generate_auto_reply_honors_the_toggle(db, user_id, monkeypatch):
     monkeypatch.setattr(svc, "process_review", fake_process)
     monkeypatch.setattr(settings, "GOOGLE_REVIEWS_MOCK", False)
 
-    out = await generate_auto_reply(
+    out, _ = await generate_auto_reply(
         SimpleNamespace(model=None, handoff_link_enabled=False), ch, 1,
         "The food was cold", "Ali", db, review_id="r",
     )

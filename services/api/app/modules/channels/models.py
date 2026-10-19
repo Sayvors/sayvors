@@ -78,13 +78,16 @@ class ChannelMessage(Base):
         # Thread lookup scans (channel_id, contact_phone) newest-first, and the
         # inbox needs it to be a real index rather than a table scan.
         Index("ix_channel_messages_thread", "channel_id", "contact_phone", "created_at"),
+        # Inbox GROUP BY on (contact_phone_hash, channel_id) + ORDER BY
+        # max(created_at) — composite index avoids full table scan.
+        Index("ix_channel_messages_inbox", "channel_id", "contact_phone_hash", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     channel_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("channels.id"), index=True
     )
-    platform_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    platform_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     direction: Mapped[str] = mapped_column(Enum("inbound", "outbound", name="message_direction"))
     content: Mapped[str] = mapped_column(Text)
     content_type: Mapped[str] = mapped_column(String(50), default="text")
@@ -447,7 +450,7 @@ class AutoReplyConfig(Base):
     # "auto" = post above min_rating_auto, queue below.
     # "approval" = every reply waits for human approval.
     approval_mode: Mapped[str] = mapped_column(
-        Enum("auto", "approval", name="reply_approval_mode"), default="auto"
+        Enum("auto", "approval", name="reply_approval_mode"), default="approval"
     )
     # When a reviewer edits a review we already answered, the follow-up
     # reply waits for human approval by default. True = the follow-up may

@@ -249,7 +249,7 @@ async def test_mock_mode_arabic_review_returns_arabic_reply(monkeypatch):
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", True)
     config = SimpleNamespace(model="groq:oss-120b", tone="friendly")
     channel = SimpleNamespace(id=None, user_id=None)
-    text = await review_reply.generate_auto_reply(
+    text, _ = await review_reply.generate_auto_reply(
         config, channel, 5, "مطعم رائع جداً", "أحمد", None
     )
     # Arabic script present, no English canned text
@@ -296,11 +296,11 @@ async def test_mock_mode_question_gets_answer_not_thanks(monkeypatch):
     monkeypatch.setattr("app.config.settings.GOOGLE_REVIEWS_MOCK", True)
     config = SimpleNamespace(model="groq:oss-120b", tone="friendly")
     channel = SimpleNamespace(id=None, user_id=None)
-    ar = await review_reply.generate_auto_reply(
+    ar, _ = await review_reply.generate_auto_reply(
         config, channel, 5, "هل تبيعون شاورما؟", "سعيد", None
     )
     assert "سؤالك" in ar
-    en = await review_reply.generate_auto_reply(
+    en, _ = await review_reply.generate_auto_reply(
         config, channel, 5, "Do you sell shawarma?", "Saeed", None
     )
     assert "question" in en.lower()

@@ -104,15 +104,24 @@ async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List
     """
     now = datetime.now(timezone.utc)
 
-    # Release expired leases (mark as pending again)
-    # This requires lease columns to exist in event_outbox
-    # For now, we skip lease management until migration adds the columns
-    # The query below uses status='pending' and FOR UPDATE SKIP LOCKED
+    # Release expired leases back to pending so crashed workers' claims are
+    # reclaimed (mirrors JobRunner lease-expiry pattern).
+    await db.execute(
+        text("""
+            UPDATE event_outbox
+            SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL
+            WHERE status = 'processing'
+              AND event_type LIKE 'meta.%'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < :now
+        """),
+        {"now": now},
+    )
 
     query = text("""
         SELECT id, event_type, payload, topic, attempts, next_retry_at
         FROM event_outbox
-        WHERE status = 'pending'
+        WHERE status IN ('pending', 'failed')
           AND event_type LIKE 'meta.%'
           AND (next_retry_at IS NULL OR next_retry_at <= :now)
         ORDER BY created_at ASC
@@ -124,10 +133,14 @@ async def _claim_due_events(db, worker_id: str, limit: int = BATCH_SIZE) -> List
 
     events = []
     for row in rows:
-        # Mark as claimed by updating status to 'processing'
+        # Mark as claimed by updating status to 'processing' with a lease.
         await db.execute(
-            text("UPDATE event_outbox SET status = 'processing' WHERE id = :id"),
-            {"id": row["id"]}
+            text("""
+                UPDATE event_outbox
+                SET status = 'processing', lease_owner = :worker, lease_expires_at = :lease
+                WHERE id = :id
+            """),
+            {"id": row["id"], "worker": worker_id, "lease": now + timedelta(seconds=LEASE_SECONDS)},
         )
         events.append(dict(row))
 
@@ -212,7 +225,7 @@ async def _process_event(db, event_data: Dict[str, Any]) -> bool:
 async def _mark_event_sent(db, event_id: str) -> None:
     """Mark event as successfully sent."""
     await db.execute(
-        text("UPDATE event_outbox SET status = 'sent', last_error = NULL WHERE id = :id"),
+        text("UPDATE event_outbox SET status = 'sent', last_error = NULL, lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
         {"id": event_id}
     )
     await db.commit()
@@ -221,48 +234,46 @@ async def _mark_event_sent(db, event_id: str) -> None:
 async def _mark_event_ambiguous(db, event_id: str) -> None:
     """Mark event as ambiguous (delivered but not confirmed)."""
     await db.execute(
-        text("UPDATE event_outbox SET status = 'ambiguous' WHERE id = :id"),
+        text("UPDATE event_outbox SET status = 'ambiguous', lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
         {"id": event_id}
     )
     await db.commit()
 
 
 async def _mark_event_failed(db, event_id: str, error: str, retry: bool = True) -> None:
-    """Mark event as failed, schedule retry if appropriate."""
-    now = datetime.now(timezone.utc)
-    if retry:
+    """Mark event as failed, schedule retry with exponential backoff.
+
+    Retries use exponential backoff (RETRY_BASE_SECONDS ** attempts, capped at
+    RETRY_MAX_SECONDS). After MAX_RETRIES attempts the event is marked dead.
+    """
+    # Check current attempt count to decide dead vs retry.
+    result = await db.execute(
+        text("SELECT attempts FROM event_outbox WHERE id = :id"),
+        {"id": event_id},
+    )
+    row = result.fetchone()
+    attempts = (row[0] if row else 0) + 1
+
+    if retry and attempts < MAX_RETRIES:
+        backoff = min(RETRY_BASE_SECONDS * (2 ** (attempts - 1)), RETRY_MAX_SECONDS)
         await db.execute(
             text("""
                 UPDATE event_outbox
-                SET status = 'failed', attempts = attempts + 1,
-                    last_error = :error, next_retry_at = :next_retry
+                SET status = 'failed', attempts = :attempts,
+                    last_error = :error, next_retry_at = :next_retry,
+                    lease_owner = NULL, lease_expires_at = NULL
                 WHERE id = :id
             """),
-            {"id": event_id, "error": str(error)[:500], "next_retry": datetime.now(timezone.utc) + timedelta(seconds=300)}
+            {"id": event_id, "error": str(error)[:500],
+             "next_retry": datetime.now(timezone.utc) + timedelta(seconds=backoff),
+             "attempts": attempts},
         )
     else:
         await db.execute(
-            text("UPDATE event_outbox SET status = 'dead', last_error = :error WHERE id = :id"),
-            {"id": event_id, "error": str(error)[:500]}
+            text("UPDATE event_outbox SET status = 'dead', attempts = :attempts, last_error = :error, lease_owner = NULL, lease_expires_at = NULL WHERE id = :id"),
+            {"id": event_id, "error": str(error)[:500], "attempts": attempts},
         )
     await db.commit()
-
-
-async def _process_batch(worker_id: str) -> int:
-    """Process one batch of events. Returns number of events processed."""
-    processed = 0
-    async with async_session() as db:
-        events = await _claim_due_events(db, worker_id, BATCH_SIZE)
-        for event in events:
-            try:
-                success = await _process_event(db, event)
-                if not success:
-                    # Will be retried by next poll
-                    pass
-                processed += 1
-            except Exception as e:
-                logger.exception("Event processing crashed: %s", e)
-    return processed
 
 
 async def run_meta_events_worker() -> None:
@@ -285,7 +296,7 @@ async def run_meta_events_worker() -> None:
         try:
             # Claim events
             async with async_session() as db:
-                events = await _claim_due_events(db, f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}", BATCH_SIZE)
+                events = await _claim_due_events(db, worker_id, BATCH_SIZE)
 
             if not events:
                 await asyncio.sleep(POLL_SECONDS)

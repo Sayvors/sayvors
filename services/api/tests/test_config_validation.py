@@ -16,6 +16,10 @@ _PROD = {
     "ADMIN_PASSWORD_HASH": "$2b$12$" + "a" * 53,
     "ALLOWED_HOSTS": ["api.sayvors.com"],
     "CORS_ORIGINS": ["https://app.sayvors.com"],
+    "CORS_ORIGIN_REGEX": None,
+    "FRONTEND_URL": "https://app.sayvors.com",
+    "GOOGLE_REVIEWS_REDIRECT_URI": "https://api.sayvors.com/api/v1/channels/google/callback",
+    "META_OAUTH_REDIRECT_URI": "https://api.sayvors.com/api/v1/meta/facebook/callback",
     "EMAIL_SEND_ALLOW_ANY_RECIPIENT": False,
     "RAG_DB_ALLOW_PRIVATE_HOSTS": False,
 }
@@ -34,6 +38,10 @@ def test_valid_production_config_passes(monkeypatch):
     ("ALLOWED_HOSTS", ["*"]),
     ("ALLOWED_HOSTS", []),
     ("CORS_ORIGINS", ["http://localhost:3000"]),
+    ("CORS_ORIGIN_REGEX", "http://localhost:3000"),
+    ("FRONTEND_URL", "http://localhost:3000"),
+    ("GOOGLE_REVIEWS_REDIRECT_URI", "http://localhost:8000/api/v1/channels/google/callback"),
+    ("META_OAUTH_REDIRECT_URI", "http://localhost:8000/api/v1/meta/facebook/callback"),
     ("EMAIL_SEND_ALLOW_ANY_RECIPIENT", True),
     ("RAG_DB_ALLOW_PRIVATE_HOSTS", True),
 ])

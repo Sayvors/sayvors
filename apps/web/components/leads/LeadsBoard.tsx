@@ -139,7 +139,13 @@ function LeadCard({
 }) {
   const reqs = requirements(lead.request);
   return (
-    <li className="flex flex-col rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-surface)] p-4">
+    <li
+      className={`flex flex-col rounded-[12px] border p-4 ${
+        lead.priority === "important"
+          ? "border-red-500 bg-red-50"
+          : "border-[var(--ui-line)] bg-[var(--ui-surface)]"
+      }`}
+    >
       <div className="flex items-start gap-3">
         <Avatar lead={lead} />
         <div className="min-w-0 flex-1">
@@ -391,14 +397,11 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
   if (priorityFilter === "important") {
     rows = rows.filter((l) => l.priority === "important");
   }
-  // Safety net: if the server sort is unavailable the escalated leads must
-  // still be reachable, not silently buried under recency order.
-  if (priorityFirst) {
-    rows = [...rows].sort((a, b) => {
-      const rank = (l: Lead) => (l.priority === "important" ? 0 : 1);
-      return rank(a) - rank(b) || +new Date(b.updated_at) - +new Date(a.updated_at);
-    });
-  }
+  // Always surface escalated (important) leads first, then recency.
+  rows = [...rows].sort((a, b) => {
+    const rank = (l: Lead) => (l.priority === "important" ? 0 : 1);
+    return rank(a) - rank(b) || +new Date(b.updated_at) - +new Date(a.updated_at);
+  });
   const visible = rows;
 
   return (

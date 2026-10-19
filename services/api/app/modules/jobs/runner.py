@@ -16,6 +16,7 @@ from .handlers import HANDLERS
 from .models import Job, JobStatus
 from .service import block_job, cancel_job, complete_job, claim_due_jobs, fail_job, retry_job
 from ...database import async_session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

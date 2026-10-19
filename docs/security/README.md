@@ -13,3 +13,5 @@ This directory contains security-related documentation for the Sayvors platform.
 - [Incident Response](incident-response.md) — Security incident procedures
 - [Vulnerability Management](vulnerability-management.md) — Scanning, patching
 - [Secure Development](secure-development.md) — Coding practices, reviews
+- [SSRF Guard](ssrf-guard.md) — DNS-pinned fetching, per-hop redirect validation, SEC-H1 + SEC-M5
+- [WebSocket Auth](websocket-auth.md) — inbox WS JWT auth, revocation checks, SEC-H3

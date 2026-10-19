@@ -8,9 +8,11 @@ class Settings(BaseSettings):
     DB_POOL_MODE: str = "session"  # session | transaction — PgBouncer pool mode
     # AsyncPG pool: workers hold sessions across network calls (Localith,
     # Groq), so size generously and fail fast instead of hanging forever.
-    DB_POOL_SIZE: int = 50
-    DB_POOL_MAX_OVERFLOW: int = 50
+    DB_POOL_SIZE: int = 5
+    DB_POOL_MAX_OVERFLOW: int = 5
     DB_POOL_TIMEOUT_SECONDS: int = 30
+    DB_STATEMENT_TIMEOUT_MS: int = 30000  # 30s — kills runaway queries
+    DB_IDLE_IN_TX_TIMEOUT_MS: int = 60000  # 60s — kills stuck transactions
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_EXPIRATION_MINUTES: int = 15
@@ -164,7 +166,7 @@ class Settings(BaseSettings):
     BUSINESS_DATA_PROVIDER: str = "localith"
     # Background auto-sync: every connected listing is re-synced on this
     # cadence (profile + reviews + metrics). Manual "Sync now" still works.
-    LOCALITH_SYNC_INTERVAL_SECONDS: int = 60  # 1 min
+    LOCALITH_SYNC_INTERVAL_SECONDS: int = 300  # 5 min (reviews don't need 60s SLA)
     # Scheduled-post publisher: how often due posts are pushed to Google.
     POSTS_PUBLISH_INTERVAL_SECONDS: int = 300  # 5 min
     # Scheduled-media publisher: how often due photos go live on Google.
@@ -265,6 +267,14 @@ def validate_production_settings() -> None:
         errors.append("ALLOWED_HOSTS must list explicit production hosts (no wildcard)")
     if not settings.CORS_ORIGINS or any("localhost" in o for o in settings.CORS_ORIGINS):
         errors.append("CORS_ORIGINS must list the real frontend origin(s), not localhost")
+    if settings.CORS_ORIGIN_REGEX and "localhost" in settings.CORS_ORIGIN_REGEX:
+        errors.append("CORS_ORIGIN_REGEX must not reference localhost in production")
+    if "localhost" in settings.FRONTEND_URL:
+        errors.append("FRONTEND_URL must not reference localhost in production")
+    if "localhost" in settings.GOOGLE_REVIEWS_REDIRECT_URI:
+        errors.append("GOOGLE_REVIEWS_REDIRECT_URI must not reference localhost in production")
+    if "localhost" in settings.META_OAUTH_REDIRECT_URI:
+        errors.append("META_OAUTH_REDIRECT_URI must not reference localhost in production")
     if settings.EMAIL_SEND_ALLOW_ANY_RECIPIENT:
         errors.append("EMAIL_SEND_ALLOW_ANY_RECIPIENT must stay off (open-relay guard)")
     if settings.RAG_DB_ALLOW_PRIVATE_HOSTS:

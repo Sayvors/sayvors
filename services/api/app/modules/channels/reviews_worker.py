@@ -386,7 +386,7 @@ async def _refresh_edited_review_reply(
         attempt = (failed_row.generation_attempt or 1) + 1 if failed_row else 1
         previous_draft = failed_row.reply_text if failed_row else None
     try:
-        reply_text = await generate_auto_reply(
+        reply_text, needs_review = await generate_auto_reply(
             config, channel, review.rating, review.text, review.reviewer_name, db,
             review_id=review.review_id,
             attempt=attempt,
@@ -623,7 +623,7 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             failed_row = await _resume_failed_row(db, channel.id, review.review_id)
 
             try:
-                reply_text = await generate_auto_reply(
+                reply_text, needs_review = await generate_auto_reply(
                     config, channel, review.rating, review.text, review.reviewer_name, db,
                     review_id=review.review_id,
                     attempt=(failed_row.generation_attempt or 1) + 1 if failed_row else 1,
@@ -653,6 +653,7 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             needs_approval = (
                 getattr(config, "approval_mode", "auto") == "approval"
                 or review.rating < config.min_rating_auto
+                or needs_review
             )
             if not needs_approval:
                 try:

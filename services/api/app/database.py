@@ -14,6 +14,12 @@ engine = create_async_engine(
     pool_timeout=settings.DB_POOL_TIMEOUT_SECONDS,
     pool_recycle=1800,
     pool_pre_ping=True,
+    connect_args={
+        "server_settings": {
+            "statement_timeout": str(settings.DB_STATEMENT_TIMEOUT_MS),
+            "idle_in_transaction_session_timeout": str(settings.DB_IDLE_IN_TX_TIMEOUT_MS),
+        }
+    },
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -28,6 +34,12 @@ engine_read = create_async_engine(
     pool_timeout=settings.DB_POOL_TIMEOUT_SECONDS,
     pool_recycle=1800,
     pool_pre_ping=True,
+    connect_args={
+        "server_settings": {
+            "statement_timeout": str(settings.DB_STATEMENT_TIMEOUT_MS),
+            "idle_in_transaction_session_timeout": str(settings.DB_IDLE_IN_TX_TIMEOUT_MS),
+        }
+    },
 )
 async_session_read = async_sessionmaker(engine_read, class_=AsyncSession, expire_on_commit=False)
 

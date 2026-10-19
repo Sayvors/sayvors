@@ -506,6 +506,7 @@ async def list_inbox_threads(
     db: AsyncSession,
     search: str | None = None,
     limit: int = 100,
+    cursor: str | None = None,
 ) -> list[dict]:
     """Threads across every channel the user owns, newest activity first.
 
@@ -564,27 +565,43 @@ async def list_inbox_threads(
         .where(ChannelMessage.channel_id.in_(channel_ids))
         .group_by(ChannelMessage.contact_phone_hash, ChannelMessage.channel_id)
     )
+    if cursor:
+        try:
+            cursor_dt = datetime.fromisoformat(cursor)
+            if cursor_dt.tzinfo is None:
+                cursor_dt = cursor_dt.replace(tzinfo=timezone.utc)
+            stmt = stmt.having(func.max(ChannelMessage.created_at) < cursor_dt)
+        except (ValueError, TypeError):
+            pass
     stmt = stmt.order_by(func.max(ChannelMessage.created_at).desc()).limit(limit)
 
     summaries = (await db.execute(stmt)).all()
     if not summaries:
         return []
 
+    # Batch fetch ALL messages for these channels in one query instead of
+    # N per-thread queries. Group in Python — eliminates N+1.
+    all_msgs = (
+        await db.execute(
+            select(ChannelMessage)
+            .where(ChannelMessage.channel_id.in_(channel_ids))
+            .order_by(ChannelMessage.created_at.desc())
+        )
+    ).scalars().all()
+
+    # Index messages by (channel_id, contact_phone_hash) for fast lookup
+    msgs_by_thread: dict[tuple, list] = {}
+    for m in all_msgs:
+        key = (m.channel_id, m.contact_phone_hash)
+        msgs_by_thread.setdefault(key, []).append(m)
+
     # When searching, filter threads by decrypting message content in Python.
     # SQL ILIKE cannot match encrypted content.
     if needle:
         filtered_summaries = []
         for phone_hash, phone, channel_id, last_at, total in summaries:
-            conditions = [
-                ChannelMessage.channel_id == channel_id,
-                ChannelMessage.contact_phone_hash.is_(None)
-                if phone_hash is None
-                else ChannelMessage.contact_phone_hash == phone_hash,
-            ]
-            rows = (await db.execute(
-                select(ChannelMessage.content).where(*conditions)
-            )).scalars().all()
-            if any(needle in (decrypt_message_content(c) or "").lower() for c in rows):
+            msgs = msgs_by_thread.get((channel_id, phone_hash), [])
+            if any(needle in (decrypt_message_content(m.content) or "").lower() for m in msgs):
                 filtered_summaries.append((phone_hash, phone, channel_id, last_at, total))
         summaries = filtered_summaries
         if not summaries:
@@ -613,46 +630,25 @@ async def list_inbox_threads(
         ).scalars().all()
         profiles = {(r.platform, r.contact_id): r for r in rows}
 
-    # The preview line and unread count need per-thread detail the grouped
-    # aggregate cannot carry, so fetch those rows only.
+    # Build output from batched data — no per-thread queries.
     out: list[dict] = []
     for phone_hash, phone, channel_id, last_at, total in summaries:
-        conditions = [
-            ChannelMessage.channel_id == channel_id,
-            ChannelMessage.contact_phone_hash.is_(None)
-            if phone_hash is None
-            else ChannelMessage.contact_phone_hash == phone_hash,
-        ]
-        last_row = (
-            await db.execute(
-                select(ChannelMessage)
-                .where(*conditions)
-                .order_by(ChannelMessage.created_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        if last_row is None:
+        msgs = msgs_by_thread.get((channel_id, phone_hash), [])
+        if not msgs:
             continue
 
+        last_row = msgs[0]  # already sorted by created_at desc
+
         # Unread = inbound messages after the most recent outbound one.
-        last_outbound_at = (
-            await db.execute(
-                select(func.max(ChannelMessage.created_at)).where(
-                    *conditions,
-                    ChannelMessage.direction == "outbound",
-                )
-            )
-        ).scalar()
-        unread = (
-            await db.execute(
-                select(func.count(ChannelMessage.id)).where(
-                    *conditions,
-                    ChannelMessage.direction == "inbound",
-                    ChannelMessage.created_at > (last_outbound_at or last_at),
-                )
-            )
-        ).scalar()
-        if not last_outbound_at:
+        last_outbound_at = None
+        for m in msgs:
+            if m.direction == "outbound":
+                last_outbound_at = m.created_at
+                break
+        unread = 0
+        if last_outbound_at:
+            unread = sum(1 for m in msgs if m.direction == "inbound" and m.created_at > last_outbound_at)
+        else:
             unread = total if phone is not None else 0
 
         name = last_row.contact_name

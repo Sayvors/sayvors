@@ -29,23 +29,21 @@ export function middleware(request: NextRequest) {
   // middleware can never see cross-domain — gating on them would bounce every
   // /dashboard visit to /login. The client-side <AuthGuard> is the real gate.
 
-  const response = NextResponse.next();
   const isProd = process.env.NODE_ENV === "production";
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-  response.headers.set("X-Content-Type-Options", "nosniff");
-  response.headers.set("X-Frame-Options", "DENY");
-  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+  // SEC-M8: nonce-based CSP. Next.js 16 reads the x-nonce request header
+  // and applies it to its own inline bootstrap scripts automatically.
+  // 'strict-dynamic' lets scripts loaded by trusted (nonced) scripts run
+  // without listing every CDN host — the Meta SDK loaded via a nonced
+  // script tag is trusted transitively.
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
 
-  // Next.js injects inline bootstrap scripts and allows no per-request nonce
-  // yet — without 'unsafe-inline', every production page renders with dead
-  // JS (all inline scripts blocked). Nonce-based CSP is the proper follow-up.
   // Google Identity Services: gsi/client script, sign-in button iframe,
   // and its account/status fetches all live on accounts.google.com.
   const gsi = "https://accounts.google.com";
-  const scriptExtras = isProd ? " 'unsafe-inline'" : " 'unsafe-eval' 'unsafe-inline'";
   // Dev tunnel chain (ngrok -> Next /api rewrite -> API): the proxied Meta SDK
   // bootstrap rewrites its bundle URL to the API's local address
   // (http://localhost:8000 — same destination as next.config.ts rewrites),
@@ -57,10 +55,13 @@ export function middleware(request: NextRequest) {
   // match an https:// host source against a wss:// URL, so connect-src
   // carries the API host in both spellings.
   const wsApiUrl = apiUrl.replace(/^http/, "ws");
+  const scriptSrc = isProd
+    ? `'self' 'nonce-${nonce}' 'strict-dynamic' ${apiUrl} ${gsi}${devSdk}`
+    : `'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-eval' ${apiUrl} ${gsi}${devSdk}`;
   const csp = [
     "default-src 'self'",
     // API host: serves the proxied Meta SDK script (cross-origin script tag).
-    `script-src 'self' ${apiUrl} ${gsi}${devSdk}${scriptExtras}`,
+    `script-src ${scriptSrc}`,
     `style-src 'self' 'unsafe-inline' ${gsi}`,
     // Contact avatars come straight from Meta's CDNs (Instagram profile_pic,
     // Messenger lookaside) — temporary links by design, refreshed weekly.
@@ -73,6 +74,15 @@ export function middleware(request: NextRequest) {
     `frame-src 'self' ${gsi} https://www.facebook.com https://web.facebook.com`,
     "frame-ancestors 'none'",
   ].join("; ");
+
+  const response = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  response.headers.set("X-Frame-Options", "DENY");
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   response.headers.set("Content-Security-Policy", csp);
 
   return response;

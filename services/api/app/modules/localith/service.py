@@ -1042,7 +1042,7 @@ async def _sync_single_connection(
                 continue  # draft/reply already reflects the current content
             if latest_reply.status == "pending_approval":
                 try:
-                    reply_text = await generate_auto_reply(
+                    reply_text, _ = await generate_auto_reply(
                         config, channel, review.rating, review.text, review.reviewer, db,
                         review_id=full_review_id,
                         attempt=(latest_reply.generation_attempt or 1) + 1,
@@ -1067,7 +1067,7 @@ async def _sync_single_connection(
             # reply — the normal publish path below (never in mock mode).
             failed_row = await _resume_failed_row(db, channel.id, full_review_id)
             try:
-                reply_text = await generate_auto_reply(
+                reply_text, _ = await generate_auto_reply(
                     config, channel, review.rating, review.text, review.reviewer, db,
                     review_id=full_review_id,
                     attempt=(failed_row.generation_attempt or 1) + 1 if failed_row else 1,
@@ -1155,7 +1155,7 @@ async def _sync_single_connection(
             continue
         failed_row = await _resume_failed_row(db, channel.id, full_review_id)
         try:
-            reply_text = await generate_auto_reply(
+            reply_text, _ = await generate_auto_reply(
                 config, channel, review.rating, review.text, review.reviewer, db,
                 review_id=full_review_id,
                 attempt=(failed_row.generation_attempt or 1) + 1 if failed_row else 1,
@@ -1256,6 +1256,16 @@ async def _sync_single_connection(
         )).scalar_one_or_none()
         if _ins and _ins.skipped:
             continue
+        # Gate: skip re-enqueue when content is unchanged and enrichment
+        # is already done (same check as native reviews_worker path).
+        # Only re-enqueue on new or edited reviews.
+        if _ins is not None:
+            same_content = (
+                _ins.rating == review.rating
+                and (_ins.review_text or None) == (review.text or None)
+            )
+            if same_content and _ins.enrichment_status == "done":
+                continue
         try:
             await enqueue_event(
                 "review.discovered",
