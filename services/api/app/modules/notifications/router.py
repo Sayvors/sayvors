@@ -24,7 +24,10 @@ router = APIRouter(prefix="/api/v1/notifications", tags=["notifications"])
 
 
 def _uid(user: User) -> str:
-    return tenant_id_of(user)
+    # Key notification preferences by the actor (the user calling the endpoint),
+    # not the tenant owner. An employee's toggles must not overwrite the
+    # owner's settings (SEC-M7).
+    return user.id
 
 
 class NotificationItem(BaseModel):
