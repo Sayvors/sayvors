@@ -53,6 +53,18 @@ jobs:
           pip install --upgrade pip
           pip install -e "services/api/.[dev]"
 
+      - name: Verify single alembic head
+        working-directory: services/api
+        run: |
+          set -e
+          HEADS=$(alembic heads | wc -l)
+          if [ "$HEADS" -ne 1 ]; then
+            echo "FATAL: alembic has $HEADS heads — the migration chain forked."
+            alembic heads
+            exit 1
+          fi
+          echo "single head: $(alembic heads)"
+
       - name: Run pytest
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors
