@@ -407,8 +407,9 @@
   </article>
 
   <article class="finding p0">
-    <div class="f-head"><span class="f-id">05</span><span class="chip crit">Blocker at scale</span><span class="chip effort">~1 day</span></div>
+    <div class="f-head"><span class="f-id">05</span><span class="chip fixed">Fixed</span><span class="chip effort">done</span></div>
     <h3>Localith sync re-enqueues every review of every listing, every 60 seconds</h3>
+    <p><strong>Fixed:</strong> gated re-enqueue on enrichment status + unchanged content (same check as native reviews_worker path). Sync interval raised from 60s to 300s. Pushed as <code>1733eef</code>. Note: Localith being replaced by Google API at launch — fix ensures no 200k outbox rows/min waste in the interim.</p>
     <p>The third sync loop enqueues <code>review.discovered</code> for all items with no done/content gate, and the fetch pulls full review history every pass — each event its own INSERT and commit. At 1000 listings × ~200 reviews that is on the order of 200k outbox rows per minute. It buries the outbox, Kafka, and the consumer long before you reach 1000 businesses; even at 50 businesses it's measurable waste.</p>
     <ul class="refs">
       <li>localith/service.py:1243-1275 — the ungated loop</li>

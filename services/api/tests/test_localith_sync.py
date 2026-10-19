@@ -494,7 +494,7 @@ async def test_autopilot_auto_posts_high_and_queues_low(db, user_id, channel_id,
 
     async def _gen(config, channel, rating, text, reviewer, db_,
                    review_id=None, attempt=1, previous_draft=None):
-        return "engine draft"
+        return "engine draft", False
 
     monkeypatch.setattr(service, "generate_auto_reply", _gen)
 
@@ -574,7 +574,7 @@ async def test_sync_flags_edited_review_and_notifies_once(db, user_id, channel_i
     monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
 
     async def _gen(*a, **k):
-        return "draft"
+        return "draft", False
 
     monkeypatch.setattr(service, "generate_auto_reply", _gen)
 
@@ -666,7 +666,7 @@ async def test_sync_backfill_is_not_an_edit(db, user_id, channel_id, monkeypatch
     monkeypatch.setattr(embedsocial, "fetch_item_metrics", lambda *a, **k: {})
 
     async def _gen(*a, **k):
-        return "draft"
+        return "draft", False
 
     monkeypatch.setattr(service, "generate_auto_reply", _gen)
 
@@ -733,7 +733,7 @@ async def test_edited_review_regenerates_pending_draft_in_place(db, user_id, cha
 
     async def _gen(config, channel, rating, text, reviewer, db_,
                    review_id=None, attempt=1, previous_draft=None):
-        return f"AI reply to: {text} (try {attempt})"
+        return f"AI reply to: {text} (try {attempt})", False
 
     monkeypatch.setattr(service, "generate_auto_reply", _gen)
 
@@ -810,7 +810,7 @@ async def test_edited_review_after_posted_reply_queues_followup(db, user_id, cha
 
     async def _gen(config, channel, rating, text, reviewer, db_,
                    review_id=None, attempt=1, previous_draft=None):
-        return f"AI reply to: {text} (try {attempt})"
+        return f"AI reply to: {text} (try {attempt})", False
 
     monkeypatch.setattr(service, "generate_auto_reply", _gen)
 
@@ -905,7 +905,7 @@ async def test_edited_review_followup_autoposts_when_opted_in(db, user_id, monke
 
     async def _gen(config, channel, rating, text, reviewer, db_,
                    review_id=None, attempt=1, previous_draft=None):
-        return f"AI reply to: {text} (try {attempt})"
+        return f"AI reply to: {text} (try {attempt})", False
 
     monkeypatch.setattr(service, "generate_auto_reply", _gen)
 
@@ -1188,7 +1188,7 @@ async def test_dismissed_insight_skips_drafting(db, user_id, channel_id, monkeyp
     async def _gen(config, channel, rating, text, reviewer, db_,
                    review_id=None, attempt=1, previous_draft=None):
         calls.append(review_id)
-        return "engine draft"
+        return "engine draft", False
 
     monkeypatch.setattr(service, "generate_auto_reply", _gen)
 
