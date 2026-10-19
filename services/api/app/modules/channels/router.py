@@ -399,6 +399,19 @@ async def inbox_ws(websocket: WebSocket):
         user_id = payload.get("sub")
         if not user_id or payload.get("type") != "access":
             raise ValueError("bad token")
+        # SEC-H3: enforce revocation — blacklist (logout/reuse) and
+        # token_version (password change / logout-all). Mirrors get_current_user.
+        from ..auth.rate_limit import is_token_blacklisted
+        if await is_token_blacklisted(payload.get("jti", "")):
+            raise ValueError("token revoked")
+        from sqlalchemy import select
+        from ..users.models import User
+        async with _async_session() as _chk:
+            _tv = (await _chk.execute(
+                select(User.token_version).where(User.id == user_id)
+            )).scalar_one_or_none()
+            if payload.get("ver", 0) != (_tv or 0):
+                raise ValueError("token revoked")
     except Exception:
         await websocket.close(code=4401)
         return
