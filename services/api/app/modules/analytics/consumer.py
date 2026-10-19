@@ -464,6 +464,10 @@ async def run_analytics_consumer() -> None:
             logger.info("Analytics consumer listening on %s", TOPIC)
             async for msg in consumer:
                 await _process_message(msg.value)
+                try:
+                    await consumer.commit()
+                except Exception:
+                    logger.warning("Failed to commit Kafka offset; will retry on next pass")
         except asyncio.CancelledError:
             if consumer:
                 await consumer.stop()

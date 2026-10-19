@@ -108,7 +108,7 @@ class OutboxWorker:
         for event in events:
             try:
                 key = f"{event.event_type}:{event.payload.get('user_id', event.payload.get('email', ''))}".encode()
-                value = json.dumps(event.payload).encode()
+                value = json.dumps({"event_type": event.event_type, "payload": event.payload}).encode()
                 await producer.send(topic, key=key, value=value)
                 sent_ids.append(event.id)
             except Exception as e:
