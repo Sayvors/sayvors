@@ -872,6 +872,64 @@ export default function SettingsPage() {
             </>
           )}
 
+          {/* ── Data & privacy (GDPR) ─────────────────────────────── */}
+          <Section
+            tone="danger"
+            eyebrow="Data & privacy"
+            title="Your data"
+            subtitle="Export everything Sayvors holds about you, or permanently delete your account and all associated data. Deletion cannot be undone."
+          >
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-ink/[0.06] bg-white px-4 py-3 dark:border-fog/[0.08] dark:bg-ink">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-ink dark:text-fog">Export my data</p>
+                  <p className="text-[11px] text-ink/40 dark:text-fog/40">
+                    Download a JSON file with all your channels, messages, leads, reviews, notifications, and usage data.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const a = document.createElement("a");
+                    a.href = "/api/v1/account/export";
+                    a.download = "sayvors-export.json";
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  }}
+                  className="rounded-[2px] border border-ink/[0.12] bg-white px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:bg-ink/[0.04] dark:border-fog/[0.12] dark:bg-ink dark:text-fog"
+                >
+                  Download export
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-red-500/20 bg-red-500/[0.04] px-4 py-3 dark:border-red-500/20 dark:bg-red-500/[0.06]">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-red-600 dark:text-red-400">Delete my account</p>
+                  <p className="text-[11px] text-ink/40 dark:text-fog/40">
+                    Permanently deletes your account and all data — channels, messages, leads, reviews, notifications. Cannot be undone.
+                  </p>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!confirm("This will permanently delete your account and ALL data. This cannot be undone. Are you sure?")) return;
+                    try {
+                      const res = await fetch("/api/v1/account", { method: "DELETE", credentials: "include" });
+                      if (res.ok) {
+                        window.location.href = "/login";
+                      } else {
+                        alert("Deletion failed. Please try again.");
+                      }
+                    } catch {
+                      alert("Deletion failed. Please try again.");
+                    }
+                  }}
+                  className="rounded-[2px] border border-red-500/40 px-3 py-1.5 text-[12px] font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+                >
+                  Delete account
+                </button>
+              </div>
+            </div>
+          </Section>
+
           {/* ── Google Business Profile only ─────────────────────────── */}
           {tab === "google" && (
             <>
