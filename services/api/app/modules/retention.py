@@ -7,8 +7,8 @@ count deleted. Failures are logged but never break the cleanup loop.
 import logging
 from datetime import datetime, timedelta, timezone
 
-from ...config import settings
-from ...database import async_session
+from ..config import settings
+from ..database import async_session
 from ..channels.meta.models import MetaWebhookEvent
 from ..channels.models import ChannelMessage
 from ..llm.models import LLMUsageEvent
