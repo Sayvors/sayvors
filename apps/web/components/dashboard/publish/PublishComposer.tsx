@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
 import { INK, INK2 } from "@/components/channels/instagram/ui";
+import { apiFetch } from "@/lib/api-rag";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
@@ -48,8 +49,10 @@ const FIELD =
 export default function PublishComposer() {
   // ── Destinations ─────────────────────────────────────────────────
   const [targets, setTargets] = useState<PublishTarget[]>([]);
+  const [googleTargets, setGoogleTargets] = useState<PublishTarget[]>([]);
   const [targetsStatus, setTargetsStatus] = useState<"loading" | "ready">("loading");
   const [allConnected, setAllConnected] = useState(false);
+  const [allGoogleConnected, setAllGoogleConnected] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -57,12 +60,18 @@ export default function PublishComposer() {
     (async () => {
       const { fetchMetaAssets } = await import("@/lib/api-meta");
       const providers = ["facebook", "instagram", "whatsapp"] as const;
-      const results = await Promise.allSettled(providers.map((p) => fetchMetaAssets(p)));
+      const results = await Promise.allSettled([
+        ...providers.map((p) => fetchMetaAssets(p)),
+        apiFetch("/api/v1/channels?limit=100"),
+      ]);
       if (cancelled) return;
       const rows: PublishTarget[] = [];
+      const googleRows: PublishTarget[] = [];
+
+      // Meta assets (Facebook, Instagram, WhatsApp)
       providers.forEach((provider, i) => {
         const r = results[i];
-        const assets = r.status === "fulfilled" ? r.value.assets ?? [] : [];
+        const assets = (r.status === "fulfilled" ? r.value.assets ?? [] : []) as Array<{ asset_type: string; active: boolean; external_asset_id: string; name: string | null; username: string | null; phone: string | null }>;
         const active = assets.filter((a) => a.active);
         if (provider === "whatsapp") {
           active
@@ -91,7 +100,26 @@ export default function PublishComposer() {
           }
         }
       });
+
+      // Google Business Profile locations from /api/v1/channels
+      const channelsResult = results[providers.length];
+      if (channelsResult.status === "fulfilled") {
+        const channels = (channelsResult.value as { channels?: Array<{ id: string; platform: string; display_name: string | null; listing_id: string | null; status: string }> }).channels ?? [];
+        channels
+          .filter((c) => c.platform === "google_reviews" && c.status === "active")
+          .forEach((c) => {
+            googleRows.push({
+              id: `google:${c.id}`,
+              platform: "google_reviews",
+              name: c.display_name ?? "Google Business Profile",
+              handle: c.listing_id ?? null,
+              locationId: c.listing_id ?? null,
+            });
+          });
+      }
+
       setTargets(rows);
+      setGoogleTargets(googleRows);
       setTargetsStatus("ready");
     })();
     return () => {
@@ -100,7 +128,11 @@ export default function PublishComposer() {
   }, []);
 
   const usableTargets = useMemo(() => targets.filter((t) => !t.demo), [targets]);
-  const selectedTargets = useMemo(() => targets.filter((t) => selected.has(t.id)), [targets, selected]);
+  const usableGoogleTargets = useMemo(() => googleTargets.filter((t) => !t.demo), [googleTargets]);
+  const selectedTargets = useMemo(
+    () => [...targets.filter((t) => selected.has(t.id)), ...googleTargets.filter((t) => selected.has(t.id))],
+    [targets, googleTargets, selected],
+  );
 
   // ── Media + message ─────────────────────────────────────────────
   const [media, setMedia] = useState<MediaState | null>(null);
@@ -135,13 +167,26 @@ export default function PublishComposer() {
     if (v) usableTargets.forEach((t) => seedFormats(t, "default"));
   };
 
+  const applyAllGoogle = (v: boolean) => {
+    setAllGoogleConnected(v);
+    if (v) {
+      usableGoogleTargets.forEach((t) => selected.add(t.id));
+    } else {
+      usableGoogleTargets.forEach((t) => selected.delete(t.id));
+    }
+    setSelected(new Set(selected));
+    if (v) usableGoogleTargets.forEach((t) => seedFormats(t, "default"));
+  };
+
   const toggleTarget = (t: PublishTarget) => {
     const next = new Set(selected);
     const turningOn = !next.has(t.id);
     if (turningOn) next.add(t.id);
     else next.delete(t.id);
     setSelected(next);
-    setAllConnected(usableTargets.length > 0 && next.size === usableTargets.length);
+    // Master switch only covers Meta social targets; Google has its own.
+    const metaSelected = [...next].filter((id) => usableTargets.some((t) => t.id === id));
+    setAllConnected(usableTargets.length > 0 && metaSelected.length === usableTargets.length);
     if (turningOn) seedFormats(t, "default");
   };
 
@@ -446,9 +491,13 @@ export default function PublishComposer() {
                 targets={targets}
                 status={targetsStatus}
                 allConnected={allConnected}
+                googleTargets={usableGoogleTargets}
+                allGoogleConnected={allGoogleConnected}
                 selected={selected}
                 onSelectAll={applyAll}
+                onApplyAllGoogle={applyAllGoogle}
                 onToggleTarget={toggleTarget}
+                onToggleGoogleTarget={toggleTarget}
                 onLoadDemo={loadDemo}
               />
             </section>

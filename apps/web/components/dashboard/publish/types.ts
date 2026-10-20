@@ -8,7 +8,8 @@ export type PlatformKey =
   | "tiktok"
   | "linkedin"
   | "telegram"
-  | "snapchat";
+  | "snapchat"
+  | "google_reviews";
 
 export type PostMethod = "post" | "story" | "reel" | "status";
 
@@ -18,6 +19,8 @@ export interface PublishTarget {
   name: string;
   handle?: string | null;
   demo?: boolean;
+  /** Google Business Profile location_id when platform is google_reviews */
+  locationId?: string | null;
 }
 
 export type MediaKind = "image" | "video" | null;
@@ -69,6 +72,7 @@ export const PLATFORM_METHODS: Record<PlatformKey, PostMethod[]> = {
   facebook: ["post", "story", "reel"],
   instagram: ["post", "story", "reel"],
   whatsapp: ["status"],
+  google_reviews: ["post"],
   x: ["post"],
   tiktok: ["reel"],
   linkedin: ["post"],
@@ -80,6 +84,7 @@ const PLATFORM_POST_CROP: Record<PlatformKey, CropState["key"]> = {
   facebook: "orig",
   instagram: "1:1",
   whatsapp: "orig",
+  google_reviews: "orig",
   x: "16:9",
   tiktok: "9:16",
   linkedin: "16:9",
@@ -112,6 +117,7 @@ export const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
   whatsapp: { label: "WhatsApp", captionMax: 1024, video: true, enabled: true },
   facebook: { label: "Facebook", captionMax: 5000, video: true, enabled: true },
   instagram: { label: "Instagram", captionMax: 2200, video: true, enabled: true },
+  google_reviews: { label: "Google Business Profile", captionMax: 1500, video: false, enabled: true },
   x: { label: "X", captionMax: 280, video: true, enabled: false },
   tiktok: { label: "TikTok", captionMax: 2200, video: true, enabled: false },
   linkedin: { label: "LinkedIn", captionMax: 3000, video: true, enabled: false },
@@ -123,6 +129,7 @@ export const PLATFORM_ORDER: PlatformKey[] = [
   "instagram",
   "facebook",
   "whatsapp",
+  "google_reviews",
   "linkedin",
   "tiktok",
   "x",

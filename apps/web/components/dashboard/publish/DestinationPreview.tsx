@@ -350,6 +350,60 @@ function StoryChrome({
   );
 }
 
+/* ── Google Business Profile: post card on Search & Maps ──────────── */
+
+function GooglePostPreview({
+  target,
+  media,
+  caption,
+  description,
+  crop,
+}: {
+  target: PublishTarget;
+  media: MediaState;
+  caption: string;
+  description: string;
+  crop: CropState;
+}) {
+  const author = target.name || "Your business";
+  const aspect = aspectFor(crop, 1.91);
+  const body = caption || description || "Your update appears on Google Search & Maps.";
+  const overflow = captionOverflow(caption, "google_reviews");
+  return (
+    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+      <div className="flex items-center gap-2.5 px-3.5 py-2.5">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-[#4285f4] bg-[#eef5ff] text-[11px] font-bold text-[#1a0dab]">
+          {author.charAt(0).toUpperCase()}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-bold text-[#111]">{author}</span>
+          <span className="block text-[11px] text-[#65676b]">On Google · just now</span>
+        </span>
+      </div>
+      {body && (
+        <p className="px-3.5 pt-2 pb-1 text-[12px] leading-snug text-[#111]">
+          {body}
+        </p>
+      )}
+      <div className="relative w-full overflow-hidden bg-black" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
+        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W} aspect={aspect} />
+      </div>
+      <div className="flex items-center justify-between border-t border-[#e4e6eb] px-3.5 py-2 text-[11px] font-semibold text-[#65676b]">
+        <span className="flex items-center gap-1">
+          <span aria-hidden>&#128077;</span>
+          <span>Google Post</span>
+        </span>
+        <span>Search &amp; Maps &rsaquo;</span>
+      </div>
+      {overflow > 0 && (
+        <p className="mt-1 px-3.5 text-[10px] font-semibold text-amber-600">
+          {overflow} characters past Google&apos;s limit
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ── Generic fallback for the neutral main preview + later networks ─ */
 
 function GenericPreview({
@@ -436,6 +490,8 @@ export default function DestinationPreview({
         );
       case "whatsapp":
         return <WhatsAppStatusPreview target={target} media={media} caption={caption} crop={crop} />;
+      case "google_reviews":
+        return <GooglePostPreview target={target} media={media} caption={caption} description={description} crop={crop} />;
       default:
         return (
           <GenericPreview
