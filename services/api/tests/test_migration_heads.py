@@ -9,84 +9,76 @@ Two failure modes this file exists to prevent:
 
 2. **A model column with no migration.** The model says the column exists,
    the database says it does not, and the first request that selects it
-   fails with "column X does not exist" — after the container booted fine.
+   fails with "column X does not exist" - after the container booted fine.
 
 Both checks are structural, not behavioural, so they run without a database.
+
+The analysis itself lives in ``services/api/migration_guard.py`` so that this
+pytest gate and ``scripts/pre_push_check.py`` cannot drift apart. When the
+guard logic changes, both callers change together.
 """
-import os
-import re
+import sys
 from pathlib import Path
 
 import pytest
 
-VERSIONS_DIR = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+API_DIR = Path(__file__).resolve().parents[1]
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
 
-
-def _read_migrations() -> dict[str, tuple[str | None, tuple[str, ...]]]:
-    """Map revision id -> (filename, parents). Parents is a tuple so a merge
-    revision (two down_revisions) is represented honestly."""
-    out: dict[str, tuple[str | None, tuple[str, ...]]] = {}
-    for path in sorted(VERSIONS_DIR.glob("*.py")):
-        if path.name == "__init__.py":
-            continue
-        src = path.read_text(encoding="utf-8")
-        rev = re.search(r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)['\"]", src, re.M)
-        if not rev:
-            pytest.fail(f"{path.name} has no revision id")
-        down = re.search(
-            r"^down_revision(?::[^=]*)?\s*=\s*(\(.*?\)|[^(\n]+)", src, re.M | re.S
-        )
-        parents: tuple[str, ...] = ()
-        if down:
-            raw = down.group(1).strip()
-            if raw.startswith("("):
-                parents = tuple(re.findall(r"['\"]([^'\"]+)['\"]", raw))
-            else:
-                one = re.search(r"['\"]([^'\"]+)['\"]", raw)
-                parents = (one.group(1),) if one else ()
-        out[rev.group(1)] = (path.name, parents)
-    return out
+import migration_guard as guard  # noqa: E402
 
 
 def test_no_duplicate_revision_ids():
-    """Two files claiming the same revision id makes alembic refuse to run."""
-    seen: dict[str, str] = {}
-    for path in sorted(VERSIONS_DIR.glob("*.py")):
-        if path.name == "__init__.py":
-            continue
-        src = path.read_text(encoding="utf-8")
-        rev = re.search(r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)['\"]", src, re.M)
-        if not rev:
-            pytest.fail(f"{path.name} has no revision id")
-        rid = rev.group(1)
-        assert rid not in seen, (
-            f"revision id {rid} is used by both {seen[rid]} and {path.name}"
-        )
-        seen[rid] = path.name
+    """Two files claiming the same revision id makes alembic refuse to run.
+
+    Alembic keys its revision map by id, so the second file silently
+    overwrites the first and the loaded graph is not what anyone intended.
+    It only surfaces as a ``UserWarning`` and a wrong head count.
+    """
+    report = guard.analyze_chain()
+    assert not report.duplicates, (
+        "duplicate revision id(s): "
+        + "; ".join(f"{rev} used by {a} and {b}" for rev, a, b in report.duplicates)
+        + " - rename one of them to a fresh id"
+    )
 
 
 def test_migration_chain_has_exactly_one_head():
     """A forked chain has 2+ heads; `alembic upgrade head` then refuses."""
-    migrations = _read_migrations()
-    all_parents: set[str] = set()
-    for _rid, (_fn, parents) in migrations.items():
-        all_parents.update(parents)
-    heads = sorted(r for r in migrations if r not in all_parents)
-    assert len(heads) == 1, (
-        f"alembic has {len(heads)} heads {heads} — chain forked. "
+    report = guard.analyze_chain()
+    assert len(report.heads) == 1, (
+        f"alembic has {len(report.heads)} heads {report.heads} - chain forked. "
         f"A new migration must set down_revision to the CURRENT head, "
         f"not to an already-used parent."
     )
 
 
 def test_no_orphan_down_revisions():
-    """Every down_revision must name a migration that exists."""
-    migrations = _read_migrations()
-    for rid, (fn, parents) in migrations.items():
-        for p in parents:
-            assert p in migrations, (
-                f"{fn} (revision {rid}) has down_revision {p} which does not exist"
-            )
+    """Every down_revision must name a migration that exists.
+
+    An orphan only shows up when somebody provisions a brand-new database,
+    which is the worst possible time to discover it.
+    """
+    report = guard.analyze_chain()
+    assert not report.orphans, (
+        "orphan down_revision(s): "
+        + "; ".join(f"{fn} -> {parent}" for fn, parent in report.orphans)
+    )
+
+
+def test_every_revision_is_reachable():
+    """A revision no path from a base reaches would never run."""
+    report = guard.analyze_chain()
+    assert not report.unreachable, (
+        f"unreachable migration(s): {report.unreachable} - they would never run"
+    )
+
+
+def test_no_migration_cycles():
+    """A cycle makes `alembic upgrade` recurse forever."""
+    report = guard.analyze_chain()
+    assert not report.cycles, f"migration cycle(s) detected: {report.cycles}"
 
 
 def test_model_columns_have_migrations():
@@ -96,47 +88,102 @@ def test_model_columns_have_migrations():
     class of deploy failure: the container boots, then the first request
     that touches the column 500s.
     """
-    from app.database import Base
-
-    # Import every model module so Base.metadata is complete.
-    import app.modules.analytics.models  # noqa: F401
-    import app.modules.auth.models  # noqa: F401
-    import app.modules.billing.models  # noqa: F401
-    import app.modules.channels.models  # noqa: F401
-    import app.modules.channels.meta.models  # noqa: F401
-    import app.modules.jobs.models  # noqa: F401
-    import app.modules.llm.models  # noqa: F401
-    import app.modules.localith.models  # noqa: F401
-    import app.modules.notifications.models  # noqa: F401
-    import app.modules.outbox.models  # noqa: F401
-    import app.modules.posts.models  # noqa: F401
-    import app.modules.users.models  # noqa: F401
-
-    # Every identifier that appears anywhere in any migration.
-    migrated_tokens: set[str] = set()
-    for path in VERSIONS_DIR.glob("*.py"):
-        if path.name == "__init__.py":
-            continue
-        src = path.read_text(encoding="utf-8")
-        migrated_tokens.update(re.findall(r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]", src))
-
-    # Tables that are created outside alembic (test bootstrap, extensions).
-    unmanaged = {
-        "alembic_version",
-        "alembic_tmp_reviews_issues",
-    }
-
-    missing: list[str] = []
-    for table in Base.metadata.sorted_tables:
-        if table.name in unmanaged:
-            continue
-        for col in table.columns:
-            # A column added by a migration names the column in that migration.
-            if col.name not in migrated_tokens:
-                missing.append(f"{table.name}.{col.name}")
-
+    missing = guard.find_model_drift()
     assert not missing, (
         "model columns with no migration: "
-        + ", ".join(sorted(missing))
-        + " — add an alembic migration for each"
+        + ", ".join(missing)
+        + " - add an alembic migration for each"
+    )
+
+
+def test_chain_report_is_clean():
+    """Catch anything the individual assertions above might not cover.
+
+    ``problems`` is the aggregate of every structural problem the guard can
+    find, so this stays correct as new checks are added to the guard.
+    """
+    report = guard.analyze_chain()
+    assert report.ok, "migration chain problems:\n- " + "\n- ".join(report.problems)
+
+
+def test_alembic_actually_loads_a_single_head():
+    """The guard's own analysis must agree with what alembic reports.
+
+    This is the end-to-end version of the above: it runs alembic's real
+    script loader, so a migration file with syntax alembic cannot parse
+    (or a revision id alembic rejects) is caught too.
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "alembic", "heads"],
+        cwd=str(API_DIR),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    output = proc.stdout + proc.stderr
+
+    assert "present more than once" not in output, (
+        "alembic reports a duplicate revision id:\n" + output
+    )
+
+    heads = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    assert len(heads) == 1, f"alembic reports {len(heads)} heads: {heads}\n{output}"
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["duplicate_id", "fork", "orphan"],
+)
+def test_guard_detects_each_failure_mode(scenario, tmp_path, monkeypatch):
+    """The guard must actually catch the failure it exists to catch.
+
+    A guard that cannot fail is worse than no guard, because it gives
+    false confidence. This writes a deliberately broken migration into a
+    temporary versions directory and asserts the guard reports it.
+    """
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    (versions / "__init__.py").write_text("")
+
+    good = (
+        "revision: str = 'aaa000000001'\n"
+        "down_revision: Union[str, None] = None\n"
+    )
+
+    if scenario == "duplicate_id":
+        # Two files, same revision id.
+        (versions / "a_one.py").write_text(good)
+        (versions / "b_two.py").write_text(
+            good.replace("aaa000000001", "bbb000000002")
+        )
+        (versions / "c_dup.py").write_text(good)
+        expected = "duplicate revision id"
+    elif scenario == "fork":
+        # Two children of the same parent.
+        (versions / "a_root.py").write_text(good)
+        (versions / "b_left.py").write_text(
+            good.replace("aaa000000001", "bbb000000002")
+            .replace("Union[str, None] = None", "Union[str, None] = 'aaa000000001'")
+        )
+        (versions / "c_right.py").write_text(
+            good.replace("aaa000000001", "ccc000000003")
+            .replace("Union[str, None] = None", "Union[str, None] = 'aaa000000001'")
+        )
+        expected = "alembic heads"
+    else:  # orphan
+        (versions / "a_root.py").write_text(good)
+        (versions / "b_orphan.py").write_text(
+            good.replace("aaa000000001", "bbb000000002")
+            .replace("Union[str, None] = None", "Union[str, None] = 'missing_rev'")
+        )
+        expected = "does not exist"
+
+    monkeypatch.setattr(guard, "VERSIONS_DIR", versions)
+    report = guard.analyze_chain()
+
+    assert any(expected in problem for problem in report.problems), (
+        f"guard did not detect the {scenario} scenario; "
+        f"problems were: {report.problems}"
     )
