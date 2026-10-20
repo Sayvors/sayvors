@@ -292,6 +292,12 @@ Authorization: Bearer <token>
 | POST | `/{channel_id}/reviews/verify-posted` | Verify externally posted review replies |
 | POST | `/{channel_id}/reviews/{reply_id}/retry` | Retry a failed review reply |
 | POST | `/{channel_id}/test-review` | Run the review-reply test pipeline |
+| POST | `/publish` | Publish one post to many destinations |
+| GET | `/publish` | List publish jobs (filter by status/platform) |
+| GET | `/publish/status` | Batch poll publish job status |
+| GET | `/publish/{job_id}` | Poll single publish job |
+| POST | `/publish/{job_id}/delete` | Delete published post from platforms |
+| POST | `/publish/{job_id}/cancel` | Cancel queued/scheduled job |
 
 ### Connect Channel
 ```http
@@ -864,7 +870,11 @@ Storage backend is selected by env var: `S3_MEDIA_BUCKET`/`S3_DOCS_BUCKET` → S
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/publish` | Publish one post to many destinations (creates jobs) |
-| GET | `/publish/{job_id}` | Poll publish job status |
+| GET | `/publish` | List publish jobs (filter by status/platform, paginated) |
+| GET | `/publish/status?job_ids=...` | Batch poll publish job status |
+| GET | `/publish/{job_id}` | Poll single publish job status |
+| POST | `/publish/{job_id}/delete` | Delete a published post from selected platforms (or all) |
+| POST | `/publish/{job_id}/cancel` | Cancel a queued/scheduled publish job |
 
 ### Publish Post
 ```http
@@ -879,36 +889,94 @@ Content-Type: application/json
   "media_key": "u1/abc123.jpg",
   "caption": "Check out our new menu!",
   "description": "Full details here.",
-  "scheduled_at": null,
+  "scheduled_at": "2026-10-25T10:00:00Z",  // optional, ISO-8601, must be in the future
   "idempotency_key": "publish-123",
   "destinations": [
     { "platform": "instagram", "external_asset_id": "17841400000000000", "methods": ["post", "story"] },
     { "platform": "facebook", "external_asset_id": "123456789", "methods": ["post"] },
-    { "platform": "whatsapp", "external_asset_id": "+15551234567", "methods": ["status"] }
+    { "platform": "whatsapp", "external_asset_id": "+15551234567", "methods": ["status"] },
+    { "platform": "google_reviews", "external_asset_id": "locations/123456", "methods": ["post"] }
   ]
 }
 ```
 
+Supported platforms: `whatsapp`, `facebook`, `instagram`, `google_reviews`.
+Supported methods: `post`, `story`, `reel`, `status` (platform-dependent).
+`media_type`: `image` or `video`. `scheduled_at`: ISO-8601 datetime in the future, or null.
+
 **Response (200):**
 ```json
 [
-  { "job_id": "uuid-1", "status": "accepted", "lane": "publishing", "created_at": "2026-10-17T13:53:24+00:00" },
-  { "job_id": "uuid-2", "status": "accepted", "lane": "publishing", "created_at": "2026-10-17T13:53:24+00:00" }
+  { "job_id": "uuid-1", "status": "accepted", "lane": "publishing", "platform": "instagram", "method": "post", "created_at": "2026-10-17T13:53:24+00:00" },
+  { "job_id": "uuid-2", "status": "accepted", "lane": "publishing", "platform": "instagram", "method": "story", "created_at": "2026-10-17T13:53:24+00:00" },
+  { "job_id": "uuid-3", "status": "accepted", "lane": "publishing", "platform": "facebook", "method": "post", "created_at": "2026-10-17T13:53:24+00:00" }
 ]
 ```
 
-Creates one Job per (destination, method) pair on the `publishing` lane. Jobs run asynchronously via the job runner; poll `/publish/{job_id}` for status.
+Creates one Job per (destination, method) pair on the `publishing` lane. Jobs run asynchronously via the job runner; poll `/publish/{job_id}` or `/publish/status` for status.
 
-### Publish Status
+### List Publish Jobs
+```http
+GET /api/v1/channels/publish?status=succeeded&platform=facebook&limit=50&offset=0
+Authorization: Bearer <token>
+```
+
+**Response (200):** Array of `JobOut` (same shape as above, newest-first). Optional filters: `status`, `platform`. Paginated with `limit`/`offset`.
+
+### Batch Publish Status
+```http
+GET /api/v1/channels/publish/status?job_ids=uuid-1,uuid-2,uuid-3
+Authorization: Bearer <token>
+```
+
+**Response (200):** Array of `JobOut` for the requested ids (max 100). Unknown or cross-tenant ids are silently dropped.
+
+### Publish Status (single)
 ```http
 GET /api/v1/channels/publish/{job_id}
 Authorization: Bearer <token>
-X-CSRF-Token: ...
 ```
 
 **Response (200):**
 ```json
-{ "job_id": "uuid-1", "status": "succeeded", "lane": "publishing", "created_at": "2026-10-17T13:53:24+00:00" }
+{ "job_id": "uuid-1", "status": "succeeded", "lane": "publishing", "platform": "instagram", "method": "post", "result": { "id": "..." }, "created_at": "2026-10-17T13:53:24+00:00" }
 ```
 
 Status values: `accepted`, `queued`, `running`, `retrying`, `blocked`, `succeeded`, `failed`, `cancelled`, `dead`.
+
+### Delete Published Post
+```http
+POST /api/v1/channels/publish/{job_id}/delete
+Authorization: Bearer <token>
+X-CSRF-Token: ...
+Content-Type: application/json
+
+{ "platforms": ["facebook", "instagram"] }   // or ["all"], or omit body for all
+```
+
+If the job is still queued/scheduled, it is cancelled (nothing to delete yet).
+If the job has succeeded, calls the provider's delete API per selected platform.
+Best-effort per platform: a failure on one does not roll back the others.
+
+**Response (200):** `JobOut` with status `cancelled`.
+
+Platform support:
+- `facebook`: DELETE /{post_id}
+- `instagram`: DELETE /{media_id}
+- `google_reviews`: DELETE /v1/.../localPosts/{postId}
+- `whatsapp`: 501 (statuses are ephemeral, auto-expire after 24h)
+
+### Cancel Publish Job
+```http
+POST /api/v1/channels/publish/{job_id}/cancel
+Authorization: Bearer <token>
+X-CSRF-Token: ...
+Content-Type: application/json
+
+{ "reason": "changed my mind" }   // optional
+```
+
+Cancels a job in `accepted`, `queued`, `retrying`, or `blocked` state.
+Already-published jobs must use the delete endpoint.
+
+**Response (200):** `JobOut` with status `cancelled`.
