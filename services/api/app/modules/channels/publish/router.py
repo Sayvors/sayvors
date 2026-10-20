@@ -33,7 +33,7 @@ from ...jobs.service import submit_job
 from ...jobs.types import JobType
 from ...team.context import tenant_id_of
 from ..models import Channel
-from ..service import encrypt_token, decrypt_token
+from ..service import channel_location_ids, encrypt_token, decrypt_token
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,22 @@ router = APIRouter(prefix="/api/v1/channels", tags=["channels-publish"])
 # Platforms the publish pipeline can actually deliver to. Anything else is
 # rejected at the boundary so we never enqueue a job the worker cannot run.
 _SUPPORTED_PLATFORMS = {"whatsapp", "facebook", "instagram", "google_reviews"}
-_SUPPORTED_METHODS = {"post", "story", "reel", "status"}
+# Meta formats (post/story/reel/status) plus Google post types. "update"
+# is Google's STANDARD topic; "event" and "offer" map to EVENT/OFFER.
+# "profile" and "banner" are account surfaces, not feed posts — they
+# replace the avatar / cover image and carry no caption. Which platform
+# accepts which is enforced per provider in the job handler.
+_SUPPORTED_METHODS = {
+    "post",
+    "story",
+    "reel",
+    "status",
+    "update",
+    "event",
+    "offer",
+    "profile",
+    "banner",
+}
 
 
 class PublishDestination(BaseModel):
@@ -395,16 +410,10 @@ async def batch_delete_published_posts(
         )
         channel = None
         if platform == "google_reviews":
+            # A branch can be identified by its Localith listing id, its
+            # Google location id, or both — accept any of them.
             for ch in result.scalars().all():
-                try:
-                    import json as _json
-
-                    meta = _json.loads(ch.metadata_json or "{}")
-                except (ValueError, TypeError):
-                    meta = {}
-                if isinstance(meta, dict) and str(
-                    meta.get("location_id") or meta.get("listing_id")
-                ) == str(external_asset_id):
+                if str(external_asset_id) in channel_location_ids(ch):
                     channel = ch
                     break
         else:
@@ -422,6 +431,37 @@ async def batch_delete_published_posts(
 
         job_result = job_row.result or {}
         post_id = job_result.get("id") or job_result.get("name") or job_result.get("media_id")
+
+        if payload.get("method") in {"profile", "banner"}:
+            # An avatar or cover image is not a post — there is nothing to
+            # delete from the platform, only to replace. The job row is
+            # closed out so it stops showing as pending, and the reason
+            # says plainly that the surface was left alone.
+            job_row.status = "cancelled"
+            job_row.last_error = (
+                "closed without changes — a profile picture or banner cannot "
+                "be deleted, only replaced by publishing a new one"
+            )
+            await db.commit()
+            out.append(
+                JobOut(
+                    job_id=job_row.id,
+                    status=job_row.status,
+                    lane=job_row.lane,
+                    created_at=job_row.created_at.isoformat(),
+                    platform=platform,
+                    method=payload.get("method"),
+                    external_asset_id=external_asset_id,
+                    scheduled_at=payload.get("scheduled_at"),
+                    result=job_row.result,
+                    last_error=job_row.last_error,
+                    updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+                    batch_id=payload.get("batch_id"),
+                    caption=payload.get("caption"),
+                    media_url=payload.get("media_url"),
+                )
+            )
+            continue
 
         if post_id and access_token is not None:
             # Call provider delete.
@@ -619,16 +659,10 @@ async def delete_published_post(
     )
     channel = None
     if platform == "google_reviews":
+        # A branch can be identified by its Localith listing id, its Google
+        # location id, or both — accept any of them.
         for ch in result.scalars().all():
-            try:
-                import json as _json
-
-                meta = _json.loads(ch.metadata_json or "{}")
-            except (ValueError, TypeError):
-                meta = {}
-            if isinstance(meta, dict) and str(
-                meta.get("location_id") or meta.get("listing_id")
-            ) == str(external_asset_id):
+            if str(external_asset_id) in channel_location_ids(ch):
                 channel = ch
                 break
     else:
@@ -636,6 +670,18 @@ async def delete_published_post(
 
     # Get the platform post id from the job result.
     job_result = job_row.result or {}
+
+    if method in {"profile", "banner"}:
+        # A profile picture or cover image is not a post — there is
+        # nothing to delete, only to replace by publishing a new one.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "a profile picture or banner cannot be deleted — publish a "
+                "new one to replace it"
+            ),
+        )
+
     post_id = job_result.get("id") or job_result.get("name") or job_result.get("media_id")
 
     if not post_id:

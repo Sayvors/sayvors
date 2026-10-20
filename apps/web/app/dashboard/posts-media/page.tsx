@@ -7,11 +7,11 @@ import PublishComposer from "@/components/dashboard/publish/PublishComposer";
 /*
  * Posts & Media — one page, no tabs.
  *
- * The feed lists every post published through the composer, on every
- * connected network (Instagram, Facebook, WhatsApp, Google Business
- * Profile). "Publish" opens the unified composer, which pushes the same
- * post to every selected destination; the post lands back in the feed
- * with its status.
+ * The feed lists every post on every connected network (Instagram,
+ * Facebook, WhatsApp, Google Business Profile): publishing jobs from the
+ * composer plus legacy Google location posts from the old per-branch flow.
+ * "Publish" opens the unified composer, which pushes the same post to every
+ * selected destination; the post lands back in the feed with its status.
  *
  * `/dashboard/channels/publish` redirects here.
  */
@@ -22,8 +22,10 @@ export default function PostsMediaPage() {
   const [view, setView] = useState<View>("feed");
 
   if (view === "compose") {
+    // `.team-ui` is required: the composer styles off the --ui-* variables
+    // that class defines (globals.css), exactly like the old publish page did.
     return (
-      <div className="h-full">
+      <div className="team-ui flex h-full flex-col">
         <PublishComposer onPublished={() => setView("feed")} onCancel={() => setView("feed")} />
       </div>
     );

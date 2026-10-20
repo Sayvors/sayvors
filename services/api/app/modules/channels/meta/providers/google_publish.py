@@ -26,6 +26,20 @@ logger = logging.getLogger(__name__)
 
 GBP_LOCAL_POSTS_API = "https://mybusiness.googleapis.com/v1"
 
+# Location photos live in the v4.9 Business Profile API — v1 has no media
+# resource. Both versions are served from the same host and take the same
+# OAuth token, so the two are used side by side: v1 for local posts, v4.9
+# for the profile picture and cover image.
+GBP_MEDIA_API = "https://mybusiness.googleapis.com/v4"
+
+# The method -> the location media category Google stores it under.
+# PROFILE and COVER are the two surfaces that belong to the location
+# itself rather than to a post; a location has exactly one of each.
+_LOCATION_IMAGE_CATEGORY = {
+    "profile": "PROFILE",
+    "banner": "COVER",
+}
+
 
 class GoogleBusinessPublisher:
     """Publish a post to a Google Business Profile location.
@@ -64,14 +78,26 @@ class GoogleBusinessPublisher:
 
         ``asset_id`` is the location_id (e.g. "locations/123" or bare "123").
         ``account_id`` is the Google account id (e.g. "accounts/456").
-        ``method`` is "post" (only supported method for GBP).
+        ``method`` maps to a Google topicType:
+            "update" → STANDARD (What's New)
+            "event"  → EVENT
+            "offer"  → OFFER
 
         Returns a dict with at least ``{"id": ..., "name": ...}`` on success.
         Raises ``GoogleReviewsError`` on failure.
         """
-        if method not in {"post"}:
+        _METHOD_TO_TOPIC = {
+            "update": "STANDARD",
+            "event": "EVENT",
+            "offer": "OFFER",
+            # "post" is the legacy alias for What's New, kept so jobs
+            # created before the method split still publish.
+            "post": "STANDARD",
+        }
+        topic_type = _METHOD_TO_TOPIC.get(method)
+        if topic_type is None:
             raise GoogleReviewsError(
-                f"GBP supports only 'post' method, got {method!r}", 400
+                f"GBP supports 'update', 'event' or 'offer', got {method!r}", 400
             )
 
         account = (account_id or "").strip()
@@ -88,7 +114,7 @@ class GoogleBusinessPublisher:
             location = f"locations/{location}"
 
         body: dict[str, Any] = {
-            "topicType": "STANDARD",
+            "topicType": topic_type,
             "languageCode": "en",
         }
         summary = (caption or description or "").strip()
@@ -102,6 +128,30 @@ class GoogleBusinessPublisher:
                     "sourceUrl": media_url,
                 }
             ]
+
+        # EVENT posts require an event object with a title and a start
+        # date. The composer does not collect dates yet, so default to a
+        # 7-day window from now — Google rejects a bare STANDARD payload
+        # with topicType EVENT.
+        if topic_type == "EVENT":
+            from datetime import timedelta
+
+            now = datetime.now(timezone.utc)
+            end = now + timedelta(days=7)
+            body["event"] = {
+                "title": (summary[:60] if summary else "Event"),
+                "startDate": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "endDate": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }
+
+        # OFFER posts require at least one of couponCode, redeemOnlineUrl,
+        # termsConditions, or description. Send description + terms so the
+        # offer renders even without a coupon code.
+        if topic_type == "OFFER":
+            body["offer"] = {
+                "description": (summary[:300] if summary else ""),
+                "termsConditions": (description or "Terms apply")[:300],
+            }
 
         if scheduled_at:
             try:
@@ -129,6 +179,67 @@ class GoogleBusinessPublisher:
             "topicType": data.get("topicType"),
             "state": data.get("state"),
             "searchUrl": data.get("searchUrl"),
+        }
+
+    async def set_location_image(
+        self,
+        token: str,
+        asset_id: str,
+        method: str,
+        media_url: str,
+        account_id: str | None = None,
+    ) -> dict:
+        """Replace a location's profile picture or cover image.
+
+        Google stores both as location media:
+        ``POST /v4/{parent=accounts/*/locations/*}/media`` with
+        ``locationAssociation.category`` set to ``PROFILE`` or ``COVER``.
+        A location has exactly one of each, and the profile picture is
+        filed under a fixed resource name
+        (``.../locations/{id}/media/profile``), so creating the media
+        item replaces what was there — no separate delete first, which
+        would leave the location with no picture if the upload failed.
+
+        ``asset_id`` is the location id; ``account_id`` is the Google
+        account id.
+        """
+        category = _LOCATION_IMAGE_CATEGORY.get(method)
+        if category is None:
+            raise GoogleReviewsError(
+                f"GBP location images are 'profile' or 'banner', got {method!r}", 400
+            )
+        if not media_url:
+            raise GoogleReviewsError("a location image needs a media URL", 400)
+
+        account = (account_id or "").strip()
+        location = (asset_id or "").strip()
+        if not account:
+            raise GoogleReviewsError("account_id is required for GBP publish", 400)
+        if not location:
+            raise GoogleReviewsError("location_id is required for GBP publish", 400)
+        if "/" not in account:
+            account = f"accounts/{account}"
+        if "/" not in location:
+            location = f"locations/{location}"
+
+        body: dict[str, Any] = {
+            "mediaFormat": "PHOTO",
+            "locationAssociation": {"category": category},
+            "sourceUrl": media_url,
+        }
+        url = f"{GBP_MEDIA_API}/{account}/{location}/media"
+        resp = await self._client._authed_request("POST", url, json=body)
+        if resp.status_code not in (200, 201):
+            raise GoogleReviewsError(
+                f"create_location_media failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        data = resp.json()
+        return {
+            "id": data.get("name", ""),
+            "name": data.get("name", ""),
+            "category": (data.get("locationAssociation") or {}).get("category"),
+            "googleUrl": data.get("googleUrl", ""),
         }
 
     async def delete_post(self, token: str, post_id: str) -> dict:

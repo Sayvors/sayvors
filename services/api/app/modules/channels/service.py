@@ -290,6 +290,31 @@ def channel_listing_key(platform: str, metadata: dict) -> str | None:
     return None
 
 
+def channel_location_ids(channel: Channel) -> set[str]:
+    """Every id that identifies one Google location of this channel.
+
+    A branch can be identified by its Localith listing id, its Google
+    location id, or both (a Localith branch that was later connected
+    through Google's own OAuth). Publishing resolves the channel from
+    whichever id the client holds, so all of them are accepted.
+    """
+    ids: set[str] = set()
+    try:
+        import json as _json
+
+        meta = _json.loads(channel.metadata_json or "{}")
+    except (ValueError, TypeError):
+        meta = {}
+    if isinstance(meta, dict):
+        for key in ("location_id", "listing_id"):
+            value = meta.get(key)
+            if value:
+                ids.add(str(value))
+    if channel.listing_key:
+        ids.add(str(channel.listing_key))
+    return ids
+
+
 async def find_channel_by_key(
     db: AsyncSession, user_id: str, platform: str, listing_key: str
 ) -> Channel | None:

@@ -10,12 +10,14 @@ import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
 import ConfirmModal from "./ConfirmModal";
 import CropFrame from "./CropFrame";
+import FormatThumb from "./FormatThumb";
 import {
   DEFAULT_CROP,
   METHOD_META,
   PLATFORM_META,
   cropKeyFor,
   defaultCropFor,
+  isFeedMethod,
   methodsFor,
   type CropState,
   type MediaState,
@@ -145,7 +147,10 @@ export default function PublishComposer({
     setFormats((prev) => {
       if (prev[t.id]?.length) return prev;
       const avail = methodsFor(t.platform, media?.type ?? null);
-      const chosen = mode === "default" ? avail.slice(0, 1) : avail;
+      // "all" means every FEED format — the avatar and cover surfaces
+      // are never seeded, only ever picked one by one.
+      const chosen =
+        mode === "default" ? avail.slice(0, 1) : avail.filter(isFeedMethod);
       return { ...prev, [t.id]: chosen };
     });
   };
@@ -169,13 +174,18 @@ export default function PublishComposer({
   };
 
   const toggleAllFormats = (t: PublishTarget) => {
-    const avail = availableFor(t);
+    // "All" covers the feed formats only. Selecting every pill would
+    // also replace the account's avatar and cover image, which must
+    // stay a deliberate, one-at-a-time choice.
+    const feed = availableFor(t).filter(isFeedMethod);
     const cur = chosenFor(t);
-    const turningAll = cur.length < avail.length;
-    const nextList = turningAll ? [...avail] : [];
+    const turningAll = cur.filter(isFeedMethod).length < feed.length;
+    const nextList = turningAll
+      ? [...cur.filter((m) => !isFeedMethod(m)), ...feed]
+      : cur.filter((m) => !isFeedMethod(m));
     setFormats((prev) => ({ ...prev, [t.id]: nextList }));
     if (turningAll) {
-      avail.forEach((m) => {
+      feed.forEach((m) => {
         const key = cropKeyFor(t.id, m);
         setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
       });
@@ -262,12 +272,14 @@ export default function PublishComposer({
       // the Google Business uploader) fetch the media from a public URL at
       // publish time, so a blob: URL can never be delivered.
       let mediaUrl = media.url;
+      let mediaKey = media.key ?? null;
       if (media.url.startsWith("blob:")) {
         if (!media.file) throw new Error("The picked file is no longer available — attach it again.");
         const form = new FormData();
         form.append("file", media.file);
         const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
         mediaUrl = up.image_url;
+        mediaKey = up.key ?? null;
         if (!mediaUrl) throw new Error("Upload succeeded but no URL came back — try a different file.");
       }
 
@@ -284,6 +296,7 @@ export default function PublishComposer({
         method: "POST",
         body: JSON.stringify({
           media_url: mediaUrl,
+          media_key: mediaKey,
           media_type: media.type,
           caption,
           description,
@@ -519,6 +532,15 @@ export default function PublishComposer({
                 <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
                   Click a format to set its crop and thumbnail.
                 </p>
+                {selectedTargets.some((t) =>
+                  availableFor(t).some((m) => m === "profile" || m === "banner"),
+                ) && (
+                  <p className={`mb-3 text-[11px] ${INK2}`}>
+                    A profile picture or banner replaces that image on the
+                    account — it carries no caption, and it can only be
+                    changed by publishing a new one.
+                  </p>
+                )}
                 <div className="space-y-3">
                   {selectedTargets.map((t) => {
                     const avail = availableFor(t);
@@ -534,6 +556,7 @@ export default function PublishComposer({
                             const isOn = chosen.includes(m);
                             const key = cropKeyFor(t.id, m);
                             const isConfigured = configured.has(key);
+                            const crop = crops[key] ?? defaultCropFor(t.platform, m);
                             return (
                               <button
                                 key={m}
@@ -544,7 +567,7 @@ export default function PublishComposer({
                                   }
                                   openConfig(t, m);
                                 }}
-                                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                                className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                                   isConfigured
                                     ? "border-[var(--ui-ink)] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                                     : isOn
@@ -552,6 +575,7 @@ export default function PublishComposer({
                                     : "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)] hover:bg-[var(--ui-line)]"
                                 }`}
                               >
+                                <FormatThumb media={media} crop={crop} />
                                 {isConfigured && <span aria-hidden>✓</span>}
                                 {METHOD_META[m].label}
                               </button>
@@ -561,7 +585,7 @@ export default function PublishComposer({
                             type="button"
                             onClick={() => toggleAllFormats(t)}
                             className="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-                            title="Select all formats for this destination"
+                            title="Select every feed format for this destination"
                           >
                             All
                           </button>

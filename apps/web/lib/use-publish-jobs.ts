@@ -38,16 +38,16 @@ export const DELETABLE_STATUSES = new Set(["succeeded", "accepted", "queued", "r
 /** Rows that have not gone out yet — these get cancelled, never deleted. */
 export const QUEUED_STATUSES = new Set(["accepted", "queued", "retrying", "blocked"]);
 
-/** The feed's status buckets, so one filter row covers every source. */
-export type FeedStatus = "published" | "scheduled" | "failed" | "removed" | "library" | "draft";
+/**
+ * Rows that publish an account surface instead of a post. A profile picture
+ * or banner cannot be removed from the platform — it can only be replaced
+ * by publishing a new one — so these never offer a Remove action.
+ */
+const ACCOUNT_SURFACE_METHODS = new Set<PostMethod>(["profile", "banner"]);
 
-export function jobFeedStatus(job: PublishJob): FeedStatus {
-  if (job.status === "succeeded") return "published";
-  if (job.status === "running") return "scheduled";
-  if (job.status === "failed" || job.status === "dead") return "failed";
-  if (job.status === "cancelled") return job.result?.deleted === true ? "removed" : "removed";
-  if (QUEUED_STATUSES.has(job.status)) return "scheduled";
-  return "library";
+export function isRemovableJob(job: Pick<PublishJob, "status" | "method">): boolean {
+  if (job.method && ACCOUNT_SURFACE_METHODS.has(job.method)) return false;
+  return DELETABLE_STATUSES.has(job.status);
 }
 
 export function usePublishJobs() {
@@ -156,7 +156,7 @@ export function usePublishJobs() {
   }, []);
 
   const deletableIds = useMemo(
-    () => (jobs ?? []).filter((j) => DELETABLE_STATUSES.has(j.status)).map((j) => j.job_id),
+    () => (jobs ?? []).filter(isRemovableJob).map((j) => j.job_id),
     [jobs],
   );
 

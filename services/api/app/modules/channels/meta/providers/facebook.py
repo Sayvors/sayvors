@@ -252,6 +252,32 @@ class FacebookAdapter(MetaProviderAdapter):
         resp = await self._graph("POST", f"/{page_id}/photos", token, data=data)
         return resp.json()
 
+    async def set_page_profile_picture(self, page_id: str, token: str, *, url: str) -> dict:
+        """POST /{page}/picture — replace the Page's profile picture.
+
+        The parameter is ``picture`` (a public URL Meta fetches), NOT
+        ``url`` — Graph ignores a stray ``url`` and answers "Missing or
+        invalid image file" (#324). The Page token must belong to
+        someone with the MANAGE task on the Page.
+        """
+        resp = await self._graph("POST", f"/{page_id}/picture", token, data={"picture": url})
+        return resp.json()
+
+    async def set_page_cover_photo(self, page_id: str, token: str, *, url: str) -> dict:
+        """POST /{page}/photos (unpublished) then POST /{page} with cover=<id>.
+
+        The Page's ``cover`` field is writable only as a photo id, so the
+        image is first uploaded as an unpublished photo and that id is
+        then set on the Page. Updating ``cover`` needs the EDIT_PROFILE
+        task and the ``business_management`` permission.
+        """
+        photo = await self.publish_photo(page_id, token, url=url, published=False)
+        photo_id = photo.get("id")
+        if not photo_id:
+            raise MetaAPIError("Facebook cover photo upload returned no photo id", 502)
+        resp = await self._graph("POST", f"/{page_id}", token, data={"cover": str(photo_id)})
+        return {"cover_photo_id": str(photo_id), **(resp.json() or {})}
+
     async def reply_to_comment(self, comment_id: str, token: str, message: str) -> str:
         resp = await self._graph(
             "POST", f"/{comment_id}/comments", token, data={"message": message},
