@@ -78,6 +78,7 @@ class PublishBody(BaseModel):
     scheduled_at: str | None = None
     idempotency_key: str | None = Field(None, max_length=200)
     destinations: list[PublishDestination]
+    batch_id: str | None = Field(None, max_length=64)
 
     @field_validator("media_type")
     @classmethod
@@ -118,9 +119,11 @@ class JobOut(BaseModel):
     platform: str | None = None
     method: str | None = None
     external_asset_id: str | None = None
+    scheduled_at: str | None = None
     result: dict[str, Any] | None = None
     last_error: str | None = None
     updated_at: str | None = None
+    batch_id: str | None = None
 
 
 @router.post("/publish", response_model=list[JobOut])
@@ -156,6 +159,7 @@ async def publish_post(
                     "external_asset_id": asset_id,
                     "method": method,
                     "scheduled_at": body.scheduled_at,
+                    "batch_id": body.batch_id,
                 }
 
                 idem_key = (
@@ -181,6 +185,11 @@ async def publish_post(
                         status=job.status,
                         lane=job.lane,
                         created_at=job.created_at.isoformat(),
+                        platform=platform,
+                        method=method,
+                        external_asset_id=asset_id,
+                        scheduled_at=body.scheduled_at,
+                        batch_id=body.batch_id,
                     )
                 )
         await db.commit()
@@ -268,6 +277,181 @@ async def list_publish_jobs(
                 updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
             )
         )
+    return out
+
+
+class BatchDeleteBody(BaseModel):
+    job_ids: list[str] = Field(..., min_length=1, max_length=100)
+    platforms: list[str] = Field(default_factory=list)
+
+    @field_validator("job_ids")
+    @classmethod
+    def _validate_ids(cls, v: list[str]) -> list[str]:
+        if len(v) > 100:
+            raise ValueError("too many job_ids (max 100)")
+        return [j.strip() for j in v if j.strip()]
+
+    @field_validator("platforms")
+    @classmethod
+    def _validate_platforms(cls, v: list[str]) -> list[str]:
+        for p in v:
+            if p not in _SUPPORTED_PLATFORMS and p != "all":
+                raise ValueError(f"unsupported platform: {p}")
+        if "all" in v and len(v) > 1:
+            raise ValueError("'all' cannot be combined with specific platforms")
+        return v
+
+
+@router.post("/publish/delete", response_model=list[JobOut])
+async def batch_delete_published_posts(
+    body: BatchDeleteBody,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete published posts from selected platforms (or all).
+
+    Accepts a list of job_ids and an optional list of platforms. If platforms
+    is empty or ["all"], deletes from every platform the job was published to.
+    If specific platforms are given, only those are deleted.
+
+    Jobs that are still queued/scheduled are cancelled instead of deleted.
+    Best-effort per job/platform: a failure on one does not roll back the others.
+
+    Returns the updated status of every job touched.
+    """
+    tenant_id = tenant_id_of(user)
+    if not body.job_ids:
+        raise HTTPException(status_code=400, detail="job_ids must not be empty")
+
+    rows = await db.execute(
+        select(Job).where(Job.id.in_(body.job_ids), Job.tenant_id == tenant_id)
+    )
+    jobs = list(rows.scalars().all())
+    if not jobs:
+        raise HTTPException(status_code=404, detail="no matching jobs found")
+
+    out: list[JobOut] = []
+    for job_row in jobs:
+        payload = job_row.payload or {}
+        platform = payload.get("platform")
+        external_asset_id = payload.get("external_asset_id")
+
+        # Determine target platforms.
+        requested = body.platforms or []
+        if not requested or "all" in requested:
+            target_platforms = [platform] if platform else []
+        else:
+            target_platforms = [p for p in requested if p == platform]
+
+        if not target_platforms:
+            continue
+
+        # Cancel if not yet published.
+        if job_row.status in {"accepted", "queued", "retrying", "blocked"}:
+            job_row.status = "cancelled"
+            job_row.last_error = "deleted by user before publish"
+            await db.commit()
+            out.append(
+                JobOut(
+                    job_id=job_row.id,
+                    status=job_row.status,
+                    lane=job_row.lane,
+                    created_at=job_row.created_at.isoformat(),
+                    platform=platform,
+                    method=payload.get("method"),
+                    external_asset_id=external_asset_id,
+                    scheduled_at=payload.get("scheduled_at"),
+                    result=job_row.result,
+                    last_error=job_row.last_error,
+                    updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+                    batch_id=payload.get("batch_id"),
+                )
+            )
+            continue
+
+        if job_row.status != "succeeded":
+            # Skip non-succeeded, non-cancellable jobs.
+            continue
+
+        # Resolve channel + token for deletion.
+        result = await db.execute(
+            select(Channel).where(
+                Channel.user_id == tenant_id,
+                Channel.platform == platform,
+                Channel.status == "active",
+            )
+        )
+        channel = None
+        if platform == "google_reviews":
+            for ch in result.scalars().all():
+                try:
+                    import json as _json
+
+                    meta = _json.loads(ch.metadata_json or "{}")
+                except (ValueError, TypeError):
+                    meta = {}
+                if isinstance(meta, dict) and str(
+                    meta.get("location_id") or meta.get("listing_id")
+                ) == str(external_asset_id):
+                    channel = ch
+                    break
+        else:
+            channel = result.scalars().first()
+
+        access_token = None
+        refresh_token = None
+        if channel is not None:
+            access_token = (
+                decrypt_token(channel.access_token) if channel.access_token else None
+            )
+            refresh_token = (
+                decrypt_token(channel.refresh_token) if channel.refresh_token else None
+            )
+
+        job_result = job_row.result or {}
+        post_id = job_result.get("id") or job_result.get("name") or job_result.get("media_id")
+
+        if post_id and access_token is not None:
+            # Call provider delete.
+            if platform == "google_reviews":
+                publisher = GoogleBusinessPublisher(access_token or "", refresh_token)
+                try:
+                    r = await publisher.delete_post(access_token or "", post_id)
+                    job_row.result = {**(job_row.result or {}), "deleted": True, "delete_results": [r]}
+                except Exception as e:
+                    job_row.result = {**(job_row.result or {}), "delete_error": str(e)[:200]}
+            else:
+                provider = _provider_for(platform)
+                if provider is not None:
+                    try:
+                        r = await provider.delete_post(access_token or "", post_id)
+                        job_row.result = {**(job_row.result or {}), "deleted": True, "delete_results": [r]}
+                    except Exception as e:
+                        job_row.result = {**(job_row.result or {}), "delete_error": str(e)[:200]}
+
+        job_row.status = "cancelled"
+        job_row.last_error = "deleted by user"
+        await db.commit()
+
+        out.append(
+            JobOut(
+                job_id=job_row.id,
+                status=job_row.status,
+                lane=job_row.lane,
+                created_at=job_row.created_at.isoformat(),
+                platform=platform,
+                method=payload.get("method"),
+                external_asset_id=external_asset_id,
+                scheduled_at=payload.get("scheduled_at"),
+                result=job_row.result,
+                last_error=job_row.last_error,
+                updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+                batch_id=payload.get("batch_id"),
+            )
+        )
+
+    if not out:
+        raise HTTPException(status_code=409, detail="no jobs could be deleted or cancelled")
     return out
 
 
