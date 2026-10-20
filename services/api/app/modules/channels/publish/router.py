@@ -33,6 +33,7 @@ from ...jobs.service import submit_job
 from ...jobs.types import JobType
 from ...team.context import tenant_id_of
 from ..models import Channel
+from ..service import encrypt_token, decrypt_token
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,12 @@ class JobOut(BaseModel):
     status: str
     lane: str
     created_at: str
+    platform: str | None = None
+    method: str | None = None
+    external_asset_id: str | None = None
+    result: dict[str, Any] | None = None
+    last_error: str | None = None
+    updated_at: str | None = None
 
 
 @router.post("/publish", response_model=list[JobOut])
@@ -214,6 +221,56 @@ async def publish_post(
     return jobs_out
 
 
+@router.get("/publish", response_model=list[JobOut])
+async def list_publish_jobs(
+    status_filter: str | None = Query(None, alias="status"),
+    platform: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List publish jobs for the current tenant.
+
+    Optional filters: ``status`` (accepted/queued/running/succeeded/failed/
+    cancelled/dead) and ``platform`` (whatsapp/facebook/instagram/
+    google_reviews). Sorted newest-first. Used by the publish page to show
+    scheduled and published posts with their per-platform status.
+    """
+    tenant_id = tenant_id_of(user)
+    q = select(Job).where(
+        Job.tenant_id == tenant_id, Job.job_type == JobType.post_publish.value
+    )
+    if status_filter:
+        q = q.where(Job.status == status_filter)
+    if platform:
+        # platform lives inside the payload JSON; filter in Python after fetch
+        # to avoid dialect-specific JSON operators. Page size is small.
+        pass
+    q = q.order_by(Job.created_at.desc()).offset(offset).limit(limit)
+    rows = await db.execute(q)
+    out: list[JobOut] = []
+    for job_row in rows.scalars().all():
+        payload = job_row.payload or {}
+        if platform and payload.get("platform") != platform:
+            continue
+        out.append(
+            JobOut(
+                job_id=job_row.id,
+                status=job_row.status,
+                lane=job_row.lane,
+                created_at=job_row.created_at.isoformat(),
+                platform=payload.get("platform"),
+                method=payload.get("method"),
+                external_asset_id=payload.get("external_asset_id"),
+                result=job_row.result,
+                last_error=job_row.last_error,
+                updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+            )
+        )
+    return out
+
+
 @router.get("/publish/status", response_model=list[JobOut])
 async def publish_status_batch(
     job_ids: str = Query(..., description="Comma-separated job ids"),
@@ -237,12 +294,19 @@ async def publish_status_batch(
     )
     out: list[JobOut] = []
     for job_row in rows.scalars().all():
+        payload = job_row.payload or {}
         out.append(
             JobOut(
                 job_id=job_row.id,
                 status=job_row.status,
                 lane=job_row.lane,
                 created_at=job_row.created_at.isoformat(),
+                platform=payload.get("platform"),
+                method=payload.get("method"),
+                external_asset_id=payload.get("external_asset_id"),
+                result=job_row.result,
+                last_error=job_row.last_error,
+                updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
             )
         )
     return out
@@ -388,7 +452,19 @@ async def delete_published_post(
     delete_results: list[dict] = []
     if platform == "google_reviews":
         publisher = GoogleBusinessPublisher(access_token or "", refresh_token)
-        publisher.set_token_persister(None) if False else None
+        if channel is not None:
+            async def _persist(new_access_token: str, new_expires_at) -> None:
+                channel.access_token = encrypt_token(new_access_token)
+                channel.token_expires_at = new_expires_at
+                db.add(channel)
+                try:
+                    await db.commit()
+                except Exception as e:
+                    logger.error("Failed to persist refreshed Google token: %s", e)
+                    await db.rollback()
+
+            publisher.set_token_persister(_persist)
+            publisher.set_known_expiry(channel.token_expires_at)
         try:
             r = await publisher.delete_post(access_token or "", post_id)
             delete_results.append(r)
@@ -407,11 +483,18 @@ async def delete_published_post(
     job_row.last_error = "deleted by user"
     await db.commit()
 
+    payload = job_row.payload or {}
     return JobOut(
         job_id=job_row.id,
         status=job_row.status,
         lane=job_row.lane,
         created_at=job_row.created_at.isoformat(),
+        platform=payload.get("platform"),
+        method=payload.get("method"),
+        external_asset_id=payload.get("external_asset_id"),
+        result=job_row.result,
+        last_error=job_row.last_error,
+        updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
     )
 
 
@@ -445,11 +528,18 @@ async def cancel_publish_job(
     job_row.last_error = (body.reason if body and body.reason else "cancelled by user")
     await db.commit()
 
+    payload = job_row.payload or {}
     return JobOut(
         job_id=job_row.id,
         status=job_row.status,
         lane=job_row.lane,
         created_at=job_row.created_at.isoformat(),
+        platform=payload.get("platform"),
+        method=payload.get("method"),
+        external_asset_id=payload.get("external_asset_id"),
+        result=job_row.result,
+        last_error=job_row.last_error,
+        updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
     )
 
 
@@ -467,9 +557,16 @@ async def publish_status(
     job_row = job.scalar_one_or_none()
     if not job_row:
         raise HTTPException(status_code=404, detail="Publish job not found")
+    payload = job_row.payload or {}
     return JobOut(
         job_id=job_row.id,
         status=job_row.status,
         lane=job_row.lane,
         created_at=job_row.created_at.isoformat(),
+        platform=payload.get("platform"),
+        method=payload.get("method"),
+        external_asset_id=payload.get("external_asset_id"),
+        result=job_row.result,
+        last_error=job_row.last_error,
+        updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
     )
