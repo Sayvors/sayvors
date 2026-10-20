@@ -220,6 +220,21 @@ class FacebookAdapter(MetaProviderAdapter):
         resp = await self._graph("POST", f"/{page_id}/feed", token, data=data)
         return resp.json()
 
+    async def delete_post(self, token: str, post_id: str) -> dict:
+        """Delete a published Facebook post.
+
+        Returns {"deleted": True} on success. Raises MetaAPIError on failure.
+        """
+        if not post_id:
+            raise MetaAPIError("post_id is required for delete", 400)
+        resp = await self._graph("DELETE", f"/{post_id}", token)
+        # Facebook returns {"success": true} on delete
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"success": True}
+        return {"deleted": True, "platform": "facebook", "post_id": post_id, **data}
+
     async def publish_photo(
         self,
         page_id: str,

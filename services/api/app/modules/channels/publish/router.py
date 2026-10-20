@@ -248,6 +248,211 @@ async def publish_status_batch(
     return out
 
 
+class DeletePublishBody(BaseModel):
+    platforms: list[str] = Field(default_factory=list)
+
+    @field_validator("platforms")
+    @classmethod
+    def _validate(cls, v: list[str]) -> list[str]:
+        if not v:
+            return []
+        for p in v:
+            if p not in _SUPPORTED_PLATFORMS and p != "all":
+                raise ValueError(f"unsupported platform: {p}")
+        if "all" in v and len(v) > 1:
+            raise ValueError("'all' cannot be combined with specific platforms")
+        return v
+
+
+class CancelPublishBody(BaseModel):
+    reason: str | None = Field(None, max_length=200)
+
+
+@router.post("/publish/{job_id}/delete", response_model=JobOut)
+async def delete_published_post(
+    job_id: str,
+    body: DeletePublishBody | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a published post from selected platforms.
+
+    Accepts a JSON body ``{"platforms": ["facebook", "instagram"]}`` to
+    delete from specific platforms, or ``{"platforms": ["all"]}`` (or no
+    body) to delete from every platform the post was published to.
+
+    If the job is still queued/scheduled, it is cancelled instead of
+    deleted (nothing has been published yet).
+
+    Returns the updated job status. Deletion is best-effort per platform:
+    a failure on one platform does not roll back the others, and the
+    per-platform result is recorded in the job's result.
+    """
+    tenant_id = tenant_id_of(user)
+    job = await db.execute(
+        select(Job).where(Job.id == job_id, Job.tenant_id == tenant_id)
+    )
+    job_row = job.scalar_one_or_none()
+    if not job_row:
+        raise HTTPException(status_code=404, detail="Publish job not found")
+
+    payload = job_row.payload or {}
+    platform = payload.get("platform")
+    external_asset_id = payload.get("external_asset_id")
+    method = payload.get("method", "post")
+    media_url = payload.get("media_url")
+    media_type = payload.get("media_type")
+    caption = payload.get("caption", "")
+    description = payload.get("description", "")
+
+    # Determine which platforms to delete from.
+    requested = (body.platforms if body else []) or []
+    if not requested or "all" in requested:
+        target_platforms = [platform] if platform else []
+    else:
+        target_platforms = [p for p in requested if p == platform]
+
+    if not target_platforms:
+        raise HTTPException(status_code=400, detail="no platforms to delete from")
+
+    # If the job hasn't published yet, just cancel it.
+    if job_row.status in {"accepted", "queued", "retrying", "blocked"}:
+        job_row.status = "cancelled"
+        job_row.last_error = "deleted by user before publish"
+        await db.commit()
+        return JobOut(
+            job_id=job_row.id,
+            status=job_row.status,
+            lane=job_row.lane,
+            created_at=job_row.created_at.isoformat(),
+        )
+
+    if job_row.status != "succeeded":
+        raise HTTPException(
+            status_code=409,
+            detail=f"job is in '{job_row.status}' state; cannot delete",
+        )
+
+    # Resolve the channel for token access.
+    result = await db.execute(
+        select(Channel).where(
+            Channel.user_id == tenant_id,
+            Channel.platform == platform,
+            Channel.status == "active",
+        )
+    )
+    channel = None
+    if platform == "google_reviews":
+        for ch in result.scalars().all():
+            try:
+                import json as _json
+
+                meta = _json.loads(ch.metadata_json or "{}")
+            except (ValueError, TypeError):
+                meta = {}
+            if isinstance(meta, dict) and str(
+                meta.get("location_id") or meta.get("listing_id")
+            ) == str(external_asset_id):
+                channel = ch
+                break
+    else:
+        channel = result.scalars().first()
+
+    # Get the platform post id from the job result.
+    job_result = job_row.result or {}
+    post_id = job_result.get("id") or job_result.get("name") or job_result.get("media_id")
+
+    if not post_id:
+        raise HTTPException(
+            status_code=409, detail="job has no recorded platform post id"
+        )
+
+    # Resolve token.
+    access_token = None
+    refresh_token = None
+    if channel is not None:
+        access_token = (
+            decrypt_token(channel.access_token) if channel.access_token else None
+        )
+        refresh_token = (
+            decrypt_token(channel.refresh_token) if channel.refresh_token else None
+        )
+
+    # Call the provider's delete_post.
+    provider = _provider_for(platform)
+    if provider is None and platform != "google_reviews":
+        raise HTTPException(
+            status_code=501, detail=f"delete not supported for {platform}"
+        )
+
+    delete_results: list[dict] = []
+    if platform == "google_reviews":
+        publisher = GoogleBusinessPublisher(access_token or "", refresh_token)
+        publisher.set_token_persister(None) if False else None
+        try:
+            r = await publisher.delete_post(access_token or "", post_id)
+            delete_results.append(r)
+        except Exception as e:
+            delete_results.append({"error": str(e)[:200], "platform": platform})
+    else:
+        try:
+            r = await provider.delete_post(access_token or "", post_id)
+            delete_results.append(r)
+        except Exception as e:
+            delete_results.append({"error": str(e)[:200], "platform": platform})
+
+    # Record the deletion in the job result.
+    job_row.result = {**(job_row.result or {}), "deleted": True, "delete_results": delete_results}
+    job_row.status = "cancelled"
+    job_row.last_error = "deleted by user"
+    await db.commit()
+
+    return JobOut(
+        job_id=job_row.id,
+        status=job_row.status,
+        lane=job_row.lane,
+        created_at=job_row.created_at.isoformat(),
+    )
+
+
+@router.post("/publish/{job_id}/cancel", response_model=JobOut)
+async def cancel_publish_job(
+    job_id: str,
+    body: CancelPublishBody | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a queued or scheduled publish job before it runs.
+
+    Only jobs in 'accepted', 'queued', 'retrying', or 'blocked' state can be
+    cancelled. Already-published jobs must use the delete endpoint.
+    """
+    tenant_id = tenant_id_of(user)
+    job = await db.execute(
+        select(Job).where(Job.id == job_id, Job.tenant_id == tenant_id)
+    )
+    job_row = job.scalar_one_or_none()
+    if not job_row:
+        raise HTTPException(status_code=404, detail="Publish job not found")
+
+    if job_row.status not in {"accepted", "queued", "retrying", "blocked"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"job is in '{job_row.status}' state; cannot cancel (use delete for published posts)",
+        )
+
+    job_row.status = "cancelled"
+    job_row.last_error = (body.reason if body and body.reason else "cancelled by user")
+    await db.commit()
+
+    return JobOut(
+        job_id=job_row.id,
+        status=job_row.status,
+        lane=job_row.lane,
+        created_at=job_row.created_at.isoformat(),
+    )
+
+
 @router.get("/publish/{job_id}", response_model=JobOut)
 async def publish_status(
     job_id: str,

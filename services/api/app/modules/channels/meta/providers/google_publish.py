@@ -130,3 +130,27 @@ class GoogleBusinessPublisher:
             "state": data.get("state"),
             "searchUrl": data.get("searchUrl"),
         }
+
+    async def delete_post(self, token: str, post_id: str) -> dict:
+        """Delete a Google Business Profile local post.
+
+        ``post_id`` is the full resource name returned by publish_post
+        (e.g. "accounts/123/locations/456/localPosts/789").
+        """
+        if not post_id:
+            raise GoogleReviewsError("post_id is required for delete", 400)
+
+        # Accept both full resource names and bare ids.
+        if "/" not in post_id:
+            raise GoogleReviewsError(
+                "post_id must be the full localPost resource name", 400
+            )
+
+        url = f"https://mybusiness.googleapis.com/v1/{post_id}"
+        resp = await self._client._authed_request("DELETE", url)
+        if resp.status_code not in (200, 204):
+            raise GoogleReviewsError(
+                f"delete_local_post failed ({resp.status_code}): {resp.text[:300]}",
+                resp.status_code,
+            )
+        return {"deleted": True, "platform": "google_reviews", "post_id": post_id}

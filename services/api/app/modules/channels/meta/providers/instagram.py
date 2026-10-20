@@ -616,6 +616,21 @@ class InstagramAdapter(MetaProviderAdapter):
             "asset_id": asset_id,
         }
 
+    async def delete_post(self, token: str, media_id: str) -> dict:
+        """Delete a published Instagram media object.
+
+        Instagram Graph API supports DELETE /{media-id} for media published
+        by the app. Returns {"deleted": True} on success.
+        """
+        if not media_id:
+            raise MetaAPIError("media_id is required for delete", 400)
+        resp = await self._graph("DELETE", f"/{media_id}", token)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"success": True}
+        return {"deleted": True, "platform": "instagram", "media_id": media_id, **data}
+
     # Fields documented on the IG User reference states it plainly: "Updating:
     # not supported." name, biography, website, username and the avatar are all
     # readable and none of them are writable over the Graph API, so there is
