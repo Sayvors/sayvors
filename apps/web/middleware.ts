@@ -75,6 +75,12 @@ export function middleware(request: NextRequest) {
     "frame-ancestors 'none'",
   ].join("; ");
 
+  // Next.js 16 extracts the nonce from the Content-Security-Policy header on
+  // the request (not just x-nonce) and applies it to its inline bootstrap
+  // scripts. Without this on the request, strict-dynamic blocks every inline
+  // script and the page renders with dead JS — login/signup never hydrate.
+  requestHeaders.set("Content-Security-Policy", csp);
+
   const response = NextResponse.next({
     request: { headers: requestHeaders },
   });
