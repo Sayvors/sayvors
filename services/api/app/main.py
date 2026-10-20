@@ -350,8 +350,11 @@ app.include_router(account_router)
 app.include_router(tts_router)
 app.include_router(stt_router)
 app.include_router(llm_router)
-app.include_router(channels_router)
+# Publish is registered BEFORE channels on purpose: the channels router owns
+# GET /api/v1/channels/{channel_id}, so registering it first would swallow
+# GET /api/v1/channels/publish (the posts feed) as a channel lookup.
 app.include_router(publish_router)
+app.include_router(channels_router)
 app.include_router(leads_router)
 app.include_router(review_issues_router)
 app.include_router(inbox_router)

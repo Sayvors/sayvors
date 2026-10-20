@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
 import { INK, INK2 } from "@/components/channels/instagram/ui";
 import { apiFetch } from "@/lib/api-rag";
+import { externalAssetIdFor } from "@/lib/publish-targets";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
@@ -33,20 +34,23 @@ import {
  * format keeps its own framing, and the step-1 thumbnail + live preview
  * mirror whatever you're currently configuring.
  *
- * Everything here is local state — the publish endpoint hasn't landed.
- * The confirm modal says so explicitly rather than faking success.
+ * Confirming uploads locally-picked media to /api/v1/media/upload (the
+ * provider must fetch the files from a public URL at publish time), then
+ * creates one job per destination+format via POST /api/v1/channels/publish.
+ * A locally-picked file that never uploads means the post never leaves,
+ * so only https URLs and stored files make it through the confirm gate.
  */
-
-const DEMO_TARGETS: PublishTarget[] = [
-  { id: "demo:instagram", platform: "instagram", name: "Sayvors Studio", handle: "sayvors.studio", demo: true },
-  { id: "demo:facebook", platform: "facebook", name: "Sayvors Page", demo: true },
-  { id: "demo:whatsapp", platform: "whatsapp", name: "+91 98••• •••12", demo: true },
-];
 
 const FIELD =
   "rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
 
-export default function PublishComposer() {
+export default function PublishComposer({
+  onPublished,
+  onCancel,
+}: {
+  onPublished?: () => void;
+  onCancel?: () => void;
+}) {
   // ── Destinations ─────────────────────────────────────────────────
   const [targets, setTargets] = useState<PublishTarget[]>([]);
   const [googleTargets, setGoogleTargets] = useState<PublishTarget[]>([]);
@@ -58,68 +62,11 @@ export default function PublishComposer() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { fetchMetaAssets } = await import("@/lib/api-meta");
-      const providers = ["facebook", "instagram", "whatsapp"] as const;
-      const results = await Promise.allSettled([
-        ...providers.map((p) => fetchMetaAssets(p)),
-        apiFetch("/api/v1/channels?limit=100"),
-      ]);
+      const { fetchPublishTargets } = await import("@/lib/publish-targets");
+      const set = await fetchPublishTargets();
       if (cancelled) return;
-      const rows: PublishTarget[] = [];
-      const googleRows: PublishTarget[] = [];
-
-      // Meta assets (Facebook, Instagram, WhatsApp)
-      providers.forEach((provider, i) => {
-        const r = results[i];
-        const assets = (r.status === "fulfilled" ? r.value.assets ?? [] : []) as Array<{ asset_type: string; active: boolean; external_asset_id: string; name: string | null; username: string | null; phone: string | null }>;
-        const active = assets.filter((a) => a.active);
-        if (provider === "whatsapp") {
-          active
-            .filter((a) => a.asset_type === "phone_number")
-            .forEach((a) =>
-              rows.push({
-                id: `wa:${a.external_asset_id}`,
-                platform: "whatsapp",
-                name: a.phone ?? a.name ?? "WhatsApp number",
-                handle: a.phone ?? null,
-              }),
-            );
-        } else {
-          active
-            .filter((a) => a.asset_type === "page" || a.asset_type === "account")
-            .forEach((a) =>
-              rows.push({
-                id: `${provider}:${a.external_asset_id}`,
-                platform: provider,
-                name: a.name ?? a.username ?? a.external_asset_id,
-                handle: a.username ?? null,
-              }),
-            );
-          if (r.status === "fulfilled" && active.length === 0) {
-            rows.push({ id: `${provider}:empty`, platform: provider, name: PLATFORM_META[provider].label, demo: true });
-          }
-        }
-      });
-
-      // Google Business Profile locations from /api/v1/channels
-      const channelsResult = results[providers.length];
-      if (channelsResult.status === "fulfilled") {
-        const channels = (channelsResult.value as { channels?: Array<{ id: string; platform: string; display_name: string | null; listing_id: string | null; status: string }> }).channels ?? [];
-        channels
-          .filter((c) => c.platform === "google_reviews" && c.status === "active")
-          .forEach((c) => {
-            googleRows.push({
-              id: `google:${c.id}`,
-              platform: "google_reviews",
-              name: c.display_name ?? "Google Business Profile",
-              handle: c.listing_id ?? null,
-              locationId: c.listing_id ?? null,
-            });
-          });
-      }
-
-      setTargets(rows);
-      setGoogleTargets(googleRows);
+      setTargets(set.social);
+      setGoogleTargets(set.google);
       setTargetsStatus("ready");
     })();
     return () => {
@@ -140,6 +87,10 @@ export default function PublishComposer() {
   const [description, setDescription] = useState("");
 
   const blobRef = useRef<string | null>(null);
+
+  // ── Publishing ──────────────────────────────────────────────────
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
 
   // ── Schedule ────────────────────────────────────────────────────
   const [scheduleOn, setScheduleOn] = useState(false);
@@ -231,31 +182,14 @@ export default function PublishComposer() {
     }
   };
 
-  const loadDemo = () => {
-    setTargets(DEMO_TARGETS);
-    setSelected(new Set(DEMO_TARGETS.map((t) => t.id)));
-    setAllConnected(true);
-    setFormats(
-      Object.fromEntries(
-        DEMO_TARGETS.map((t) => [t.id, methodsFor(t.platform, null)] as [string, PostMethod[]]),
-      ),
-    );
-    DEMO_TARGETS.forEach((t) =>
-      methodsFor(t.platform, null).forEach((m) => {
-        const key = cropKeyFor(t.id, m);
-        setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
-      }),
-    );
-  };
-
   // ── Media blob lifecycle ────────────────────────────────────────
-  const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number) => {
+  const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File) => {
     if (blobRef.current && blobRef.current !== url) {
       URL.revokeObjectURL(blobRef.current);
     }
     if (url.startsWith("blob:")) blobRef.current = url;
     else blobRef.current = null;
-    setMedia({ type, url, fileName, sizeBytes });
+    setMedia({ type, url, fileName, sizeBytes, file: file ?? null });
   };
 
   const clearMedia = () => {
@@ -292,20 +226,87 @@ export default function PublishComposer() {
   };
 
   // ── Confirm ─────────────────────────────────────────────────────
+  // Every destination in the confirm needs an id the backend can resolve and
+  // at least one format. Google rows without a listing id cannot be targeted
+  // at all (there is no location to post to), so they are dropped here rather
+  // than enqueued into a job that can only fail.
   const confirmItems = selectedTargets
     .map((t) => ({ target: t, methods: chosenFor(t) }))
-    .filter((i) => i.methods.length > 0);
+    .filter((i) => i.methods.length > 0 && externalAssetIdFor(i.target) !== null);
   const formatCount = confirmItems.reduce((n, i) => n + i.methods.length, 0);
-  const canPublish =
-    confirmItems.length > 0 && (media !== null || caption.trim().length > 0 || description.trim().length > 0);
+  // The publish endpoint requires a fetchable media URL, and WhatsApp's only
+  // format (status) is media-only — a text-only push would fail downstream,
+  // so media is required at the gate too.
+  const canPublish = confirmItems.length > 0 && media !== null;
 
   const openConfirm = () => {
-    if (!canPublish) {
-      setNotice("Pick a destination with at least one format, and add media or a caption.");
+    if (media === null) {
+      setNotice("Attach an image or video — text-only publishing isn't supported yet.");
+      return;
+    }
+    if (confirmItems.length === 0) {
+      setNotice("Pick a destination with at least one format.");
       return;
     }
     setNotice(null);
+    setPublishError(null);
     setConfirmOpen(true);
+  };
+
+  const publishNow = async () => {
+    if (!media || publishing) return;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      // Locally-picked files must go to our storage first: providers (and
+      // the Google Business uploader) fetch the media from a public URL at
+      // publish time, so a blob: URL can never be delivered.
+      let mediaUrl = media.url;
+      if (media.url.startsWith("blob:")) {
+        if (!media.file) throw new Error("The picked file is no longer available — attach it again.");
+        const form = new FormData();
+        form.append("file", media.file);
+        const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
+        mediaUrl = up.image_url;
+        if (!mediaUrl) throw new Error("Upload succeeded but no URL came back — try a different file.");
+      }
+
+      const batchId = crypto.randomUUID();
+      // One idempotency key per attempt so a retry (network drop, 500) never
+      // double-posts: the backend keys jobs as key:platform:method.
+      const destinations = confirmItems.map(({ target: t, methods }) => ({
+        platform: t.platform,
+        external_asset_id: externalAssetIdFor(t) as string,
+        methods,
+      }));
+
+      await apiFetch("/api/v1/channels/publish", {
+        method: "POST",
+        body: JSON.stringify({
+          media_url: mediaUrl,
+          media_type: media.type,
+          caption,
+          description,
+          scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
+          destinations,
+          batch_id: batchId,
+          idempotency_key: `${batchId}:${Date.now()}`,
+        }),
+      });
+
+      setConfirmOpen(false);
+      clearMedia();
+      setCaption("");
+      setDescription("");
+      setScheduleOn(false);
+      setScheduleAt("");
+      setFormats({});
+      onPublished?.();
+    } catch (e) {
+      setPublishError(e instanceof Error ? e.message : "Publishing failed — try again.");
+    } finally {
+      setPublishing(false);
+    }
   };
 
   // ── What's being edited (mirrors) ───────────────────────────────
@@ -343,6 +344,15 @@ export default function PublishComposer() {
     <div className="flex h-full flex-col">
       {/* Header */}
       <header className="shrink-0 border-b border-[var(--ui-line)] px-4 py-4 sm:px-6">
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="mb-2 inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--ui-ink-2)] transition hover:text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+          >
+            ← Back to posts
+          </button>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h1 className={`text-[20px] font-bold ${INK}`}>Publish a post</h1>
@@ -350,7 +360,6 @@ export default function PublishComposer() {
               One post, every connected network — pick a format on any destination to configure its crop.
             </p>
           </div>
-          <p className={`text-[11px] font-semibold uppercase tracking-widest ${INK2}`}>UI preview</p>
         </div>
       </header>
 
@@ -364,7 +373,7 @@ export default function PublishComposer() {
                 1 · Media
               </h2>
               <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                An image, a video, or nothing — the text-only option stays open. The frame mirrors the format you&apos;re configuring.
+                An image or video is required — the frame mirrors the format you&apos;re configuring.
               </p>
               <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
             </section>
@@ -498,7 +507,6 @@ export default function PublishComposer() {
                 onApplyAllGoogle={applyAllGoogle}
                 onToggleTarget={toggleTarget}
                 onToggleGoogleTarget={toggleTarget}
-                onLoadDemo={loadDemo}
               />
             </section>
 
@@ -700,6 +708,9 @@ export default function PublishComposer() {
         captionLen={caption.trim().length}
         descriptionLen={description.trim().length}
         scheduled={scheduleOn && scheduleAt ? scheduleAt : null}
+        busy={publishing}
+        error={publishError}
+        onConfirm={publishNow}
         onClose={() => setConfirmOpen(false)}
       />
     </div>

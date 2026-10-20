@@ -51,7 +51,6 @@ export default function DestinationSelector({
   onApplyAllGoogle,
   onToggleTarget,
   onToggleGoogleTarget,
-  onLoadDemo,
 }: {
   targets: PublishTarget[];
   status: "loading" | "ready" | "error";
@@ -63,7 +62,6 @@ export default function DestinationSelector({
   onApplyAllGoogle: (v: boolean) => void;
   onToggleTarget: (t: PublishTarget) => void;
   onToggleGoogleTarget: (t: PublishTarget) => void;
-  onLoadDemo: () => void;
 }) {
   const usable = targets.filter((t) => !t.demo && PLATFORM_META[t.platform]?.enabled);
   const comingSoon = PLATFORM_ORDER.filter((p) => !PLATFORM_META[p].enabled);
@@ -96,13 +94,6 @@ export default function DestinationSelector({
           >
             Connect channels
           </Link>
-          <button
-            type="button"
-            onClick={onLoadDemo}
-            className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-          >
-            Preview with sample channels
-          </button>
         </div>
       </div>
     );

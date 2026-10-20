@@ -298,6 +298,15 @@ Authorization: Bearer <token>
 | GET | `/publish/{job_id}` | Poll single publish job |
 | POST | `/publish/{job_id}/delete` | Delete published post from platforms |
 | POST | `/publish/{job_id}/cancel` | Cancel queued/scheduled job |
+| POST | `/publish/delete` | Delete many published posts (body: `job_ids`, optional `platforms`) |
+
+`GET /publish` and `POST /publish/delete` return the same job shape:
+`job_id`, `status`, `platform`, `method`, `external_asset_id`, `caption`,
+`media_url`, `scheduled_at`, `result`, `last_error`, `batch_id`. The posts
+feed renders a card per job from those fields and removes a post by ticking
+it and calling `/publish/delete` — a job that has not gone out yet is
+cancelled instead of deleted, and one that already went out is deleted from
+the platform it was published to (best effort per platform).
 
 ### Connect Channel
 ```http

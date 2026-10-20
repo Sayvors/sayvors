@@ -30,6 +30,9 @@ export interface MediaState {
   url: string;
   fileName?: string;
   sizeBytes?: number;
+  /** The original file when the media was picked locally — needed so the
+   * composer can upload it to /api/v1/media/upload for a public URL. */
+  file?: File | null;
 }
 
 export interface CropState {

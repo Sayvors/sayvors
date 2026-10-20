@@ -124,6 +124,11 @@ class JobOut(BaseModel):
     last_error: str | None = None
     updated_at: str | None = None
     batch_id: str | None = None
+    # The post's own text and media, echoed from the job payload so the
+    # posts feed can render a real card (caption + thumbnail) without a
+    # second round trip to the provider.
+    caption: str | None = None
+    media_url: str | None = None
 
 
 @router.post("/publish", response_model=list[JobOut])
@@ -190,6 +195,8 @@ async def publish_post(
                         external_asset_id=asset_id,
                         scheduled_at=body.scheduled_at,
                         batch_id=body.batch_id,
+                        caption=body.caption or None,
+                        media_url=body.media_url,
                     )
                 )
         await db.commit()
@@ -275,6 +282,9 @@ async def list_publish_jobs(
                 result=job_row.result,
                 last_error=job_row.last_error,
                 updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+                batch_id=payload.get("batch_id"),
+                caption=payload.get("caption"),
+                media_url=payload.get("media_url"),
             )
         )
     return out
@@ -365,6 +375,8 @@ async def batch_delete_published_posts(
                     last_error=job_row.last_error,
                     updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
                     batch_id=payload.get("batch_id"),
+                    caption=payload.get("caption"),
+                    media_url=payload.get("media_url"),
                 )
             )
             continue
@@ -447,6 +459,8 @@ async def batch_delete_published_posts(
                 last_error=job_row.last_error,
                 updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
                 batch_id=payload.get("batch_id"),
+                caption=payload.get("caption"),
+                media_url=payload.get("media_url"),
             )
         )
 
@@ -491,6 +505,9 @@ async def publish_status_batch(
                 result=job_row.result,
                 last_error=job_row.last_error,
                 updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+                batch_id=payload.get("batch_id"),
+                caption=payload.get("caption"),
+                media_url=payload.get("media_url"),
             )
         )
     return out
@@ -568,11 +585,22 @@ async def delete_published_post(
         job_row.status = "cancelled"
         job_row.last_error = "deleted by user before publish"
         await db.commit()
+        payload = job_row.payload or {}
         return JobOut(
             job_id=job_row.id,
             status=job_row.status,
             lane=job_row.lane,
             created_at=job_row.created_at.isoformat(),
+            platform=payload.get("platform"),
+            method=payload.get("method"),
+            external_asset_id=payload.get("external_asset_id"),
+            scheduled_at=payload.get("scheduled_at"),
+            result=job_row.result,
+            last_error=job_row.last_error,
+            updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+            batch_id=payload.get("batch_id"),
+            caption=payload.get("caption"),
+            media_url=payload.get("media_url"),
         )
 
     if job_row.status != "succeeded":
@@ -679,6 +707,9 @@ async def delete_published_post(
         result=job_row.result,
         last_error=job_row.last_error,
         updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+        batch_id=payload.get("batch_id"),
+        caption=payload.get("caption"),
+        media_url=payload.get("media_url"),
     )
 
 
@@ -724,6 +755,9 @@ async def cancel_publish_job(
         result=job_row.result,
         last_error=job_row.last_error,
         updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
+        batch_id=payload.get("batch_id"),
+        caption=payload.get("caption"),
+        media_url=payload.get("media_url"),
     )
 
 
