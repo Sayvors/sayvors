@@ -34,6 +34,13 @@ export const metadata: Metadata = {
   icons: "/Sayvors_Icon.png",
 };
 
+// Nonce-based CSP (see apps/web/middleware.ts) requires every page to be
+// dynamically rendered so Next.js can inject the per-request nonce into its
+// inline bootstrap scripts at request time. Without this, strict-dynamic
+// blocks every inline script and the page renders with dead JS — forms
+// never hydrate, login/signup fail silently.
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({
   children,
 }: Readonly<{
