@@ -131,6 +131,52 @@ def decrypt_contact_phone(phone: str | None) -> str | None:
         return phone
 
 
+def categorize_message(
+    content: str | None,
+    platform: str | None = None,
+    rating: int | None = None,
+) -> tuple[str, str]:
+    """Auto-categorise an inbound message into (category, priority).
+
+    Rules (in priority order):
+      - Google reviews with rating <= 2  -> complaint, high
+      - Google reviews with rating == 3  -> feedback, normal
+      - Google reviews with rating >= 4  -> feedback, low
+      - Messages containing complaint keywords -> complaint, high
+      - Messages containing urgent keywords -> important, urgent
+      - Default -> normal, normal
+    """
+    text = (content or "").lower()
+    plat = (platform or "").lower()
+
+    # Google review: categorise by rating.
+    if plat == "google_reviews" and rating is not None:
+        if rating <= 2:
+            return "complaint", "high"
+        if rating == 3:
+            return "feedback", "normal"
+        return "feedback", "low"
+
+    # Keyword-based heuristics for chat messages.
+    complaint_words = {
+        "complaint", "issue", "problem", "broken", "not working",
+        "angry", "terrible", "worst", "refund", "cancel", "disappointed",
+        "unhappy", "frustrated", "horrible", "awful", "scam", "fake",
+    }
+    urgent_words = {
+        "urgent", "emergency", "asap", "immediately", "critical",
+        "help", "sos", "911", "danger",
+    }
+
+    words = set(text.split())
+    if complaint_words & words:
+        return "complaint", "high"
+    if urgent_words & words:
+        return "important", "urgent"
+
+    return "normal", "normal"
+
+
 def encrypt_webhook_secret(secret: str | None) -> str | None:
     """Encrypt a channel webhook secret at rest."""
     if not secret:
@@ -677,6 +723,8 @@ async def list_inbox_threads(
                 "message_count": total,
                 "unread": int(unread or 0),
                 "is_unknown": phone is None,
+                "category": last_row.category or "normal",
+                "priority": last_row.priority or "normal",
             }
         )
     return out

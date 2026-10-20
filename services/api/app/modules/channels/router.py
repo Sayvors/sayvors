@@ -537,11 +537,17 @@ async def inbox_ws(websocket: WebSocket):
 @_inbox_router.get("/threads", response_model=InboxThreadListResponse)
 async def inbox_threads(
     search: str | None = Query(None, max_length=200),
+    category: str | None = Query(None, max_length=32),
+    priority: str | None = Query(None, max_length=16),
     limit: int = Query(100, ge=1, le=500),
     ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
     threads = await list_inbox_threads(ctx.user, db, search=search, limit=limit)
+    if category:
+        threads = [t for t in threads if t.get("category") == category]
+    if priority:
+        threads = [t for t in threads if t.get("priority") == priority]
     visible = ctx.visible_channel_ids()
     if visible is not None:
         threads = [t for t in threads if t.get("channel_id") in visible]
@@ -589,6 +595,45 @@ async def inbox_thread_messages(
         ],
         total=len(msgs),
     )
+
+
+class ThreadCategoryUpdate(BaseModel):
+    category: str = Field(..., min_length=1, max_length=32)
+    priority: str | None = Field(None, max_length=16)
+
+
+@_inbox_router.patch("/threads/{channel_id}/{contact_phone}/category", response_model=dict)
+async def inbox_thread_update_category(
+    channel_id: str,
+    contact_phone: str,
+    body: ThreadCategoryUpdate,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the category/priority of all messages in a thread.
+
+    The tenant can override the auto-assigned category. Updates every message
+    in the thread so the inbox filter reflects the change immediately.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    from sqlalchemy import update
+
+    phone_hash = hash_contact_phone(phone) if phone else None
+    conditions = [ChannelMessage.channel_id == channel_id]
+    if phone_hash is None:
+        conditions.append(ChannelMessage.contact_phone_hash.is_(None))
+    else:
+        conditions.append(ChannelMessage.contact_phone_hash == phone_hash)
+
+    await db.execute(
+        update(ChannelMessage)
+        .where(*conditions)
+        .values(category=body.category, priority=body.priority)
+    )
+    await db.commit()
+    return {"channel_id": channel_id, "contact_phone": phone, "category": body.category, "priority": body.priority}
 
 
 @_inbox_router.post("/send", response_model=InboxSendResponse)

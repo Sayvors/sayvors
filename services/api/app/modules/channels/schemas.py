@@ -122,6 +122,8 @@ class InboxThread(BaseModel):
     last_message_at: str
     last_direction: str
     message_count: int
+    category: str | None = None
+    priority: str | None = None
     # Inbound messages with no outbound reply after them. Computed per thread so
     # the badge matches the conversation the user is about to open.
     unread: int = 0

@@ -289,6 +289,11 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
     )
     if existing.scalar_one_or_none():
         return
+    from .service import categorize_message as _categorize
+
+    category, priority = _categorize(
+        review.text or "", platform="google_reviews", rating=review.rating
+    )
     db.add(
         ChannelMessage(
             id=str(uuid.uuid4()),
@@ -298,6 +303,8 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
             content=review.text or f"({review.rating}/5 stars, no comment)",
             content_type="review",
             status="read",
+            category=category,
+            priority=priority,
         )
     )
     await db.commit()
