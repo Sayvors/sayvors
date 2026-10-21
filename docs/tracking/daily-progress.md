@@ -97,3 +97,4 @@
 - RAG decision (D10) — prefix-window cosine, JSON embeddings
 - Reviews worker serial poller — concurrent polling with semaphore
 - Redis re-arm prober — fail-closed paths recover after outage
+- OPS-1 backups — pg_dump → S3 backup script + restore rehearsal script written
