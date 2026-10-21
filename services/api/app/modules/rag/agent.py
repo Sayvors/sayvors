@@ -25,6 +25,7 @@ from ..llm.gateway import (
     ensure_usable,
     resolve_tenant_model,
 )
+from ..team.context import tenant_id_of
 from ..users.models import User
 from .service import get_databank
 from .tools import TOOL_RUNNERS, ToolContext, tool_definitions
@@ -146,7 +147,7 @@ async def ask_question(
             temperature=0.2,
             max_tokens=2048,
             tools=tools,
-            tenant_id=user.id,
+            tenant_id=tenant_id_of(user),
             purpose="databank.ask",
         )
         if not resp.tool_calls:
@@ -207,7 +208,7 @@ async def ask_question(
             system_prompt=SYSTEM_PROMPT,
             temperature=0.2,
             max_tokens=2048,
-            tenant_id=user.id,
+            tenant_id=tenant_id_of(user),
             purpose="databank.ask",
         )
         answer = resp.content.strip()

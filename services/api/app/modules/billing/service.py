@@ -210,20 +210,29 @@ async def set_default(method_id: str, user_id: str, db: AsyncSession) -> dict:
 
 # ── Plan + AI credits (D1) ─────────────────────────────────
 
-async def get_budget(user_id: str, db: AsyncSession) -> dict:
+async def get_budget(tenant_id: str, db: AsyncSession) -> dict:
     """Tenant-facing wallet: plan + live balance.
 
-    The live balance is Redis when available, else the DB column (top-up
-    source of truth — may lag spend made since the last grant).
+    A missing Redis key is rebuilt from grants minus metered usage, never
+    from ``users.ai_credit_cents`` alone — that column may be a stale or
+    grants-only figure and would hand already-spent credits back. It is only
+    a last-resort display fallback when the rebuild itself fails.
     """
     from ..users.models import User
-    from .budget import get_balance
+    from .wallet import ensure_wallet_balance
 
-    user = await db.get(User, user_id)
+    user = await db.get(User, tenant_id)
     if user is None:
         raise ValueError("Tenant not found.")
-    live = await get_balance(user_id)
-    balance = live if live is not None else (user.ai_credit_cents or 0)
+    try:
+        balance = await ensure_wallet_balance(tenant_id, db)
+    except Exception as e:
+        logger.error(
+            "Wallet rehydrate failed for %s; showing DB grant fallback: %s",
+            tenant_id,
+            e,
+        )
+        balance = max(0, user.ai_credit_cents or 0)
     return {
         "plan": user.plan or "free",
         "balance_cents": balance,
@@ -239,32 +248,60 @@ async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
 
     A Pro purchase grants PLAN_INCLUDED_CENTS bundled credits on top of any
     explicit top-up — the DB is updated as a pro user with a $20 AI budget.
+
+    The new balance is computed from the event ledger, not from the raw
+    grants column or a possibly stale Redis key. Otherwise a top-up after
+    the old TTL bug would re-add credits the tenant had already spent.
     """
     from ..users.models import User
     from .budget import PLAN_INCLUDED_CENTS, sync_balance
+    from .wallet import compute_balance
 
     if plan not in ("free", "pro"):
         raise ValueError("Unknown plan.")
-    user = await db.get(User, user_id)
+    # Serialise grants so two admins cannot lose one top-up to a
+    # read-modify-write race.
+    user = (
+        await db.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+    ).scalar_one_or_none()
     if user is None:
         raise ValueError("Tenant not found.")
     old_plan = user.plan or "free"
     plan_changed = old_plan != plan
     bundled = PLAN_INCLUDED_CENTS.get(plan, 0) if plan_changed else 0
     total_add = (add_credit_cents or 0) + bundled
+    # The event ledger is authoritative here, not the live Redis key: a
+    # stale/lost key must not re-add credits the tenant already spent. The
+    # expensive part happens only on an admin grant, never on an AI call.
+    before = await compute_balance(user_id, db)
+    if before["warning"]:
+        logger.warning(
+            "Plan grant for %s uses an approximate wallet window: %s",
+            user_id,
+            before["warning"],
+        )
+    new_balance = int(before["balance_cents"]) + total_add
     user.plan = plan
-    user.ai_credit_cents = (user.ai_credit_cents or 0) + total_add
+    user.ai_credit_cents = new_balance
     db.add(BillingEvent(
         id=str(uuid.uuid4()),
         tenant_id=user_id,
         kind="plan_grant" if plan_changed else "credit_topup",
         amount_cents=total_add,
-        balance_after_cents=user.ai_credit_cents,
+        balance_after_cents=new_balance,
         note=note,
         created_by=created_by,
     ))
     await db.commit()
-    await sync_balance(user_id, user.ai_credit_cents)
+    synced = await sync_balance(user_id, new_balance)
+    if not synced:
+        logger.error(
+            "Plan grant committed but Redis sync failed: tenant=%s balance=%s¢",
+            user_id,
+            new_balance,
+        )
     logger.info("Plan grant: tenant=%s plan=%s +%s¢ (by=%s)", user_id, plan, total_add, created_by)
     return {
         "plan": user.plan,

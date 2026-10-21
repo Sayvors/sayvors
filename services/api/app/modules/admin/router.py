@@ -276,6 +276,30 @@ class PlanGrantResponse(BaseModel):
     currency: str = "usd"
 
 
+class WalletResyncRequest(BaseModel):
+    """Preview by default; applying a repair requires dry_run=false."""
+
+    dry_run: bool = True
+    force: bool = False
+    note: str | None = Field(default=None, max_length=500)
+
+
+class WalletResyncResponse(BaseModel):
+    tenant_id: str
+    applied: bool
+    balance_cents: int
+    previous_balance_cents: int | None = None
+    delta_cents: int
+    opening_cents: int
+    credits_cents: int
+    spent_cents: int
+    calls: int
+    window_started_at: str | None = None
+    reliable: bool
+    warning: str | None = None
+    redis_synced: bool | None = None
+
+
 @router.post("/tenants/{user_id}/plan", response_model=PlanGrantResponse)
 async def admin_grant_plan(
     user_id: str,
@@ -297,6 +321,42 @@ async def admin_grant_plan(
         )
     except ValueError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
+
+
+@router.post("/tenants/{user_id}/resync-balance", response_model=WalletResyncResponse)
+async def admin_resync_balance(
+    user_id: str,
+    body: WalletResyncRequest | None = None,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview or apply a wallet repair from grants minus metered usage.
+
+    Dry-run is the default so a stray POST cannot move money. The preview
+    includes the spend window and a reliability flag; apply with
+    ``{"dry_run": false}``. If the window predates usage retention, the
+    endpoint returns 409 unless ``force`` is explicitly set.
+    """
+    from ..billing.wallet import UnsafeWalletResync, resync_wallet
+
+    request = body or WalletResyncRequest()
+    try:
+        return await resync_wallet(
+            user_id,
+            db,
+            dry_run=request.dry_run,
+            force=request.force,
+            note=request.note,
+            created_by="admin",
+        )
+    except UnsafeWalletResync as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(e), "preview": e.preview},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/health", response_model=AdminHealth)

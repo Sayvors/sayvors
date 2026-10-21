@@ -81,7 +81,11 @@ class BillingEvent(Base):
     """Audit ledger for plan/credit changes (admin-visible purchases).
 
     One row per grant/topup/adjustment — NEVER per AI call (per-call spend
-    lives in llm_usage_events, priced by the TOKEN_PRICES table)."""
+    lives in llm_usage_events, priced by the TOKEN_PRICES table).
+
+    ``balance_resync`` is an audit-only wallet baseline written by the admin
+    repair endpoint. It is deliberately excluded from credit sums so running
+    the repair twice cannot double-count the adjustment."""
 
     __tablename__ = "billing_events"
 
@@ -89,7 +93,7 @@ class BillingEvent(Base):
     tenant_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    kind: Mapped[str] = mapped_column(String(32))  # plan_grant | credit_topup | credit_adjust
+    kind: Mapped[str] = mapped_column(String(32))  # plan_grant | credit_topup | credit_adjust | balance_resync
     amount_cents: Mapped[int] = mapped_column(Integer, default=0)
     balance_after_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)

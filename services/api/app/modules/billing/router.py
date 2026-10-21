@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
+from ..team.context import tenant_id_of
 from . import service
 from .schemas import (
     BillingProfileIn,
@@ -20,9 +21,13 @@ router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 @router.get("/budget", response_model=BudgetOut)
 async def read_budget(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Tenant wallet: current plan + remaining AI credit balance."""
+    """Workspace wallet: current plan + remaining AI credit balance.
+
+    Employees see the owner's workspace wallet (AI spend is charged there);
+    billing profile and saved cards below remain owner-scoped.
+    """
     try:
-        return await service.get_budget(user.id, db)
+        return await service.get_budget(tenant_id_of(user), db)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
