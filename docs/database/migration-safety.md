@@ -125,6 +125,13 @@ never drift apart.
 The analysis module. Exposes `analyze_chain()` and `find_model_drift()`, plus
 `format_report()` for human-readable output.
 
+The guard is hermetic. It reads migration files and ORM metadata only: it never
+opens a database connection and never uses application configuration. During
+the model import it seeds a throwaway `JWT_SECRET` and restores the previous
+value afterwards, because `app/config.py` fails closed at import time while the
+secret is still the placeholder. That is why CI can run it as a plain step with
+no repository secret — a guard that needs deploy secrets cannot gate a deploy.
+
 It checks:
 
 - **duplicate revision ids** - two files claiming one id

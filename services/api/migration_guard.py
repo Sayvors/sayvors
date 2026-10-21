@@ -58,6 +58,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: Directory holding the alembic revision scripts.
 VERSIONS_DIR = Path(__file__).resolve().parent / "alembic" / "versions"
 
+#: Throwaway secret used only while the guard imports the ORM metadata.
+#:
+#: The guard is static analysis: it parses the migration scripts and reads
+#: ``Base.metadata``. It never opens a connection and never handles a JWT.
+#: But importing ``app.database`` pulls in ``app.config``, whose module-level
+#: gate exits the process while JWT_SECRET is still the placeholder. A CI
+#: runner has no ``.env``, so the guard died before it could check anything.
+#: Seeding a value for the duration of the import keeps the tool runnable
+#: anywhere without deploy secrets, while the gate stays intact for real app
+#: boots (which import ``app.config`` normally, without this module).
+_GUARD_JWT_SECRET = "migration-guard-static-analysis-not-a-real-secret"
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -263,20 +275,35 @@ def _model_tables() -> dict[str, set[str]]:
     Every model module must be imported so ``Base.metadata`` is complete.
     A model that is not imported here would look like a missing table.
     """
-    from app.database import Base
+    import os
 
-    import app.modules.analytics.models  # noqa: F401
-    import app.modules.auth.models  # noqa: F401
-    import app.modules.billing.models  # noqa: F401
-    import app.modules.channels.models  # noqa: F401
-    import app.modules.channels.meta.models  # noqa: F401
-    import app.modules.jobs.models  # noqa: F401
-    import app.modules.llm.models  # noqa: F401
-    import app.modules.localith.models  # noqa: F401
-    import app.modules.notifications.models  # noqa: F401
-    import app.modules.outbox.models  # noqa: F401
-    import app.modules.posts.models  # noqa: F401
-    import app.modules.users.models  # noqa: F401
+    # See ``_GUARD_JWT_SECRET``. Only override for the duration of the import,
+    # then restore, so a pre-push or pytest process that already has a real
+    # value is left untouched. Once the model modules are in ``sys.modules``
+    # the config gate cannot fire again, which makes repeat calls no-ops.
+    previous_secret = os.environ.get("JWT_SECRET")
+    os.environ["JWT_SECRET"] = _GUARD_JWT_SECRET
+    try:
+        from app.database import Base
+
+        import app.modules.analytics.models  # noqa: F401
+        import app.modules.auth.models  # noqa: F401
+        import app.modules.billing.models  # noqa: F401
+        import app.modules.channels.models  # noqa: F401
+        import app.modules.channels.meta.models  # noqa: F401
+        import app.modules.jobs.models  # noqa: F401
+        import app.modules.llm.models  # noqa: F401
+        import app.modules.localith.models  # noqa: F401
+        import app.modules.notifications.models  # noqa: F401
+        import app.modules.outbox.models  # noqa: F401
+        import app.modules.posts.models  # noqa: F401
+        import app.modules.stt.models  # noqa: F401
+        import app.modules.users.models  # noqa: F401
+    finally:
+        if previous_secret is None:
+            os.environ.pop("JWT_SECRET", None)
+        else:
+            os.environ["JWT_SECRET"] = previous_secret
 
     return {
         table.name: {column.name for column in table.columns}
