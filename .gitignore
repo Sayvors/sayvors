@@ -22,3 +22,6 @@ brag-*/
 
 # Local curl cookie jars (contain live session tokens) - never commit
 cj*.txt
+
+# Local agent tooling state - never commit
+.commandcode/

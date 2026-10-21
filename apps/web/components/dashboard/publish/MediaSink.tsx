@@ -31,7 +31,7 @@ export default function MediaSink({
   thumbLabel = "",
 }: {
   media: { type: "image" | "video" | null; url: string; fileName?: string; sizeBytes?: number } | null;
-  onPick: (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number) => void;
+  onPick: (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File) => void;
   onClear: () => void;
   thumb?: ThumbCrop | null;
   thumbLabel?: string;
@@ -58,7 +58,7 @@ export default function MediaSink({
       setError("Images or video only.");
       return;
     }
-    onPick(kind, URL.createObjectURL(file), file.name, file.size);
+    onPick(kind, URL.createObjectURL(file), file.name, file.size, file);
   };
 
   const addUrl = () => {

@@ -402,6 +402,18 @@ class WhatsAppAdapter(MetaProviderAdapter):
             caption=caption,
         )
 
+    async def delete_post(self, token: str, post_id: str) -> dict:
+        """WhatsApp status updates are ephemeral (24h) and have no delete API.
+
+        Returns a 501 so the caller can surface "not supported" rather than
+        silently pretending the delete succeeded.
+        """
+        raise MetaAPIError(
+            "WhatsApp status updates cannot be deleted via the API "
+            "(they expire automatically after 24 hours)",
+            501,
+        )
+
     async def _publish_status_update(
         self,
         phone_number_id: str,

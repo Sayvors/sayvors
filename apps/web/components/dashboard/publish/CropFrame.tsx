@@ -15,6 +15,13 @@ import { useRef, useState } from "react";
 
 const BOX = 200; // on-screen editor width, css px
 
+/**
+ * The editor's on-screen box width. Previews render at a different size,
+ * so they scale the stored pan offset by (their width / this) to stay
+ * pixel-for-pixel equivalent to what the editor shows.
+ */
+export const CROP_BOX = BOX;
+
 export const CROP_KEYS = ["orig", "1:1", "4:5", "16:9", "9:16"] as const;
 export type CropKey = (typeof CROP_KEYS)[number];
 

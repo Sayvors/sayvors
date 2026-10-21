@@ -21,6 +21,7 @@ class JobType(str, Enum):
 
     # ── publishing lane ── provider-quota-bound
     post_publish = "post.publish"            # Google Business Profile post
+    post_delete = "post.delete"              # take a published post down on schedule
     media_publish = "media.publish"          # Google media upload
 
     # ── media lane ── memory-bound image processing
@@ -37,6 +38,7 @@ class JobType(str, Enum):
         meta_send_reply: JobLane.realtime,
         meta_send_template: JobLane.realtime,
         post_publish: JobLane.publishing,
+        post_delete: JobLane.publishing,
         media_publish: JobLane.publishing,
         media_process: JobLane.media,
         databank_ingest: JobLane.bulk,

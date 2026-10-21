@@ -83,3 +83,18 @@
 - Deploy staging #42 root-caused: ci-gate ran gh api with no GH_TOKEN (gh refuses in Actions without it) → every poll reported "CI status = unknown" and aborted after 10 min although CI #24 on the same commit was green; the jq filter also emitted two lines so it could never equal "completed"
 - deploy-staging.yml fixed: GH_TOKEN env on the gate step, checks:read permission, multi-check status expression (latest check per name; both CI jobs must complete and be green; re-run aware) — validated against the real check-runs payload with jq 1.7.1 (success/pending/failure/rerun cases)
 - CI #24 green on staging merge 6fb0022 (PR #33)
+
+## 2026-10-21
+
+- Scheduled dates for removing posts - promotional
+- Merged Post and Media
+- Categorized conversation
+- Customers page with full profile side panel
+- Fixed publish job pipeline
+- Fixed test harness
+- CI migration guard step
+- Enrichment silent heuristic fallback marks failed
+- RAG decision (D10) — prefix-window cosine, JSON embeddings
+- Reviews worker serial poller — concurrent polling with semaphore
+- Redis re-arm prober — fail-closed paths recover after outage
+- OPS-1 backups — pg_dump → S3 backup script + restore rehearsal script written

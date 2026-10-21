@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,11 +19,6 @@ async def create_stt_job(body: STTRequest, user: User, db: AsyncSession) -> STTJ
     db.add(job)
     await db.commit()
     await db.refresh(job)
-
-    # TODO: dispatch to STT provider (Whisper, Azure, etc.)
-    job.status = "completed"
-    job.completed_at = datetime.now(timezone.utc)
-    await db.commit()
     return job
 
 

@@ -65,6 +65,10 @@ jobs:
           fi
           echo "single head: $(alembic heads)"
 
+      - name: Run migration guard
+        working-directory: services/api
+        run: python migration_guard.py
+
       - name: Run pytest
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/sayvors

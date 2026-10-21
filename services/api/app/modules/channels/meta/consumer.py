@@ -514,6 +514,7 @@ async def _channel_for(
 async def _handle_message_received(event: dict, data: dict) -> None:
     """Persist the inbound message, then AI-reply + send when possible."""
     from ..models import ChannelMessage
+    from ..service import categorize_message as _categorize
     from .credentials import decrypt_connection_token
     from .providers.base import MetaAPIError
     from .service import get_adapter
@@ -564,6 +565,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 contact_phone=encrypt_contact_phone(from_wa or None),
                 contact_phone_hash=hash_contact_phone(from_wa or None),
                 contact_name=data.get("profile_name") or None,
+                category=_categorize(text)[0],
+                priority=_categorize(text)[1],
             )
         db.add(row)
         # Cache the free profile name for the inbox/contacts lists.

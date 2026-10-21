@@ -66,10 +66,18 @@ Rules:
 
 ---
 
-## 4. Never push unless asked
+## 4. NEVER push unless explicitly asked — ABSOLUTE RULE
 
-Commit freely. **Push only when the user explicitly says push.** An unpushed
-branch is easy to fix; a pushed branch is a deployed artifact.
+**Commit freely. NEVER push unless the user explicitly says "push".**
+
+This is non-negotiable. No exceptions. No "I'll push to be helpful". No
+"the user implied it". No "the deploy needs it". An unpushed branch is easy
+to fix; a pushed branch is a deployed artifact that may already be in CI or
+staging.
+
+If you think a push is needed, **ASK THE USER FIRST** and wait for an explicit
+"push it" or "yes, push". Do not assume. Do not infer from context. Do not
+push because "it's ready" or "it's fixed".
 
 The user merges `development` → `staging` via PR and runs the deploy themselves.
 

@@ -23,7 +23,7 @@ import {
 import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
 import TypingIndicator from "@/components/inbox/TypingIndicator";
 
-type Filter = "all" | "unread" | "unknown";
+type Filter = "all" | "unread" | "important" | "unknown";
 
 const QUICK_REPLIES = [
   "Thanks for reaching out! How can I help?",
@@ -47,6 +47,23 @@ function initials(name: string | null, phone: string | null): string {
   const parts = base.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return base.slice(0, 2).toUpperCase();
+}
+
+/**
+ * Why a conversation is flagged important — shown on the badge's tooltip.
+ * The rule is the same for every source, so the reason is the
+ * conversation's own category and priority, never its platform.
+ */
+function importantReason(t: {
+  category?: string | null;
+  priority?: string | null;
+}): string {
+  const p = (t.priority || "normal").toLowerCase();
+  const c = (t.category || "normal").toLowerCase();
+  if (p === "urgent") return "Marked urgent — needs an answer now.";
+  if (c === "complaint") return "A complaint — needs an answer now.";
+  if (p === "high") return "Marked high priority.";
+  return "Needs a human now.";
 }
 
 /** Profile picture when the platform gave us one, initials otherwise. */
@@ -307,6 +324,7 @@ export default function InboxView() {
           message_count: 1,
           unread: msg.direction === "inbound" && !open ? 1 : 0,
           is_unknown: !e.contact_phone,
+          can_reply: (e.platform ?? "") !== "google_reviews",
         };
         return [fresh, ...prev];
       }
@@ -370,6 +388,7 @@ export default function InboxView() {
   const visible = useMemo(() => {
     let rows = threads;
     if (filter === "unread") rows = rows.filter((t) => t.unread > 0);
+    if (filter === "important") rows = rows.filter((t) => t.important);
     if (filter === "unknown") rows = rows.filter((t) => t.is_unknown);
     if (platformFilter !== "all") rows = rows.filter((t) => t.platform === platformFilter);
     return [...rows].sort((a, b) => {
@@ -380,6 +399,10 @@ export default function InboxView() {
   }, [threads, filter, platformFilter, pinned]);
 
   const unreadTotal = useMemo(() => threads.reduce((s, t) => s + t.unread, 0), [threads]);
+  const importantTotal = useMemo(
+    () => threads.filter((t) => t.important).length,
+    [threads],
+  );
 
   const threadView = useMemo(() => {
     const q = threadQuery.trim().toLowerCase();
@@ -438,7 +461,10 @@ export default function InboxView() {
     }
   };
 
-  const canSend = !!target && !target.is_unknown && !!draft.trim() && !sending;
+  // `can_reply === false` (not `!can_reply`) so a thread from an older
+  // API — which does not send the field — can still be replied to.
+  const canSend =
+    !!target && !target.is_unknown && target.can_reply !== false && !!draft.trim() && !sending;
   const openThread = !!target;
 
   return (
@@ -473,6 +499,7 @@ export default function InboxView() {
               {([
                 { key: "all", label: "All" },
                 { key: "unread", label: `Unread${unreadTotal ? ` (${unreadTotal})` : ""}` },
+                { key: "important", label: `Important${importantTotal ? ` (${importantTotal})` : ""}` },
                 { key: "unknown", label: "Unknown" },
               ] as { key: Filter; label: string }[]).map((f) => (
                 <button
@@ -533,8 +560,18 @@ export default function InboxView() {
                           </Avatar>
                           <span className="min-w-0 flex-1">
                             <span className="flex items-baseline justify-between gap-2">
-                              <span className="truncate text-[13px] font-semibold text-ink dark:text-fog">
-                                {t.display_name || "Unknown sender"}
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <span className="truncate text-[13px] font-semibold text-ink dark:text-fog">
+                                  {t.display_name || "Unknown sender"}
+                                </span>
+                                {t.important && (
+                                  <span
+                                    className="shrink-0 rounded-full bg-[#FF4F6E]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#C4304B] dark:bg-[#FF4F6E]/20 dark:text-[#FF8FA3]"
+                                    title={importantReason(t)}
+                                  >
+                                    Important
+                                  </span>
+                                )}
                               </span>
                               <span className="shrink-0 text-[11px] text-ink/35 dark:text-fog/35">
                                 {relative(t.last_message_at)}
@@ -727,6 +764,11 @@ export default function InboxView() {
                 {target.is_unknown ? (
                   <p className="text-[12px] text-ink/45 dark:text-fog/45">
                     These messages predate contact tracking, so there is no number to reply to.
+                  </p>
+                ) : target.can_reply === false ? (
+                  <p className="text-[12px] text-ink/45 dark:text-fog/45">
+                    This is a public {target.platform === "google_reviews" ? "Google review" : "post"} — it is
+                    answered from the Reviews page, not from here.
                   </p>
                 ) : (
                   <div className="flex items-end gap-2">

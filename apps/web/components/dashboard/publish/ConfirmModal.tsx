@@ -5,10 +5,10 @@ import PlatformMark from "@/components/channels/PlatformMark";
 import { METHOD_META, type MediaState, type PostMethod, type PublishTarget } from "./types";
 
 /*
- * The final gate before a post leaves the composer. UI-only today: the
- * confirm button says exactly that instead of faking a success state.
- * When the publish endpoint lands, "Publish now" wires up and the notice
- * disappears — the modal itself stays as the review step.
+ * The final gate before a post leaves the composer. The confirm button
+ * calls the real publish endpoint; while the request is in flight the
+ * modal stays open and disabled, and a server error stays visible here
+ * so nothing is lost behind a closed modal.
  */
 
 export default function ConfirmModal({
@@ -18,6 +18,10 @@ export default function ConfirmModal({
   captionLen,
   descriptionLen,
   scheduled,
+  removes,
+  busy,
+  error,
+  onConfirm,
   onClose,
 }: {
   open: boolean;
@@ -26,20 +30,24 @@ export default function ConfirmModal({
   captionLen: number;
   descriptionLen: number;
   scheduled: string | null;
+  removes?: string | null;
+  busy: boolean;
+  error: string | null;
+  onConfirm: () => void;
   onClose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const formatCount = items.reduce((n, i) => n + i.methods.length, 0);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || busy) return;
     closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, busy, onClose]);
 
   if (!open) return null;
 
@@ -49,7 +57,7 @@ export default function ConfirmModal({
       aria-modal="true"
       aria-label="Review before publishing"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && !busy) onClose();
       }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,0,0,0.45)] p-4"
     >
@@ -58,15 +66,16 @@ export default function ConfirmModal({
           <div>
             <h2 className="text-[16px] font-bold text-[var(--ui-ink)]">Review before publishing</h2>
             <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
-              {scheduled ? "This is a scheduled post (UI preview)." : "This is a preview edition (UI preview)."}
+              {scheduled ? "This is a scheduled post." : "One push to every destination listed."}
             </p>
           </div>
           <button
             ref={closeRef}
             type="button"
             onClick={onClose}
+            disabled={busy}
             aria-label="Close review"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[15px] font-bold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[15px] font-bold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-sunken)] hover:text-[var(--ui-ink)] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             ×
           </button>
@@ -81,6 +90,11 @@ export default function ConfirmModal({
           <span className="text-[11px] font-semibold text-[var(--ui-ink-2)]">
             Caption {captionLen} · Description {descriptionLen}
           </span>
+          {removes && (
+            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
+              Removed {new Date(removes).toLocaleString()}
+            </span>
+          )}
         </div>
 
         <p className="mt-3 px-1 text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">
@@ -105,21 +119,35 @@ export default function ConfirmModal({
           )}
         </ul>
 
+        <p aria-live="polite">
+          {error && (
+            <span role="alert" className="mt-3 block rounded-[10px] border border-red-500/50 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-700 dark:text-red-400">
+              {error}
+            </span>
+          )}
+          {busy && !error && (
+            <span role="status" className="mt-3 block px-1 text-[12px] font-semibold text-[var(--ui-ink-2)]">
+              Publishing — this can take a few seconds…
+            </span>
+          )}
+        </p>
+
         <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+            disabled={busy}
+            className="rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-ink)] transition hover:bg-[var(--ui-sunken)] disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
             Keep editing
           </button>
           <button
             type="button"
-            disabled
-            title="Publishing wires up when the endpoint lands — this pass is UI-only"
-            className="cursor-not-allowed rounded-[10px] bg-[var(--ui-ink)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-on-ink)] opacity-50"
+            onClick={onConfirm}
+            disabled={busy || items.length === 0}
+            className="rounded-[10px] bg-[var(--ui-ink)] px-5 py-2.5 text-[13px] font-semibold text-[var(--ui-on-ink)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
           >
-            Publish now
+            {busy ? "Publishing…" : scheduled ? "Schedule now" : "Publish now"}
           </button>
         </div>
       </div>

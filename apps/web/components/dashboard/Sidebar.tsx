@@ -23,6 +23,7 @@ const MAIN_ITEMS: NavItem[] = [
   { key: "locations", icon: <NavAsset src="/nav/locations.jpg" />, href: "/dashboard/locations" },
   { key: "services", icon: <NavAsset src="/nav/services.webp" />, href: "/dashboard/services" },
   { key: "postsMedia", icon: <NavAsset src="/nav/posts-media.webp" />, href: "/dashboard/posts-media" },
+  { key: "customers", icon: <NavAsset src="/nav/customers.webp" />, href: "/dashboard/customers" },
   { key: "reviews", icon: <NavAsset src="/nav/reviews.png" />, href: "/dashboard/reviews" },
   { key: "databank", icon: <NavAsset src="/nav/databank.webp" />, href: "/dashboard/databank" },
 ];
@@ -494,24 +495,9 @@ function ChannelsNav({
       </div>
       {open && !rail && (
         <div className="ml-6 mt-0.5 space-y-0.5 border-l border-ink/[0.06] pl-2">
-          {/* Publish — the unified composer, always reachable. Publish is
-              the action, not a network, so it never depends on `rows`. */}
-          <Link
-            href="/dashboard/channels/publish"
-            data-tour="nav-channels-publish"
-            aria-current={pathname === "/dashboard/channels/publish" ? "page" : undefined}
-            className={`flex items-center gap-2 rounded-[2px] px-2 py-1.5 text-[12px] font-medium transition hover:bg-ink/[0.04] ${
-              pathname === "/dashboard/channels/publish"
-                ? "bg-deep-violet/[0.07] text-deep-violet dark:bg-violet-light/[0.14] dark:text-violet-soft"
-                : "text-ink/60 dark:text-fog/60"
-            }`}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0" aria-hidden>
-              <path d="M12 19V5" />
-              <path d="M5 12l7-7 7 7" />
-            </svg>
-            <span className="flex-1 truncate">{labels.publishPost ?? "Publish"}</span>
-          </Link>
+          {/* Publish lives on /dashboard/posts-media (one hub: compose,
+              published posts, Google library) — it is a top-level page, not
+              a channel, so it is not repeated under Channels. */}
           {!rows && (
             <>
               <div className="h-7 animate-pulse rounded-[2px] bg-ink/[0.05]" />

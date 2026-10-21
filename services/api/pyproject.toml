@@ -39,6 +39,7 @@ dependencies = [
     # (app/modules/review_engine/graph.py). Kept deliberately small: the graph
     # wraps existing sync/async helpers rather than reimplementing them.
     "langgraph>=1.0",
+    "faster-whisper>=1.0",
 ]
 
 [project.optional-dependencies]

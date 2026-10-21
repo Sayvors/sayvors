@@ -11,10 +11,12 @@ from typing import Any
 from .stt_job import handle_stt_job
 from .tts_job import handle_tts_job
 from .post_publish import handle_post_publish
+from .post_delete import handle_post_delete
 
 # Closed registry: job_type -> handler coroutine(job, db) -> dict | None
 HANDLERS: dict[str, Callable[[Any, Any], Any]] = {
     "stt.job": handle_stt_job,
     "tts.job": handle_tts_job,
     "post.publish": handle_post_publish,
+    "post.delete": handle_post_delete,
 }

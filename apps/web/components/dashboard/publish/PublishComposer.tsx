@@ -3,17 +3,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PlatformMark from "@/components/channels/PlatformMark";
 import { INK, INK2 } from "@/components/channels/instagram/ui";
+import { apiFetch } from "@/lib/api-rag";
+import { externalAssetIdFor } from "@/lib/publish-targets";
 import MediaSink from "./MediaSink";
 import DestinationSelector from "./DestinationSelector";
 import DestinationPreview from "./DestinationPreview";
 import ConfirmModal from "./ConfirmModal";
 import CropFrame from "./CropFrame";
+import FormatThumb from "./FormatThumb";
 import {
   DEFAULT_CROP,
   METHOD_META,
   PLATFORM_META,
   cropKeyFor,
   defaultCropFor,
+  isFeedMethod,
   methodsFor,
   type CropState,
   type MediaState,
@@ -32,66 +36,39 @@ import {
  * format keeps its own framing, and the step-1 thumbnail + live preview
  * mirror whatever you're currently configuring.
  *
- * Everything here is local state — the publish endpoint hasn't landed.
- * The confirm modal says so explicitly rather than faking success.
+ * Confirming uploads locally-picked media to /api/v1/media/upload (the
+ * provider must fetch the files from a public URL at publish time), then
+ * creates one job per destination+format via POST /api/v1/channels/publish.
+ * A locally-picked file that never uploads means the post never leaves,
+ * so only https URLs and stored files make it through the confirm gate.
  */
-
-const DEMO_TARGETS: PublishTarget[] = [
-  { id: "demo:instagram", platform: "instagram", name: "Sayvors Studio", handle: "sayvors.studio", demo: true },
-  { id: "demo:facebook", platform: "facebook", name: "Sayvors Page", demo: true },
-  { id: "demo:whatsapp", platform: "whatsapp", name: "+91 98••• •••12", demo: true },
-];
 
 const FIELD =
   "rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
 
-export default function PublishComposer() {
+export default function PublishComposer({
+  onPublished,
+  onCancel,
+}: {
+  onPublished?: () => void;
+  onCancel?: () => void;
+}) {
   // ── Destinations ─────────────────────────────────────────────────
   const [targets, setTargets] = useState<PublishTarget[]>([]);
+  const [googleTargets, setGoogleTargets] = useState<PublishTarget[]>([]);
   const [targetsStatus, setTargetsStatus] = useState<"loading" | "ready">("loading");
   const [allConnected, setAllConnected] = useState(false);
+  const [allGoogleConnected, setAllGoogleConnected] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { fetchMetaAssets } = await import("@/lib/api-meta");
-      const providers = ["facebook", "instagram", "whatsapp"] as const;
-      const results = await Promise.allSettled(providers.map((p) => fetchMetaAssets(p)));
+      const { fetchPublishTargets } = await import("@/lib/publish-targets");
+      const set = await fetchPublishTargets();
       if (cancelled) return;
-      const rows: PublishTarget[] = [];
-      providers.forEach((provider, i) => {
-        const r = results[i];
-        const assets = r.status === "fulfilled" ? r.value.assets ?? [] : [];
-        const active = assets.filter((a) => a.active);
-        if (provider === "whatsapp") {
-          active
-            .filter((a) => a.asset_type === "phone_number")
-            .forEach((a) =>
-              rows.push({
-                id: `wa:${a.external_asset_id}`,
-                platform: "whatsapp",
-                name: a.phone ?? a.name ?? "WhatsApp number",
-                handle: a.phone ?? null,
-              }),
-            );
-        } else {
-          active
-            .filter((a) => a.asset_type === "page" || a.asset_type === "account")
-            .forEach((a) =>
-              rows.push({
-                id: `${provider}:${a.external_asset_id}`,
-                platform: provider,
-                name: a.name ?? a.username ?? a.external_asset_id,
-                handle: a.username ?? null,
-              }),
-            );
-          if (r.status === "fulfilled" && active.length === 0) {
-            rows.push({ id: `${provider}:empty`, platform: provider, name: PLATFORM_META[provider].label, demo: true });
-          }
-        }
-      });
-      setTargets(rows);
+      setTargets(set.social);
+      setGoogleTargets(set.google);
       setTargetsStatus("ready");
     })();
     return () => {
@@ -100,7 +77,11 @@ export default function PublishComposer() {
   }, []);
 
   const usableTargets = useMemo(() => targets.filter((t) => !t.demo), [targets]);
-  const selectedTargets = useMemo(() => targets.filter((t) => selected.has(t.id)), [targets, selected]);
+  const usableGoogleTargets = useMemo(() => googleTargets.filter((t) => !t.demo), [googleTargets]);
+  const selectedTargets = useMemo(
+    () => [...targets.filter((t) => selected.has(t.id)), ...googleTargets.filter((t) => selected.has(t.id))],
+    [targets, googleTargets, selected],
+  );
 
   // ── Media + message ─────────────────────────────────────────────
   const [media, setMedia] = useState<MediaState | null>(null);
@@ -109,9 +90,17 @@ export default function PublishComposer() {
 
   const blobRef = useRef<string | null>(null);
 
+  // ── Publishing ──────────────────────────────────────────────────
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
   // ── Schedule ────────────────────────────────────────────────────
   const [scheduleOn, setScheduleOn] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
+  // A promotional post has an end date: it goes up now and comes down
+  // on the day the offer lapses.
+  const [removeOn, setRemoveOn] = useState(false);
+  const [removeAt, setRemoveAt] = useState("");
 
   // ── Per-format previews + saved crops ───────────────────────────
   const [crops, setCrops] = useState<Record<string, CropState>>({});
@@ -135,13 +124,26 @@ export default function PublishComposer() {
     if (v) usableTargets.forEach((t) => seedFormats(t, "default"));
   };
 
+  const applyAllGoogle = (v: boolean) => {
+    setAllGoogleConnected(v);
+    if (v) {
+      usableGoogleTargets.forEach((t) => selected.add(t.id));
+    } else {
+      usableGoogleTargets.forEach((t) => selected.delete(t.id));
+    }
+    setSelected(new Set(selected));
+    if (v) usableGoogleTargets.forEach((t) => seedFormats(t, "default"));
+  };
+
   const toggleTarget = (t: PublishTarget) => {
     const next = new Set(selected);
     const turningOn = !next.has(t.id);
     if (turningOn) next.add(t.id);
     else next.delete(t.id);
     setSelected(next);
-    setAllConnected(usableTargets.length > 0 && next.size === usableTargets.length);
+    // Master switch only covers Meta social targets; Google has its own.
+    const metaSelected = [...next].filter((id) => usableTargets.some((t) => t.id === id));
+    setAllConnected(usableTargets.length > 0 && metaSelected.length === usableTargets.length);
     if (turningOn) seedFormats(t, "default");
   };
 
@@ -149,7 +151,10 @@ export default function PublishComposer() {
     setFormats((prev) => {
       if (prev[t.id]?.length) return prev;
       const avail = methodsFor(t.platform, media?.type ?? null);
-      const chosen = mode === "default" ? avail.slice(0, 1) : avail;
+      // "all" means every FEED format — the avatar and cover surfaces
+      // are never seeded, only ever picked one by one.
+      const chosen =
+        mode === "default" ? avail.slice(0, 1) : avail.filter(isFeedMethod);
       return { ...prev, [t.id]: chosen };
     });
   };
@@ -173,44 +178,32 @@ export default function PublishComposer() {
   };
 
   const toggleAllFormats = (t: PublishTarget) => {
-    const avail = availableFor(t);
+    // "All" covers the feed formats only. Selecting every pill would
+    // also replace the account's avatar and cover image, which must
+    // stay a deliberate, one-at-a-time choice.
+    const feed = availableFor(t).filter(isFeedMethod);
     const cur = chosenFor(t);
-    const turningAll = cur.length < avail.length;
-    const nextList = turningAll ? [...avail] : [];
+    const turningAll = cur.filter(isFeedMethod).length < feed.length;
+    const nextList = turningAll
+      ? [...cur.filter((m) => !isFeedMethod(m)), ...feed]
+      : cur.filter((m) => !isFeedMethod(m));
     setFormats((prev) => ({ ...prev, [t.id]: nextList }));
     if (turningAll) {
-      avail.forEach((m) => {
+      feed.forEach((m) => {
         const key = cropKeyFor(t.id, m);
         setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
       });
     }
   };
 
-  const loadDemo = () => {
-    setTargets(DEMO_TARGETS);
-    setSelected(new Set(DEMO_TARGETS.map((t) => t.id)));
-    setAllConnected(true);
-    setFormats(
-      Object.fromEntries(
-        DEMO_TARGETS.map((t) => [t.id, methodsFor(t.platform, null)] as [string, PostMethod[]]),
-      ),
-    );
-    DEMO_TARGETS.forEach((t) =>
-      methodsFor(t.platform, null).forEach((m) => {
-        const key = cropKeyFor(t.id, m);
-        setCrops((prev) => (prev[key] ? prev : { ...prev, [key]: defaultCropFor(t.platform, m) }));
-      }),
-    );
-  };
-
   // ── Media blob lifecycle ────────────────────────────────────────
-  const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number) => {
+  const pickMedia = (type: "image" | "video", url: string, fileName?: string, sizeBytes?: number, file?: File) => {
     if (blobRef.current && blobRef.current !== url) {
       URL.revokeObjectURL(blobRef.current);
     }
     if (url.startsWith("blob:")) blobRef.current = url;
     else blobRef.current = null;
-    setMedia({ type, url, fileName, sizeBytes });
+    setMedia({ type, url, fileName, sizeBytes, file: file ?? null });
   };
 
   const clearMedia = () => {
@@ -247,20 +240,105 @@ export default function PublishComposer() {
   };
 
   // ── Confirm ─────────────────────────────────────────────────────
+  // Every destination in the confirm needs an id the backend can resolve and
+  // at least one format. Google rows without a listing id cannot be targeted
+  // at all (there is no location to post to), so they are dropped here rather
+  // than enqueued into a job that can only fail.
   const confirmItems = selectedTargets
     .map((t) => ({ target: t, methods: chosenFor(t) }))
-    .filter((i) => i.methods.length > 0);
+    .filter((i) => i.methods.length > 0 && externalAssetIdFor(i.target) !== null);
   const formatCount = confirmItems.reduce((n, i) => n + i.methods.length, 0);
-  const canPublish =
-    confirmItems.length > 0 && (media !== null || caption.trim().length > 0 || description.trim().length > 0);
+  // The publish endpoint requires a fetchable media URL, and WhatsApp's only
+  // format (status) is media-only — a text-only push would fail downstream,
+  // so media is required at the gate too.
+  const canPublish = confirmItems.length > 0 && media !== null;
 
   const openConfirm = () => {
-    if (!canPublish) {
-      setNotice("Pick a destination with at least one format, and add media or a caption.");
+    if (media === null) {
+      setNotice("Attach an image or video — text-only publishing isn't supported yet.");
+      return;
+    }
+    if (confirmItems.length === 0) {
+      setNotice("Pick a destination with at least one format.");
       return;
     }
     setNotice(null);
+    setPublishError(null);
     setConfirmOpen(true);
+  };
+
+  const publishNow = async () => {
+    if (!media || publishing) return;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      // A post cannot be taken down before it goes up. Checked here so
+      // the tenant gets the reason immediately, not a 422 from the API.
+      if (removeOn) {
+        if (!removeAt) {
+          throw new Error("Pick the date the post should come down.");
+        }
+        if (scheduleOn && scheduleAt) {
+          if (new Date(removeAt).getTime() <= new Date(scheduleAt).getTime()) {
+            throw new Error("The removal date must be after the publish date.");
+          }
+        }
+      }
+      // Locally-picked files must go to our storage first: providers (and
+      // the Google Business uploader) fetch the media from a public URL at
+      // publish time, so a blob: URL can never be delivered.
+      let mediaUrl = media.url;
+      let mediaKey = media.key ?? null;
+      if (media.url.startsWith("blob:")) {
+        if (!media.file) throw new Error("The picked file is no longer available — attach it again.");
+        const form = new FormData();
+        form.append("file", media.file);
+        const up = await apiFetch("/api/v1/media/upload", { method: "POST", body: form });
+        mediaUrl = up.image_url;
+        mediaKey = up.key ?? null;
+        if (!mediaUrl) throw new Error("Upload succeeded but no URL came back — try a different file.");
+      }
+
+      const batchId = crypto.randomUUID();
+      // One idempotency key per attempt so a retry (network drop, 500) never
+      // double-posts: the backend keys jobs as key:platform:method.
+      const destinations = confirmItems.map(({ target: t, methods }) => ({
+        platform: t.platform,
+        external_asset_id: externalAssetIdFor(t) as string,
+        methods,
+      }));
+
+      await apiFetch("/api/v1/channels/publish", {
+        method: "POST",
+        body: JSON.stringify({
+          media_url: mediaUrl,
+          media_key: mediaKey,
+          media_type: media.type,
+          caption,
+          description,
+          scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
+          delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
+          destinations,
+          batch_id: batchId,
+          idempotency_key: `${batchId}:${Date.now()}`,
+        }),
+      });
+
+      setConfirmOpen(false);
+      clearMedia();
+      setCaption("");
+      setDescription("");
+      setScheduleOn(false);
+      setScheduleAt("");
+      setRemoveOn(false);
+      setRemoveAt("");
+      setFormats({});
+      onPublished?.();
+    } catch (e) {
+      setPublishError(e instanceof Error ? e.message : "Publishing failed — try again.");
+    } finally {
+      setPublishing(false);
+    }
   };
 
   // ── What's being edited (mirrors) ───────────────────────────────
@@ -298,6 +376,15 @@ export default function PublishComposer() {
     <div className="flex h-full flex-col">
       {/* Header */}
       <header className="shrink-0 border-b border-[var(--ui-line)] px-4 py-4 sm:px-6">
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="mb-2 inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--ui-ink-2)] transition hover:text-[var(--ui-ink)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+          >
+            ← Back to posts
+          </button>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h1 className={`text-[20px] font-bold ${INK}`}>Publish a post</h1>
@@ -305,7 +392,6 @@ export default function PublishComposer() {
               One post, every connected network — pick a format on any destination to configure its crop.
             </p>
           </div>
-          <p className={`text-[11px] font-semibold uppercase tracking-widest ${INK2}`}>UI preview</p>
         </div>
       </header>
 
@@ -319,7 +405,7 @@ export default function PublishComposer() {
                 1 · Media
               </h2>
               <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
-                An image, a video, or nothing — the text-only option stays open. The frame mirrors the format you&apos;re configuring.
+                An image or video is required — the frame mirrors the format you&apos;re configuring.
               </p>
               <MediaSink media={media} onPick={pickMedia} onClear={clearMedia} thumb={thumb} thumbLabel={thumbLabel} />
             </section>
@@ -394,7 +480,7 @@ export default function PublishComposer() {
               </h2>
               <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>Optional — leave it off to publish immediately.</p>
               <div className="flex flex-wrap items-center gap-3">
-                <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} />
+                <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} label="Schedule for later" />
                 {scheduleOn && (
                   <input
                     type="datetime-local"
@@ -405,6 +491,24 @@ export default function PublishComposer() {
                   />
                 )}
               </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--ui-line)] pt-3">
+                <ScheduleToggle scheduleOn={removeOn} setScheduleOn={setRemoveOn} label="Remove it later" />
+                {removeOn && (
+                  <input
+                    type="datetime-local"
+                    value={removeAt}
+                    onChange={(e) => setRemoveAt(e.target.value)}
+                    aria-label="Remove the post at"
+                    className={`${FIELD} w-full sm:w-64`}
+                  />
+                )}
+              </div>
+              {removeOn && (
+                <p className={`mt-2 text-[11px] ${INK2}`}>
+                  The post is taken back down from every destination on that
+                  date. Nothing is removed before it is published.
+                </p>
+              )}
             </section>
 
             {/* Live preview */}
@@ -446,10 +550,13 @@ export default function PublishComposer() {
                 targets={targets}
                 status={targetsStatus}
                 allConnected={allConnected}
+                googleTargets={usableGoogleTargets}
+                allGoogleConnected={allGoogleConnected}
                 selected={selected}
                 onSelectAll={applyAll}
+                onApplyAllGoogle={applyAllGoogle}
                 onToggleTarget={toggleTarget}
-                onLoadDemo={loadDemo}
+                onToggleGoogleTarget={toggleTarget}
               />
             </section>
 
@@ -462,6 +569,15 @@ export default function PublishComposer() {
                 <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
                   Click a format to set its crop and thumbnail.
                 </p>
+                {selectedTargets.some((t) =>
+                  availableFor(t).some((m) => m === "profile" || m === "banner"),
+                ) && (
+                  <p className={`mb-3 text-[11px] ${INK2}`}>
+                    A profile picture or banner replaces that image on the
+                    account — it carries no caption, and it can only be
+                    changed by publishing a new one.
+                  </p>
+                )}
                 <div className="space-y-3">
                   {selectedTargets.map((t) => {
                     const avail = availableFor(t);
@@ -477,6 +593,7 @@ export default function PublishComposer() {
                             const isOn = chosen.includes(m);
                             const key = cropKeyFor(t.id, m);
                             const isConfigured = configured.has(key);
+                            const crop = crops[key] ?? defaultCropFor(t.platform, m);
                             return (
                               <button
                                 key={m}
@@ -487,7 +604,7 @@ export default function PublishComposer() {
                                   }
                                   openConfig(t, m);
                                 }}
-                                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
+                                className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] ${
                                   isConfigured
                                     ? "border-[var(--ui-ink)] bg-[var(--ui-ink)] text-[var(--ui-on-ink)]"
                                     : isOn
@@ -495,6 +612,7 @@ export default function PublishComposer() {
                                     : "border-[var(--ui-line)] bg-[var(--ui-surface)] text-[var(--ui-ink-2)] hover:bg-[var(--ui-line)]"
                                 }`}
                               >
+                                <FormatThumb media={media} crop={crop} />
                                 {isConfigured && <span aria-hidden>✓</span>}
                                 {METHOD_META[m].label}
                               </button>
@@ -504,7 +622,7 @@ export default function PublishComposer() {
                             type="button"
                             onClick={() => toggleAllFormats(t)}
                             className="inline-flex items-center gap-1 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink-2)] transition hover:bg-[var(--ui-line)] focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
-                            title="Select all formats for this destination"
+                            title="Select every feed format for this destination"
                           >
                             All
                           </button>
@@ -651,6 +769,10 @@ export default function PublishComposer() {
         captionLen={caption.trim().length}
         descriptionLen={description.trim().length}
         scheduled={scheduleOn && scheduleAt ? scheduleAt : null}
+        removes={removeOn && removeAt ? removeAt : null}
+        busy={publishing}
+        error={publishError}
+        onConfirm={publishNow}
         onClose={() => setConfirmOpen(false)}
       />
     </div>
@@ -662,9 +784,11 @@ export default function PublishComposer() {
 function ScheduleToggle({
   scheduleOn,
   setScheduleOn,
+  label,
 }: {
   scheduleOn: boolean;
   setScheduleOn: (v: boolean) => void;
+  label: string;
 }) {
   return (
     <button
@@ -687,7 +811,7 @@ function ScheduleToggle({
           }`}
         />
       </span>
-      <span className={`text-[13px] font-semibold ${INK}`}>Schedule for later</span>
+      <span className={`text-[13px] font-semibold ${INK}`}>{label}</span>
     </button>
   );
 }

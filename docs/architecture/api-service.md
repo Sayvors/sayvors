@@ -425,6 +425,34 @@ def auth_headers(user):
     return {"Authorization": f"Bearer {access_token}"}
 ```
 
+### Test isolation — the production lifespan must not run
+
+The tests use an in-memory SQLite database, not the configured Postgres.
+That only holds if the **production lifespan never runs**: that lifespan
+warms the real connection pool, so every test would otherwise open a
+connection to the development database.
+
+Replacing `app.lifespan` is **not** enough to stop it. FastAPI builds
+`app.router.lifespan_context` at construction time by merging the
+router's own lifespan with the app's, so that merge captures the real
+lifespan before any test can replace it. The router's context is what
+actually runs, so `tests/conftest.py` replaces **both**:
+
+```python
+app.lifespan = _noop_lifespan
+app.router.lifespan_context = _noop_lifespan
+```
+
+Getting this wrong is quiet and expensive. The symptom is a flaky
+teardown error — `RuntimeError: Event loop is closed` from SQLAlchemy
+terminating a pooled asyncpg connection after the event loop has closed
+— which appears in whichever test happens to be running when the pool is
+garbage-collected. It also made the suite roughly seven times slower,
+because every test was opening a real database connection.
+
+If a test needs production start-up behaviour, call it explicitly
+rather than letting the lifespan run.
+
 ## Performance Considerations
 
 ### Connection Pooling

@@ -49,6 +49,7 @@ Current names are:
 - `job-runner-publishing`
 - `job-runner-media`
 - `job-runner-bulk`
+- `job-reaper`
 - `escalation-sweeps`
 - `lead-digest`
 
@@ -63,7 +64,7 @@ The unified job registry currently maps types to these lanes:
 | Lane | Work types | In-process concurrency |
 |------|------------|------------------------|
 | `realtime` | Meta message replies and template sends | 8 |
-| `publishing` | Google post and media publishing | 4 |
+| `publishing` | Google post and media publishing, scheduled post removal | 4 |
 | `media` | Media processing | 2 |
 | `bulk` | Databank ingest, URL scrape, speech-to-text, text-to-speech | 1 |
 
@@ -72,6 +73,41 @@ and use expiring leases so jobs can be reclaimed after a worker crash. Kafka
 dispatch topics wake/coordinate lane workers; PostgreSQL remains the persisted
 job lifecycle. A job with a caller-provided idempotency key is deduplicated
 within its tenant.
+
+### The claim is a transaction
+
+A claim is only a claim once it is **committed**. Until the transaction that
+made it ends, the row is still claimable by another worker — the
+`FOR UPDATE` lock is released with the transaction — so an uncommitted claim
+is no claim at all, and the same job can be run twice at once. The same
+applies to the `external_intent` written before an external call (it is the
+crash-recovery record, so it must be durable before the call, not after) and
+to the terminal status the runner writes when a job finishes.
+
+## The reaper
+
+`job-reaper` runs alongside the lane runners and does two idempotent sweeps:
+
+- **Lease reaper.** A `running` job whose lease has passed belongs to a
+  worker that died mid-call. The row goes back to `queued` so it can be
+  reclaimed. Every handler is idempotent by job id, so re-running one is
+  safe.
+- **`accepted` reconciler.** `accepted` is the design's "row exists, dispatch
+  not confirmed" state. Nothing produces it now — a job is inserted
+  `queued` and the runner claims it from PostgreSQL — so a row in that state
+  is invisible to the runner. The reconciler promotes such rows so a job
+  cannot be stranded by an older build.
+
+Both sweeps commit. A sweep that is not committed is a sweep that did not
+happen.
+
+## Scheduling work for later
+
+`submit_job(..., next_run_at=...)` sets when a job may be claimed. A job
+scheduled for the future is not claimable until then, which is how
+scheduled work is expressed: the removal of a promotional post on its end
+date is a `post.delete` job with `next_run_at` set to that date, not a
+cron entry bolted onto the side.
 
 ## Status and troubleshooting
 

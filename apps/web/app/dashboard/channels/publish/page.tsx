@@ -1,17 +1,10 @@
-"use client";
-
-import PublishComposer from "@/components/dashboard/publish/PublishComposer";
+import { redirect } from "next/navigation";
 
 /*
- * Publish a post to every connected social channel — the unified composer
- * sits under Channels because that is where its destinations live. Body
- * renders the full-height team-ui shell so the composer inherits the
- * locked three-colour palette the other channel hubs use.
+ * The composer moved to /dashboard/posts-media (one hub owns publishing
+ * across social + Google and the published-post list). Old links keep
+ * working through this redirect.
  */
-export default function PublishPostPage() {
-  return (
-    <div className="team-ui flex h-full flex-col">
-      <PublishComposer />
-    </div>
-  );
+export default function PublishRedirectPage() {
+  redirect("/dashboard/posts-media");
 }

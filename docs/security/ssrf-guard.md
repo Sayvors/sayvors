@@ -44,6 +44,14 @@ Any URL a tenant can influence must pass through `assert_public_http_url()` + `f
 
 **Fix:** Replaced unpinned `httpx.get()` with `fetch_pinned_bytes()` (DNS pinning + per-hop redirect validation + size cap). Removed unused `httpx` import.
 
+### Publish pipeline — profile-picture bytes (Guarded by design)
+
+**Location:** `app/modules/jobs/handlers/post_publish.py` — `_read_profile_image()`
+
+WhatsApp's business profile photo is uploaded as bytes, not fetched from a URL by Meta, so the publish job reads the image back itself. A tenant-supplied `media_url` is therefore a URL this service would fetch, which is exactly the shape the guard exists for.
+
+The read prefers our own storage (`media_key` → `core/storage.get_media`), which needs no fetch at all. When only a pasted `media_url` is available it goes through `fetch_pinned_bytes()` in a thread pool, capped at Meta's 5 MB profile-photo limit. The content type is read from the image's magic bytes, not from a tenant-controlled filename.
+
 ## Rules
 
 1. **Never fetch user-supplied URLs with raw httpx/urllib/requests.** Every URL a tenant can influence must pass through `assert_public_http_url()` + `fetch_pinned()` / `fetch_pinned_status()` / `fetch_pinned_bytes()`.

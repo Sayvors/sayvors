@@ -80,6 +80,7 @@ def _heuristic_enrich(rating: int, text: str | None) -> dict:
         "topics": topics,
         "products": [],
         "problems": [{"name": t["name"], "severity": "high" if rating <= 2 else "medium"} for t in topics if sentiment == "negative"],
+        "heuristic": True,
     }
 
 
@@ -129,6 +130,7 @@ def _valid_result(data: dict) -> dict:
         "topics": _clean_list(data.get("topics")),
         "products": _clean_list(data.get("products")),
         "problems": _clean_list(data.get("problems"), sent_key="severity"),
+        "heuristic": False,
     }
 
 

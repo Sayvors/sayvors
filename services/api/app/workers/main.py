@@ -94,9 +94,11 @@ async def _amain() -> None:
     from ..modules.channels.meta.digest_worker import run_lead_digest_sweeps
     from ..modules.channels.meta.escalation_worker import run_escalation_sweeps
     from ..modules.channels.reviews_worker import run_google_reviews_worker
+    from ..modules.jobs.reaper import run_job_reaper
     from ..modules.jobs.runner import JobRunner
     from ..modules.localith.worker import run_localith_sync_worker
     from ..modules.posts.worker import run_post_publish_worker
+    from ..modules.redis.client import run_redis_rearmer
 
     loops = {
         "google-reviews-auto-reply": run_google_reviews_worker,
@@ -114,6 +116,13 @@ async def _amain() -> None:
         "job-runner-publishing": lambda: JobRunner(lane="publishing", worker_id="publishing-1").start(),
         "job-runner-media": lambda: JobRunner(lane="media", worker_id="media-1").start(),
         "job-runner-bulk": lambda: JobRunner(lane="bulk", worker_id="bulk-1").start(),
+        # Lease reaper + `accepted` reconciler — returns crashed workers'
+        # jobs to the queue and un-strands rows the dispatcher never
+        # promoted.
+        "job-reaper": run_job_reaper,
+        # Redis re-arm prober — re-latches Redis after an outage so fail-closed
+        # paths (rate limiting, auth) recover once Redis is back.
+        "redis-rearmer": run_redis_rearmer,
         # Reminder + handover resume for escalated leads. Cheap enough to run
         # everywhere; an AI-only deployment still wants the 24h resume, since
         # that is what stops a misrouted escalation silencing a customer.

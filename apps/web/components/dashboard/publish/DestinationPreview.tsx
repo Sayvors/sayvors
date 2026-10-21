@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import { CROP_ASPECT } from "./CropFrame";
+import CroppedMedia from "./CroppedMedia";
 import { METHOD_META, PLATFORM_META, type CropState, type MediaState, type PostMethod, type PublishTarget } from "./types";
 
 /*
@@ -23,125 +23,9 @@ function aspectFor(crop: CropState, fallback: number): number {
 }
 
 /*
- * CroppedMedia — renders media inside a preview box so it matches the
- * crop frame EXACTLY. It tracks the media's natural dimensions, computes
- * the same cover scale the crop frame uses, and applies the same pan
- * offset scaled to the preview box size. This is what makes the preview
- * an honest mirror of the crop editor.
+ * CroppedMedia lives in ./CroppedMedia so the format pill thumbnails and
+ * the modal preview render the exact same crop as this preview.
  */
-function CroppedMedia({
-  media,
-  cropKey,
-  zoom,
-  offset,
-  boxW = PREVIEW_W,
-  aspect,
-  className = "",
-}: {
-  media: MediaState;
-  cropKey: CropState["key"];
-  zoom: number;
-  offset: { x: number; y: number };
-  boxW?: number;
-  aspect: number;
-  className?: string;
-}) {
-  const boxH = aspect > 0 ? Math.round(boxW / aspect) : boxW;
-  const [naturalState, setNaturalState] = useState<{ url: string; w: number; h: number } | null>(null);
-
-  const active = cropKey !== "orig" ? cropKey : null;
-  const url = media?.url ?? "";
-  const natural = naturalState && naturalState.url === url ? { w: naturalState.w, h: naturalState.h } : null;
-
-  if (!media.type) return null;
-
-  if (media.type === "video") {
-    if (!active) {
-      return (
-        <video
-          src={media.url}
-          muted
-          loop
-          autoPlay
-          playsInline
-          className={`h-full w-full object-cover ${className}`}
-        />
-      );
-    }
-    // Videos: apply the same transform as images using videoWidth/Height
-    const cover = natural ? Math.max(boxW / natural.w, boxH / natural.h) : 1;
-    const scale = zoom * cover;
-    const s = boxW / 260; // editor→preview scale
-    return (
-      <video
-        src={media.url}
-        muted
-        loop
-        autoPlay
-        playsInline
-        className={`absolute left-1/2 top-1/2 max-w-none select-none ${className}`}
-        style={{
-          transform: `translate(-50%, -50%) translate(${offset.x * s}px, ${offset.y * s}px) scale(${scale})`,
-        }}
-        onLoadedMetadata={(e) => {
-          const v = e.currentTarget;
-          if (v.videoWidth && v.videoHeight) {
-            setNaturalState({ url, w: v.videoWidth, h: v.videoHeight });
-          }
-        }}
-      />
-    );
-  }
-
-  if (!active) {
-    return (
-      /* eslint-disable-next-line @next/next/no-img-element */
-      <img
-        src={media.url}
-        alt=""
-        className={`h-full w-full object-cover ${className}`}
-        onLoad={(e) => {
-          const img = e.currentTarget;
-          setNaturalState({ url, w: img.naturalWidth, h: img.naturalHeight });
-        }}
-      />
-    );
-  }
-
-  if (!natural) {
-    return (
-      /* eslint-disable-next-line @next/next/no-img-element */
-      <img
-        src={media.url}
-        alt=""
-        className={`h-full w-full object-cover ${className}`}
-        onLoad={(e) => {
-          const img = e.currentTarget;
-          setNaturalState({ url, w: img.naturalWidth, h: img.naturalHeight });
-        }}
-      />
-    );
-  }
-
-  const cover = Math.max(boxW / natural.w, boxH / natural.h);
-  const scale = zoom * cover;
-  const s = boxW / 260; // editor box is 260px wide
-  return (
-    /* eslint-disable-next-line @next/next/no-img-element */
-    <img
-      src={media.url}
-      alt=""
-      className={`absolute left-1/2 top-1/2 max-w-none select-none ${className}`}
-      style={{
-        transform: `translate(-50%, -50%) translate(${offset.x * s}px, ${offset.y * s}px) scale(${scale})`,
-      }}
-      onLoad={(e) => {
-        const img = e.currentTarget;
-        setNaturalState({ url, w: img.naturalWidth, h: img.naturalHeight });
-      }}
-    />
-  );
-}
 
 function captionOverflow(caption: string, platform: keyof typeof PLATFORM_META): number {
   return Math.max(caption.length - PLATFORM_META[platform].captionMax, 0);
@@ -350,6 +234,67 @@ function StoryChrome({
   );
 }
 
+/* ── Google Business Profile: post card on Search & Maps ──────────── */
+
+function GooglePostPreview({
+  target,
+  method,
+  media,
+  caption,
+  description,
+  crop,
+}: {
+  target: PublishTarget;
+  method: PostMethod;
+  media: MediaState;
+  caption: string;
+  description: string;
+  crop: CropState;
+}) {
+  const author = target.name || "Your business";
+  const aspect = aspectFor(crop, 1.91);
+  const body = caption || description || "Your update appears on Google Search & Maps.";
+  const overflow = captionOverflow(caption, "google_reviews");
+  const kindLabel =
+    method === "event" ? "Event" : method === "offer" ? "Promotion" : "Update";
+  return (
+    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+      <div className="flex items-center gap-2.5 px-3.5 py-2.5">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-[#4285f4] bg-[#eef5ff] text-[11px] font-bold text-[#1a0dab]">
+          {author.charAt(0).toUpperCase()}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-bold text-[#111]">{author}</span>
+          <span className="block text-[11px] text-[#65676b]">On Google · just now</span>
+        </span>
+        <span className="shrink-0 rounded-full bg-[#eef5ff] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#1a73e8]">
+          {kindLabel}
+        </span>
+      </div>
+      {body && (
+        <p className="px-3.5 pt-2 pb-1 text-[12px] leading-snug text-[#111]">
+          {body}
+        </p>
+      )}
+      <div className="relative w-full overflow-hidden bg-black" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
+        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W} aspect={aspect} />
+      </div>
+      <div className="flex items-center justify-between border-t border-[#e4e6eb] px-3.5 py-2 text-[11px] font-semibold text-[#65676b]">
+        <span className="flex items-center gap-1">
+          <span aria-hidden>&#128077;</span>
+          <span>Google Post</span>
+        </span>
+        <span>Search &amp; Maps &rsaquo;</span>
+      </div>
+      {overflow > 0 && (
+        <p className="mt-1 px-3.5 text-[10px] font-semibold text-amber-600">
+          {overflow} characters past Google&apos;s limit
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ── Generic fallback for the neutral main preview + later networks ─ */
 
 function GenericPreview({
@@ -383,6 +328,67 @@ function GenericPreview({
   );
 }
 
+/* ── Profile surfaces: the avatar and the cover image ──────────────── */
+
+/*
+ * A profile picture is not a post — it replaces the round avatar on a
+ * page or business header, and it carries no caption. The preview shows
+ * the avatar where the network actually draws it, so the tenant sees the
+ * crop in context rather than as a floating rectangle.
+ */
+function ProfilePicturePreview({
+  target,
+  media,
+  crop,
+}: {
+  target: PublishTarget;
+  media: MediaState;
+  crop: CropState;
+}) {
+  const aspect = aspectFor(crop, 1);
+  const size = 56;
+  return (
+    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+      <div className="relative h-[74px] bg-[#e9eaee]">
+        <div
+          className="absolute -bottom-7 left-3 overflow-hidden rounded-full border-[3px] border-white bg-white shadow-sm"
+          style={{ width: size, height: size }}
+        >
+          <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={size} aspect={aspect} />
+        </div>
+      </div>
+      <div className="px-3.5 pb-3.5 pt-10">
+        <span className="block truncate text-[13px] font-bold text-[#111]">{target.name}</span>
+        <span className="block text-[11px] text-[#65676b]">Profile picture · replaces your avatar</span>
+      </div>
+    </div>
+  );
+}
+
+/* A banner is the wide cover image that sits behind a page header. */
+function BannerPreview({
+  target,
+  media,
+  crop,
+}: {
+  target: PublishTarget;
+  media: MediaState;
+  crop: CropState;
+}) {
+  const aspect = aspectFor(crop, 1.91);
+  return (
+    <div className="mx-auto overflow-hidden rounded-[16px] border border-[var(--ui-line)] bg-white shadow-sm" style={{ width: PREVIEW_W }}>
+      <div className="relative w-full overflow-hidden bg-[#e9eaee]" style={{ aspectRatio: String(aspect), height: Math.round(PREVIEW_W / aspect) }}>
+        <CroppedMedia media={media} cropKey={crop.key} zoom={crop.zoom} offset={{ x: crop.x, y: crop.y }} boxW={PREVIEW_W} aspect={aspect} />
+      </div>
+      <div className="px-3.5 py-2.5">
+        <span className="block truncate text-[13px] font-bold text-[#111]">{target.name}</span>
+        <span className="block text-[11px] text-[#65676b]">Banner · replaces your cover image</span>
+      </div>
+    </div>
+  );
+}
+
 /* ── Registry ─────────────────────────────────────────────────────── */
 
 export default function DestinationPreview({
@@ -401,6 +407,14 @@ export default function DestinationPreview({
   crop: CropState;
 }) {
   if (target) {
+    // Profile surfaces look the same wherever they live — a round avatar
+    // and a wide cover — so they resolve before the platform switch.
+    if (method === "profile") {
+      return <ProfilePicturePreview target={target} media={media} crop={crop} />;
+    }
+    if (method === "banner") {
+      return <BannerPreview target={target} media={media} crop={crop} />;
+    }
     switch (target.platform) {
       case "instagram":
         return method === "post" ? (
@@ -436,6 +450,8 @@ export default function DestinationPreview({
         );
       case "whatsapp":
         return <WhatsAppStatusPreview target={target} media={media} caption={caption} crop={crop} />;
+      case "google_reviews":
+        return <GooglePostPreview target={target} method={method} media={media} caption={caption} description={description} crop={crop} />;
       default:
         return (
           <GenericPreview

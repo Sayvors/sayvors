@@ -108,6 +108,11 @@ class ChannelMessage(Base):
     # Best-known display name. WhatsApp only sends a profile name on some
     # payloads, so this is often NULL and the UI falls back to the phone.
     contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Conversation category: complaint, inquiry, feedback, review, other.
+    # Auto-assigned on inbound; manually overridable via the inbox API.
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # Conversation priority: urgent, high, normal, low.
+    priority: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     # True when the platform's AI authored this outbound row. Set only by the
     # consumer on rows it writes itself. Drives lead_escalation's counter.
     # Never inferred from message text — that would misclassify a human whose
