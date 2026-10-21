@@ -836,8 +836,72 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
             await client.close()
 
 
+_POLL_CONCURRENCY = 5
+
+
+async def _poll_one_channel(
+    channel_id: str,
+    config_id: str,
+    semaphore: asyncio.Semaphore,
+) -> dict:
+    """Poll one channel: claim → check backoff → process → release.
+
+    Each channel gets its own DB session so concurrent polls don't share
+    a transaction. The semaphore caps concurrent in-flight API calls to
+    Google so we don't overwhelm the endpoint.
+    """
+    from ...database import async_session
+
+    stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
+
+    async with semaphore:
+        async with async_session() as session:
+            channel = await session.get(Channel, channel_id)
+            config = await session.get(AutoReplyConfig, config_id)
+
+            if channel is None or config is None:
+                return stats
+
+            if not await _claim_channel(session, config.id, config.last_polled_at):
+                return stats  # another instance has it
+
+            try:
+                now = datetime.now(timezone.utc)
+
+                # Channel health backoff: a channel Google is rate-limiting
+                # gets breathing room instead of being retried every poll.
+                if _is_in_health_backoff(channel, now):
+                    logger.info(
+                        "Channel %s in health backoff — skipping this poll pass",
+                        channel.id,
+                    )
+                    await _release_channel(session, config.id)
+                    return stats
+
+                stats["channels"] += 1
+                try:
+                    channel_stats = await process_channel(session, channel, config)
+                    for k in ("reviews", "replied", "queued", "skipped", "errors"):
+                        stats[k] += channel_stats[k]
+                except Exception as e:
+                    logger.error("Poll failed for channel %s: %s", channel.id, e)
+                    stats["errors"] += 1
+                    await _update_channel_health(session, channel, False, type(e).__name__)
+                else:
+                    await _update_channel_health(session, channel, True)
+            finally:
+                await _release_channel(session, config.id)
+
+    return stats
+
+
 async def poll_once() -> dict:
-    """One polling pass over all due Google Reviews channels. Returns totals."""
+    """One polling pass over all due Google Reviews channels. Returns totals.
+
+    Channels are polled concurrently (bounded by _POLL_CONCURRENCY) instead
+    of serially, so a slow Google response on one channel doesn't block
+    all the others.
+    """
     from ...database import async_session
 
     totals = {"channels": 0, "reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
@@ -860,33 +924,25 @@ async def poll_once() -> dict:
             )
         ).all()
 
-        for channel, config in rows:
-            if not await _claim_channel(db, config.id, config.last_polled_at):
-                continue  # another instance has it
+    channel_configs = [(str(ch.id), str(cfg.id)) for ch, cfg in rows]
 
-            # Channel health backoff: a channel Google is rate-limiting gets
-            # breathing room instead of being retried every poll cycle.
-            if _is_in_health_backoff(channel, now):
-                logger.info(
-                    "Channel %s in health backoff — skipping this poll pass",
-                    channel.id,
-                )
-                await _release_channel(db, config.id)
-                continue
+    semaphore = asyncio.Semaphore(_POLL_CONCURRENCY)
 
-            totals["channels"] += 1
-            try:
-                stats = await process_channel(db, channel, config)
-                for k in ("reviews", "replied", "queued", "skipped", "errors"):
-                    totals[k] += stats[k]
-            except Exception as e:
-                logger.error("Poll failed for channel %s: %s", channel.id, e)
-                totals["errors"] += 1
-                await _update_channel_health(db, channel, False, type(e).__name__)
-            else:
-                await _update_channel_health(db, channel, True)
-            finally:
-                await _release_channel(db, config.id)
+    results = await asyncio.gather(
+        *[
+            _poll_one_channel(ch_id, cfg_id, semaphore)
+            for ch_id, cfg_id in channel_configs
+        ],
+        return_exceptions=True,
+    )
+
+    for result in results:
+        if isinstance(result, Exception):
+            logger.error("Poll task failed: %s", result)
+            totals["errors"] += 1
+        else:
+            for k in ("channels", "reviews", "replied", "queued", "skipped", "errors"):
+                totals[k] += result[k]
 
     return totals
 
