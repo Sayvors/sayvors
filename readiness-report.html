@@ -436,6 +436,7 @@
     <tr><td><code>plan_features</code></td><td>Boolean entitlements (voice, analytics, API, …).</td><td><code>plan_id</code>, <code>feature_key</code>, <code>enabled</code>; unique <code>(plan_id, feature_key)</code></td></tr>
     <tr><td><code>subscriptions</code></td><td>One active subscription per tenant; history retained.</td><td><code>tenant_id</code>, <code>plan_id</code>, <code>status</code>, <code>source</code>, <code>provider</code>, <code>provider_subscription_id</code>, <code>current_period_start/end</code>, <code>trial_end</code>, <code>cancel_at_period_end</code></td></tr>
     <tr><td><code>subscription_events</code></td><td>Audit for activation, renewal, cancellation, refund, demo/admin override.</td><td><code>subscription_id</code>, <code>kind</code>, <code>source</code>, <code>provider_event_id</code>, payload summary, <code>created_by</code></td></tr>
+    <tr><td><code>plan_promotions</code></td><td>Optional one-time credit bonuses, separate from recurring included credit.</td><td><code>plan_id</code>, <code>promotion_key</code>, <code>bonus_credit_cents</code>, <code>eligible_source</code>, <code>one_time_per_tenant</code>, <code>starts_at</code>, <code>ends_at</code>, <code>is_active</code></td></tr>
   </table></div>
   <p>The request path must never branch on a plan string. A single <strong>entitlements service</strong> resolves the active subscription to a plan, then exposes <code>get_entitlements(tenant_id)</code>, <code>has_feature(key)</code>, and <code>check_limit(key, delta)</code>. Adding a plan becomes a data insert, not a deploy.</p>
 
@@ -446,21 +447,24 @@
       <li>closes/expires the previous active subscription for that tenant;</li>
       <li>inserts the new subscription with <code>source ∈ {demo, admin, payment}</code>;</li>
       <li>writes the plan's included credit as a real billing/ledger event;</li>
+      <li>for a <strong>direct paid Pro signup</strong>, applies the active one-time signup bonus as a separate ledger event, keyed by <code>(tenant_id, promotion_key)</code> so a webhook retry cannot pay it twice;</li>
       <li>syncs the Redis cache only after the DB commit.</li>
     </ul>
     <p><strong>Demo Pro</strong> is a server-side source, not a client flag. The endpoint is admin-gated and behind <code>BILLING_DEMO_MODE</code>; production returns 404/403 when the flag is off. The <strong>payment webhook</strong> uses the same function, keyed by <code>provider_event_id</code> so retries are idempotent. <strong>Admin assignment</strong> remains for support, but it is visibly logged as an override.</p>
+    <p class="note">The <strong>$10 direct-join bonus</strong> is not recurring included credit and not a separate trial. It is a one-time promotion on the first paid Pro activation. Demo/admin activations do not receive it unless an admin explicitly grants it.</p>
   </div>
 
   <h3>Plan shape</h3>
   <div class="scroll"><table>
-    <tr><th></th><th>Starter</th><th>Pro (demo)</th></tr>
+    <tr><th></th><th>Starter</th><th>Pro</th></tr>
     <tr><td>Positioning</td><td>One-location merchant getting started</td><td>Full multi-channel operator</td></tr>
-    <tr><td>Included AI credit</td><td>Trial credit only (amount TBD)</td><td><strong>$100 = 10,000¢</strong> included (name/amount temporary)</td></tr>
+    <tr><td>Included AI credit</td><td>Entry credit (amount TBD)</td><td><strong>$100 = 10,000¢</strong> included (name/amount temporary)</td></tr>
+    <tr><td>Direct-join bonus</td><td>—</td><td><strong>+$10 = 1,000¢ one-time</strong> on first paid Pro signup → <strong>$110 = 11,000¢</strong></td></tr>
     <tr><td>Google locations</td><td><strong>1</strong></td><td>Unlimited (<code>−1</code>)</td></tr>
     <tr><td>Social accounts</td><td><strong>1 total</strong> across WhatsApp / Instagram / Facebook / etc.</td><td>Unlimited (<code>−1</code>)</td></tr>
     <tr><td>Features</td><td>Core inbox, reviews, one-channel AI replies</td><td>All services unlocked; voice/analytics/automation as they ship</td></tr>
   </table></div>
-  <p class="note"><strong>Open product decisions:</strong> whether the first-month ~$10 trial is separate from the $100 Pro demo; the demo duration (proposed 30 days); and the real Starter/Pro prices. The code should not assume the demo is permanent. The only hard rule already agreed: after the trial, an active paid subscription is required for AI — leftover wallet credit alone is not enough.</p>
+  <p class="note"><strong>Confirmed:</strong> the <strong>$10 is an extra bonus</strong> on top of the $100 Pro credit for a direct Pro join, not a separate trial and not part of the recurring plan credit. Proposed default: one-time, first paid Pro activation only, not renewed, not applied to demo/admin activations. Remaining open items: the demo duration (proposed 30 days), the real Starter/Pro prices, and whether the bonus is temporary or always-on. Access gate: an active demo/trial or paid subscription first, then the wallet — leftover credit alone does not keep AI on after the access period.</p>
 
   <h3>Entitlements enforcement</h3>
   <ul>
@@ -475,7 +479,7 @@
   <ul>
     <li><strong><code>apps/web</code> (customer):</strong> current plan, renewal date, credit remaining, usage meters, upgrade/downgrade, checkout return state, and a limit banner with a direct upgrade CTA. No admin controls.</li>
     <li><strong><code>apps/admin</code> (platform):</strong> plan catalog CRUD, subscription overrides, demo activation, wallet preview/resync, and an audit view of who changed what.</li>
-    <li><strong>Checkout:</strong> <code>POST /billing/subscribe</code> creates a provider checkout session; the browser returns to a success page that polls the subscription; the webhook is the source of truth. The provider choice is still open (the current gateway is a dev stub), so the webhook adapter is the only provider-specific code.</li>
+    <li><strong>Checkout:</strong> <code>POST /billing/subscribe</code> creates a provider checkout session; the browser returns to a success page that polls the subscription; the webhook is the source of truth. “Provider” here means the payment processor that actually charges the card and sends the webhook — for example Stripe, PayTabs, Moyasar, or Tap. The current gateway in <code>billing/providers.py</code> is a dev stub, so the plan/entitlement flow can be built now, but real money movement waits for the provider choice (country/currency, cards, mada, Apple Pay, fees). The webhook adapter is the only provider-specific code.</li>
     <li><strong>Portal:</strong> cancel-at-period-end, update card, invoices. Cancellation keeps access to <code>current_period_end</code>, then moves to expired; it does not delete data.</li>
   </ul>
 
