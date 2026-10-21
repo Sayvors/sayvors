@@ -6,7 +6,6 @@
 services:
   caddy:
     image: caddy:2-alpine
-    container_name: sayvors-caddy
     restart: unless-stopped
     ports:
       - "80:80"
@@ -29,7 +28,6 @@ services:
 
   api:
     image: ghcr.io/sayvors/sayvors-api:staging
-    container_name: sayvors-api
     restart: unless-stopped
     env_file:
       - ./.env.prod
@@ -83,7 +81,6 @@ services:
 
   worker:
     image: ghcr.io/sayvors/sayvors-api:staging
-    container_name: sayvors-worker
     restart: unless-stopped
     env_file:
       - ./.env.prod
@@ -114,7 +111,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: sayvors-redis
     restart: unless-stopped
     # noeviction: this instance holds OTPs, rate-limit windows, JWT
     # blacklist entries and session indexes. An LRU eviction would silently
@@ -132,7 +128,6 @@ services:
 
   kafka:
     image: apache/kafka:3.8.0
-    container_name: sayvors-kafka
     restart: unless-stopped
     environment:
       KAFKA_NODE_ID: 1
