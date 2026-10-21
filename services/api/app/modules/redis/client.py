@@ -106,6 +106,22 @@ def mark_redis_available():
     _redis_available = True
 
 
+async def run_redis_rearmer() -> None:
+    """Background prober that re-arms Redis after an outage.
+
+    ``mark_redis_unavailable()`` latches Redis offline (used by fail-closed
+    paths like rate limiting and auth). This prober periodically unlatches
+    it so the next ``get_redis()`` call attempts a real reconnect.
+
+    Without this, if no caller invokes ``get_redis()`` for an extended
+    period, Redis stays latched offline indefinitely even after it has
+    recovered — fail-closed paths (rate limiting, auth) stay broken.
+    """
+    while True:
+        await asyncio.sleep(REDIS_REPROBE_COOLDOWN_SECONDS)
+        mark_redis_available()
+
+
 @lru_cache
 def get_redis_url() -> str:
     return settings.REDIS_URL
