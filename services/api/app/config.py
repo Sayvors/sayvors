@@ -159,6 +159,18 @@ class Settings(BaseSettings):
     # Provider keys live exclusively in the database (Admin → LLMs).
     # No LLM keys are read from the environment.
 
+    # ── Speech-to-text (Faster-Whisper / CTranslate2) ──────────────────
+    # General-purpose speech transcription: any audio URL from any channel
+    # (WhatsApp voice notes, Instagram voice messages, Facebook voice notes,
+    # Telegram voice messages, Google voice posts, user uploads, etc.).
+    # Not hardcoded to any platform — any caller can enqueue an STT job.
+    STT_MODEL: str = "base"              # tiny, base, small, medium, large-v1, large-v2, large-v3
+    STT_DEVICE: str = "cpu"              # cpu | cuda | auto
+    STT_COMPUTE_TYPE: str = "int8"       # int8 | int8_float16 | float16 | float32 (device dependent)
+    STT_BEAM_SIZE: int = 5
+    STT_VAD_FILTER: bool = True          # voice activity detection: skips silent segments
+    STT_MAX_FILE_MB: int = 100           # max audio file size for transcription
+
     # ── Localith (EmbedSocial) ──────────────────────────────
     LOCALITH_API_KEY: str = ""
     LOCALITH_BASE_URL: str = "https://embedsocial.com/app/api"
