@@ -19,8 +19,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...modules.stt.models import STTJob
-from ...modules.stt.provider import transcribe_audio
+from ...stt.models import STTJob
+from ...stt.provider import transcribe_audio
 from ..models import Job
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,8 @@ async def handle_stt_job(job: Job, db: AsyncSession) -> dict | None:
     faster-whisper, and writes the transcript + confidence + duration back
     to the STTJob row.
 
-    Idempotent: a completed job is never re-transcribed.
+    Idempotent by job id: the same job never transcribes twice because the lane
+    runner checks terminal status before running.
     """
     payload = job.payload or {}
     stt_job_id = payload.get("stt_job_id")
