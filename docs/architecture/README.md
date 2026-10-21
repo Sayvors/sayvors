@@ -7,7 +7,8 @@ This directory contains architecture documentation for the Sayvors platform.
 - [Overview](overview.md) — System architecture, components, data flow
 - [API Service](api-service.md) — FastAPI service internals
 - [Conversation categorization](conversation-categorization.md) — Categories, priorities, and the "important" rule
-- [Speech-to-Text (STT)](stt.md) — faster-whisper transcription for voice messages
+- [Speech-to-Text (STT)](../stt.md) — faster-whisper transcription for voice messages
+- [Text-to-Speech (TTS)](tts.md) — one synthesis capability for every channel and call path
 - [Google review, ticket, and lead flow](google-review-ticket-lead-flow.md) — Review follow-up lifecycle
 - [Database](../database/README.md) — Database setup and storage backends
 - [Meta integration architecture](../integrations/meta/architecture.md) — Meta connections, OAuth, assets, and webhooks

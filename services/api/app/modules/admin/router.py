@@ -1005,7 +1005,7 @@ async def admin_voice_engines_list(
     db: AsyncSession = Depends(get_db),
 ):
     """All configured voice engines. Key VALUES are never returned."""
-    from ..llm.models import VoiceModelConfig
+    from ..tts.models import VoiceModelConfig
 
     rows = (await db.execute(select(VoiceModelConfig))).scalars().all()
     return [_voice_engine_status(r) for r in rows]
@@ -1021,9 +1021,9 @@ async def admin_fish_voice_catalog(
     """Browse the fish.audio public voice library so the admin can pick a
     persona by name instead of pasting an opaque id. Uses the API key
     stored on any fish engine — add one first if this 400s."""
-    from ..channels.service import decrypt_token
-    from ..channels.meta.voice import fish_voice_catalog
-    from ..llm.models import VoiceModelConfig
+    from ...core.crypto import decrypt_secret
+    from ..tts.engines.fish import voice_catalog as fish_voice_catalog
+    from ..tts.models import VoiceModelConfig
 
     row = (
         await db.execute(
@@ -1043,7 +1043,7 @@ async def admin_fish_voice_catalog(
         )
     try:
         return await fish_voice_catalog(
-            decrypt_token(row.key_encrypted), sort_by=sort_by, page=page
+            decrypt_secret(row.key_encrypted), sort_by=sort_by, page=page
         )
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -1060,8 +1060,8 @@ async def admin_voice_engine_create(
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
-    from ..channels.service import encrypt_token
-    from ..llm.models import VoiceModelConfig
+    from ...core.crypto import encrypt_secret
+    from ..tts.models import VoiceModelConfig
 
     row = VoiceModelConfig(
         id=str(uuid.uuid4()),
@@ -1076,7 +1076,7 @@ async def admin_voice_engine_create(
         enabled=body.enabled,
     )
     if body.api_key is not None:
-        row.key_encrypted = encrypt_token(body.api_key) if body.api_key else None
+        row.key_encrypted = encrypt_secret(body.api_key) if body.api_key else None
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -1089,7 +1089,7 @@ async def admin_voice_engine_delete(
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
-    from ..llm.models import VoiceModelConfig
+    from ..tts.models import VoiceModelConfig
 
     row = (
         await db.execute(
@@ -1113,8 +1113,9 @@ async def admin_voice_engine_test(
     result of a good key, and a bad one shows here before any tenant does."""
     import time
 
-    from ..channels.meta.voice import _synthesize_edge, _synthesize_fish
-    from ..llm.models import VoiceModelConfig
+    from ..tts.engines.edge import synthesize as _synthesize_edge
+    from ..tts.engines.fish import synthesize as _synthesize_fish
+    from ..tts.models import VoiceModelConfig
 
     row = (
         await db.execute(
@@ -1162,8 +1163,8 @@ async def admin_voice_engine_update(
     """Update an engine. A non-null api_key rotates the stored key
     (encrypted); an empty string clears it; omitting the field changes
     nothing."""
-    from ..channels.service import encrypt_token
-    from ..llm.models import VoiceModelConfig
+    from ...core.crypto import encrypt_secret
+    from ..tts.models import VoiceModelConfig
 
     row = (
         await db.execute(
@@ -1182,7 +1183,7 @@ async def admin_voice_engine_update(
     row.languages = body.languages
     row.enabled = body.enabled
     if body.api_key is not None:
-        row.key_encrypted = encrypt_token(body.api_key) if body.api_key else None
+        row.key_encrypted = encrypt_secret(body.api_key) if body.api_key else None
     db.add(row)
     await db.commit()
     await db.refresh(row)

@@ -1,4 +1,3 @@
-import functools
 import hashlib
 import hmac
 import json
@@ -11,80 +10,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...config import settings
+from ...core.crypto import decrypt_secret as _decrypt_secret
+from ...core.crypto import encrypt_secret as _encrypt_secret
+from ...core.crypto import get_fernet as _get_fernet
 from ..team.context import tenant_id_of
 from ..users.models import User
 from .models import Channel, ChannelMessage
 from .schemas import ChannelCreate, ChannelMessageSend
 
 
-@functools.lru_cache(maxsize=1)
-def _get_fernet():
-    """Lazy-load Fernet for token encryption (derived once per process).
-
-    Primary key: CHANNEL_ENCRYPTION_KEY (dedicated, independent of the JWT
-    signing secret — leaking one must not unlock the other). When unset, the
-    legacy JWT-derived key is used so existing deployments keep working, and
-    a loud log tells operators to set the dedicated key.
-
-    Decryption tries the primary key first, then falls back to legacy, so
-    setting CHANNEL_ENCRYPTION_KEY later never breaks previously stored
-    ciphertext. New writes always use the primary key.
-    """
-    import base64
-    import logging
-
-    from cryptography.fernet import Fernet, InvalidToken
-
-    log = logging.getLogger(__name__)
-
-    def _fernet_from(secret: str):
-        key = hashlib.sha256(secret.encode()).digest()
-        return Fernet(base64.urlsafe_b64encode(key))
-
-    primary_secret = (settings.CHANNEL_ENCRYPTION_KEY or "").strip()
-    legacy_fernet = _fernet_from(settings.JWT_SECRET)
-
-    if primary_secret:
-        class _PrimaryFirstFernet:
-            def encrypt(self, data: bytes) -> bytes:
-                return _fernet_from(primary_secret).encrypt(data)
-
-            def decrypt(self, token: bytes) -> bytes:
-                try:
-                    return _fernet_from(primary_secret).decrypt(token)
-                except InvalidToken:
-                    return legacy_fernet.decrypt(token)
-
-        return _PrimaryFirstFernet()
-
-    log.warning(
-        "CHANNEL_ENCRYPTION_KEY is not set — credential encryption is falling "
-        "back to a key derived from JWT_SECRET. Set a dedicated "
-        "CHANNEL_ENCRYPTION_KEY so JWT and storage keys are independent."
-    )
-
-    class _LegacyFernet:
-        def encrypt(self, data: bytes) -> bytes:
-            return legacy_fernet.encrypt(data)
-
-        def decrypt(self, data: bytes) -> bytes:
-            return legacy_fernet.decrypt(data)
-
-    return _LegacyFernet()
-
-
 def encrypt_token(token: str) -> str:
     """Encrypt an OAuth token at rest."""
-    if not token:
-        return token
-    return _get_fernet().encrypt(token.encode()).decode()
+    return _encrypt_secret(token)
 
 
 def decrypt_token(encrypted: str) -> str:
     """Decrypt an OAuth token."""
-    if not encrypted:
-        return encrypted
-    return _get_fernet().decrypt(encrypted.encode()).decode()
+    return _decrypt_secret(encrypted)
 
 
 def encrypt_message_content(content: str | None) -> str | None:
