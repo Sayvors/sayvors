@@ -86,18 +86,11 @@
 
 ## 2026-10-21
 
-### Shipped (committed & pushed to development)
 - Scheduled dates for removing posts - promotional
 - Merged Post and Media
 - Categorized conversation
-
-### This session (committed, not yet pushed)
-- Scheduled dates for removing posts - promotional (job pipeline fix, post.delete job type, composer removal date, migration a9b8c7d6e5f4)
-- Categorized conversation v2 (one priority scale across every source, derived "important" flag, a real thread per Google reviewer, inbox UI)
-- Fixed the publish job pipeline (accepted→queued, committed transactions, lease reaper + reconciler)
-- Fixed the test harness (production lifespan was running in every test — suite 18min → ~3min)
-
-### Notes
-- Full suite: 1425 passed, 1 skipped, 1 error (pre-existing teardown race, now fixed by the test-harness fix)
-- Backend tests for this session's new code: 56 passed (jobs pipeline 9, post.delete 5, publish router 23, conversation categorization 18, inbox 29)
-- Frontend: tsc clean, npm run build passes
+- Customers page with full profile side panel
+- Fixed publish job pipeline
+- Fixed test harness
+- CI migration guard step
+- Enrichment silent heuristic fallback marks failed
