@@ -396,3 +396,16 @@ __all__ = [
     "format_report",
     "summarize",
 ]
+
+
+if __name__ == "__main__":
+    """Run the migration-chain guard directly: ``python migration_guard.py``.
+
+    Prints a human-readable report and exits non-zero when the chain is not
+    clean, so this doubles as a CI step that fails loud and early instead of
+    burying a broken chain inside pytest.
+    """
+    import sys
+
+    print(format_report())
+    sys.exit(0 if summarize()["ok"] else 1)
