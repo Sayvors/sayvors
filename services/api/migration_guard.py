@@ -297,6 +297,7 @@ def _model_tables() -> dict[str, set[str]]:
         import app.modules.notifications.models  # noqa: F401
         import app.modules.outbox.models  # noqa: F401
         import app.modules.posts.models  # noqa: F401
+        import app.modules.rag.models  # noqa: F401
         import app.modules.stt.models  # noqa: F401
         import app.modules.tts.models  # noqa: F401
         import app.modules.users.models  # noqa: F401

@@ -110,3 +110,16 @@
 - Job lane map moved off the enum + `lane_for` call fixed
 - Admin LLM key status reads the DB, not a stale worker overlay
 - Provider key refresh across uvicorn workers (15s TTL)
+- RAG search moved to pgvector: `embedding_vector vector(1024)` + HNSW index,
+  GIN `to_tsvector('simple', content)` index, prefix window removed (the whole
+  databank is searched now), one canonical embedding width, model tag so
+  foreign vectors are excluded, Arabic-safe keyword config
+- Fixed the embedding write path: a Python list was written into a TEXT column,
+  so any database with a working embedding backend failed the chunk insert
+- asyncpg taught the pgvector `vector` type; CI postgres now runs the pgvector
+  image and `tests/test_rag_pgvector.py` exercises the real ANN path
+- `scripts/backfill_embeddings.py` re-embeds existing chunks (dry-run default)
+- Embedding providers configured apart from the chat providers: own key, own
+  model, one active provider (`embedding_provider_configs` + Admin → Embeddings)
+- Admin → Embeddings page: provider cards, model picker, key store, "make
+  active", live test that reports the width the API answered with

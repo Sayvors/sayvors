@@ -10,7 +10,7 @@ type NavItem = {
   href: string;
   label: string;
   desc: string;
-  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice";
+  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings";
 };
 
 const SECTIONS: { title: string; items: NavItem[] }[] = [
@@ -32,6 +32,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Intelligence",
     items: [
       { href: "/llms", label: "LLMs", desc: "Providers & models", icon: "llms" },
+      { href: "/embeddings", label: "Embeddings", desc: "RAG vector API", icon: "embeddings" },
       { href: "/voice", label: "Voice models", desc: "WhatsApp voice TTS", icon: "voice" },
     ],
   },
@@ -93,6 +94,20 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
           <rect x="9" y="3" width="6" height="11.5" rx="3" stroke="currentColor" strokeWidth="1.6" />
           <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
           <path d="M12 18v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      );
+    case "embeddings":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <circle cx="6" cy="6.5" r="2.2" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="18" cy="6.5" r="2.2" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="12" cy="17.5" r="2.2" stroke="currentColor" strokeWidth="1.5" />
+          <path
+            d="M7.7 7.8l2.8 7.5M16.3 7.8l-2.8 7.5M8.2 6.5h7.6"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
         </svg>
       );
   }

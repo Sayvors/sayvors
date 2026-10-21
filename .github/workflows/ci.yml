@@ -26,7 +26,10 @@ jobs:
         ports:
           - 6379:6379
       postgres:
-        image: postgres:15-alpine
+        # pgvector image: the RAG search path needs the `vector` extension.
+        # Plain postgres:15-alpine has no extension files, so the pgvector
+        # integration test could not run here.
+        image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

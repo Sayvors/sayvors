@@ -314,3 +314,51 @@ rather than `docker logs sayvors-api` / `docker exec sayvors-api`.
 api container's command with a bare `uvicorn`, which skips the
 `alembic upgrade head` step entirely - the container comes up against an
 un-migrated schema.
+
+---
+
+## 9. The pgvector requirement
+
+Migration `c3d4e5f6a7b8` adds `document_chunks.embedding_vector vector(1024)`
+and the HNSW / GIN indexes that make databank search scale. It needs the
+`vector` extension, and it **fails the deploy** if the extension cannot be
+created - deliberately: a database without pgvector cannot hold a vector
+column, and silently continuing would leave the app writing to a schema it
+cannot search.
+
+| Environment | Requirement | How to check |
+|---|---|---|
+| CI | postgres service runs the `pgvector/pgvector:pg15` image (plain `postgres:15-alpine` has no extension files) | `tests/test_rag_pgvector.py` runs there and skips everywhere else |
+| Staging / production (AWS RDS) | a PostgreSQL version that supports pgvector, and a role allowed to `CREATE EXTENSION vector` | `SELECT * FROM pg_available_extensions WHERE name = 'vector';` then `CREATE EXTENSION IF NOT EXISTS vector;` |
+| Local development | the same, on the local PostgreSQL the API points at | as above |
+
+Check before deploying:
+
+```bash
+# 1. is the extension installable at all?
+psql "$DATABASE_URL" -c "SELECT default_version FROM pg_available_extensions WHERE name = 'vector';"
+
+# 2. does this role have the right to create it?
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# 3. after the deploy, the column and the indexes must exist
+psql "$DATABASE_URL" -c "\d document_chunks" | grep embedding_vector
+psql "$DATABASE_URL" -c "SELECT indexname FROM pg_indexes WHERE tablename = 'document_chunks';"
+```
+
+If `CREATE EXTENSION` is refused, the database is not ready for this
+migration: enable pgvector on the instance (RDS: the engine version has to
+support it) and re-run as a role with the right to create extensions. The
+api container logs `pgvector codec not registered on this connection` when
+the extension is missing - the app still boots, but embedding writes fail.
+
+Existing chunks have no vector after the migration. Backfill them with:
+
+```bash
+cd services/api
+python scripts/backfill_embeddings.py             # dry-run report
+python scripts/backfill_embeddings.py --apply     # writes the vectors
+```
+
+The script is re-runnable and only touches chunks whose vector is still
+NULL (unless `--force` is passed).

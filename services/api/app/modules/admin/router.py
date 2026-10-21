@@ -537,6 +537,152 @@ async def admin_llm_test(
         return LlmTestResult(provider=provider, ok=False, latency_ms=ms, detail=f"{type(e).__name__}: {str(e)[:160]}")
 
 
+class EmbeddingProviderStatus(BaseModel):
+    provider: str
+    model: str | None = None
+    has_key: bool = False
+    enabled: bool = True
+    active: bool = False
+    base_url: str | None = None
+    supported_models: list[str] = Field(default_factory=list)
+
+
+class EmbeddingConfigOverview(BaseModel):
+    providers: list[EmbeddingProviderStatus]
+    active_provider: str | None = None
+    canonical_dimensions: int
+    chunks_total: int
+    chunks_with_vector: int
+    # "admin" when a provider is configured separately, "fallback" when the
+    # embedding backend is still borrowing the text-generation keys.
+    source: str
+
+
+class EmbeddingProviderUpdate(BaseModel):
+    model: str | None = None
+    # None keeps the stored key, an empty string clears it.
+    api_key: str | None = None
+    base_url: str | None = None
+    enabled: bool | None = None
+    activate: bool = False
+
+
+class EmbeddingTestRequest(BaseModel):
+    provider: str | None = None
+
+
+class EmbeddingTestResult(BaseModel):
+    ok: bool
+    provider: str | None = None
+    model: str | None = None
+    dimensions: int = 0
+    latency_ms: int = 0
+    detail: str = ""
+
+
+@router.get("/embeddings", response_model=EmbeddingConfigOverview)
+async def admin_embedding_config(
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """The embedding providers, configured apart from the text-generation ones."""
+    from ..rag.embeddings import (
+        CANONICAL_DIMENSIONS,
+        EMBEDDING_MODELS,
+        corpus_stats,
+        get_active_embedding_config,
+        list_embedding_configs,
+    )
+
+    configs = {c["provider"]: c for c in await list_embedding_configs(db)}
+    providers = []
+    for name in EMBEDDING_MODELS:
+        config = configs.get(name, {})
+        providers.append(
+            EmbeddingProviderStatus(
+                provider=name,
+                model=config.get("model"),
+                has_key=bool(config.get("has_key")),
+                enabled=bool(config.get("enabled", True)),
+                active=bool(config.get("active")),
+                base_url=config.get("base_url"),
+                supported_models=list(EMBEDDING_MODELS[name]),
+            )
+        )
+
+    active = await get_active_embedding_config(db)
+    stats = await corpus_stats(db)
+    return EmbeddingConfigOverview(
+        providers=providers,
+        active_provider=active["provider"] if active else None,
+        canonical_dimensions=CANONICAL_DIMENSIONS,
+        chunks_total=stats["chunks_total"],
+        chunks_with_vector=stats["chunks_with_vector"],
+        source="admin" if active else "fallback",
+    )
+
+
+@router.put("/embeddings/{provider}", response_model=EmbeddingProviderStatus)
+async def admin_embedding_update(
+    provider: str,
+    body: EmbeddingProviderUpdate,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Store/clear the embedding key, pick the model, activate the provider."""
+    from ..rag.embeddings import EMBEDDING_MODELS, save_embedding_config
+
+    if provider not in EMBEDDING_MODELS:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown embedding provider: {provider}"
+        )
+    try:
+        result = await save_embedding_config(
+            provider,
+            model=body.model,
+            api_key=body.api_key.strip() if body.api_key is not None else None,
+            base_url=body.base_url,
+            enabled=body.enabled,
+            activate=body.activate,
+            db=db,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(
+        "Admin updated embedding provider %s (model=%s active=%s)",
+        provider,
+        result["model"],
+        result["active"],
+    )
+    return EmbeddingProviderStatus(
+        provider=result["provider"],
+        model=result["model"],
+        has_key=result["has_key"],
+        enabled=result["enabled"],
+        active=result["active"],
+        base_url=result["base_url"],
+        supported_models=list(EMBEDDING_MODELS[provider]),
+    )
+
+
+@router.post("/embeddings/test", response_model=EmbeddingTestResult)
+async def admin_embedding_test(
+    body: EmbeddingTestRequest | None = None,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Embed one sample string and report the width that came back."""
+    from ..rag.embeddings import EMBEDDING_MODELS, test_embedding_provider
+
+    request = body or EmbeddingTestRequest()
+    if request.provider and request.provider not in EMBEDDING_MODELS:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown embedding provider: {request.provider}"
+        )
+    result = await test_embedding_provider(request.provider, db=db)
+    return EmbeddingTestResult(**result)
+
+
 @router.put("/llm/{provider}/models/{model_id:path}", response_model=LlmModelStatus)
 async def admin_llm_model_update(
     provider: str,

@@ -181,10 +181,12 @@ async def hybrid_lookup(db, bank_ids: list[str], query: str,
         from ..rag.embeddings import get_embedding_provider
         from ..rag.search import hybrid_search
 
+        query_model: str | None = None
         try:
             provider = await get_embedding_provider()
             vectors = await provider.embed([query[:500]])
             query_vector = vectors[0]
+            query_model = provider.model_tag
         except Exception:
             query_vector = None
         seen: dict[str, tuple[str, float]] = {}
@@ -197,6 +199,7 @@ async def hybrid_lookup(db, bank_ids: list[str], query: str,
                         query_text=query[:500],
                         top_k=top_k,
                         db=db,
+                        query_model=query_model,
                     )
             except Exception as e:
                 logger.debug("Hybrid lookup failed for bank %s: %s", bank_id, e)

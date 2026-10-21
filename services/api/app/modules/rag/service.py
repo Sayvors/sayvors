@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ from ...database import async_session as _async_session
 from ..users.models import User
 from .cache import content_hash, set_progress
 from .chunker import chunk_text
-from .embeddings import get_embedding_provider
+from .embeddings import canonical_vector, get_embedding_provider
 from .models import Databank, DataSource, Document, DocumentChunk, IngestJob, ScrapeJob
 from .search import hybrid_search
 from .schemas import (
@@ -475,11 +476,13 @@ async def search(
     from .embeddings import get_embedding_provider
 
     query_vector: list[float] | None = None
+    query_model: str | None = None
     degraded = False
     try:
         provider = await get_embedding_provider()
         vectors = await provider.embed([body.query])
         query_vector = vectors[0]
+        query_model = provider.model_tag
     except Exception:
         degraded = True
 
@@ -490,6 +493,7 @@ async def search(
             query_text=body.query,
             top_k=body.top_k,
             db=search_db,
+            query_model=query_model,
         )
     return results, degraded
 
@@ -549,18 +553,22 @@ async def _embed_and_store(
                 for v in vectors:
                     all_vectors[idx] = v
                     idx += 1
-            embedding_model = provider.__class__.__name__
+            embedding_model = provider.model_tag
         except Exception as e:
             logger.warning("Embedding failed for doc %s, storing without vectors: %s", doc.id, e)
 
         db_chunks = []
         for idx, (chunk, vector) in enumerate(zip(chunks, all_vectors)):
+            canonical = canonical_vector(vector)
             db_chunk = DocumentChunk(
                 id=str(uuid.uuid4()),
                 document_id=doc.id,
                 databank_id=doc.databank_id,
                 content=chunk["content"],
-                embedding=vector,
+                # The legacy text column stores the same vector as JSON so a
+                # rollback to the pre-pgvector search path still works.
+                embedding=json.dumps(canonical) if canonical else None,
+                embedding_vector=canonical,
                 embedding_model=embedding_model,
                 seq=idx,
                 token_count=chunk["token_count"],

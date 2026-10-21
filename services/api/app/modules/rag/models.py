@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
+from .embeddings import CANONICAL_DIMENSIONS
 
 
 class Databank(Base):
@@ -67,13 +69,52 @@ class DocumentChunk(Base):
     )
     databank_id: Mapped[str] = mapped_column(String(36), index=True)
     content: Mapped[str] = mapped_column(Text)
+    # Legacy JSON copy of the vector. The searchable representation is
+    # `embedding_vector` below; this column is kept so a rollback to the
+    # pre-pgvector search path still finds the vectors it wrote.
     embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
-    embedding_model: Mapped[str] = mapped_column(String(100), default="bge-m3")
+    # pgvector column. One dimension for every provider, so a chunk written
+    # by one model is still comparable with a query built by another width.
+    embedding_vector: Mapped[list[float] | None] = mapped_column(
+        Vector(CANONICAL_DIMENSIONS), nullable=True
+    )
+    # Tag of the model that produced the vector (provider + model name).
+    # Chunks with a different tag are excluded from vector search.
+    embedding_model: Mapped[str] = mapped_column(String(100), default="unknown")
     seq: Mapped[int] = mapped_column(Integer, default=0)
     token_count: Mapped[int] = mapped_column(Integer, default=0)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class EmbeddingProviderConfig(Base):
+    """Admin-managed embedding provider, configured apart from the chat ones.
+
+    The embedding backend has its own key, model and base URL because the two
+    are bought and rotated separately, and because vectors from different
+    models are not comparable: the model recorded here decides which stored
+    chunks the vector search is allowed to score.
+
+    Exactly one row is active at a time. A provider with no active row falls
+    back to the text-generation keys (see ``rag.embeddings``), so an
+    installation that never configured embeddings keeps working.
+    """
+
+    __tablename__ = "embedding_provider_configs"
+
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Fernet-encrypted, exactly like the chat provider keys.
+    key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    base_url: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 

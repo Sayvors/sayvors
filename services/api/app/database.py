@@ -1,9 +1,13 @@
+import logging
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 # ── Writer engine (primary / PgBouncer) ──────────────────────────────
 engine = create_async_engine(
@@ -42,6 +46,51 @@ engine_read = create_async_engine(
     },
 )
 async_session_read = async_sessionmaker(engine_read, class_=AsyncSession, expire_on_commit=False)
+
+
+async def _register_vector_codec(connection) -> None:
+    """Teach asyncpg the pgvector ``vector`` type.
+
+    SQLAlchemy's ``Vector`` type hands the driver the text form
+    (``[1.0,2.0]``), so the codec passes that through untouched and parses
+    the text the server sends back. Without a codec, asyncpg cannot encode
+    a vector parameter at all and every embedding write fails with
+    "unsupported type".
+    """
+    from pgvector import Vector
+
+    def _encode(value):
+        if isinstance(value, str):
+            return value
+        if isinstance(value, Vector):
+            return value.to_text()
+        return "[" + ",".join(str(float(item)) for item in value) + "]"
+
+    await connection.set_type_codec(
+        "vector",
+        encoder=_encode,
+        decoder=Vector.from_text,
+        format="text",
+    )
+
+
+def _register_vector_on_connect(dbapi_connection, connection_record) -> None:
+    """Pool hook: register the vector codec on every new connection.
+
+    A database without the pgvector extension must still boot: the codec
+    registration is logged and skipped, and only the vector write path
+    fails (the migration is what blocks such a database from deploying).
+    """
+    if not hasattr(dbapi_connection, "run_async"):
+        return
+    try:
+        dbapi_connection.run_async(_register_vector_codec)
+    except Exception as e:  # pragma: no cover - depends on the database
+        logger.error("pgvector codec not registered on this connection: %s", e)
+
+
+event.listen(engine.sync_engine, "connect", _register_vector_on_connect)
+event.listen(engine_read.sync_engine, "connect", _register_vector_on_connect)
 
 
 class Base(DeclarativeBase):
