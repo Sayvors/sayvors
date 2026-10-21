@@ -14,6 +14,7 @@ Two rules keep the module extractable into its own service later:
 """
 
 import logging
+import math
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -65,6 +66,7 @@ class SynthesisRequest:
     tenant_id: str | None = None
     voice: VoiceRef = field(default_factory=VoiceRef)
     format: AudioFormat = AudioFormat.NATIVE
+    speed: float = 1.0
     purpose: str = "generic"
 
 
@@ -163,19 +165,33 @@ async def _render(req: SynthesisRequest, db) -> SynthesisResult | None:
         return None
 
     audio, mime_type = rendered
-    if req.format != AudioFormat.NATIVE and mime_type != req.format.value:
-        converted = await convert_audio(audio, mime_type, req.format)
+    speed_changed = abs(req.speed - 1.0) > 0.01
+    if req.format != AudioFormat.NATIVE:
+        target_format = req.format
+    elif speed_changed:
+        # No container change was requested, but the tempo still needs an
+        # encode — keep the provider's container.
+        target_format = format_for_mime(mime_type)
+    else:
+        target_format = AudioFormat.NATIVE
+
+    if target_format != AudioFormat.NATIVE and (
+        mime_type != target_format.value or speed_changed
+    ):
+        converted = await convert_audio(
+            audio, mime_type, target_format, speed=req.speed
+        )
         if converted is None:
-            # The caller asked for a container we cannot produce. Keep the
-            # audio it can still send (a media bubble beats no reply) and
+            # The caller asked for a container/tempo we cannot produce. Keep
+            # the audio it can still send (a media bubble beats no reply) and
             # report the real container so it can label it correctly.
             logger.info(
-                "Could not convert %s to %s — returning native audio",
-                mime_type, req.format.value,
+                "Could not convert %s to %s at %.2fx — returning native audio",
+                mime_type, target_format.value, req.speed,
             )
         else:
             audio, mime_type = converted
-            actual_format = req.format
+            actual_format = target_format
     else:
         actual_format = format_for_mime(mime_type)
 
@@ -221,12 +237,25 @@ async def synthesize(
         )
         text = text[:MAX_SYNTH_CHARS]
 
+    speed = float(req.speed)
+    if not math.isfinite(speed) or speed <= 0:
+        logger.warning("Invalid TTS speed %r — using 1.0 (purpose=%s)", req.speed, req.purpose)
+        speed = 1.0
+    clamped = min(2.0, max(0.5, speed))
+    if clamped != speed:
+        logger.warning(
+            "TTS speed %.2f outside 0.5–2.0 — clamped to %.2f (purpose=%s)",
+            speed, clamped, req.purpose,
+        )
+    speed = clamped
+
     bounded = SynthesisRequest(
         text=text,
         language=req.language,
         tenant_id=req.tenant_id,
         voice=req.voice,
         format=req.format,
+        speed=speed,
         purpose=req.purpose,
     )
 

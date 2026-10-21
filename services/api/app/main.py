@@ -228,13 +228,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.error("Database pool warmup failed: %s", e)
 
-    # Load DB-backed LLM provider keys (env fallback stays if this fails)
+    # Load DB-backed LLM provider keys and model curation
     try:
         from .modules.llm.providers.registry import refresh_provider_keys
         n = await refresh_provider_keys()
         log.info("LLM provider keys loaded from DB: %d", n)
     except Exception as e:
-        log.warning("LLM provider key refresh failed (env fallback active): %s", e)
+        log.warning("LLM provider key refresh failed — generation stays unavailable until it succeeds: %s", e)
 
     # Try Redis — mark unavailable fast if down
     try:

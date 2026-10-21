@@ -123,6 +123,58 @@ async def test_llm_list_shape(client, admin_headers):
 
 
 @pytest.mark.asyncio
+async def test_llm_list_reads_stored_keys_from_database(db, client, admin_headers, monkeypatch):
+    """A stale boot overlay must not hide a key the database holds.
+
+    The admin page is how an operator discovers and fixes a key problem; if
+    the list trusted the in-memory overlay, a failed boot load would show
+    "no keys" forever while the encrypted row sits in Postgres.
+    """
+    from app.core.crypto import encrypt_secret
+    from app.modules.llm.models import ProviderConfig
+    from app.modules.llm.providers import registry
+
+    db.add(ProviderConfig(
+        provider="openrouter",
+        enabled=True,
+        key_encrypted=encrypt_secret("sk-or-test-key"),
+    ))
+    await db.commit()
+    monkeypatch.setattr(registry, "_db_overlay", None)
+
+    r = client.get("/api/v1/admin/llm", headers=admin_headers)
+    assert r.status_code == 200, r.text
+    openrouter = next(p for p in r.json() if p["provider"] == "openrouter")
+    assert openrouter["has_key"] is True
+    assert openrouter["key_source"] == "database"
+
+
+@pytest.mark.asyncio
+async def test_saving_a_key_updates_this_worker(db, client, admin_headers):
+    """The save response and the next generation must see the new key.
+
+    Without a reload, the resolver keeps the overlay from boot and reports
+    "no API key configured" until the process restarts.
+    """
+    from app.modules.llm.providers import registry
+
+    previous = (registry._db_overlay, registry._model_overlay, registry._custom_models)
+    registry.reset_provider_cache()
+    try:
+        r = client.put(
+            "/api/v1/admin/llm/openrouter",
+            headers=admin_headers,
+            json={"api_key": "sk-or-saved"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["has_key"] is True
+        assert registry.resolve_provider_key("openrouter") == ("sk-or-saved", "database")
+    finally:
+        registry._db_overlay, registry._model_overlay, registry._custom_models = previous
+        registry._providers.clear()
+
+
+@pytest.mark.asyncio
 async def test_catalog_lists_shape(client, admin_headers):
     for url in ("/api/v1/admin/dialects", "/api/v1/admin/tones"):
         r = client.get(url, headers=admin_headers)

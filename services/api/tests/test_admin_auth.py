@@ -142,6 +142,22 @@ def test_every_admin_route_is_gated_except_login():
 
     assert admin_router.prefix == "/api/v1/admin"
     for route in admin_router.routes:
+        # FastAPI 0.141 defers include_router: the child's routes are not
+        # copied in, and the include-level dependencies live on the context.
+        include_context = getattr(route, "include_context", None)
+        if include_context is not None:
+            # Include-level deps are fastapi.params.Depends (not Dependant),
+            # so the callable lives on `.dependency`.
+            calls = [
+                getattr(d, "dependency", getattr(d, "call", None))
+                for d in include_context.dependencies
+            ]
+            assert require_admin in calls, (
+                f"included router {include_context.prefix} missing require_admin"
+            )
+            assert include_context.prefix == "/api/v1/admin"
+            continue
+
         path = getattr(route, "path", "")
         methods = getattr(route, "methods", set()) or set()
         if path == "/api/v1/admin/login" and methods == {"POST"}:
@@ -350,7 +366,7 @@ async def test_admin_llm_list_and_set_round_trip(client, monkeypatch):
     r = client.put("/api/v1/admin/llm/groq", json={"enabled": False}, headers=headers)
     assert r.json()["key_source"] == "disabled"
 
-    # Clear the key -> falls back to env (none in tests).
+    # Clear the key -> no key.
     r = client.put("/api/v1/admin/llm/groq", json={"api_key": "", "enabled": True}, headers=headers)
     assert r.json()["key_source"] in ("env", "none")
 

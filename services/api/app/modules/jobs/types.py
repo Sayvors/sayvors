@@ -33,23 +33,26 @@ class JobType(str, Enum):
     stt_job = "stt.job"                      # speech-to-text
     tts_job = "tts.job"                      # text-to-speech
 
-    # Lane for each job type
-    LANE_MAP: dict["JobType", JobLane] = {
-        meta_send_reply: JobLane.realtime,
-        meta_send_template: JobLane.realtime,
-        post_publish: JobLane.publishing,
-        post_delete: JobLane.publishing,
-        media_publish: JobLane.publishing,
-        media_process: JobLane.media,
-        databank_ingest: JobLane.bulk,
-        scrape_url: JobLane.bulk,
-        stt_job: JobLane.bulk,
-        tts_job: JobLane.bulk,
-    }
-
     @classmethod
     def lane_for(cls, job_type: "JobType") -> JobLane:
-        return cls.LANE_MAP[job_type]
+        return _LANE_MAP[job_type]
+
+
+# Module-level map, not an enum attribute: a dict assigned inside an Enum
+# body becomes a member (and a classmethod that indexes it would look up the
+# member, not the map). Keeping it here makes the mapping data, not a job type.
+_LANE_MAP: dict[JobType, JobLane] = {
+    JobType.meta_send_reply: JobLane.realtime,
+    JobType.meta_send_template: JobLane.realtime,
+    JobType.post_publish: JobLane.publishing,
+    JobType.post_delete: JobLane.publishing,
+    JobType.media_publish: JobLane.publishing,
+    JobType.media_process: JobLane.media,
+    JobType.databank_ingest: JobLane.bulk,
+    JobType.scrape_url: JobLane.bulk,
+    JobType.stt_job: JobLane.bulk,
+    JobType.tts_job: JobLane.bulk,
+}
 
 
 # JOB_TYPES is the closed registry validated server-side on submit.

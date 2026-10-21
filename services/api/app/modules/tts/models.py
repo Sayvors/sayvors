@@ -76,6 +76,10 @@ class TTSJob(Base):
         default="pending",
     )
     audio_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Private docs key (relative to the tenant's docs prefix) — the audio is
+    # not public; the router serves it after checking ownership.
+    storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    audio_mime: Mapped[str | None] = mapped_column(String(64), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

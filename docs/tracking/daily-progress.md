@@ -103,3 +103,10 @@
 - OpenRouter provider added to admin
 - Streamed LLM calls budgeted and metered
 - LLM chat double-charge removed
+- TTS admin voice routes extracted behind admin auth
+- TTS `/convert` durable job with private audio storage + playback
+- TTS speed via one-pass ffmpeg tempo chain
+- TTS job failure contract: terminal no-audio, retryable storage errors
+- Job lane map moved off the enum + `lane_for` call fixed
+- Admin LLM key status reads the DB, not a stale worker overlay
+- Provider key refresh across uvicorn workers (15s TTL)

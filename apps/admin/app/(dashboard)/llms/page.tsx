@@ -378,7 +378,11 @@ export default function AdminLlmsPage() {
     }
   };
 
-  const keyedProviders = items.filter((p) => p.has_key);
+  // Providers with a usable key first. The rest stay visible: with zero keys
+  // configured, hiding every card would also hide the only place to add one.
+  const orderedProviders = [...items].sort(
+    (a, b) => Number(b.has_key) - Number(a.has_key)
+  );
 
   return (
     <div className="space-y-4">
@@ -415,17 +419,34 @@ export default function AdminLlmsPage() {
             <div key={i} className="panel h-32 animate-pulse" />
           ))}
         </div>
-      ) : keyedProviders.length === 0 ? (
+      ) : orderedProviders.length === 0 ? (
         <div className="panel p-10 text-center">
-          <p className="text-[14px] font-semibold text-ink/70">No providers with keys yet</p>
+          <p className="text-[14px] font-semibold text-ink/70">No providers available</p>
           <p className="mt-1 text-[12px] text-ink/45">
-            Add a provider key above to get started — models appear once a key is stored.
+            The API returned an empty provider catalog. Check the server logs.
           </p>
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          {keyedProviders.map((p) => {
-            const src = SOURCE_LABEL[p.key_source];
+          {orderedProviders.map((p) => {
+            const optional = p.provider === "ollama";
+            const src =
+              p.key_source === "disabled"
+                ? SOURCE_LABEL.disabled
+                : p.has_key
+                  ? SOURCE_LABEL.database
+                  : optional
+                    ? { text: "local", cls: "bg-emerald-100 text-emerald-700" }
+                    : SOURCE_LABEL.none;
+            const subtitle =
+              p.key_source === "disabled"
+                ? "Disabled by admin"
+                : p.has_key
+                  ? "Key configured"
+                  : optional
+                    ? "Local server — no key needed"
+                    : "No key stored yet";
+            const canTest = p.has_key || optional;
             const test = tests[p.provider];
             const isBusy = busy === p.provider || busy === `${p.provider}:test`;
             return (
@@ -447,7 +468,7 @@ export default function AdminLlmsPage() {
                         </span>
                       )}
                     </p>
-                    <p className="mt-0.5 text-[11px] text-ink/45">Key configured</p>
+                    <p className="mt-0.5 text-[11px] text-ink/45">{subtitle}</p>
                   </div>
                   <select
                     value={p.enabled ? "enabled" : "disabled"}
@@ -492,30 +513,47 @@ export default function AdminLlmsPage() {
                   </div>
                 ) : (
                   <div className="mt-3 flex flex-wrap gap-2 border-t border-ink/[0.05] pt-3">
-                    <button
-                      onClick={() => {
-                        setEditing(p.provider);
-                        setKeyInput("");
-                      }}
-                      disabled={isBusy}
-                      className="btn-secondary !px-3 !py-1.5 disabled:opacity-50"
-                    >
-                      Replace key
-                    </button>
-                    <button
-                      onClick={() => void clearKey(p.provider)}
-                      disabled={isBusy}
-                      className="rounded-[2px] px-3 py-1.5 text-[11px] font-semibold text-ink/40 transition hover:text-coral disabled:opacity-50"
-                    >
-                      Clear
-                    </button>
-                    <button
-                      onClick={() => void runTest(p.provider)}
-                      disabled={isBusy}
-                      className="ml-auto rounded-[2px] bg-emerald-500 px-3 py-1.5 text-[11px] font-bold text-white transition hover:bg-emerald-600 disabled:opacity-50"
-                    >
-                      Test
-                    </button>
+                    {p.has_key ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            setEditing(p.provider);
+                            setKeyInput("");
+                          }}
+                          disabled={isBusy}
+                          className="btn-secondary !px-3 !py-1.5 disabled:opacity-50"
+                        >
+                          Replace key
+                        </button>
+                        <button
+                          onClick={() => void clearKey(p.provider)}
+                          disabled={isBusy}
+                          className="rounded-[2px] px-3 py-1.5 text-[11px] font-semibold text-ink/40 transition hover:text-coral disabled:opacity-50"
+                        >
+                          Clear
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setEditing(p.provider);
+                          setKeyInput("");
+                        }}
+                        disabled={isBusy}
+                        className="btn-primary !px-3 !py-1.5 disabled:opacity-50"
+                      >
+                        Add key
+                      </button>
+                    )}
+                    {canTest && (
+                      <button
+                        onClick={() => void runTest(p.provider)}
+                        disabled={isBusy}
+                        className="ml-auto rounded-[2px] bg-emerald-500 px-3 py-1.5 text-[11px] font-bold text-white transition hover:bg-emerald-600 disabled:opacity-50"
+                      >
+                        Test
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -535,7 +573,7 @@ export default function AdminLlmsPage() {
           <div>
             <h2 className="text-[16px] font-bold text-ink">Models</h2>
             <p className="mt-0.5 text-[12px] text-ink/50">
-              Only saved models reach tenants. Add one from a provider&apos;s live list, test it, keep it on.
+              Only saved models reach tenants, and only while their provider has a key. Add one from a provider&apos;s live list, test it, keep it on.
             </p>
           </div>
           {!adding && (

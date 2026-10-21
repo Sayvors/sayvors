@@ -1,9 +1,10 @@
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..jobs.service import submit_job
+from ..jobs.types import JobType
 from ..users.models import User
 from .models import TTSJob, Voice
 from .schemas import TTSRequest
@@ -20,6 +21,12 @@ async def list_voices(db: AsyncSession, language: str | None = None) -> list[Voi
 async def create_tts_job(
     body: TTSRequest, user: User, db: AsyncSession
 ) -> TTSJob:
+    """Persist a pending job and enqueue it on the bulk lane.
+
+    The TTSJob row and its durable Job row commit in one transaction: a job
+    the client can poll but no worker will ever see is worse than a failed
+    request the client can retry.
+    """
     job = TTSJob(
         id=str(uuid.uuid4()),
         user_id=user.id,
@@ -30,14 +37,19 @@ async def create_tts_job(
         status="pending",
     )
     db.add(job)
+    await db.flush()
+
+    await submit_job(
+        db,
+        tenant_id=user.id,
+        job_type=JobType.tts_job.value,
+        payload={"tts_job_id": job.id},
+        idempotency_key=f"tts:{job.id}",
+        subject_type="tts_job",
+        subject_id=job.id,
+    )
     await db.commit()
     await db.refresh(job)
-
-    # TODO: dispatch to TTS provider (ElevenLabs, Azure, etc.)
-    # For now, mark as completed
-    job.status = "completed"
-    job.completed_at = datetime.now(timezone.utc)
-    await db.commit()
     return job
 
 

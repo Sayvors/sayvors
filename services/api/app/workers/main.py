@@ -46,7 +46,7 @@ async def _warmup() -> None:
         n = await refresh_provider_keys()
         logger.info("LLM provider keys loaded from DB: %d", n)
     except Exception as e:
-        logger.warning("LLM provider key refresh failed (env fallback active): %s", e)
+        logger.warning("LLM provider key refresh failed — generation stays unavailable until it succeeds: %s", e)
 
     try:
         redis = await get_redis()

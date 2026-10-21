@@ -153,6 +153,7 @@ async def complete(
     ``purpose`` has no default: an LLM call nobody can attribute is a cost
     nobody budgeted for, so every caller must name its use.
     """
+    await registry.ensure_provider_keys_fresh()
     resolved = resolve_model(model)
     provider = registry.get_provider_for_model(model)
     req = _build_request(
@@ -190,6 +191,7 @@ async def stream(
     ``finally``, so a provider failure refunds it and a client disconnect still
     charges for what was delivered.
     """
+    await registry.ensure_provider_keys_fresh()
     resolved = resolve_model(model)
     provider = registry.get_provider_for_model(model)
     req = _build_request(

@@ -50,7 +50,8 @@ async def submit_job(
     if job_type not in JOB_TYPES:
         raise ValueError(f"unknown_job_type: {job_type}. known={JOB_TYPES}")
 
-    resolved_lane = lane or JobType(job_type).lane_for().value
+    resolved_type = JobType(job_type)
+    resolved_lane = lane or JobType.lane_for(resolved_type).value
     resolved_lane_key = lane_key or str(subject_id or uuid4())
 
     # Idempotency: if a job with this key already exists for this tenant, return it.

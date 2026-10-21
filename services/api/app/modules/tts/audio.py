@@ -93,17 +93,52 @@ def _out_suffix(target: AudioFormat) -> str:
     }.get(target, ".bin")
 
 
+def _atempo_filters(speed: float) -> list[str]:
+    """Build an ffmpeg ``atempo`` chain for ``speed``.
+
+    A single atempo filter only accepts 0.5–2.0, so extreme values are split
+    across filters. The public API caps speed at 0.5–2.0; the chain keeps the
+    helper correct for internal callers that pass something wider.
+    """
+    filters: list[str] = []
+    remaining = speed
+    while remaining > 2.0:
+        filters.append("atempo=2.0")
+        remaining /= 2.0
+    while remaining < 0.5:
+        filters.append("atempo=0.5")
+        remaining /= 0.5
+    filters.append(f"atempo={remaining:.6f}")
+    return filters
+
+
 async def convert_audio(
-    audio: bytes, source_mime: str, target: AudioFormat
+    audio: bytes,
+    source_mime: str,
+    target: AudioFormat,
+    *,
+    speed: float = 1.0,
 ) -> tuple[bytes, str] | None:
-    """Convert ``audio`` to ``target``.
+    """Convert ``audio`` to ``target`` and optionally change its tempo.
 
     Returns ``(bytes, mime_type)`` or ``None`` when the target is unavailable
     (ffmpeg missing, conversion failed, empty output). Never raises.
+
+    ``speed`` is applied in the same ffmpeg pass as the container conversion,
+    so a channel asking for Ogg/Opus at 1.2x pays for one encode, not two.
+    ``NATIVE`` with a non-default speed re-encodes in the source container.
     """
     if not audio:
         return None
-    if target == AudioFormat.NATIVE or source_mime == target.value:
+    if speed <= 0:
+        return None
+
+    speed_changed = abs(speed - 1.0) > 0.01
+    if target == AudioFormat.NATIVE:
+        if not speed_changed:
+            return audio, source_mime
+        target = format_for_mime(source_mime)
+    elif not speed_changed and source_mime == target.value:
         return audio, source_mime
 
     ffmpeg = shutil.which("ffmpeg")
@@ -123,6 +158,8 @@ async def convert_audio(
         args = _ffmpeg_args(target, out_path)
         if args is None:
             return None
+        if speed_changed:
+            args = ["-filter:a", ",".join(_atempo_filters(speed)), *args]
         proc = await asyncio.create_subprocess_exec(
             ffmpeg, "-y", "-loglevel", "error", "-i", src_path, *args,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
