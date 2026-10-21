@@ -96,3 +96,4 @@
 - Enrichment silent heuristic fallback marks failed
 - RAG decision (D10) — prefix-window cosine, JSON embeddings
 - Reviews worker serial poller — concurrent polling with semaphore
+- Redis re-arm prober — fail-closed paths recover after outage
