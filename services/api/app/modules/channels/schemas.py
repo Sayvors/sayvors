@@ -124,6 +124,14 @@ class InboxThread(BaseModel):
     message_count: int
     category: str | None = None
     priority: str | None = None
+    # Whether the conversation needs a human now — urgent/high priority
+    # or a complaint. Derived from the two fields above, so it means the
+    # same thing for a WhatsApp thread and a Google review.
+    important: bool = False
+    # False for conversations that cannot be answered from the inbox —
+    # a Google review is a public post answered through the review-reply
+    # flow, and an unattributed thread has nobody to send to.
+    can_reply: bool = True
     # Inbound messages with no outbound reply after them. Computed per thread so
     # the badge matches the conversation the user is about to open.
     unread: int = 0

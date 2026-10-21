@@ -23,6 +23,7 @@ const MAIN_ITEMS: NavItem[] = [
   { key: "locations", icon: <NavAsset src="/nav/locations.jpg" />, href: "/dashboard/locations" },
   { key: "services", icon: <NavAsset src="/nav/services.webp" />, href: "/dashboard/services" },
   { key: "postsMedia", icon: <NavAsset src="/nav/posts-media.webp" />, href: "/dashboard/posts-media" },
+  { key: "customers", icon: <NavAsset src="/nav/customers.webp" />, href: "/dashboard/customers" },
   { key: "reviews", icon: <NavAsset src="/nav/reviews.png" />, href: "/dashboard/reviews" },
   { key: "databank", icon: <NavAsset src="/nav/databank.webp" />, href: "/dashboard/databank" },
 ];

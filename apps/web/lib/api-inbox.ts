@@ -24,6 +24,17 @@ export interface InboxThread {
   message_count: number;
   unread: number;
   is_unknown: boolean;
+  /** complaint | feedback | normal | … */
+  category?: string | null;
+  /** urgent | high | normal | low */
+  priority?: string | null;
+  /** Needs a human now — urgent/high priority or a complaint. One rule
+   * for every source, so a Google review and a WhatsApp thread mean the
+   * same thing here. */
+  important?: boolean;
+  /** False for a conversation that cannot be answered from the inbox —
+   * a Google review is answered through the review-reply flow. */
+  can_reply?: boolean;
 }
 
 export interface InboxMessage {
@@ -52,7 +63,6 @@ export async function fetchInboxThreads(search = ""): Promise<InboxThread[]> {
   const data = await apiFetch(`/api/v1/inbox/threads${q}`);
   return (data?.threads ?? []) as InboxThread[];
 }
-
 export async function fetchThreadMessages(
   channelId: string,
   contactPhone: string | null,

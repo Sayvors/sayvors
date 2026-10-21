@@ -110,8 +110,34 @@ API; location photos have no v1 resource, so they go through the
 need the `business.manage` scope this codebase already requests. v4.9's
 media resource is not on Google's deprecation schedule.
 
-## Account surfaces on the platforms that are not enabled yet
+## Scheduled removal
 
+A promotional post has an end date: it goes up now and comes down on the
+day the offer lapses. `POST /api/v1/channels/publish` takes an optional
+`delete_at` for that.
+
+- The date must be in the future, and after `scheduled_at` when the post
+  is itself scheduled — a post cannot be taken down before it is
+  published.
+- The removal is queued **when the post succeeds**, not when the request
+  is made. That is the first moment there is a platform post id to
+  remove; the removal job points at the publish job rather than copying
+  the id, so the two cannot drift apart.
+- It is a `post.delete` job on the publishing lane, timed with
+  `next_run_at`, so it rides the same lease, retry and idempotency
+  machinery as everything else. See
+  [workers-and-jobs.md](../operations/workers-and-jobs.md).
+- It calls the provider's real delete — the same call the "Remove"
+  button makes. Unlike the legacy Google flow, which could only clean
+  up its own rows, this actually takes the post off the platform.
+- A post that is already gone is a success, not a retry. A provider
+  failure raises, so the runner retries with backoff.
+
+Account surfaces are never removed this way: a profile picture or banner
+can only be replaced by publishing a new one, so the removal job skips
+them and says so.
+
+## Account surfaces on the platforms that are not enabled yet
 Checked against each vendor's current published spec, for whoever turns
 these platforms on:
 

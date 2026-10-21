@@ -14,6 +14,7 @@ from ...channels.meta.providers.whatsapp import WhatsAppAdapter
 from ...channels.meta.providers.instagram import InstagramAdapter
 from ...channels.meta.providers.facebook import FacebookAdapter
 from ...channels.meta.providers.google_publish import GoogleBusinessPublisher
+from ...channels.publish.service import is_removable_method, schedule_removal
 from ...channels.google_reviews import GoogleReviewsError
 from ...channels.models import Channel
 from ...channels.service import channel_location_ids, decrypt_token, encrypt_token
@@ -152,6 +153,27 @@ async def handle_post_publish(job: Job, db: AsyncSession) -> dict | None:
         )
 
     await complete_job(db, job=job, result=result)
+
+    # A promotional post has an end date. Now that the post is live and
+    # the platform has given us its id, queue the removal for that date.
+    # The removal is created only now, because that is when there is
+    # something to remove — a removal queued at publish time would have
+    # no post id to act on.
+    delete_at = payload.get("delete_at")
+    if delete_at and is_removable_method(method):
+        try:
+            await schedule_removal(
+                db,
+                tenant_id=job.tenant_id,
+                publish_job=job,
+                delete_at=datetime.fromisoformat(str(delete_at).replace("Z", "+00:00")),
+            )
+        except Exception as e:
+            # A bad date must not fail a publish that already succeeded —
+            # the post IS out there. Log it and let the operator see the
+            # post without a removal schedule.
+            logger.error("Could not schedule removal for job %s: %s", job.id, e)
+
     return result
 
 

@@ -91,6 +91,7 @@ class PublishBody(BaseModel):
     caption: str = Field("", max_length=5000)
     description: str = Field("", max_length=5000)
     scheduled_at: str | None = None
+    delete_at: str | None = None
     idempotency_key: str | None = Field(None, max_length=200)
     destinations: list[PublishDestination]
     batch_id: str | None = Field(None, max_length=64)
@@ -125,6 +126,38 @@ class PublishBody(BaseModel):
             raise ValueError("scheduled_at too far in the future")
         return dt.isoformat()
 
+    @field_validator("delete_at")
+    @classmethod
+    def _validate_delete_at(cls, v: str | None) -> str | None:
+        """When the post should be taken down again.
+
+        A promotional post has an end date: it goes up now and comes
+        down on the day the offer lapses. The date must be in the
+        future, and after the publish time — a post cannot be removed
+        before it is published.
+        """
+        if v is None or v == "":
+            return None
+        from datetime import datetime, timezone
+
+        s = v.strip()
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError as e:
+            raise ValueError(f"invalid delete_at: {e}") from e
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if dt <= datetime.now(timezone.utc):
+            raise ValueError("delete_at must be in the future")
+        return dt.isoformat()
+
+    def check_delete_after_publish(self) -> None:
+        """The removal must land after the publish, not before it."""
+        if not self.delete_at or not self.scheduled_at:
+            return
+        if self.delete_at <= self.scheduled_at:
+            raise ValueError("delete_at must be after the scheduled publish time")
+
 
 class JobOut(BaseModel):
     job_id: str
@@ -135,6 +168,9 @@ class JobOut(BaseModel):
     method: str | None = None
     external_asset_id: str | None = None
     scheduled_at: str | None = None
+    # When the post is due to be taken down again (a promotional post
+    # with an end date). Echoed so the feed can show it on the card.
+    delete_at: str | None = None
     result: dict[str, Any] | None = None
     last_error: str | None = None
     updated_at: str | None = None
@@ -161,6 +197,12 @@ async def publish_post(
     jobs_out: list[JobOut] = []
     idempotency_key = body.idempotency_key
 
+    # The removal must land after the publish, not before it.
+    try:
+        body.check_delete_after_publish()
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
     # Create every job in a single transaction. A partial failure (e.g. a
     # duplicate idempotency key, or a constraint violation) rolls back the
     # whole batch instead of leaving some destinations scheduled and some not.
@@ -179,6 +221,7 @@ async def publish_post(
                     "external_asset_id": asset_id,
                     "method": method,
                     "scheduled_at": body.scheduled_at,
+                    "delete_at": body.delete_at,
                     "batch_id": body.batch_id,
                 }
 
@@ -209,6 +252,7 @@ async def publish_post(
                         method=method,
                         external_asset_id=asset_id,
                         scheduled_at=body.scheduled_at,
+                        delete_at=body.delete_at,
                         batch_id=body.batch_id,
                         caption=body.caption or None,
                         media_url=body.media_url,
@@ -224,9 +268,9 @@ async def publish_post(
         raise HTTPException(status_code=500, detail="publish failed") from e
 
     # Dispatch all jobs to Kafka now so the publishing lane runner picks them up.
-    # Dispatch is best-effort: jobs are already persisted in Postgres in the
-    # 'accepted' state, and the publishing worker polls for accepted jobs even
-    # if Kafka is down, so a dispatch failure never loses a publish.
+    # Dispatch is best-effort: the jobs are already persisted in Postgres as
+    # 'queued', and the lane runner claims them from Postgres, so a dispatch
+    # failure never loses a publish.
     if jobs_out:
         try:
             producer = await get_kafka_producer()
@@ -244,7 +288,7 @@ async def publish_post(
                 )
         except Exception:
             logger.warning(
-                "Kafka dispatch failed - %d jobs remain accepted in Postgres "
+                "Kafka dispatch failed - %d jobs remain queued in Postgres "
                 "and will be picked up by the publishing worker",
                 len(jobs_out),
             )
@@ -386,6 +430,7 @@ async def batch_delete_published_posts(
                     method=payload.get("method"),
                     external_asset_id=external_asset_id,
                     scheduled_at=payload.get("scheduled_at"),
+                    delete_at=payload.get("delete_at"),
                     result=job_row.result,
                     last_error=job_row.last_error,
                     updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
@@ -453,6 +498,7 @@ async def batch_delete_published_posts(
                     method=payload.get("method"),
                     external_asset_id=external_asset_id,
                     scheduled_at=payload.get("scheduled_at"),
+                    delete_at=payload.get("delete_at"),
                     result=job_row.result,
                     last_error=job_row.last_error,
                     updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
@@ -495,6 +541,7 @@ async def batch_delete_published_posts(
                 method=payload.get("method"),
                 external_asset_id=external_asset_id,
                 scheduled_at=payload.get("scheduled_at"),
+                delete_at=payload.get("delete_at"),
                 result=job_row.result,
                 last_error=job_row.last_error,
                 updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,
@@ -635,6 +682,7 @@ async def delete_published_post(
             method=payload.get("method"),
             external_asset_id=payload.get("external_asset_id"),
             scheduled_at=payload.get("scheduled_at"),
+            delete_at=payload.get("delete_at"),
             result=job_row.result,
             last_error=job_row.last_error,
             updated_at=job_row.updated_at.isoformat() if job_row.updated_at else None,

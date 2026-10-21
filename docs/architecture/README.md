@@ -6,6 +6,7 @@ This directory contains architecture documentation for the Sayvors platform.
 
 - [Overview](overview.md) — System architecture, components, data flow
 - [API Service](api-service.md) — FastAPI service internals
+- [Conversation categorization](conversation-categorization.md) — Categories, priorities, and the "important" rule
 - [Google review, ticket, and lead flow](google-review-ticket-lead-flow.md) — Review follow-up lifecycle
 - [Database](../database/README.md) — Database setup and storage backends
 - [Meta integration architecture](../integrations/meta/architecture.md) — Meta connections, OAuth, assets, and webhooks

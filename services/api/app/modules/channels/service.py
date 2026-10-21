@@ -131,6 +131,32 @@ def decrypt_contact_phone(phone: str | None) -> str | None:
         return phone
 
 
+# The levels a conversation can carry, most urgent first. ONE scale for
+# every source, so a filter means the same thing wherever the
+# conversation came from.
+PRIORITY_LEVELS = ("urgent", "high", "normal", "low")
+
+# A conversation is important when it needs a human now. The rule spans
+# every source: an urgent or high priority, OR a complaint — which is
+# what a one- or two-star Google review and a "my order never arrived"
+# message both are. The Leads board's "important" is a different thing
+# (an AI-missed thread); this one is about the conversation's content.
+IMPORTANT_PRIORITIES = frozenset({"urgent", "high"})
+
+
+def is_important(priority: str | None, category: str | None) -> bool:
+    """Whether a conversation needs a human's attention now.
+
+    Deliberately derived rather than stored: "important" is a question
+    about the conversation, and storing the answer would mean three
+    writers keeping it in step with the priority and category they also
+    write.
+    """
+    if (priority or "normal").strip().lower() in IMPORTANT_PRIORITIES:
+        return True
+    return (category or "").strip().lower() == "complaint"
+
+
 def categorize_message(
     content: str | None,
     platform: str | None = None,
@@ -139,9 +165,10 @@ def categorize_message(
     """Auto-categorise an inbound message into (category, priority).
 
     Rules (in priority order):
-      - Google reviews with rating <= 2  -> complaint, high
-      - Google reviews with rating == 3  -> feedback, normal
-      - Google reviews with rating >= 4  -> feedback, low
+      - Google reviews, by rating: 1 star -> urgent, 2 -> high,
+        3 -> normal, 4-5 -> low. A rating is the one honest signal a
+        public review carries, and it is mapped onto the SAME scale the
+        chat path uses so one rule can rank both.
       - Messages containing complaint keywords -> complaint, high
       - Messages containing urgent keywords -> important, urgent
       - Default -> normal, normal
@@ -151,7 +178,9 @@ def categorize_message(
 
     # Google review: categorise by rating.
     if plat == "google_reviews" and rating is not None:
-        if rating <= 2:
+        if rating <= 1:
+            return "complaint", "urgent"
+        if rating == 2:
             return "complaint", "high"
         if rating == 3:
             return "feedback", "normal"
@@ -732,6 +761,9 @@ async def list_inbox_threads(
             name = profile.name
         decrypted_phone = decrypt_contact_phone(phone) if phone is not None else None
         decrypted_last = decrypt_message_content(last_row.content) if last_row.content else ""
+        category = last_row.category or "normal"
+        priority = last_row.priority or "normal"
+        platform = by_id[channel_id].platform
         out.append(
             {
                 "key": thread_key(decrypted_phone),
@@ -741,15 +773,22 @@ async def list_inbox_threads(
                 "avatar_url": profile.avatar_url if profile else None,
                 "channel_id": channel_id,
                 "channel_name": by_id[channel_id].display_name,
-                "platform": by_id[channel_id].platform,
+                "platform": platform,
                 "last_message": (decrypted_last or "")[:280],
                 "last_message_at": last_at.isoformat() if last_at else None,
                 "last_direction": last_row.direction,
                 "message_count": total,
                 "unread": int(unread or 0),
                 "is_unknown": phone is None,
-                "category": last_row.category or "normal",
-                "priority": last_row.priority or "normal",
+                "category": category,
+                "priority": priority,
+                # One rule, every source: an urgent/high conversation or
+                # a complaint needs a human now.
+                "important": is_important(priority, category),
+                # A Google review is a public post, not a message — it is
+                # answered through the review-reply flow, so the inbox's
+                # send box must not offer to reply to it.
+                "can_reply": platform != "google_reviews" and phone is not None,
             }
         )
     return out

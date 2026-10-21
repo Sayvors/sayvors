@@ -50,6 +50,7 @@ const ar: Dict = {
     closeMenu: "إغلاق القائمة",
     mainNavigation: "التنقل الرئيسي",
     postsMedia: "المنشورات والوسائط",
+  customers: "العملاء",
     advanced: "متقدم",
     automations: "الأتمتة",
     benchmark: "المقارنة المرجعية",

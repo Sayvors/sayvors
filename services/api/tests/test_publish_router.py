@@ -11,6 +11,7 @@ depends on:
 - a published job is removed through the provider, best-effort
 """
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -223,6 +224,100 @@ def test_publish_carries_the_media_key(client):
     )
     assert res.status_code == 200, res.text
     assert res.json()[0]["method"] == "profile"
+
+
+# ── scheduled removal ──────────────────────────────────────────────────
+
+
+def test_publish_accepts_a_removal_date(client):
+    """A promotional post goes up now and comes down on a date."""
+    delete_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "media_url": "https://cdn.example/post.jpg",
+            "delete_at": delete_at,
+            "destinations": [
+                {"platform": "facebook", "external_asset_id": "fb-1", "methods": ["post"]}
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    row = res.json()[0]
+    assert row["delete_at"] == delete_at
+    # The job carries it, so the removal can be queued once the post is
+    # actually live.
+    assert row["job_id"]
+
+
+def test_publish_rejects_a_removal_date_in_the_past(client):
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "media_url": "https://cdn.example/post.jpg",
+            "delete_at": "2000-01-01T00:00:00+00:00",
+            "destinations": [
+                {"platform": "facebook", "external_asset_id": "fb-1", "methods": ["post"]}
+            ],
+        },
+    )
+    assert res.status_code == 422
+
+
+def test_publish_rejects_a_removal_before_the_post_goes_out(client):
+    """A post cannot be taken down before it is published."""
+    scheduled = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    res = client.post(
+        "/api/v1/channels/publish",
+        json={
+            "media_url": "https://cdn.example/post.jpg",
+            "scheduled_at": scheduled,
+            "delete_at": (
+                datetime.now(timezone.utc) + timedelta(days=1)
+            ).isoformat(),
+            "destinations": [
+                {"platform": "facebook", "external_asset_id": "fb-1", "methods": ["post"]}
+            ],
+        },
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_scheduling_a_removal_queues_a_delete_job(db, user_id):
+    """The removal is a job of its own, timed for the removal date."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.jobs.models import Job
+    from app.modules.jobs.service import submit_job
+    from app.modules.jobs.types import JobType
+    from app.modules.channels.publish.service import schedule_removal
+
+    publish_job = await submit_job(
+        db,
+        tenant_id=user_id,
+        job_type=JobType.post_publish.value,
+        payload={"platform": "facebook", "external_asset_id": "fb-1", "method": "post"},
+        lane="publishing",
+    )
+    delete_at = datetime.now(timezone.utc) + timedelta(days=5)
+    removal = await schedule_removal(
+        db, tenant_id=user_id, publish_job=publish_job, delete_at=delete_at
+    )
+    await db.commit()
+
+    assert removal.job_type == JobType.post_delete.value
+    assert removal.status == "queued"
+    assert removal.payload["publish_job_id"] == publish_job.id
+    # Timed for the removal date, not for now.
+    assert abs((removal.next_run_at - delete_at).total_seconds()) < 1
+
+    # Scheduling twice must not queue two removals.
+    again = await schedule_removal(
+        db, tenant_id=user_id, publish_job=publish_job, delete_at=delete_at
+    )
+    await db.commit()
+    assert again.id == removal.id
 
 
 def test_publish_rejects_past_schedule(client):

@@ -31,8 +31,22 @@ async def submit_job(
     subject_type: str | None = None,
     subject_id: str | None = None,
     lane_key: str | None = None,
+    next_run_at: datetime | None = None,
 ) -> Job:
-    """Insert a Job(row) in status=accepted. Caller commits the session."""
+    """Insert a Job(row) in status=queued. Caller commits the session.
+
+    The row is durable AND claimable the moment it commits. The lane
+    runner claims from Postgres, so a row that was inserted but not
+    claimable would never run — which is exactly what the design's
+    `accepted` state did: nothing promoted it, because dispatching to
+    Kafka is best-effort and the runner never consumes that topic. Rows
+    left in `accepted` by an older build are swept by the reconciler in
+    `jobs/reaper.py`.
+
+    ``next_run_at`` is when the runner may claim the job. Leave it unset
+    for "as soon as possible"; set it in the future to schedule work
+    (a post that must be taken down on a given date).
+    """
     if job_type not in JOB_TYPES:
         raise ValueError(f"unknown_job_type: {job_type}. known={JOB_TYPES}")
 
@@ -56,7 +70,7 @@ async def submit_job(
         tenant_id=tenant_id,
         job_type=job_type,
         lane=resolved_lane,
-        status=JobStatus.accepted.value,
+        status=JobStatus.queued.value,
         priority=priority,
         payload=payload or {},
         idempotency_key=idempotency_key,
@@ -65,11 +79,57 @@ async def submit_job(
         lane_key=resolved_lane_key,
         attempts=0,
         max_attempts=max_attempts,
-        next_run_at=datetime.now(timezone.utc),
+        next_run_at=next_run_at or datetime.now(timezone.utc),
     )
     db.add(job)
     await db.flush()
     return job
+
+
+async def release_expired_leases(db: AsyncSession) -> int:
+    """Return jobs whose lease expired to the queue so they can be reclaimed.
+
+    A worker that died mid-call leaves its job in `running` with a lease
+    that has passed. Without this the job is stuck forever. Reclaiming it
+    is safe because every handler is idempotent by job id.
+    """
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        update(Job)
+        .where(
+            Job.status == JobStatus.running.value,
+            Job.lease_expires_at.is_not(None),
+            Job.lease_expires_at < now,
+        )
+        .values(
+            status=JobStatus.queued.value,
+            attempts=Job.attempts + 1,
+            lease_expires_at=None,
+            lease_owner=None,
+            next_run_at=now,
+        )
+    )
+    return result.rowcount
+
+
+async def promote_accepted_jobs(db: AsyncSession, *, older_than_seconds: int = 60) -> int:
+    """Promote rows stuck in `accepted` to `queued`.
+
+    `accepted` was the design's "row exists, dispatch not confirmed"
+    state. Nothing produced it, so a row that lands there is invisible to
+    the runner. Sweeping it keeps a job from being stranded by an older
+    build or by a dispatch path that gave up.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=older_than_seconds)
+    result = await db.execute(
+        update(Job)
+        .where(
+            Job.status == JobStatus.accepted.value,
+            Job.created_at < cutoff,
+        )
+        .values(status=JobStatus.queued.value)
+    )
+    return result.rowcount
 
 
 async def claim_due_jobs(
@@ -82,25 +142,16 @@ async def claim_due_jobs(
 ) -> list[Job]:
     """Atomically claim due jobs for a lane using FOR UPDATE SKIP LOCKED.
 
-    Expired leases are released first so crashed workers' jobs are reclaimable.
-    Returns the claimed Job rows (status=running, lease set).
+    Returns the claimed Job rows (status=running, lease set). The caller
+    MUST commit: until it does, the claim is not durable and the row
+    stays claimable by another worker, because the FOR UPDATE lock is
+    released when the transaction ends. A claim that is not committed is
+    a claim that did not happen.
+
+    Expired leases are reclaimed by `release_expired_leases` in the
+    reaper, not here — a reclaim that is never committed is a no-op.
     """
     now = datetime.now(timezone.utc)
-
-    # Release expired leases back to queued/retrying so they can be reclaimed.
-    await db.execute(
-        update(Job)
-        .where(
-            Job.lane == lane,
-            Job.status == JobStatus.running.value,
-            Job.lease_expires_at < now,
-        )
-        .values(
-            status=JobStatus.queued.value,
-            lease_expires_at=None,
-            lease_owner=None,
-        )
-    )
 
     # Claim due jobs: status in (queued, retrying), next_run_at <= now.
     result = await db.execute(

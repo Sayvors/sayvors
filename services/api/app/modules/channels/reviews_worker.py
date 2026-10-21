@@ -30,7 +30,7 @@ from .google_reviews import GoogleReviewsClient, GoogleReviewsError
 from .models import AutoReplyConfig, Channel, ChannelMessage, ReviewReply
 from .review_reply import generate_auto_reply
 from ..notifications.service import notify
-from .service import decrypt_token
+from .service import decrypt_token, encrypt_message_content
 
 logger = logging.getLogger(__name__)
 
@@ -290,24 +290,75 @@ async def _store_inbound_review(db: AsyncSession, channel_id: str, review) -> No
     if existing.scalar_one_or_none():
         return
     from .service import categorize_message as _categorize
+    from .service import encrypt_contact_phone, hash_contact_phone
 
     category, priority = _categorize(
         review.text or "", platform="google_reviews", rating=review.rating
     )
+    # A Google reviewer has no phone number, so without an identity of
+    # their own EVERY review on the channel collapses into the catch-all
+    # "unknown" thread — one bucket, no reviewer names, nothing that can
+    # be flagged or answered. Google gives us a profile URL and a display
+    # name; either identifies the reviewer, so the thread key is derived
+    # from whichever is available and namespaced so it can never collide
+    # with a real phone number.
+    reviewer_key = _google_reviewer_key(review)
     db.add(
         ChannelMessage(
             id=str(uuid.uuid4()),
             channel_id=channel_id,
             platform_message_id=review.review_id[:200],
             direction="inbound",
-            content=review.text or f"({review.rating}/5 stars, no comment)",
+            content=encrypt_message_content(
+                review.text or f"({review.rating}/5 stars, no comment)"
+            ),
             content_type="review",
             status="read",
+            contact_name=getattr(review, "author_name", None) or None,
+            contact_phone=encrypt_contact_phone(reviewer_key),
+            contact_phone_hash=hash_contact_phone(reviewer_key),
             category=category,
             priority=priority,
         )
     )
     await db.commit()
+
+
+def _google_reviewer_key(review) -> str:
+    """A stable, namespaced identity for a Google reviewer.
+
+    Google does not expose a stable user id for a reviewer, so the
+    profile URL is the best identifier available, with the display name
+    as a fallback and the review id as the last resort. Whichever is
+    used, it is hashed rather than stored raw:
+
+    - a profile URL is long and full of characters that would have to
+      survive being a URL path segment, a query parameter, a JSON
+      payload and an encrypted column;
+    - a fixed-length digest cannot overflow the column;
+    - the digest is one-way, so the reviewer's Google profile URL is not
+      recoverable from what we store — the same posture the repo takes
+      with contact phone numbers, which are HMAC'd into
+      `contact_phone_hash`.
+
+    The "google:" prefix keeps the key from ever colliding with a real
+    phone number, which is what the inbox groups threads by.
+
+    The attributes are read defensively: a review object that does not
+    carry them must not cost the tenant the review itself.
+    """
+    import hashlib
+
+    identity = (
+        getattr(review, "author_profile_url", None)
+        or getattr(review, "author_name", None)
+        or ""
+    ).strip().lower()
+    if not identity:
+        # Nothing identifies this reviewer — fall back to the review id so
+        # the message still lands in a thread of its own.
+        identity = str(review.review_id)
+    return f"google:{hashlib.sha256(identity.encode()).hexdigest()[:32]}"
 
 
 async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review) -> None:

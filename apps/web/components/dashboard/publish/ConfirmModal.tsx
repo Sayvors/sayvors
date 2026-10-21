@@ -18,6 +18,7 @@ export default function ConfirmModal({
   captionLen,
   descriptionLen,
   scheduled,
+  removes,
   busy,
   error,
   onConfirm,
@@ -29,6 +30,7 @@ export default function ConfirmModal({
   captionLen: number;
   descriptionLen: number;
   scheduled: string | null;
+  removes?: string | null;
   busy: boolean;
   error: string | null;
   onConfirm: () => void;
@@ -88,6 +90,11 @@ export default function ConfirmModal({
           <span className="text-[11px] font-semibold text-[var(--ui-ink-2)]">
             Caption {captionLen} · Description {descriptionLen}
           </span>
+          {removes && (
+            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
+              Removed {new Date(removes).toLocaleString()}
+            </span>
+          )}
         </div>
 
         <p className="mt-3 px-1 text-[10px] font-bold uppercase tracking-widest text-[var(--ui-ink-2)]">

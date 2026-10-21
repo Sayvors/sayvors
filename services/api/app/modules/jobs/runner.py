@@ -8,7 +8,7 @@ See docs/specs/2026-10-10-unified-job-processing-design.md §C.4 / §D.5
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ..kafka.client import create_consumer, get_kafka_producer, mark_kafka_unavailable
 from ..outbox.service import enqueue_event_in
@@ -27,6 +27,9 @@ LANE_CONCURRENCY: dict[str, int] = {
     "media": 2,
     "bulk": 1,
 }
+
+# How long a claimed job's lease holds before the reaper can reclaim it.
+LEASE_SECONDS = 300
 
 # Poll interval when no work is available (seconds).
 IDLE_POLL_SECONDS = 2
@@ -114,6 +117,11 @@ class JobRunner:
                 worker_id=self.worker_id,
                 limit=LANE_CONCURRENCY.get(self.lane, 4),
             )
+            # The claim MUST be committed. Until it is, the row is still
+            # claimable by another worker — the FOR UPDATE lock is
+            # released with the transaction, so an uncommitted claim is
+            # no claim at all.
+            await db.commit()
 
         if not jobs:
             return
@@ -133,10 +141,14 @@ class JobRunner:
                 db_job = await self._get_job_for_update(db, job.id, job.tenant_id)
                 if db_job:
                     await fail_job(db, job=db_job, error_code="no_handler", error=f"no handler for {job.job_type}")
+                    await db.commit()
                 return
 
+        # 1. Write the external intent durably BEFORE the external call.
+        #    This is the crash-recovery record: if the worker dies
+        #    mid-call, the intent is on disk and the lease expires, so
+        #    the reaper returns the job to the queue.
         async with async_session() as db:
-            # Re-fetch for update to ensure we have the latest state.
             db_job = await self._get_job_for_update(db, job.id, job.tenant_id)
             if not db_job:
                 return  # claimed by another worker or cancelled
@@ -145,7 +157,6 @@ class JobRunner:
             if db_job.status in (JobStatus.succeeded.value, JobStatus.failed.value, JobStatus.dead.value, JobStatus.cancelled.value):
                 return
 
-            # Write external_intent BEFORE the external call (crash recovery).
             external_intent = {
                 "job_type": db_job.job_type,
                 "lane": db_job.lane,
@@ -155,14 +166,24 @@ class JobRunner:
             db_job.external_intent = external_intent
             db_job.status = JobStatus.running.value
             db_job.lease_owner = self.worker_id
-            db_job.lease_expires_at = datetime.now(timezone.utc)  # will be set by claim
-            await db.flush()
+            db_job.lease_expires_at = datetime.now(timezone.utc) + timedelta(
+                seconds=LEASE_SECONDS
+            )
+            await db.commit()
 
+        # 2. Run the handler in its own session so a slow external call
+        #    does not hold a transaction (and a connection) open.
         try:
-            result = await handler(db_job, db)
-            await self._complete(db_job, result)
+            async with async_session() as db:
+                fresh = await self._get_job_for_update(db, job.id, job.tenant_id)
+                if not fresh:
+                    return
+                result = await handler(fresh, db)
+                # The handler's own writes (including the result it
+                # records) are committed with the outcome below.
+                await self._complete_in(db, fresh, result)
         except Exception as e:
-            await self._fail(db_job, e)
+            await self._fail(job, e)
 
     async def _get_job_for_update(self, db: AsyncSession, job_id: str, tenant_id: str) -> Job | None:
         from sqlalchemy import select
@@ -171,19 +192,24 @@ class JobRunner:
         )
         return result.scalar_one_or_none()
 
+    async def _complete_in(self, db: AsyncSession, db_job: Job, result: dict | None) -> None:
+        """Record a terminal success on the caller's session and commit it."""
+        await complete_job(db, job=db_job, result=result)
+        # Emit job.succeeded event to outbox (atomic with the job commit).
+        await enqueue_event_in(
+            db,
+            event_type="job.succeeded",
+            payload={"job_id": db_job.id, "lane": db_job.lane, "result": result},
+            topic=f"{db_job.lane}-dispatch",
+        )
+        await db.commit()
+
     async def _complete(self, db_job: Job, result: dict | None) -> None:
         async with async_session() as db:
             fresh = await self._get_job_for_update(db, db_job.id, db_job.tenant_id)
             if not fresh:
                 return
-            await complete_job(db, job=fresh, result=result)
-            # Emit job.succeeded event to outbox (atomic with job commit).
-            await enqueue_event_in(
-                db,
-                event_type="job.succeeded",
-                payload={"job_id": fresh.id, "lane": fresh.lane, "result": result},
-                topic=f"{fresh.lane}-dispatch",
-            )
+            await self._complete_in(db, fresh, result)
 
     async def _fail(self, db_job: Job, error: Exception) -> None:
         error_str = str(error)[:500]
@@ -214,3 +240,4 @@ class JobRunner:
                 payload={"job_id": fresh.id, "lane": fresh.lane, "error": error_str, "code": error_code},
                 topic=f"{fresh.lane}-dispatch",
             )
+            await db.commit()

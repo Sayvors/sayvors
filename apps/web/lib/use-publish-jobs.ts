@@ -29,6 +29,9 @@ export interface PublishJob {
   batch_id?: string | null;
   caption?: string | null;
   media_url?: string | null;
+  /** When the post is due to be taken down again (a promotional post
+   * with an end date). */
+  delete_at?: string | null;
 }
 
 /** Rows a delete/cancel can still act on: everything not mid-flight and not

@@ -48,6 +48,7 @@ const en = {
     closeMenu: "Close menu",
     mainNavigation: "Main navigation",
     postsMedia: "Posts & Media",
+  customers: "Customers",
     advanced: "Advanced",
     automations: "Automations",
     benchmark: "Benchmark",

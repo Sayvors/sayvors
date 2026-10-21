@@ -539,15 +539,20 @@ async def inbox_threads(
     search: str | None = Query(None, max_length=200),
     category: str | None = Query(None, max_length=32),
     priority: str | None = Query(None, max_length=16),
+    important: bool | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
     ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
+    """List inbox threads, optionally filtered by category, priority or
+    the derived `important` flag."""
     threads = await list_inbox_threads(ctx.user, db, search=search, limit=limit)
     if category:
         threads = [t for t in threads if t.get("category") == category]
     if priority:
         threads = [t for t in threads if t.get("priority") == priority]
+    if important is not None:
+        threads = [t for t in threads if bool(t.get("important")) is important]
     visible = ctx.visible_channel_ids()
     if visible is not None:
         threads = [t for t in threads if t.get("channel_id") in visible]

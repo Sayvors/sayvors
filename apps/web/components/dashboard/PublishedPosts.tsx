@@ -338,6 +338,8 @@ function PostCard({
   const meta = platform ? PLATFORM_META[platform] : null;
   const removable = isRemovableJob(job);
   const cancellable = QUEUED_STATUSES.has(job.status);
+  // A post that has already come down has no future date to show.
+  const alreadyGone = job.result?.deleted === true;
 
   return (
     <div className="group flex w-full flex-col overflow-hidden rounded-[2px] border border-ink/[0.06] bg-white text-left dark:border-fog/[0.07] dark:bg-ink">
@@ -379,6 +381,14 @@ function PostCard({
               />
               Remove
             </label>
+          )}
+          {job.delete_at && !alreadyGone && (
+            <span
+              className="rounded-[2px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-semibold text-ink/50 dark:bg-fog/[0.07] dark:text-fog/50"
+              title={`Removed automatically on ${new Date(job.delete_at).toLocaleString()}`}
+            >
+              Comes down {new Date(job.delete_at).toLocaleDateString()}
+            </span>
           )}
           {job.scheduled_at && (
             <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">

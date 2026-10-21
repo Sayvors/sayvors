@@ -899,26 +899,33 @@ Content-Type: application/json
   "caption": "Check out our new menu!",
   "description": "Full details here.",
   "scheduled_at": "2026-10-25T10:00:00Z",  // optional, ISO-8601, must be in the future
+  "delete_at": "2026-11-01T10:00:00Z",    // optional, ISO-8601, must be in the future and after scheduled_at
   "idempotency_key": "publish-123",
   "destinations": [
     { "platform": "instagram", "external_asset_id": "17841400000000000", "methods": ["post", "story"] },
     { "platform": "facebook", "external_asset_id": "123456789", "methods": ["post"] },
     { "platform": "whatsapp", "external_asset_id": "+15551234567", "methods": ["status"] },
-    { "platform": "google_reviews", "external_asset_id": "locations/123456", "methods": ["post"] }
+    { "platform": "google_reviews", "external_asset_id": "locations/123456", "methods": ["update", "event", "offer"] }
   ]
 }
 ```
 
 Supported platforms: `whatsapp`, `facebook`, `instagram`, `google_reviews`.
-Supported methods: `post`, `story`, `reel`, `status` (platform-dependent).
+Supported methods: `post`, `story`, `reel`, `status` (Meta), `update`, `event`,
+`offer` (Google Business Profile), `profile`, `banner` (account surfaces —
+see [publish-formats.md](../integrations/publish-formats.md)).
 `media_type`: `image` or `video`. `scheduled_at`: ISO-8601 datetime in the future, or null.
+`delete_at`: ISO-8601 datetime in the future, or null. When set, the post is
+taken back down from every destination on that date — a promotional post with
+an end date. The removal is queued once the post is actually live, and it
+calls the platform's real delete, so the post really comes down.
 
 **Response (200):**
 ```json
 [
-  { "job_id": "uuid-1", "status": "accepted", "lane": "publishing", "platform": "instagram", "method": "post", "created_at": "2026-10-17T13:53:24+00:00" },
-  { "job_id": "uuid-2", "status": "accepted", "lane": "publishing", "platform": "instagram", "method": "story", "created_at": "2026-10-17T13:53:24+00:00" },
-  { "job_id": "uuid-3", "status": "accepted", "lane": "publishing", "platform": "facebook", "method": "post", "created_at": "2026-10-17T13:53:24+00:00" }
+  { "job_id": "uuid-1", "status": "queued", "lane": "publishing", "platform": "instagram", "method": "post", "created_at": "2026-10-17T13:53:24+00:00" },
+  { "job_id": "uuid-2", "status": "queued", "lane": "publishing", "platform": "instagram", "method": "story", "created_at": "2026-10-17T13:53:24+00:00" },
+  { "job_id": "uuid-3", "status": "queued", "lane": "publishing", "platform": "facebook", "method": "post", "created_at": "2026-10-17T13:53:24+00:00" }
 ]
 ```
 

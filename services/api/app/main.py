@@ -18,6 +18,7 @@ from .modules.stt.router import router as stt_router
 from .modules.llm.router import router as llm_router
 from .modules.channels.leads import router as leads_router
 from .modules.channels.review_issues import router as review_issues_router
+from .modules.channels.customers_router import router as customers_router
 from .modules.channels.router import _inbox_router as inbox_router
 from .modules.channels.router import router as channels_router
 from .modules.channels.publish.router import router as publish_router
@@ -357,6 +358,7 @@ app.include_router(publish_router)
 app.include_router(channels_router)
 app.include_router(leads_router)
 app.include_router(review_issues_router)
+app.include_router(customers_router)
 app.include_router(inbox_router)
 app.include_router(meta_router)
 app.include_router(meta_webhooks_router)

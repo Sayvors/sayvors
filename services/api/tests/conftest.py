@@ -47,8 +47,30 @@ async def _noop_lifespan(_app):
     yield
 
 
+def _disable_lifespan(app) -> None:
+    """Stop the production lifespan from running in tests.
+
+    Setting ``app.lifespan`` alone is NOT enough. FastAPI builds
+    ``app.router.lifespan_context`` at construction time by merging the
+    router's own lifespan with the app's, so that merge already captured
+    the real one — replacing the attribute afterwards never reached the
+    router.
+
+    The real lifespan warms the PRODUCTION Postgres pool, so every test
+    using the ``client`` fixture was opening a connection to the dev
+    database. The pool's connection terminator then raced the event
+    loop closing, which surfaced as a flaky teardown error ("Event loop
+    is closed") and made the suite minutes slower.
+
+    The router's context is what actually runs, so that is what has to
+    be replaced.
+    """
+    app.lifespan = _noop_lifespan
+    app.router.lifespan_context = _noop_lifespan
+
+
 # The production lifespan spins up Kafka/Redis workers — skip it in tests.
-fastapi_app.lifespan = _noop_lifespan
+_disable_lifespan(fastapi_app)
 
 
 @pytest_asyncio.fixture
@@ -168,7 +190,7 @@ async def _noop_lifespan(_app):
 
 fastapi_app = __import__("app.main", fromlist=["app"]).app
 
-fastapi_app.lifespan = _noop_lifespan  # noqa: E402
+_disable_lifespan(fastapi_app)  # noqa: E402
 
 
 @pytest_asyncio.fixture

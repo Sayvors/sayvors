@@ -194,6 +194,54 @@ async def test_inbox_send_success_then_thread_shows_it(client, db, user_id, monk
 
 
 @pytest.mark.asyncio
+async def test_a_google_review_is_its_own_thread_and_can_be_important(client, db, user_id):
+    """A Google review is a conversation like any other: its own thread,
+    the reviewer's name, and an "important" flag that means the same
+    thing it does for a WhatsApp thread."""
+    db.add(Channel(
+        id="g-1", user_id=user_id, platform="google_reviews",
+        platform_user_id="accounts/1", display_name="Branch", status="active",
+    ))
+    await db.commit()
+
+    for mid, key, name, content, category, priority in (
+        ("gm-1", "google:aaa", "Fatma", "Terrible, I want a refund", "complaint", "high"),
+        ("gm-2", "google:bbb", "Omar", "Excellent service, thank you!", "feedback", "low"),
+    ):
+        db.add(ChannelMessage(
+            id=mid, channel_id="g-1", platform_message_id=f"rev-{mid}", direction="inbound",
+            content=encrypt_message_content(content), content_type="review", status="read",
+            contact_name=name,
+            contact_phone=encrypt_contact_phone(key),
+            contact_phone_hash=hash_contact_phone(key),
+            category=category, priority=priority,
+        ))
+    await db.commit()
+
+    r = client.get("/api/v1/inbox/threads")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total"] == 2
+    # Two reviewers, two threads — not one shared "unknown" bucket.
+    assert {t["key"] for t in body["threads"]} == {"google:aaa", "google:bbb"}
+
+    complaint = next(t for t in body["threads"] if t["key"] == "google:aaa")
+    assert complaint["display_name"] == "Fatma"
+    assert complaint["important"] is True
+    assert complaint["category"] == "complaint"
+    # A public review is answered from the Reviews page, not the inbox.
+    assert complaint["can_reply"] is False
+
+    praise = next(t for t in body["threads"] if t["key"] == "google:bbb")
+    assert praise["important"] is False
+
+    # The filter finds the one that needs a human.
+    only_important = client.get("/api/v1/inbox/threads?important=true").json()
+    assert only_important["total"] == 1
+    assert only_important["threads"][0]["key"] == "google:aaa"
+
+
+@pytest.mark.asyncio
 async def test_inbox_requires_auth(client, db, user_id):
     """Unauthenticated callers get 401, not thread contents."""
     from app.main import app as fastapi_app

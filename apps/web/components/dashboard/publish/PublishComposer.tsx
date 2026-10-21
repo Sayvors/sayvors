@@ -97,6 +97,10 @@ export default function PublishComposer({
   // ── Schedule ────────────────────────────────────────────────────
   const [scheduleOn, setScheduleOn] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
+  // A promotional post has an end date: it goes up now and comes down
+  // on the day the offer lapses.
+  const [removeOn, setRemoveOn] = useState(false);
+  const [removeAt, setRemoveAt] = useState("");
 
   // ── Per-format previews + saved crops ───────────────────────────
   const [crops, setCrops] = useState<Record<string, CropState>>({});
@@ -268,6 +272,18 @@ export default function PublishComposer({
     setPublishing(true);
     setPublishError(null);
     try {
+      // A post cannot be taken down before it goes up. Checked here so
+      // the tenant gets the reason immediately, not a 422 from the API.
+      if (removeOn) {
+        if (!removeAt) {
+          throw new Error("Pick the date the post should come down.");
+        }
+        if (scheduleOn && scheduleAt) {
+          if (new Date(removeAt).getTime() <= new Date(scheduleAt).getTime()) {
+            throw new Error("The removal date must be after the publish date.");
+          }
+        }
+      }
       // Locally-picked files must go to our storage first: providers (and
       // the Google Business uploader) fetch the media from a public URL at
       // publish time, so a blob: URL can never be delivered.
@@ -301,6 +317,7 @@ export default function PublishComposer({
           caption,
           description,
           scheduled_at: scheduleOn && scheduleAt ? new Date(scheduleAt).toISOString() : null,
+          delete_at: removeOn && removeAt ? new Date(removeAt).toISOString() : null,
           destinations,
           batch_id: batchId,
           idempotency_key: `${batchId}:${Date.now()}`,
@@ -313,6 +330,8 @@ export default function PublishComposer({
       setDescription("");
       setScheduleOn(false);
       setScheduleAt("");
+      setRemoveOn(false);
+      setRemoveAt("");
       setFormats({});
       onPublished?.();
     } catch (e) {
@@ -461,7 +480,7 @@ export default function PublishComposer({
               </h2>
               <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>Optional — leave it off to publish immediately.</p>
               <div className="flex flex-wrap items-center gap-3">
-                <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} />
+                <ScheduleToggle scheduleOn={scheduleOn} setScheduleOn={setScheduleOn} label="Schedule for later" />
                 {scheduleOn && (
                   <input
                     type="datetime-local"
@@ -472,6 +491,24 @@ export default function PublishComposer({
                   />
                 )}
               </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[var(--ui-line)] pt-3">
+                <ScheduleToggle scheduleOn={removeOn} setScheduleOn={setRemoveOn} label="Remove it later" />
+                {removeOn && (
+                  <input
+                    type="datetime-local"
+                    value={removeAt}
+                    onChange={(e) => setRemoveAt(e.target.value)}
+                    aria-label="Remove the post at"
+                    className={`${FIELD} w-full sm:w-64`}
+                  />
+                )}
+              </div>
+              {removeOn && (
+                <p className={`mt-2 text-[11px] ${INK2}`}>
+                  The post is taken back down from every destination on that
+                  date. Nothing is removed before it is published.
+                </p>
+              )}
             </section>
 
             {/* Live preview */}
@@ -732,6 +769,7 @@ export default function PublishComposer({
         captionLen={caption.trim().length}
         descriptionLen={description.trim().length}
         scheduled={scheduleOn && scheduleAt ? scheduleAt : null}
+        removes={removeOn && removeAt ? removeAt : null}
         busy={publishing}
         error={publishError}
         onConfirm={publishNow}
@@ -746,9 +784,11 @@ export default function PublishComposer({
 function ScheduleToggle({
   scheduleOn,
   setScheduleOn,
+  label,
 }: {
   scheduleOn: boolean;
   setScheduleOn: (v: boolean) => void;
+  label: string;
 }) {
   return (
     <button
@@ -771,7 +811,7 @@ function ScheduleToggle({
           }`}
         />
       </span>
-      <span className={`text-[13px] font-semibold ${INK}`}>Schedule for later</span>
+      <span className={`text-[13px] font-semibold ${INK}`}>{label}</span>
     </button>
   );
 }
