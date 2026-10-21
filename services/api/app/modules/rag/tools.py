@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..llm.providers.base import ToolDefinition, ToolParameter
+from ..llm.gateway import ToolDefinition, ToolParameter
 
 logger = logging.getLogger(__name__)
 

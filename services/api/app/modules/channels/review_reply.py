@@ -13,7 +13,7 @@ import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..llm.providers.base import ProviderError
+from ..llm.gateway import ProviderError
 from .models import AutoReplyConfig
 
 logger = logging.getLogger(__name__)

@@ -45,7 +45,7 @@ MODELS: list[ModelInfo] = [
     ModelInfo("ollama:qwen3", "Qwen3 (local)", "ollama", "qwen3", 32_000, 4_096),
 ]
 
-PROVIDERS = ["openai", "grok", "gemini", "kimi", "deepseek", "groq", "ollama"]
+PROVIDERS = ["openai", "grok", "gemini", "kimi", "deepseek", "groq", "openrouter", "ollama"]
 
 
 def get_model_by_id(model_id: str) -> ModelInfo | None:

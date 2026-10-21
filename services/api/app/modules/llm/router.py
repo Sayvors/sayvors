@@ -7,13 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db, get_current_user
 from ...modules.auth.rate_limit import rate_limit
-from ...modules.billing.budget import (
-    BudgetExhausted,
-    RESERVE_CENTS,
-    cost_cents,
-    reserve,
-    settle,
-)
+from ...modules.billing.budget import get_balance
 from ..team.context import tenant_id_of
 from ..users.models import User
 from .providers.base import ProviderError
@@ -51,6 +45,22 @@ async def _llm_chat_rate_limit(user: User = Depends(get_current_user)):
         raise HTTPException(
             status_code=429,
             detail="LLM chat rate limit exceeded. Try again later.",
+        )
+
+
+async def _refuse_empty_wallet(tenant_id: str) -> None:
+    """Fail fast with 402 before creating a conversation or opening a stream.
+
+    The authoritative charge happens inside the gateway, which reserves
+    atomically before a completion or a stream. This read-only pre-check only
+    preserves the friendly HTTP status and avoids orphan conversations; a
+    Redis blip returns ``None`` and fails open, matching the budget policy.
+    """
+    balance = await get_balance(tenant_id)
+    if balance is not None and balance <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail="AI credit balance exhausted. Top up your plan to keep using AI features.",
         )
 
 
@@ -205,6 +215,9 @@ async def chat(
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(_llm_chat_rate_limit),
 ):
+    tenant_id = tenant_id_of(user)
+    await _refuse_empty_wallet(tenant_id)
+
     # Reuse existing conversation or create new one
     if body.conversation_id:
         conv = await get_conversation(body.conversation_id, user, db)
@@ -216,29 +229,13 @@ async def chat(
             user,
             db,
         )
-    tenant_id = tenant_id_of(user)
-
-    # Pre-authorize budget before any provider call — empty wallet raises 402.
-    try:
-        reserved = await reserve(tenant_id, RESERVE_CENTS)
-    except BudgetExhausted:
-        raise HTTPException(
-            status_code=402,
-            detail="AI credit balance exhausted. Top up your plan to keep using AI features.",
-        )
 
     try:
         user_msg, assistant_msg = await send_message(
             conv.id, MessageCreate(content=body.messages[-1].content), user, db
         )
     except ProviderError as e:
-        await settle(tenant_id, reserved, 0)  # refund on provider failure
         raise HTTPException(status_code=e.status_code, detail=e.message)
-
-    # Settle: credit back (reserve − actual cost). Non-stream path only knows
-    # completion tokens; prompt tokens are not returned by the provider sync path.
-    actual = cost_cents(conv.model, 0, assistant_msg.tokens or 0)
-    await settle(tenant_id, reserved, actual)
 
     return ChatResponse(
         conversation_id=conv.id,
@@ -264,6 +261,9 @@ async def chat_stream(
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(_llm_chat_rate_limit),
 ):
+    tenant_id = tenant_id_of(user)
+    await _refuse_empty_wallet(tenant_id)
+
     # Reuse existing conversation or create new one
     if body.conversation_id:
         conv = await get_conversation(body.conversation_id, user, db)
@@ -274,17 +274,6 @@ async def chat_stream(
             ConversationCreate(title=None, model=body.model, system_prompt=body.system_prompt),
             user,
             db,
-        )
-
-    tenant_id = tenant_id_of(user)
-
-    # Pre-authorize budget before any provider call — empty wallet raises 402.
-    try:
-        reserved = await reserve(tenant_id, RESERVE_CENTS)
-    except BudgetExhausted:
-        raise HTTPException(
-            status_code=402,
-            detail="AI credit balance exhausted. Top up your plan to keep using AI features.",
         )
 
     async def event_generator() -> AsyncIterator[str]:
@@ -298,11 +287,6 @@ async def chat_stream(
                 yield f"data: {json.dumps(event)}\n\n"
         except ProviderError as e:
             yield f"data: {json.dumps({'type': 'error', 'message': e.message})}\n\n"
-        finally:
-            # stream no longer reserves (router owns it). We don't know actual
-            # token count from a streamed reply, so settle with 0 — full refund
-            # of the unused reserve. Real cost is still metered in usage events.
-            await settle(tenant_id, reserved, 0)
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(

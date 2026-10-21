@@ -1886,8 +1886,8 @@ def test_generator_adds_binding_language_instruction():
     captured = {}
 
     class _FakeProvider:
-        async def complete(self, req):
-            captured["user_msg"] = req.messages[0].content
+        async def __call__(self, **kwargs):
+            captured["user_msg"] = kwargs["messages"][0].content
             from app.modules.llm.providers.base import LLMResponse, LLMUsage
             return LLMResponse(
                 content='{"response_text": "شكراً لك!"}',
@@ -1896,10 +1896,8 @@ def test_generator_adds_binding_language_instruction():
                 finish_reason="stop",
             )
 
-    orig_get = gen.get_provider_for_model
-    orig_resolve = gen._resolve_model
-    gen.get_provider_for_model = lambda model: _FakeProvider()
-    gen._resolve_model = lambda model: ("test/m", {})
+    orig_complete = gen.complete
+    gen.complete = _FakeProvider()
     try:
         out, _usage = asyncio.run(gen.generate_response(
             analysis=_ar_analysis(),
@@ -1911,8 +1909,7 @@ def test_generator_adds_binding_language_instruction():
             review_text="الطعام رائع والمكان جميل",
         ))
     finally:
-        gen.get_provider_for_model = orig_get
-        gen._resolve_model = orig_resolve
+        gen.complete = orig_complete
 
     assert out.response_text == "شكراً لك!"
     assert "LANGUAGE (binding)" in captured["user_msg"]
@@ -2063,8 +2060,8 @@ def test_generator_adds_dialect_instruction():
     }
 
     class _FakeProvider:
-        async def complete(self, req):
-            captured["user_msg"] = req.messages[0].content
+        async def __call__(self, **kwargs):
+            captured["user_msg"] = kwargs["messages"][0].content
             from app.modules.llm.providers.base import LLMResponse, LLMUsage
             return LLMResponse(
                 content='{"response_text": "done"}',
@@ -2073,10 +2070,8 @@ def test_generator_adds_dialect_instruction():
                 finish_reason="stop",
             )
 
-    orig_get = gen.get_provider_for_model
-    orig_resolve = gen._resolve_model
-    gen.get_provider_for_model = lambda model: _FakeProvider()
-    gen._resolve_model = lambda model: ("test/m", {})
+    orig_complete = gen.complete
+    gen.complete = _FakeProvider()
     try:
         out, _usage = asyncio.run(gen.generate_response(
             analysis=_ar_analysis(),
@@ -2090,8 +2085,7 @@ def test_generator_adds_dialect_instruction():
             reply_language="match",
         ))
     finally:
-        gen.get_provider_for_model = orig_get
-        gen._resolve_model = orig_resolve
+        gen.complete = orig_complete
 
     assert out.response_text == "done"
     assert "DIALECT (binding)" in captured["user_msg"]
@@ -2106,8 +2100,8 @@ def test_generator_forced_english_over_arabic():
     captured = {}
 
     class _FakeProvider:
-        async def complete(self, req):
-            captured["user_msg"] = req.messages[0].content
+        async def __call__(self, **kwargs):
+            captured["user_msg"] = kwargs["messages"][0].content
             from app.modules.llm.providers.base import LLMResponse, LLMUsage
             return LLMResponse(
                 content='{"response_text": "Thanks!"}',
@@ -2116,10 +2110,8 @@ def test_generator_forced_english_over_arabic():
                 finish_reason="stop",
             )
 
-    orig_get = gen.get_provider_for_model
-    orig_resolve = gen._resolve_model
-    gen.get_provider_for_model = lambda model: _FakeProvider()
-    gen._resolve_model = lambda model: ("test/m", {})
+    orig_complete = gen.complete
+    gen.complete = _FakeProvider()
     try:
         asyncio.run(gen.generate_response(
             analysis=_ar_analysis(),
@@ -2132,8 +2124,7 @@ def test_generator_forced_english_over_arabic():
             reply_language="en",
         ))
     finally:
-        gen.get_provider_for_model = orig_get
-        gen._resolve_model = orig_resolve
+        gen.complete = orig_complete
 
     assert "ENTIRE reply in English" in captured["user_msg"]
     assert "DIALECT" not in captured["user_msg"]
@@ -2487,15 +2478,15 @@ async def test_engine_run_uses_override_bank(monkeypatch, tmp_path, db, user_id)
                                total_tokens=30)
 
     class _Analysis:
-        async def complete(self, req):
+        async def __call__(self, **kwargs):
             return SimpleNamespace(content=analysis, finish_reason="stop",
                                    usage=_usage())
 
     seen = {}
 
     class _Gen:
-        async def complete(self, req):
-            seen["prompt"] = "\n".join(m.content for m in req.messages)
+        async def __call__(self, **kwargs):
+            seen["prompt"] = "\n".join(m.content for m in kwargs["messages"])
             return SimpleNamespace(
                 content=_json.dumps({"response_text": "Our truffle pasta, glad you loved it!"}),
                 finish_reason="stop", usage=_usage())
@@ -2503,10 +2494,8 @@ async def test_engine_run_uses_override_bank(monkeypatch, tmp_path, db, user_id)
     async def _models(db):
         return [(SimpleNamespace(id="custom:model"), None)]
 
-    monkeypatch.setattr(und, "get_provider_for_model", lambda mid: _Analysis())
-    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "groq"))
-    monkeypatch.setattr(gen, "get_provider_for_model", lambda mid: _Gen())
-    monkeypatch.setattr(gen, "_resolve_model", lambda mid: ("api-x", "groq"))
+    monkeypatch.setattr(und, "complete", _Analysis())
+    monkeypatch.setattr(gen, "complete", _Gen())
     monkeypatch.setattr(
         "app.modules.llm.providers.registry.list_tenant_models", _models)
 

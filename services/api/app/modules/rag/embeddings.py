@@ -135,7 +135,7 @@ async def get_embedding_provider() -> EmbeddingProvider:
         if openai_key:
             _provider = OpenAIEmbeddingProvider()
         else:
-            from ..llm.providers.base import ProviderError
+            from ..llm.gateway import ProviderError
 
             raise ProviderError(
                 "embeddings",

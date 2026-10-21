@@ -4,9 +4,7 @@ import logging
 import re
 import time
 
-from ..llm.providers.base import LLMMessage, LLMRequest, ProviderError
-from ..llm.providers.registry import get_provider_for_model
-from ..llm.service import _resolve_model
+from ..llm.gateway import LLMMessage, ProviderError, complete
 from .schemas import ReviewAnalysis
 
 logger = logging.getLogger(__name__)
@@ -111,9 +109,6 @@ async def analyze_review(
         f"Review:\n\"{review_text.strip()[:2000]}\""
     )
 
-    provider = get_provider_for_model(model)
-    api_model, _ = _resolve_model(model)
-
     # Light in-memory cache: same review → same analysis, no extra tokens
     cache_key = f"{model}:{rating}:{review_text.strip()[:200]}"
     if not hasattr(analyze_review, "_cache"):
@@ -124,19 +119,15 @@ async def analyze_review(
 
     t0 = time.monotonic()
     try:
-        resp = await provider.complete(
-            LLMRequest(
-                model=api_model,
-                messages=[LLMMessage(role="user", content=user_msg)],
-                system_prompt=ANALYSIS_SYSTEM_PROMPT,
-                temperature=0.1,
-                max_tokens=300,
-                stream=False,
-                tenant_id=tenant_id,
-                model_id=model,
-                purpose="review_engine.analysis",
-                channel_id=channel_id,
-            )
+        resp = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=user_msg)],
+            system_prompt=ANALYSIS_SYSTEM_PROMPT,
+            temperature=0.1,
+            max_tokens=300,
+            tenant_id=tenant_id,
+            purpose="review_engine.analysis",
+            channel_id=channel_id,
         )
     except ProviderError:
         logger.warning("Analysis model %s failed; no fallback — surfacing error", model)

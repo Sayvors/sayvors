@@ -11,6 +11,7 @@ PROVIDER_BASE_URLS: dict[str, str] = {
     "kimi": "https://api.moonshot.cn/v1",
     "deepseek": "https://api.deepseek.com/v1",
     "groq": "https://api.groq.com/openai/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
     "ollama": "http://localhost:11434/v1",
 }
 

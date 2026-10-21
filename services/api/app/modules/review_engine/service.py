@@ -8,9 +8,6 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import async_session as _async_session
-from ..llm.providers.base import LLMMessage, LLMRequest, ProviderError
-from ..llm.providers.registry import get_provider_for_model
-from ..llm.service import _resolve_model
 from ..retrieval.layer import identity as _layer_identity
 from ..retrieval.layer import retrieve_evidence
 from .generator import generate_response
@@ -66,7 +63,7 @@ async def _resolve_engine_model(req: ReviewEngineRequest, tenant_id: str, db: As
     """
     from sqlalchemy import select
 
-    from ..llm.service import resolve_tenant_model
+    from ..llm.gateway import resolve_tenant_model
 
     if req.model:
         return await resolve_tenant_model(db, preferred=req.model), "request"

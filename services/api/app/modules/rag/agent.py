@@ -17,7 +17,14 @@ from typing import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..llm.providers.base import LLMMessage, LLMRequest, LLMResponse, ProviderError
+from ..llm.gateway import (
+    LLMMessage,
+    LLMResponse,
+    ProviderError,
+    complete,
+    ensure_usable,
+    resolve_tenant_model,
+)
 from ..users.models import User
 from .service import get_databank
 from .tools import TOOL_RUNNERS, ToolContext, tool_definitions
@@ -70,7 +77,7 @@ def _redact(args: dict) -> dict:
     return redacted
 
 
-async def _resolve_agent_model(db: AsyncSession, preferred: str | None = None) -> tuple:
+async def _resolve_agent_model(db: AsyncSession, preferred: str | None = None) -> str:
     """Pick the model that reasons over the databank tools.
 
     Was hardcoded to Gemini, which meant databank search failed for any
@@ -79,11 +86,8 @@ async def _resolve_agent_model(db: AsyncSession, preferred: str | None = None) -
     model if given, else the tenant's configured model, else Gemini as the
     last resort.
 
-    Returns (provider, model_id, api_model).
+    Returns the catalog model id; the gateway resolves and bills the call.
     """
-    from ..llm.providers.registry import get_provider_for_model
-    from ..llm.service import _resolve_model as resolve_api_model, resolve_tenant_model
-
     candidates: list[str] = []
     if preferred:
         candidates.append(preferred)
@@ -100,12 +104,11 @@ async def _resolve_agent_model(db: AsyncSession, preferred: str | None = None) -
             continue
         seen.add(model_id)
         try:
-            provider = get_provider_for_model(model_id)
+            ensure_usable(model_id)
         except Exception as e:  # provider disabled / key missing
             last_error = e
             continue
-        api_model, _ = resolve_api_model(model_id)
-        return provider, model_id, api_model
+        return model_id
     raise last_error or ProviderError("llm", "No usable model for databank search", 503)
 
 
@@ -123,7 +126,7 @@ async def ask_question(
     if not bank:
         raise ValueError("Databank not found")
 
-    provider, model_id, api_model = await _resolve_agent_model(db, model)
+    model_id = await _resolve_agent_model(db, model)
     ctx = ToolContext(databank_id=databank_id, user_id=user.id, db=db)
     tools = tool_definitions()
 
@@ -136,17 +139,16 @@ async def ask_question(
     max_steps = max(1, min(int(max_steps or MAX_STEPS), 10))
     for step in range(max_steps):
         steps_used = step + 1
-        resp: LLMResponse = await provider.complete(LLMRequest(
-            model=api_model,
+        resp: LLMResponse = await complete(
+            model=model_id,
             messages=list(messages),
             system_prompt=SYSTEM_PROMPT,
             temperature=0.2,
             max_tokens=2048,
             tools=tools,
             tenant_id=user.id,
-            model_id=model_id,
             purpose="databank.ask",
-        ))
+        )
         if not resp.tool_calls:
             answer = resp.content.strip()
             trace.append({"step": steps_used, "thought": resp.content[:500],
@@ -197,8 +199,8 @@ async def ask_question(
         messages.append(LLMMessage(role="user", content="\n\n".join(observations)))
     else:
         # Step budget exhausted: one final no-tools pass to synthesize.
-        resp = await provider.complete(LLMRequest(
-            model=api_model,
+        resp = await complete(
+            model=model_id,
             messages=list(messages) + [LLMMessage(
                 role="user",
                 content="Answer now with the evidence gathered so far, or say what is missing.")],
@@ -206,9 +208,8 @@ async def ask_question(
             temperature=0.2,
             max_tokens=2048,
             tenant_id=user.id,
-            model_id=model_id,
             purpose="databank.ask",
-        ))
+        )
         answer = resp.content.strip()
 
     if not answer:

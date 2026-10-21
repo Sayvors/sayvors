@@ -109,6 +109,21 @@ async def test_get_provider_uses_db_key():
 
 
 @pytest.mark.asyncio
+async def test_openrouter_is_an_openai_compatible_provider():
+    """OpenRouter is keyed like any OpenAI-compatible provider; only its
+    base URL differs, so it must not need a transport of its own."""
+    enc = encrypt_token("sk-or-test")
+    await registry.refresh_provider_keys(
+        session_factory=_factory([SimpleNamespace(
+            provider="openrouter", key_encrypted=enc, enabled=True
+        )])
+    )
+    inst = registry.get_provider("openrouter")
+    assert inst.name() == "openrouter"
+    assert str(inst._client.base_url).rstrip("/") == "https://openrouter.ai/api/v1"
+
+
+@pytest.mark.asyncio
 async def test_unknown_provider():
     key, source = registry.resolve_provider_key("nope")
     assert (key, source) == (None, "none")

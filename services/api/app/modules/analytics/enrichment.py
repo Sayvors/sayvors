@@ -20,8 +20,7 @@ import json
 import logging
 import re
 
-from ..llm.providers.base import LLMMessage, LLMRequest, ProviderError
-from ..llm.providers.registry import get_provider_for_model
+from ..llm.gateway import LLMMessage, ProviderError, complete
 
 logger = logging.getLogger(__name__)
 
@@ -147,27 +146,19 @@ async def enrich_review(
         return _heuristic_enrich(rating, None)
 
     try:
-        provider = get_provider_for_model(model)
-        from ..llm.service import _resolve_model
-
-        api_model, _ = _resolve_model(model)
         description = text.strip()[:2000]
         user_msg = (
             f"Review by {reviewer_name or 'an anonymous customer'} — {rating}/5 stars:\n"
             f"\"{description}\""
         )
-        resp = await provider.complete(
-            LLMRequest(
-                model=api_model,
-                messages=[LLMMessage(role="user", content=user_msg)],
-                system_prompt=SYSTEM_PROMPT,
-                temperature=0.1,
-                max_tokens=600,
-                stream=False,
-                tenant_id=tenant_id,
-                model_id=model,
-                purpose="analytics.enrichment",
-            )
+        resp = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=user_msg)],
+            system_prompt=SYSTEM_PROMPT,
+            temperature=0.1,
+            max_tokens=600,
+            tenant_id=tenant_id,
+            purpose="analytics.enrichment",
         )
         data = _extract_json(resp.content)
         if data is None:
@@ -280,28 +271,18 @@ async def extract_meaning(
         return _blank_meaning(reason="no review text", language=language, source="llm")
 
     try:
-        from ..llm.providers.base import LLMMessage, LLMRequest
-        from ..llm.providers.registry import get_provider_for_model
-        from ..llm.service import _resolve_model
-
-        provider = get_provider_for_model(model)
-        api_model, _ = _resolve_model(model)
-        resp = await provider.complete(
-            LLMRequest(
-                model=api_model,
-                messages=[LLMMessage(role="user", content=json.dumps({
-                    "rating": rating,
-                    "reviewer_name": reviewer_name or "an anonymous customer",
-                    "review_text": body[:2000],
-                }))],
-                system_prompt=_meaning_prompt(),
-                temperature=0.0,
-                max_tokens=500,
-                stream=False,
-                tenant_id=tenant_id,
-                model_id=model,
-                purpose="analytics.meaning",
-            )
+        resp = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=json.dumps({
+                "rating": rating,
+                "reviewer_name": reviewer_name or "an anonymous customer",
+                "review_text": body[:2000],
+            }))],
+            system_prompt=_meaning_prompt(),
+            temperature=0.0,
+            max_tokens=500,
+            tenant_id=tenant_id,
+            purpose="analytics.meaning",
         )
         data = _extract_json(resp.content)
     except Exception as e:

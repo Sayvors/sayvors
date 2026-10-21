@@ -35,6 +35,8 @@ def test_cost_cents_math():
     assert cost_cents("openai:gpt-4o", 0, 0) == 0
     assert cost_cents(None, 100, 100) == 0
     assert cost_cents("weirdmodel", 2_000_000, 0) == 0  # unknown family → free
+    # OpenRouter resells other families; it must not fall through to "free".
+    assert cost_cents("openrouter:openai/gpt-4o-mini", 1_000_000, 0) == 150
 
 
 @pytest.mark.asyncio
@@ -125,6 +127,184 @@ async def test_provider_complete_untracked_without_tenant(monkeypatch):
 
     resp = await _P().complete(LLMRequest(model="m"))
     assert resp.content == "sys"
+
+
+@pytest.mark.asyncio
+async def test_gateway_stream_reserves_meters_and_settles(monkeypatch, _clean_key):
+    """A streamed call is budgeted and metered even without provider usage."""
+    from app.modules.llm import gateway
+    from app.modules.llm.providers import registry
+    from app.modules.llm.providers.base import LLMMessage
+
+    captured = {}
+
+    class _P:
+        async def stream(self, req):
+            yield "hello "
+            yield "world"
+
+    monkeypatch.setattr(registry, "get_provider_for_model", lambda model: _P())
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model", lambda model: ("api-x", "groq")
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.gateway.record_usage_event",
+        lambda req, resp, latency_ms, **kw: captured.update(resp=resp, **kw),
+    )
+
+    await sync_balance(_TENANT, 100)
+    chunks = [
+        c async for c in gateway.stream(
+            model="groq:oss-120b",
+            messages=[LLMMessage(role="user", content="hi there")],
+            purpose="test.stream",
+            system_prompt="be nice",
+            tenant_id=_TENANT,
+        )
+    ]
+
+    assert "".join(chunks) == "hello world"
+    # prompt = (8 + 7) // 4 = 3 tokens; completion = 11 // 4 = 2 tokens.
+    assert captured["resp"].usage.prompt_tokens == 3
+    assert captured["resp"].usage.completion_tokens == 2
+    assert captured["status"] == "ok"
+    assert await get_balance(_TENANT) == 100 - cost_cents("groq:oss-120b", 3, 2)
+
+
+@pytest.mark.asyncio
+async def test_gateway_stream_refunds_the_reservation_on_provider_failure(
+    monkeypatch, _clean_key
+):
+    from app.modules.llm import gateway
+    from app.modules.llm.providers import registry
+    from app.modules.llm.providers.base import LLMMessage
+
+    captured = {}
+
+    class _P:
+        async def stream(self, req):
+            yield "partial"
+            raise RuntimeError("upstream died")
+
+    monkeypatch.setattr(registry, "get_provider_for_model", lambda model: _P())
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model", lambda model: ("api-x", "groq")
+    )
+    monkeypatch.setattr(
+        "app.modules.llm.gateway.record_usage_event",
+        lambda req, resp, latency_ms, **kw: captured.update(resp=resp, **kw),
+    )
+
+    await sync_balance(_TENANT, 100)
+    with pytest.raises(RuntimeError, match="upstream died"):
+        async for _ in gateway.stream(
+            model="groq:oss-120b",
+            messages=[LLMMessage(role="user", content="hi")],
+            purpose="test.stream",
+            tenant_id=_TENANT,
+        ):
+            pass
+
+    assert captured["resp"] is None
+    assert captured["status"] == "error"
+    assert await get_balance(_TENANT) == 100  # full refund
+
+
+@pytest.mark.asyncio
+async def test_gateway_stream_refuses_an_empty_wallet_before_calling_provider(
+    monkeypatch, _clean_key
+):
+    from app.modules.llm import gateway
+    from app.modules.llm.providers import registry
+    from app.modules.llm.providers.base import LLMMessage, ProviderError
+
+    called = False
+
+    class _P:
+        async def stream(self, req):
+            nonlocal called
+            called = True
+            yield "never"
+
+    monkeypatch.setattr(registry, "get_provider_for_model", lambda model: _P())
+    monkeypatch.setattr(
+        "app.modules.llm.service._resolve_model", lambda model: ("api-x", "groq")
+    )
+
+    await sync_balance(_TENANT, 0)
+    with pytest.raises(ProviderError) as exc:
+        async for _ in gateway.stream(
+            model="groq:oss-120b",
+            messages=[LLMMessage(role="user", content="hi")],
+            purpose="test.stream",
+            tenant_id=_TENANT,
+        ):
+            pass
+
+    assert exc.value.status_code == 402
+    assert called is False
+    assert await get_balance(_TENANT) == 0
+
+
+@pytest.mark.asyncio
+async def test_refuse_empty_wallet_only_blocks_a_known_zero(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.modules.llm import router as llm_router
+
+    async def _zero(_tenant):
+        return 0
+
+    monkeypatch.setattr(llm_router, "get_balance", _zero)
+    with pytest.raises(HTTPException) as exc:
+        await llm_router._refuse_empty_wallet("t")
+    assert exc.value.status_code == 402
+
+    async def _unknown(_tenant):
+        return None
+
+    monkeypatch.setattr(llm_router, "get_balance", _unknown)
+    await llm_router._refuse_empty_wallet("t")  # Redis unknown → fail open
+
+    async def _funded(_tenant):
+        return 25
+
+    monkeypatch.setattr(llm_router, "get_balance", _funded)
+    await llm_router._refuse_empty_wallet("t")
+
+
+@pytest.mark.parametrize("path", ["/api/v1/llm/chat", "/api/v1/llm/chat/stream"])
+def test_chat_refuses_an_empty_wallet_before_creating_a_conversation(
+    client, monkeypatch, path
+):
+    """A 402 must not leave an orphan conversation behind."""
+    from fastapi import HTTPException
+
+    from app.modules.llm import router as llm_router
+
+    created = False
+
+    async def _deny(_tenant):
+        raise HTTPException(status_code=402, detail="empty")
+
+    async def _create(*args, **kwargs):
+        nonlocal created
+        created = True
+        raise AssertionError("conversation created before the wallet check")
+
+    monkeypatch.setattr(llm_router, "_refuse_empty_wallet", _deny)
+    monkeypatch.setattr(llm_router, "create_conversation", _create)
+
+    response = client.post(
+        path,
+        json={
+            "model": "groq:oss-120b",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert response.status_code == 402
+    assert created is False
 
 
 @pytest.mark.asyncio

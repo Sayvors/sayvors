@@ -504,9 +504,9 @@ async def admin_llm_model_test(
     import time as _time2
     from datetime import datetime, timezone
 
+    from ..llm.gateway import LLMMessage, complete
     from ..llm.models import ModelConfig
     from ..llm.providers import registry
-    from ..llm.providers.base import LLMMessage, LLMRequest
     from ..llm.providers.registry import get_effective_model
 
     info = get_effective_model(model_id)
@@ -518,21 +518,15 @@ async def admin_llm_model_test(
     start = _time2.monotonic()
     ok, detail, reply = False, "", ""
     try:
-        provider_inst = registry.get_provider_for_model(model_id)
-        from ..llm.service import _resolve_model
-
-        api_model, _ = _resolve_model(model_id)
-        resp = await provider_inst.complete(LLMRequest(
-            model=api_model,
+        resp = await complete(
+            model=model_id,
             messages=[LLMMessage(role="user", content="Reply with exactly: OK")],
             system_prompt="You are a connectivity probe. Reply with exactly: OK",
             temperature=0.1,
             max_tokens=20,
-            stream=False,
             tenant_id=None,
-            model_id=model_id,
             purpose="admin.test",
-        ))
+        )
         reply = (resp.content or "").strip()[:200]
         ok, detail = True, "model generated a reply"
     except Exception as e:

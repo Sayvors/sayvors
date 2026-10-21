@@ -592,9 +592,7 @@ async def draft_post_content(
     title. Model comes from the tenant's enabled list — no default, no
     fallback. Raises ValueError for bad input, RuntimeError when the
     single attempt fails."""
-    from ..llm.providers.base import LLMMessage, LLMRequest
-    from ..llm.providers.registry import get_provider_for_model
-    from ..llm.service import _resolve_model, resolve_tenant_model
+    from ..llm.gateway import LLMMessage, complete, resolve_tenant_model
 
     title = (title or "").strip()
     if not title:
@@ -654,11 +652,9 @@ async def draft_post_content(
         f"Post type: {kind_line}\nTitle: {title}\nWrite the post content."
     )
 
-    def _build(mid: str):
-        provider = get_provider_for_model(mid)
-        api_model, _ = _resolve_model(mid)
-        return provider, LLMRequest(
-            model=api_model,
+    async def _generate(mid: str):
+        return await complete(
+            model=mid,
             messages=[LLMMessage(role="user", content=user_msg)],
             system_prompt=system,
             temperature=0.7,
@@ -666,15 +662,12 @@ async def draft_post_content(
             # a tight cap makes them return 200 with EMPTY content
             # (finish_reason="length"). Keep generous headroom.
             max_tokens=2000,
-            stream=False,
             tenant_id=user_id,
-            model_id=mid,
             purpose="posts.ai_draft",
         )
 
-    provider, req = _build(model_id)
     try:
-        resp = await provider.complete(req)
+        resp = await _generate(model_id)
     except Exception as e:
         logger.warning("Post drafting failed on first attempt: %s", e)
         raise RuntimeError("AI drafting failed.")
@@ -688,7 +681,7 @@ async def draft_post_content(
             getattr(resp, "finish_reason", "?"),
         )
         try:
-            resp = await provider.complete(req)
+            resp = await _generate(model_id)
         except Exception as e:
             raise RuntimeError("AI drafting failed.")
         content = (resp.content or "").strip()

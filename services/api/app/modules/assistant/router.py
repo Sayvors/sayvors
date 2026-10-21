@@ -59,7 +59,7 @@ async def _resolve_model(db: AsyncSession, user_id: str) -> str:
     """Tenant's configured reply model when still enabled, else the
     tenant's first enabled model. Raises when nothing is enabled — no
     hardcoded default, the database is the only source of truth."""
-    from ..llm.service import resolve_tenant_model
+    from ..llm.gateway import resolve_tenant_model
 
     cfg = (
         await db.execute(
@@ -519,28 +519,22 @@ async def _llm_reply(
     message: str,
     user: User,
 ) -> str:
-    from ..llm.providers.base import LLMMessage, LLMRequest
-    from ..llm.providers.registry import get_provider_for_model
-    from ..llm.service import _resolve_model
+    from ..llm.gateway import LLMMessage, complete
 
-    provider = get_provider_for_model(model)
-    api_model, _ = _resolve_model(model)
     msgs = [
         LLMMessage(role=m.role, content=m.content)
         for m in history[-MAX_HISTORY:]
     ]
     msgs.append(LLMMessage(role="user", content=message))
-    resp = await provider.complete(LLMRequest(
-        model=api_model,
+    resp = await complete(
+        model=model,
         messages=msgs,
         system_prompt=system_prompt,
         temperature=0.4,
         max_tokens=500,
-        stream=False,
         tenant_id=tenant_id_of(user),
-        model_id=model,
         purpose="assistant.chat",
-    ))
+    )
     return resp.content.strip()
 
 
@@ -742,29 +736,21 @@ async def chat_stream(
                 prompt_snapshot, rag_answer, citations, detail_omitted, rag_status
             )
 
-            from ..llm.providers.base import LLMMessage, LLMRequest
-            from ..llm.providers.registry import get_provider_for_model
-            # Aliased: a bare `_resolve_model` import would shadow the
-            # module-level _resolve_model(db, user_id) used just above.
-            from ..llm.service import _resolve_model as resolve_api_model
+            from ..llm.gateway import LLMMessage, stream as llm_stream
 
-            provider = get_provider_for_model(model)
-            api_model, _ = resolve_api_model(model)
             msgs = [LLMMessage(role=m.role, content=m.content) for m in body.history[-MAX_HISTORY:]]
             msgs.append(LLMMessage(role="user", content=body.message))
 
             empty = True
-            async for chunk in provider.stream(LLMRequest(
-                model=api_model,
+            async for chunk in llm_stream(
+                model=model,
                 messages=msgs,
                 system_prompt=system_prompt,
                 temperature=0.4,
                 max_tokens=500,
-                stream=True,
                 tenant_id=tenant_id_of(user),
-                model_id=model,
                 purpose="assistant.chat",
-            )):
+            ):
                 if not chunk:
                     continue
                 if empty:

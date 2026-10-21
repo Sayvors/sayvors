@@ -98,3 +98,8 @@
 - Reviews worker serial poller — concurrent polling with semaphore
 - Redis re-arm prober — fail-closed paths recover after outage
 - OPS-1 backups — pg_dump → S3 backup script + restore rehearsal script written
+- TTS capability consolidated behind one interface
+- LLM gateway — one metered, budgeted door to every provider
+- OpenRouter provider added to admin
+- Streamed LLM calls budgeted and metered
+- LLM chat double-charge removed

@@ -9,6 +9,7 @@ This directory contains architecture documentation for the Sayvors platform.
 - [Conversation categorization](conversation-categorization.md) — Categories, priorities, and the "important" rule
 - [Speech-to-Text (STT)](../stt.md) — faster-whisper transcription for voice messages
 - [Text-to-Speech (TTS)](tts.md) — one synthesis capability for every channel and call path
+- [LLM gateway](llm-gateway.md) — one metered, budgeted door to every model provider
 - [Google review, ticket, and lead flow](google-review-ticket-lead-flow.md) — Review follow-up lifecycle
 - [Database](../database/README.md) — Database setup and storage backends
 - [Meta integration architecture](../integrations/meta/architecture.md) — Meta connections, OAuth, assets, and webhooks

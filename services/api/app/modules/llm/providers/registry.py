@@ -24,6 +24,7 @@ PROVIDER_CONFIGS: dict[str, dict] = {
     "kimi": {},
     "deepseek": {},
     "groq": {},
+    "openrouter": {},
     "ollama": {"optional": True},
     "gemini": {},
 }

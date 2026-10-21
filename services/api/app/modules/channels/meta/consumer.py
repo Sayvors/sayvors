@@ -392,9 +392,12 @@ async def _generate_reply(
     to surface the failure; nothing is sent on error.
     """
     from ..models import ChannelMessage
-    from ...llm.providers.base import LLMMessage, LLMRequest, merge_consecutive
-    from ...llm.providers.registry import get_provider_for_model
-    from ...llm.service import _resolve_model, resolve_tenant_model
+    from ...llm.gateway import (
+        LLMMessage,
+        complete,
+        merge_consecutive,
+        resolve_tenant_model,
+    )
 
     model_id = await resolve_tenant_model(db)  # ValueError when nothing enabled
 
@@ -454,15 +457,13 @@ async def _generate_reply(
 
     business_card = await prompt_block(tenant_id, db)
 
-    api_model, _provider_key = _resolve_model(model_id)
-    provider = get_provider_for_model(model_id)
     # Lead capture rides this same call: the model may append one silent
     # LEAD line, which the handlers split off after the fact — extraction
     # without a second LLM request.
     from .lead_engine import LEAD_PROMPT_BLOCK
 
-    req = LLMRequest(
-        model=api_model,
+    resp = await complete(
+        model=model_id,
         messages=history,
         system_prompt=_system_prompt(user, platform=platform)
         + (f"\n\n{business_card}" if business_card else "")
@@ -470,13 +471,10 @@ async def _generate_reply(
         + f"\n\n{LEAD_PROMPT_BLOCK}",
         temperature=_REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
-        stream=False,
         tenant_id=tenant_id,
-        model_id=model_id,
         purpose=f"{platform.lower()}.auto_reply",
         channel_id=channel.id,
     )
-    resp = await provider.complete(req)
     return (resp.content or "").strip()
 
 

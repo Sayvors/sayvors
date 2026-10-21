@@ -48,6 +48,10 @@ PLAN_INCLUDED_CENTS = {"free": 0, "pro": 2000}
 TOKEN_PRICES: dict[str, tuple[float, float]] = {
     "groq": (15.0, 60.0),
     "openai": (150.0, 600.0),
+    # OpenRouter resells every family at its own price. Use the middle
+    # OpenAI-compatible rate rather than the zero "unknown" fallback, so a
+    # cheap model is slightly overcharged and an expensive one is not free.
+    "openrouter": (150.0, 600.0),
     "anthropic": (300.0, 1500.0),
     "google": (30.0, 120.0),
     "gemini": (30.0, 120.0),

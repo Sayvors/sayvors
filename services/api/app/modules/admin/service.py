@@ -287,11 +287,13 @@ async def _check_kafka() -> str:
     return "producer connected"
 
 
-_PROBE_URLS = {    "groq": "https://api.groq.com/openai/v1/models",
+_PROBE_URLS = {
+    "groq": "https://api.groq.com/openai/v1/models",
     "openai": "https://api.openai.com/v1/models",
     "grok": "https://api.x.ai/v1/models",
     "kimi": "https://api.moonshot.cn/v1/models",
     "deepseek": "https://api.deepseek.com/v1/models",
+    "openrouter": "https://openrouter.ai/api/v1/models",
     "gemini": "gemini",
     "ollama": "http://localhost:11434/api/tags",
 }
