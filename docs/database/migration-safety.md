@@ -250,10 +250,11 @@ which surfaces on the deploy host as:
 Head "https://ghcr.io/v2/sayvors/sayvors-api/manifests/staging": denied: denied
 ```
 
-`Deploy staging` therefore runs a `publish-public-package` job after the
-build that sets the package to public and then **verifies an anonymous pull
-works**. The verification step exists so a private package fails in CI rather
-than on the deploy host.
+`Deploy staging` does **not** change package visibility: it builds and pushes
+`:staging`, and logs in with `GITHUB_TOKEN` for the push only. Nothing in the
+workflow makes the package public. If the package is private, either make it
+public once (Packages -> sayvors-api -> Package settings -> Change visibility)
+or give the deploy host a credential that carries `read:packages`.
 
 The image contains no secrets - all runtime configuration comes from
 `.env.prod` via compose `env_file` - so publishing it publicly is safe.
@@ -278,23 +279,36 @@ docker pull ghcr.io/sayvors/sayvors-api:staging
 ## 8. Deploy sequence
 
 The deploy is manual on the host. `Deploy staging` builds and pushes the
-image; a human pulls it up.
+image; a human pulls it up. The `:staging` tag only moves after CI passes on
+`staging`, so pulling before that point silently redeploys the previous image.
 
 ```bash
 cd ~/sayvors
-git pull origin staging
+git rev-parse --abbrev-ref HEAD             # must print: staging
+git pull --ff-only origin staging
 rm -f docker-compose.override.yml          # it overrides the api command and skips migrations
 docker compose -f docker-compose.prod.yml pull api worker
-docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps api worker
-docker logs --tail=40 sayvors-api
+docker compose -f docker-compose.prod.yml up -d --remove-orphans
+docker compose -f docker-compose.prod.yml logs --tail=40 api
 ```
+
+`--no-deps` is deliberately absent: `api` depends on `redis` and `kafka` with
+`condition: service_healthy`, so skipping dependencies leaves the API pointing
+at containers that may not be running. `up -d` recreates a service when its
+image digest changed, which is what a fresh `:staging` push produces.
 
 Verify:
 
 ```bash
-docker exec sayvors-api alembic current     # expect the single head
+docker compose -f docker-compose.prod.yml exec api alembic current   # expect the single head
 docker compose -f docker-compose.prod.yml ps
+curl -fsS https://api.staging.sayvors.com/readyz
 ```
+
+Containers have no `container_name` in `docker-compose.prod.yml`, so they are
+named `<project>-<service>-1` (for example `sayvors-api-1`) and the name
+changes with the directory. Always address them through `docker compose`
+rather than `docker logs sayvors-api` / `docker exec sayvors-api`.
 
 `docker-compose.override.yml` must not exist on the host. It replaces the
 api container's command with a bare `uvicorn`, which skips the
