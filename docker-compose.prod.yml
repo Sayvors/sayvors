@@ -27,6 +27,8 @@ services:
       start_period: 10s
 
   api:
+    # TODO: Pin to SHA256 digest instead of mutable :staging tag
+    # e.g. ghcr.io/sayvors/sayvors-api@sha256:<digest>
     image: ghcr.io/sayvors/sayvors-api:staging
     restart: unless-stopped
     env_file:
