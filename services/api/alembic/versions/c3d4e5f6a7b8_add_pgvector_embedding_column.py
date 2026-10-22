@@ -46,8 +46,23 @@ GIN_INDEX = "ix_document_chunks_content_gin"
 def upgrade() -> None:
     # The extension has to exist before the column type does. A database
     # without it cannot hold a vector column, so this fails the deploy loudly
-    # instead of leaving the app running against a schema it cannot write.
-    op.execute(f"CREATE EXTENSION IF NOT EXISTS {EXTENSION}")
+    # instead of leaving the app running against a schema it cannot write -
+    # but the error says exactly what to do.
+    try:
+        op.execute(f"CREATE EXTENSION IF NOT EXISTS {EXTENSION}")
+    except Exception as e:
+        raise RuntimeError(
+            "pgvector is not available on this database, so the vector column "
+            "cannot be created. Install the extension and re-run "
+            "`alembic upgrade head`:\n"
+            "  - Docker/Compose: use the `pgvector/pgvector:pg16` image\n"
+            "  - AWS RDS: the engine version must support pgvector, then run "
+            "`CREATE EXTENSION IF NOT EXISTS vector;` as an admin\n"
+            "  - Windows/PostgreSQL: install the `windows-x64` build of "
+            "pgvector into the server's share/extension and lib folders, "
+            "restart the service, then run the CREATE EXTENSION above\n"
+            "See docs/database/migration-safety.md section 9."
+        ) from e
 
     # The statement is kept on one source line: the migration guard parses
     # these files to prove every model column has a migration, and a

@@ -346,11 +346,36 @@ psql "$DATABASE_URL" -c "\d document_chunks" | grep embedding_vector
 psql "$DATABASE_URL" -c "SELECT indexname FROM pg_indexes WHERE tablename = 'document_chunks';"
 ```
 
+### Installing pgvector on a local Windows PostgreSQL
+
+The local development database is a Windows PostgreSQL install, which does not ship
+pgvector. The extension has to be added once:
+
+1. Download the `windows-x64` build of the latest pgvector release
+   (<https://github.com/pgvector/pgvector/releases>).
+2. Copy `vector.control` into the server's extension folder:
+   `C:\Program Files\PostgreSQL\18\share\extension\`
+3. Copy the `vector--*.dll` files into the server's library folder:
+   `C:\Program Files\PostgreSQL\18\lib\`
+4. Restart the PostgreSQL service:
+   `Restart-Service postgresql-x64-18`
+5. Enable it and migrate:
+
+```bash
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+cd services/api
+alembic upgrade head
+```
+
+Until that is done the API starts, but `alembic upgrade head` stops at the pgvector
+migration and the worker logs the missing `dedupe_key` / `job_lane_heartbeats`
+objects, because those migrations come after it in the chain.
+
 If `CREATE EXTENSION` is refused, the database is not ready for this
 migration: enable pgvector on the instance (RDS: the engine version has to
 support it) and re-run as a role with the right to create extensions. The
-api container logs `pgvector codec not registered on this connection` when
-the extension is missing - the app still boots, but embedding writes fail.
+api container logs `pgvector codec not registered` once when the extension is
+missing — the app still boots, but embedding writes fail.
 
 Existing chunks have no vector after the migration. Backfill them with:
 

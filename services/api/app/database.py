@@ -9,6 +9,11 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
+# The pgvector codec can only be registered on a database that has the
+# extension. On one that does not, the failure is logged once - not on every
+# connection.
+_vector_codec_logged = False
+
 # ── Writer engine (primary / PgBouncer) ──────────────────────────────
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -78,15 +83,24 @@ def _register_vector_on_connect(dbapi_connection, connection_record) -> None:
     """Pool hook: register the vector codec on every new connection.
 
     A database without the pgvector extension must still boot: the codec
-    registration is logged and skipped, and only the vector write path
+    registration is logged once and skipped, and only the vector write path
     fails (the migration is what blocks such a database from deploying).
     """
+    global _vector_codec_logged
     if not hasattr(dbapi_connection, "run_async"):
         return
     try:
         dbapi_connection.run_async(_register_vector_codec)
     except Exception as e:  # pragma: no cover - depends on the database
-        logger.error("pgvector codec not registered on this connection: %s", e)
+        if not _vector_codec_logged:
+            _vector_codec_logged = True
+            logger.warning(
+                "pgvector codec not registered (%s) - this database has no "
+                "vector extension. Databank vector search is unavailable "
+                "until pgvector is installed and the migrations are applied "
+                "(docs/database/migration-safety.md §9).",
+                e,
+            )
 
 
 event.listen(engine.sync_engine, "connect", _register_vector_on_connect)
