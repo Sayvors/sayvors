@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
 from ..llm.gateway import ToolDefinition, ToolParameter
 
 logger = logging.getLogger(__name__)
@@ -120,14 +121,16 @@ async def vector_search(ctx: ToolContext, query: str, top_k: int = 5) -> dict:
     from .search import hybrid_search
 
     top_k = max(1, min(int(top_k or 5), 10))
+    query_vector = None
     query_model: str | None = None
-    try:
-        provider = await get_embedding_provider()
-        vectors = await provider.embed([query])
-        query_vector = vectors[0]
-        query_model = provider.model_tag
-    except Exception:
-        return {"passages": [], "notice": "vector_unavailable"}
+    if settings.embeddings_enabled:
+        try:
+            provider = await get_embedding_provider()
+            vectors = await provider.embed([query])
+            query_vector = vectors[0]
+            query_model = provider.model_tag
+        except Exception:
+            return {"passages": [], "notice": "vector_unavailable"}
 
     results = await hybrid_search(
         databank_id=ctx.databank_id, query_vector=query_vector,

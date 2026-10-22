@@ -18,7 +18,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    if op.get_bind().dialect.has_table("job_lane_heartbeats"):
+    if sa.inspect(op.get_bind()).has_table("job_lane_heartbeats"):
         return
     op.create_table(
         "job_lane_heartbeats",

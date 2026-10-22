@@ -19,6 +19,8 @@ import csv
 import logging
 from io import StringIO
 
+from ...config import settings
+
 logger = logging.getLogger(__name__)
 
 _MAX_EXTERNAL_SOURCES = 3
@@ -182,13 +184,15 @@ async def hybrid_lookup(db, bank_ids: list[str], query: str,
         from ..rag.search import hybrid_search
 
         query_model: str | None = None
-        try:
-            provider = await get_embedding_provider()
-            vectors = await provider.embed([query[:500]])
-            query_vector = vectors[0]
-            query_model = provider.model_tag
-        except Exception:
-            query_vector = None
+        query_vector = None
+        if settings.embeddings_enabled:
+            try:
+                provider = await get_embedding_provider()
+                vectors = await provider.embed([query[:500]])
+                query_vector = vectors[0]
+                query_model = provider.model_tag
+            except Exception:
+                query_vector = None
         seen: dict[str, tuple[str, float]] = {}
         for bank_id in bank_ids:
             try:

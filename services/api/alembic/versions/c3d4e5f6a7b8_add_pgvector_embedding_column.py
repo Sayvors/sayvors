@@ -16,12 +16,18 @@ This migration adds the searchable representation:
   'simple' applies no stemming and no English stopwords, which is what
   Arabic content needs.
 
-Requirements, because a database without them cannot run this migration:
+Requirements, because a database without them cannot run the vector branch:
 
 * PostgreSQL with the ``vector`` extension available (``CREATE EXTENSION
   vector``). AWS RDS supports pgvector on supported engine versions; the
   migration fails loudly rather than silently degrading to a JSON blob.
 * pgvector >= 0.5 for HNSW.
+
+``EMBEDDINGS_ENABLED=false`` (the default outside production, see
+``Settings.embeddings_enabled``) takes the other branch: ``embedding_vector``
+is created as TEXT so the ORM keeps working, keyword search gets its GIN
+index, and a local PostgreSQL without the extension is not stuck on this
+revision. Turning embeddings on later converts that placeholder in place.
 
 Both indexes are built with ``CONCURRENTLY`` so the write path stays open on
 a large table; that requires the autocommit block (same pattern as the
@@ -44,25 +50,53 @@ GIN_INDEX = "ix_document_chunks_content_gin"
 
 
 def upgrade() -> None:
-    # The extension has to exist before the column type does. A database
-    # without it cannot hold a vector column, so this fails the deploy loudly
-    # instead of leaving the app running against a schema it cannot write -
-    # but the error says exactly what to do.
+    from app.config import settings
+
+    # `embedding_vector` is the searchable representation, and its type needs
+    # pgvector. When embeddings are off (the default outside production) the
+    # column is still created as TEXT so the ORM maps document_chunks
+    # normally: ingest, databank listing and keyword-only search keep working
+    # on a PostgreSQL without the extension, and the rest of the migration
+    # chain is not blocked behind this one.
+    if not settings.embeddings_enabled:
+        op.execute(
+            "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS embedding_vector TEXT"
+        )
+        with op.get_context().autocommit_block():
+            op.execute(
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {GIN_INDEX} "
+                "ON document_chunks USING gin (to_tsvector('simple', content))"
+            )
+        return
+
     try:
         op.execute(f"CREATE EXTENSION IF NOT EXISTS {EXTENSION}")
     except Exception as e:
         raise RuntimeError(
-            "pgvector is not available on this database, so the vector column "
-            "cannot be created. Install the extension and re-run "
-            "`alembic upgrade head`:\n"
+            "EMBEDDINGS_ENABLED is on but pgvector is not available on this "
+            "database, so the vector column cannot be created. Install the "
+            "extension and re-run `alembic upgrade head`:\n"
             "  - Docker/Compose: use the `pgvector/pgvector:pg16` image\n"
             "  - AWS RDS: the engine version must support pgvector, then run "
             "`CREATE EXTENSION IF NOT EXISTS vector;` as an admin\n"
             "  - Windows/PostgreSQL: install the `windows-x64` build of "
             "pgvector into the server's share/extension and lib folders, "
             "restart the service, then run the CREATE EXTENSION above\n"
+            "To run without pgvector instead, set EMBEDDINGS_ENABLED=false.\n"
             "See docs/database/migration-safety.md section 9."
         ) from e
+
+    # A database that first ran this with embeddings disabled holds a TEXT
+    # placeholder. Converting it is safe because the placeholder is only ever
+    # written as NULL; the SQL is idempotent and a no-op on a fresh database.
+    op.execute(
+        "DO $$ BEGIN "
+        "IF EXISTS (SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = 'document_chunks' "
+        "AND column_name = 'embedding_vector' AND udt_name <> 'vector') THEN "
+        f"ALTER TABLE document_chunks ALTER COLUMN embedding_vector TYPE vector({VECTOR_DIM}) USING NULL; "
+        "END IF; END $$"
+    )
 
     # The statement is kept on one source line: the migration guard parses
     # these files to prove every model column has a migration, and a
@@ -81,9 +115,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    from app.config import settings
+
     with op.get_context().autocommit_block():
         op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {GIN_INDEX}")
-        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {HNSW_INDEX}")
+        if settings.embeddings_enabled:
+            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {HNSW_INDEX}")
     op.execute("ALTER TABLE document_chunks DROP COLUMN IF EXISTS embedding_vector")
     # The extension is left installed: other databases may share it, and
     # dropping it would break any object that depends on the type.

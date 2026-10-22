@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     RUN_BACKGROUND_WORKERS: bool = True
     REDIS_URL: str = "redis://localhost:6379/0"
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
+    # pgvector-backed semantic search. None = auto: on in production, off
+    # everywhere else so a development database without the pgvector
+    # extension still boots and can run the whole migration chain. Set it
+    # explicitly to force the behaviour in either direction.
+    EMBEDDINGS_ENABLED: bool | None = None
 
     # ── Auth security ────────────────────────────────────
     MAX_LOGIN_ATTEMPTS: int = 5
@@ -61,6 +66,20 @@ class Settings(BaseSettings):
     # cookies set by api.sayvors.com are also sent to web.sayvors.com and vice
     # versa. Local dev: set COOKIE_DOMAIN= in .env to get host-only cookies.
     COOKIE_DOMAIN: str | None = ".sayvors.com"
+
+    @property
+    def embeddings_enabled(self) -> bool:
+        """Whether pgvector-backed semantic search runs in this process.
+
+        Auto mode keys off ``ENVIRONMENT``: a staging or production deployment
+        without pgvector would silently degrade every databank to
+        keyword-only, so those default on and the migration fails loudly if
+        the extension is missing. Development and test default off so a
+        database without pgvector still runs the app.
+        """
+        if self.EMBEDDINGS_ENABLED is not None:
+            return self.EMBEDDINGS_ENABLED
+        return self.ENVIRONMENT not in {"development", "test"}
 
     @field_validator("COOKIE_DOMAIN")
     @classmethod

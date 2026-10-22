@@ -24,7 +24,7 @@ depends_on = None
 def upgrade() -> None:
     # Idempotent: a database that already carries the table (a partial run)
     # must not fail the boot.
-    if op.get_bind().dialect.has_table("embedding_provider_configs"):
+    if sa.inspect(op.get_bind()).has_table("embedding_provider_configs"):
         return
     op.create_table(
         "embedding_provider_configs",

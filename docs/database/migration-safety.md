@@ -320,17 +320,31 @@ un-migrated schema.
 ## 9. The pgvector requirement
 
 Migration `c3d4e5f6a7b8` adds `document_chunks.embedding_vector vector(1024)`
-and the HNSW / GIN indexes that make databank search scale. It needs the
-`vector` extension, and it **fails the deploy** if the extension cannot be
-created - deliberately: a database without pgvector cannot hold a vector
-column, and silently continuing would leave the app writing to a schema it
-cannot search.
+and the HNSW / GIN indexes that make databank search scale. The vector
+column needs the `vector` extension, so the migration has two branches,
+chosen by `EMBEDDINGS_ENABLED` (see `Settings.embeddings_enabled`):
+
+* **on** (the default outside development/test) — creates the extension,
+  converts any TEXT placeholder left by an earlier run, adds
+  `embedding_vector vector(1024)` and both indexes. If the extension cannot
+  be created the deploy **fails loudly**: a database without pgvector cannot
+  hold a vector column, and silently continuing would leave the app writing
+  to a schema it cannot search.
+* **off** (the default everywhere else) — creates `embedding_vector` as
+  `TEXT` so the ORM still maps `document_chunks`, builds the GIN keyword
+  index, and continues. Databank search is keyword-only until embeddings are
+  turned on; the API reports that as `degraded`.
+
+The switch matters beyond this migration: `hybrid_search` skips the pgvector
+operators, ingest writes no vectors, and the query path never calls an
+embedding provider while it is off. Nothing fails, results are just keyword
+based.
 
 | Environment | Requirement | How to check |
 |---|---|---|
 | CI | postgres service runs the `pgvector/pgvector:pg15` image (plain `postgres:15-alpine` has no extension files) | `tests/test_rag_pgvector.py` runs there and skips everywhere else |
 | Staging / production (AWS RDS) | a PostgreSQL version that supports pgvector, and a role allowed to `CREATE EXTENSION vector` | `SELECT * FROM pg_available_extensions WHERE name = 'vector';` then `CREATE EXTENSION IF NOT EXISTS vector;` |
-| Local development | the same, on the local PostgreSQL the API points at | as above |
+| Local development | only when embeddings are turned on; the default local setup needs no extension at all | `SELECT * FROM pg_available_extensions WHERE name = 'vector';` when `EMBEDDINGS_ENABLED=true` |
 
 Check before deploying:
 
@@ -367,15 +381,36 @@ cd services/api
 alembic upgrade head
 ```
 
-Until that is done the API starts, but `alembic upgrade head` stops at the pgvector
-migration and the worker logs the missing `dedupe_key` / `job_lane_heartbeats`
-objects, because those migrations come after it in the chain.
+Until the extension is installed, leave `EMBEDDINGS_ENABLED` unset (or
+`false`): the migration creates the TEXT placeholder, `alembic upgrade head`
+reaches the current head, and workers stop failing on the columns that come
+after it (`dedupe_key`, `hard_deadline_at`, `job_lane_heartbeats`). Search is
+keyword-only in that mode.
 
-If `CREATE EXTENSION` is refused, the database is not ready for this
-migration: enable pgvector on the instance (RDS: the engine version has to
-support it) and re-run as a role with the right to create extensions. The
-api container logs `pgvector codec not registered` once when the extension is
-missing — the app still boots, but embedding writes fail.
+### Turning embeddings on later
+
+If the database already ran `c3d4e5f6a7b8` with embeddings off, it holds a
+TEXT placeholder and the revision is already stamped, so flipping the flag
+does not re-run the migration by itself. With pgvector installed:
+
+```bash
+# Downgrade drops the empty placeholder (all values are NULL - no chunk loses
+# a vector, because none were written while embeddings were off).
+cd services/api
+alembic downgrade -1
+EMBEDDINGS_ENABLED=true alembic upgrade head
+```
+
+Production must never need this: it defaults to enabled, so the first deploy
+creates the real column.
+
+If `CREATE EXTENSION` is refused **while embeddings are enabled**, the
+database is not ready for this migration: enable pgvector on the instance
+(RDS: the engine version has to support it) and re-run as a role with the
+right to create extensions - or set `EMBEDDINGS_ENABLED=false` to run
+keyword-only. The api container logs `pgvector codec not registered` once
+either way; in the disabled case that is expected and does not affect
+keyword search.
 
 Existing chunks have no vector after the migration. Backfill them with:
 

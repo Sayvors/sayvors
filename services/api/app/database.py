@@ -82,11 +82,15 @@ async def _register_vector_codec(connection) -> None:
 def _register_vector_on_connect(dbapi_connection, connection_record) -> None:
     """Pool hook: register the vector codec on every new connection.
 
-    A database without the pgvector extension must still boot: the codec
-    registration is logged once and skipped, and only the vector write path
-    fails (the migration is what blocks such a database from deploying).
+    Skipped entirely when embeddings are off: the column is then a TEXT
+    placeholder, nothing ever writes a vector, and probing for the type on
+    every new pooled connection only produces a misleading warning.
+    A database with embeddings enabled but no extension still boots: the
+    codec registration is logged once and skipped.
     """
     global _vector_codec_logged
+    if not settings.embeddings_enabled:
+        return
     if not hasattr(dbapi_connection, "run_async"):
         return
     try:

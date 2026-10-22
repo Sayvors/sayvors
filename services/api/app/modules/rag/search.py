@@ -27,6 +27,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...config import settings
+
 logger = logging.getLogger(__name__)
 
 # Reciprocal-rank-fusion damping constant (Cormack et al., 2009).
@@ -248,11 +250,16 @@ async def hybrid_search(
     postgres = _is_postgres(db)
 
     vector_hits: list[dict[str, Any]] = []
+    # When embeddings are off the Postgres column is a TEXT placeholder and
+    # the pgvector operators do not exist. The non-Postgres fallback reads
+    # the legacy JSON column with in-process cosine, so it keeps working
+    # (that is the path the test suite runs on).
     if query_vector:
         if postgres:
-            vector_hits = await _pg_vector_search(
-                db, databank_id, query_vector, query_model, limit
-            )
+            if settings.embeddings_enabled:
+                vector_hits = await _pg_vector_search(
+                    db, databank_id, query_vector, query_model, limit
+                )
         else:
             vector_hits = await _fallback_vector_search(
                 db, databank_id, query_vector, query_model, limit

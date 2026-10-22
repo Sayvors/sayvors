@@ -477,14 +477,17 @@ async def search(
 
     query_vector: list[float] | None = None
     query_model: str | None = None
-    degraded = False
-    try:
-        provider = await get_embedding_provider()
-        vectors = await provider.embed([body.query])
-        query_vector = vectors[0]
-        query_model = provider.model_tag
-    except Exception:
-        degraded = True
+    # Without pgvector there is no comparable stored vector, so calling the
+    # provider would only burn tokens. Keyword-only is reported as degraded.
+    degraded = not settings.embeddings_enabled
+    if settings.embeddings_enabled:
+        try:
+            provider = await get_embedding_provider()
+            vectors = await provider.embed([body.query])
+            query_vector = vectors[0]
+            query_model = provider.model_tag
+        except Exception:
+            degraded = True
 
     async with _async_session() as search_db:
         results = await hybrid_search(
@@ -542,20 +545,21 @@ async def _embed_and_store(
         # Try embeddings, but fall back to NULL (keyword-only search still works).
         all_vectors: list[list[float] | None] = [None] * len(chunks)
         embedding_model = "none"
-        try:
-            provider = await get_embedding_provider()
-            texts = [c["content"] for c in chunks]
-            batch_size = 64
-            idx = 0
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i : i + batch_size]
-                vectors = await provider.embed(batch)
-                for v in vectors:
-                    all_vectors[idx] = v
-                    idx += 1
-            embedding_model = provider.model_tag
-        except Exception as e:
-            logger.warning("Embedding failed for doc %s, storing without vectors: %s", doc.id, e)
+        if settings.embeddings_enabled:
+            try:
+                provider = await get_embedding_provider()
+                texts = [c["content"] for c in chunks]
+                batch_size = 64
+                idx = 0
+                for i in range(0, len(texts), batch_size):
+                    batch = texts[i : i + batch_size]
+                    vectors = await provider.embed(batch)
+                    for v in vectors:
+                        all_vectors[idx] = v
+                        idx += 1
+                embedding_model = provider.model_tag
+            except Exception as e:
+                logger.warning("Embedding failed for doc %s, storing without vectors: %s", doc.id, e)
 
         db_chunks = []
         for idx, (chunk, vector) in enumerate(zip(chunks, all_vectors)):
