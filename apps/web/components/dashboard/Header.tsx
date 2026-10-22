@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { LOCALES } from "@/lib/i18n/locales";
@@ -32,6 +32,7 @@ export default function Header() {
   const helpRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuth();
   const { startTour } = useTour();
+  const router = useRouter();
 
   const displayName =
     user && (user.first_name || user.last_name)
@@ -226,7 +227,8 @@ export default function Header() {
         <span>{t.header.connect}</span>
       </Link>
 
-      {/* Profile */}
+      {/* Profile — the avatar dropdown lives here now; the sidebar no longer
+           carries a profile item. */}
       <div className="relative" ref={profileRef}>
         <button
           onClick={() => setProfileOpen(!profileOpen)}
@@ -241,6 +243,30 @@ export default function Header() {
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={`h-3 w-3 text-ink/40 transition-transform dark:text-fog/40 ${profileOpen ? "rotate-180" : ""}`} aria-hidden>
             <path d="M4 6l4 4 4-4" />
           </svg>
+        </button>
+        {/* Settings button */}
+        <button
+          onClick={() => { setProfileOpen(false); router.push("/dashboard/settings"); }}
+          aria-label={t.header.settings}
+          className="flex h-8 items-center gap-2 rounded-[2px] px-3 py-2 text-[12px] font-medium text-ink/60 transition hover:bg-deep-violet/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-deep-violet" aria-hidden>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          <span className="text-[12px] font-medium text-ink dark:text-fog">{t.header.settings}</span>
+        </button>
+        {/* Tour button */}
+        <button
+          onClick={() => { closeMenu(); startTour(); }}
+          aria-label="Start tour"
+          className="flex h-8 items-center gap-2 rounded-[2px] px-3 py-2 text-[12px] font-medium text-ink/60 transition hover:bg-deep-violet/[0.04] hover:text-ink focus-visible:bg-deep-violet/[0.04] focus-visible:outline-none dark:text-fog/60 dark:hover:text-fog"
+        >
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-3.5 w-3.5 text-deep-violet" aria-hidden>
+            <circle cx="10" cy="10" r="8" />
+            <path d="M10 14.5v.01M7.5 7.3A2.5 2.5 0 0112.5 8c0 1.7-2.5 2-2.5 3.5" strokeLinecap="round" />
+          </svg>
+          <span className="text-[12px] font-medium text-ink dark:text-fog">Tour</span>
         </button>
         {profileOpen && (
           <div className={`absolute ${dir === "rtl" ? "left-0" : "right-0"} top-full z-50 mt-1 max-h-[80vh] w-60 overflow-y-auto rounded-[2px] border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink`}>
@@ -349,10 +375,10 @@ export default function Header() {
               ))}
             </div>
 
-            {/* Account */}
+            {/* Account — settings and tour are the buttons beside the avatar;
+                the profile entry itself stays reachable here. */}
             <div className="border-t border-deep-violet/[0.06] py-1">
               <MenuLink label={t.account.myProfile} href="/dashboard/profile" onNavigate={closeMenu} />
-              <MenuLink label={t.header.settings} href="/dashboard/settings" onNavigate={closeMenu} />
             </div>
             <div className="border-t border-deep-violet/[0.06] py-1">
               <button

@@ -3,8 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { useAuth } from "@/lib/auth-context";
+import { useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
 import { visibleChannelNav, type ChannelNavRow } from "@/lib/channel-nav";
@@ -38,7 +37,6 @@ const ADVANCED_ITEMS: NavItem[] = [
   { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
   { key: "usage", icon: <GaugeIcon />, href: "/dashboard/usage" },
   { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
-  { key: "profile", icon: <UserIcon />, href: "/dashboard/profile" },
   { key: "settings", icon: <GearIcon />, href: "/dashboard/settings" },
 ];
 
@@ -50,7 +48,6 @@ function isActive(pathname: string, item: NavItem) {
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   // Small screens get the nav as an overlay drawer, not a column. A 220px
   // inline sidebar is 56% of a 390px phone, permanently, before any content.
   const [isMobile, setIsMobile] = useState(false);
@@ -110,38 +107,11 @@ export default function Sidebar() {
     };
   }, [isMobile]);
   const pathname = usePathname();
-  const { user, logout } = useAuth();
   const { t, dir } = useI18n();
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  const displayName =
-    user && (user.first_name || user.last_name)
-      ? `${user.first_name} ${user.last_name}`.trim()
-      : t.account.fallbackName;
-
-  const initials = user
-    ? `${user.first_name?.[0] ?? ""}${user.last_name?.[0] ?? ""}`.toUpperCase() || "U"
-    : "U";
 
   const toggleAdvanced = () => setAdvancedOpen((prev) => !prev);
 
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMenuOpen(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, []);
-
-  useEffect(() => {
-    setMenuOpen(false);
     // Following a link inside the drawer should reveal the page, not leave the
     // nav covering it.
     setDrawerOpen(false);
@@ -280,77 +250,26 @@ export default function Sidebar() {
         </div>
       </nav>
 
-      {/* Account + collapse */}
-      <div ref={menuRef} className="relative border-t border-ink/[0.05] dark:border-fog/[0.06]">
-        {menuOpen && (
-          <div
-            className={`absolute bottom-full z-50 mb-2 overflow-hidden rounded-[2px] border border-ink/[0.08] bg-white shadow-xl dark:border-fog/[0.08] dark:bg-[#221b4d] ${
-              rail ? (dir === "rtl" ? "right-12 w-48" : "left-12 w-48") : "inset-x-2"
-            }`}
+      {/* Collapse — the profile itself lives in the header now. */}
+      <div className="hidden items-center justify-end border-t border-ink/[0.05] p-2 dark:border-fog/[0.06] md:flex">
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          aria-label={collapsed ? t.nav.expand : t.nav.collapse}
+          title={collapsed ? t.nav.expand : t.nav.collapse}
+          /* The drawer is already the compact form on a phone — a collapse
+             toggle there would collapse what is off-screen twice over. */
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] text-ink/25 outline-none transition hover:bg-ink/[0.05] hover:text-ink/50 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/25 dark:hover:bg-fog/[0.08] dark:hover:text-fog/50"
+        >
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            className={`h-3.5 w-3.5 transition-transform ${collapsed ? "rotate-180" : ""}`}
           >
-            <div className="border-b border-ink/[0.06] px-3 py-2.5 dark:border-fog/[0.08]">
-              <p className="truncate text-[13px] font-medium text-ink dark:text-white">
-                {displayName}
-              </p>
-              <p className="truncate text-[11px] text-ink/40 dark:text-fog/40">{user?.email ?? ""}</p>
-            </div>
-            <div className="py-1">
-              <SidebarMenuLink href="/dashboard/profile" label={t.account.myProfile} />
-              <SidebarMenuLink href="/dashboard/settings" label={t.account.settings} />
-            </div>
-            <div className="border-t border-ink/[0.06] py-1 dark:border-fog/[0.08]">
-              <button
-                onClick={() => logout()}
-                className="flex w-full items-center px-3 py-2 text-[12px] text-coral transition hover:bg-coral/[0.07]"
-              >
-                {t.account.signOut}
-              </button>
-            </div>
-          </div>
-        )}
-        <div className={`flex items-center gap-1 p-2 ${collapsed && !isMobile ? "flex-col" : ""}`}>
-          <button
-            onClick={() => (isMobile ? setDrawerOpen(false) : setMenuOpen(!menuOpen))}
-            aria-label={isMobile ? t.nav.closeMenu : t.account.menu}
-            aria-expanded={isMobile ? drawerOpen : menuOpen}
-            title={!isMobile && collapsed ? displayName : undefined}
-            className={`flex min-w-0 flex-1 items-center gap-2 rounded-[2px] px-1.5 py-1.5 outline-none transition hover:bg-ink/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:hover:bg-fog/[0.06] ${
-              collapsed ? "justify-center" : ""
-            }`}
-          >
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-light to-magenta text-[10px] font-semibold text-white">
-              {initials}
-            </span>
-            {!collapsed && (
-              <span className="min-w-0 flex-1 text-start">
-                <span className="block truncate text-[12px] font-medium text-ink dark:text-fog">
-                  {displayName}
-                </span>
-                <span className="block truncate text-[10px] text-ink/40 dark:text-fog/40">
-                  {user?.email ?? ""}
-                </span>
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setCollapsed(!collapsed)}
-            aria-label={collapsed ? t.nav.expand : t.nav.collapse}
-            title={collapsed ? t.nav.expand : t.nav.collapse}
-            /* The drawer is already the compact form on a phone — a collapse
-               toggle there would collapse what is off-screen twice over. */
-            className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-[2px] text-ink/25 outline-none transition hover:bg-ink/[0.05] hover:text-ink/50 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/25 dark:hover:bg-fog/[0.08] dark:hover:text-fog/50 md:flex"
-          >
-            <svg
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              className={`h-3.5 w-3.5 transition-transform ${collapsed ? "rotate-180" : ""}`}
-            >
-              <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        </div>
+            <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
     </aside>
     </>
@@ -533,17 +452,6 @@ function ChannelsNav({
         </div>
       )}
     </div>
-  );
-}
-
-function SidebarMenuLink({ href, label }: { href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="flex w-full items-center px-3 py-2 text-[12px] text-ink/60 transition hover:bg-ink/[0.04] hover:text-ink dark:text-fog/60 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
-    >
-      {label}
-    </Link>
   );
 }
 
