@@ -123,3 +123,14 @@
   model, one active provider (`embedding_provider_configs` + Admin → Embeddings)
 - Admin → Embeddings page: provider cards, model picker, key store, "make
   active", live test that reports the width the API answered with
+- STT `/transcribe` now queues a durable job on the bulk lane — the request
+  used to save a pending STTJob row that nothing ever ran
+- Google channel health: a revoked token (401), a removed location (404) or a
+  lost account (403) marks the channel `expired` once and notifies the
+  merchant; the poll loop stops selecting expired channels
+- Kafka publish dispatch is bounded (5s) — `send_and_wait` had no timeout and
+  could hold the HTTP request (and an API worker) open forever; the job stays
+  queued in Postgres and the lane runner picks it up
+- Review enrichment: a heuristic fallback is stored as `failed`, not `done`,
+  so the next discovery re-runs the model instead of keeping a keyword guess
+  as the final answer; the LLM call itself retries once

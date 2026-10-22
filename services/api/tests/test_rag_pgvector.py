@@ -39,7 +39,23 @@ async def pg_session():
     if not DATABASE_URL.startswith("postgresql"):
         pytest.skip("DATABASE_URL is not PostgreSQL")
 
-    engine = create_async_engine(DATABASE_URL)
+    # Everything is bounded: a hung test would hang CI. The search path is
+    # set per connection (server_settings), so it survives COMMIT - a
+    # transaction-scoped SET would silently fall back to the public schema
+    # and the test would touch the real table.
+    def _engine(search_path: str | None = None):
+        server_settings = {
+            "statement_timeout": "30s",
+            "lock_timeout": "10s",
+            "idle_in_transaction_session_timeout": "30s",
+        }
+        if search_path:
+            server_settings["search_path"] = search_path
+        return create_async_engine(
+            DATABASE_URL, connect_args={"server_settings": server_settings}
+        )
+
+    engine = _engine()
     try:
         async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -72,13 +88,16 @@ async def pg_session():
         )
 
     try:
-        async with engine.connect() as conn:
-            await conn.execute(text(f"SET search_path TO {_SCHEMA}, public"))
+        async with _engine(f"{_SCHEMA}, public").connect() as conn:
             async with AsyncSession(bind=conn) as session:
                 yield session
     finally:
-        async with engine.begin() as conn:
-            await conn.execute(text(f"DROP SCHEMA IF EXISTS {_SCHEMA} CASCADE"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(f"DROP SCHEMA IF EXISTS {_SCHEMA} CASCADE"))
+        except Exception:
+            # A leftover schema is harmless; blocking the suite is not.
+            pass
         await engine.dispose()
 
 

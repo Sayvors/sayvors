@@ -207,7 +207,11 @@ async def _handle_discovered(payload: dict) -> None:
         insight.topics = result["topics"]
         insight.products = result["products"]
         insight.problems = result["problems"]
-        insight.enrichment_status = "done"
+        # A heuristic fallback is not a finished enrichment: mark it failed so
+        # the next discovery re-runs the LLM instead of remembering a keyword
+        # guess as the final answer. The guess is still stored - it is better
+        # than an empty review while the provider is down.
+        insight.enrichment_status = "failed" if result.get("heuristic") else "done"
 
         db.add(insight)
         await db.commit()

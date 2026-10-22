@@ -16,6 +16,7 @@ the subject must come from a closed vocabulary, and every evidence span must
 appear verbatim in the review. A complaint that cannot be grounded is marked
 `needs_human` and surfaced, never believed and never forced into a theme.
 """
+import asyncio
 import json
 import logging
 import re
@@ -26,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 ENRICHMENT_MODEL = "groq:qwen3.8-27b"
 MEANING_VERSION = 2
+
+# How many times the LLM call is tried before the heuristic fallback takes
+# over. A provider blip is the common case, and one retry is the difference
+# between a real enrichment and a keyword guess.
+ENRICHMENT_ATTEMPTS = 2
+ENRICHMENT_RETRY_DELAY_SECONDS = 1.0
 
 SYSTEM_PROMPT = """You are a review analytics engine. Analyse the customer review and
 respond with STRICT JSON only (no markdown fences, no commentary).
@@ -139,34 +146,59 @@ async def enrich_review(
     reviewer_name: str | None,
     model: str = ENRICHMENT_MODEL,
     tenant_id: str | None = None,
+    attempts: int = ENRICHMENT_ATTEMPTS,
 ) -> dict:
-    """Return {sentiment, sentiment_score, topics, products, problems} for a review."""
+    """Return {sentiment, sentiment_score, topics, products, problems} for a review.
+
+    A result built by the heuristic fallback carries ``heuristic: True``; the
+    caller records that as a failed enrichment so it is retried later instead
+    of being remembered as a finished one.
+    """
     if not text or not text.strip():
         # Star rating alone: sentiment from stars, nothing else to mine.
         return _heuristic_enrich(rating, None)
 
-    try:
-        description = text.strip()[:2000]
-        user_msg = (
-            f"Review by {reviewer_name or 'an anonymous customer'} — {rating}/5 stars:\n"
-            f"\"{description}\""
-        )
-        resp = await complete(
-            model=model,
-            messages=[LLMMessage(role="user", content=user_msg)],
-            system_prompt=SYSTEM_PROMPT,
-            temperature=0.1,
-            max_tokens=600,
-            tenant_id=tenant_id,
-            purpose="analytics.enrichment",
-        )
-        data = _extract_json(resp.content)
-        if data is None:
-            raise ProviderError(model, "Enrichment response was not valid JSON", 502)
-        return _valid_result(data)
-    except Exception as e:
-        logger.warning("LLM enrichment failed (%s); using heuristic fallback: %s", model, e)
-        return _heuristic_enrich(rating, text)
+    attempts = max(1, int(attempts))
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            description = text.strip()[:2000]
+            user_msg = (
+                f"Review by {reviewer_name or 'an anonymous customer'} — {rating}/5 stars:\n"
+                f"\"{description}\""
+            )
+            resp = await complete(
+                model=model,
+                messages=[LLMMessage(role="user", content=user_msg)],
+                system_prompt=SYSTEM_PROMPT,
+                temperature=0.1,
+                max_tokens=600,
+                tenant_id=tenant_id,
+                purpose="analytics.enrichment",
+            )
+            data = _extract_json(resp.content)
+            if data is None:
+                raise ProviderError(model, "Enrichment response was not valid JSON", 502)
+            return _valid_result(data)
+        except Exception as e:
+            last_error = e
+            if attempt < attempts:
+                logger.info(
+                    "Enrichment attempt %s/%s failed (%s); retrying",
+                    attempt,
+                    attempts,
+                    e,
+                )
+                await asyncio.sleep(ENRICHMENT_RETRY_DELAY_SECONDS * attempt)
+                continue
+
+    logger.warning(
+        "LLM enrichment failed after %s attempts (%s); using heuristic fallback: %s",
+        attempts,
+        model,
+        last_error,
+    )
+    return _heuristic_enrich(rating, text)
 
 
 # ── Meaning layer ────────────────────────────────────────────────
