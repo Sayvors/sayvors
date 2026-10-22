@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import async_session
-from .models import Job, JobStatus
+from .models import Job, JobLaneHeartbeat, JobStatus
 from .types import JobLane, JobType, JOB_TYPES
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,7 @@ async def submit_job(
     subject_id: str | None = None,
     lane_key: str | None = None,
     next_run_at: datetime | None = None,
+    hard_deadline_at: datetime | None = None,
 ) -> Job:
     """Insert a Job(row) in status=queued. Caller commits the session.
 
@@ -81,6 +82,7 @@ async def submit_job(
         attempts=0,
         max_attempts=max_attempts,
         next_run_at=next_run_at or datetime.now(timezone.utc),
+        hard_deadline_at=hard_deadline_at,
     )
     db.add(job)
     await db.flush()
@@ -154,13 +156,21 @@ async def claim_due_jobs(
     """
     now = datetime.now(timezone.utc)
 
-    # Claim due jobs: status in (queued, retrying), next_run_at <= now.
+    # Claim due jobs: status in (queued, retrying), and due when the schedule
+    # OR the hard deadline has passed. The deadline acts as a clamp
+    # (LEAST(next_run_at, hard_deadline_at)): a job scheduled far out but
+    # with a nearer deadline becomes due AT the deadline, so a backlog after
+    # an outage is worked through in order instead of bursting at once.
     result = await db.execute(
         select(Job)
         .where(
             Job.lane == lane,
             Job.status.in_([JobStatus.queued.value, JobStatus.retrying.value]),
-            Job.next_run_at <= now,
+            (Job.next_run_at <= now)
+            | (
+                Job.hard_deadline_at.is_not(None)
+                & (Job.hard_deadline_at <= now)
+            ),
         )
         .order_by(Job.priority, Job.next_run_at, Job.created_at)
         .with_for_update(skip_locked=True)
@@ -176,7 +186,35 @@ async def claim_due_jobs(
         db.add(job)
 
     await db.flush()
+    await record_lane_heartbeat(db, lane=lane, worker_id=worker_id, claimed=len(jobs))
     return jobs
+
+
+async def record_lane_heartbeat(
+    db: AsyncSession, *, lane: str, worker_id: str, claimed: int = 0
+) -> None:
+    """Refresh this lane's heartbeat row.
+
+    A lane that stopped ticking is invisible otherwise: the queue just stops
+    moving. The reaper reads these rows to report a stuck lane.
+    """
+    now = datetime.now(timezone.utc)
+    row = (
+        await db.execute(
+            select(JobLaneHeartbeat).where(JobLaneHeartbeat.lane == lane)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        db.add(
+            JobLaneHeartbeat(
+                lane=lane, worker_id=worker_id, last_seen_at=now, jobs_claimed=claimed
+            )
+        )
+        return
+    row.worker_id = worker_id
+    row.last_seen_at = now
+    row.jobs_claimed = claimed
+    db.add(row)
 
 
 async def complete_job(

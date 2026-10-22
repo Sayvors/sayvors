@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import async_session
@@ -24,14 +25,27 @@ async def enqueue_event(
     event_type: str,
     payload: dict,
     topic: str = "auth-events",
+    dedupe_key: str | None = None,
 ) -> str:
     """Write an event to the outbox. Returns the event ID.
 
     This is the only call the request path makes. It's a single local
     PostgreSQL INSERT (~1-2ms) — non-blocking, never hangs.
+
+    ``dedupe_key`` is the producer's identity for the event: a retry that
+    passes the same key returns the first event instead of writing a second
+    one, so the event is dispatched once.
     """
     event_id = str(uuid.uuid4())
     async with async_session() as db:
+        if dedupe_key:
+            existing = (
+                await db.execute(
+                    select(EventOutbox).where(EventOutbox.dedupe_key == dedupe_key)
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return existing.id
         row = EventOutbox(
             id=event_id,
             event_type=event_type,
@@ -40,8 +54,24 @@ async def enqueue_event(
             status="pending",
             attempts=0,
             next_retry_at=datetime.now(timezone.utc),
+            dedupe_key=dedupe_key,
         )
-        db.add(row)
+        try:
+            async with db.begin_nested():
+                db.add(row)
+                await db.flush()
+        except IntegrityError:
+            # Another writer inserted the same key between the check and the
+            # insert. The savepoint rolled back our row; theirs is the one
+            # that counts.
+            existing = (
+                await db.execute(
+                    select(EventOutbox).where(EventOutbox.dedupe_key == dedupe_key)
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return existing.id
+            raise
         await db.commit()
     return event_id
 
@@ -51,11 +81,24 @@ async def enqueue_event_in(
     event_type: str,
     payload: dict,
     topic: str = "auth-events",
+    dedupe_key: str | None = None,
 ) -> str:
     """Write an event to the outbox using the caller's session.
 
     Caller commits once — job row + outbox row are atomic (R2 in design doc).
+
+    With a ``dedupe_key`` the event is written once: a second writer with
+    the same key gets the first event's id back and nothing is dispatched
+    twice.
     """
+    if dedupe_key:
+        existing = (
+            await db.execute(
+                select(EventOutbox).where(EventOutbox.dedupe_key == dedupe_key)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing.id
     event_id = str(uuid.uuid4())
     row = EventOutbox(
         id=event_id,
@@ -65,9 +108,22 @@ async def enqueue_event_in(
         status="pending",
         attempts=0,
         next_retry_at=datetime.now(timezone.utc),
+        dedupe_key=dedupe_key,
     )
-    db.add(row)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(row)
+            await db.flush()
+    except IntegrityError:
+        # Lost the race with another writer for the same key.
+        existing = (
+            await db.execute(
+                select(EventOutbox).where(EventOutbox.dedupe_key == dedupe_key)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing.id
+        raise
     return event_id
 
 

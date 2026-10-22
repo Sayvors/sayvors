@@ -125,7 +125,7 @@ jobs:
         working-directory: apps/web
         run: npx eslint components/dashboard/publish/ConfirmModal.tsx components/dashboard/publish/MediaSink.tsx components/dashboard/publish/PublishComposer.tsx components/dashboard/publish/types.ts lib/api-analytics.ts lib/i18n/en.ts lib/i18n/ar.ts app/invite/\[token\]/page.tsx components/analytics/PresenceSection.tsx
 
-  lint-admin:
+  check-admin:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -143,7 +143,7 @@ jobs:
 
       # The admin console is a product surface too: it gets the same
       # type-check as the customer app, otherwise a broken admin page only
-      # shows up when somebody opens it.
+      # shows up when somebody opens it. (Lint is not gated for this app.)
       - name: Run TypeScript typecheck
         working-directory: apps/admin
         run: npx tsc --noEmit

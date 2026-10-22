@@ -11,7 +11,7 @@ Items **deferred for later** because they need a production VM (not your laptop,
 | Item | Why it can't be done now | What to do later |
 |------|-------------------------|------------------|
 | Run 3 Kafka broker containers | Each broker needs 512MB–1GB heap; a t3.small (2GB) would OOM with API+worker+Redis+caddy also running | 3 `kafka-1/2/3` services in `docker-compose.prod.yml`, each with unique `KAFKA_NODE_ID`, shared `KAFKA_CONTROLLER_QUORUM_VOTERS` |
-| `KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"` | Don't flip until topic provisioning code exists (`app/modules/kafka/topics.py`) | Set to `"false"` + provision topics with real partitions (24/12/6/6 per lane) |
+| `KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"` | The topic provisioning code now exists (`app/modules/kafka/topics.py`, explicit partition counts) — flip it together with the 3-broker change | Set to `"false"` + provision topics with real partitions (24/12/6/6 per lane) |
 | `min.insync.replicas=2` | Meaningless with 1 broker | Set when 3 brokers exist |
 | Producer `acks="all"`, `enable_idempotence=True` | Code change — can do now | Also do now, safe with 1 broker |
 | Consumer `enable_auto_commit=False` + manual commit | Code change — can do now | Also do now, safe with 1 broker |
@@ -36,7 +36,7 @@ Items **deferred for later** because they need a production VM (not your laptop,
 | RAG cache (embeddings/chunks) | `rag/cache.py` | ✅ Yes | `ex=EMBED_CACHE_TTL` |
 | Job progress | `rag/cache.py` | ✅ Yes | `ex=3600` (1 hour) |
 | Profile cache | `profile/service.py` | ✅ Yes | `setex(..., ttl, ...)` |
-| Billing budget balance | `billing/budget.py` | ✅ Yes | `setex(..., BUDGET_TTL_SECONDS, cents)` — 24h TTL added |
+| Billing budget balance | `billing/budget.py` | ❌ **No TTL — on purpose** | The 24h TTL was the disappearing-balance bug: the key expired, the next reserve created a permanent `0`. The wallet is now rebuilt from grants minus metered spend when the key is missing. **This is a wallet key, not a cache: it must not expire.** |
 
 **Bottom line:** Almost every Redis key has a TTL, so nothing critical is lost on Redis restart. Auth, OTP, sessions, rate limits, connect tickets, and billing balances all auto-expire — they won't accumulate forever.
 
@@ -63,6 +63,20 @@ With 6–8 GB, you have plenty of headroom for: 100k+ active sessions, rate-limi
 | Item | Why it can't be done now | What to do later |
 |------|-------------------------|------------------|
 | Second box / AZ / container platform | One t3.small runs everything; one OOM kills auth + messaging + ingestion | Second box behind LB, or ECS/Fly/Render |
+| Fan the job workers out | The worker container runs one runner per lane; a second box means a second copy of each lane | `docker compose --scale worker=N` (or two hosts) — the claim is `FOR UPDATE SKIP LOCKED`, so replicas never double-claim. Give each replica its own worker id (today every replica of a lane shares `realtime-1`, so "which replica holds this job" cannot be answered) |
+| Per-tenant in-flight cap on the realtime lane | Needs a cap value per lane (a product decision, not a code change) | Redis counter per tenant, checked before a job runs; today only lane-level concurrency exists, so one tenant with a burst can occupy a whole lane |
+
+## Job queue at scale (added 2026-10-22)
+
+The job system itself is built and verified (`readiness-report.html` §§5). What is left is
+infrastructure and two decisions:
+
+| Item | Kind | Status / what to do later |
+|------|------|---------------------------|
+| Kafka replication factor 1, single broker | Infra | 3 brokers + `min.insync.replicas=2`. The `jobs` table means a broker loss is a *delay*, not data loss — but dispatch still has one point of failure |
+| `KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"` | Config | The topic provisioning code now exists (`app/modules/kafka/topics.py`, explicit partition counts), so this can be flipped to `"false"` — it is listed here because flipping it on a 1-broker cluster is best done together with the 3-broker change |
+| Lane concurrency is per process | Decision | Global realtime concurrency = replicas × cap. Either write it down as intended, or move the cap to a shared counter |
+| Worker id per replica | Decision | Every replica of a lane currently reports `realtime-1` in its heartbeat; make it unique so a stuck job names its holder |
 
 ## Backups & monitoring
 
@@ -75,7 +89,7 @@ With 6–8 GB, you have plenty of headroom for: 100k+ active sessions, rate-limi
 
 | Item | Why it can't be done now | What to do later |
 |------|-------------------------|------------------|
-| GitHub Actions: lint → test → build → deploy | `.github/` only has `.gitkeep` | Add CI workflow gating image builds on 82 test files |
+| GitHub Actions: lint → test → build → deploy | ✅ Done — `.github/workflows/ci.yml` gates the image build (pytest + migration guard + tsc + eslint) and the deploy's `ci-gate` refuses to build until every check is green. 103 test files. The admin console is type-checked in CI; its eslint is not gated. | Remaining: widen the eslint scope (8 files of `apps/web` today) |
 
 ---
 

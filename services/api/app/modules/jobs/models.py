@@ -75,6 +75,13 @@ class Job(Base):
         default=lambda: datetime.now(timezone.utc),
         index=True,
     )
+    # Latest moment this job may still run. A job scheduled beyond its
+    # deadline becomes due AT the deadline, so a backlog is worked through in
+    # order instead of bursting late; a job picked up after its deadline is
+    # cancelled rather than run late.
+    hard_deadline_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     # Lease so a crashed worker's job is reclaimable.
     lease_expires_at: Mapped[datetime | None] = mapped_column(
@@ -109,3 +116,23 @@ class Job(Base):
         Index("ix_jobs_lane_due", "lane", "status", "next_run_at"),
         Index("ix_jobs_lease", "status", "lease_expires_at"),
     )
+
+
+class JobLaneHeartbeat(Base):
+    """One row per lane: who is running it and when it was last seen.
+
+    A stuck lane is invisible otherwise — the queue simply stops moving and
+    nobody notices until a merchant complains. The runner refreshes its row
+    on every tick; the reaper reports lanes that went quiet.
+    """
+
+    __tablename__ = "job_lane_heartbeats"
+
+    lane: Mapped[str] = mapped_column(String(32), primary_key=True)
+    worker_id: Mapped[str] = mapped_column(String(64))
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+    jobs_claimed: Mapped[int] = mapped_column(Integer, default=0)

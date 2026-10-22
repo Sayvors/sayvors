@@ -157,6 +157,29 @@ class JobRunner:
             if db_job.status in (JobStatus.succeeded.value, JobStatus.failed.value, JobStatus.dead.value, JobStatus.cancelled.value):
                 return
 
+            # A job past its hard deadline must not run. Running it late is
+            # a wrong outcome, not a late one: a scheduled removal that runs
+            # a day late leaves a post up for a day.
+            deadline = db_job.hard_deadline_at
+            if deadline is not None:
+                # SQLite hands back a naive datetime for a timezone-aware
+                # column; comparing it with an aware now() would raise.
+                if deadline.tzinfo is None:
+                    deadline = deadline.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) > deadline:
+                    db_job.status = JobStatus.cancelled.value
+                    db_job.error_code = "deadline_exceeded"
+                    db_job.lease_expires_at = None
+                    db_job.lease_owner = None
+                    db.add(db_job)
+                    await db.commit()
+                    logger.info(
+                        "Job %s cancelled: hard deadline %s has passed",
+                        db_job.id,
+                        db_job.hard_deadline_at,
+                    )
+                    return
+
             external_intent = {
                 "job_type": db_job.job_type,
                 "lane": db_job.lane,
