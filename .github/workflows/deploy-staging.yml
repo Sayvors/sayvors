@@ -32,7 +32,10 @@ jobs:
           echo "Waiting for CI (pytest + lint + tsc) to pass on $SHA..."
           for i in $(seq 1 60); do
             # Latest check run per name (so a re-run supersedes its old attempt);
-            # both CI jobs must complete, and both must be green.
+            # the jobs that cover THIS image must complete, and must be green.
+            # The admin console is deliberately not in this list: it deploys to
+            # Vercel, not into the API image, so its type check must not be
+            # able to block an API deploy.
             STATUS=$(gh api \
               "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
               --jq '[.check_runs[] | select(.name=="test-backend" or .name=="lint-frontend")] | sort_by([.name, .id]) | group_by(.name) | map(last) | if length < 2 then "pending" elif any(.status=="completed" and .conclusion!="success") then "failure" elif any(.status != "completed") then "pending" elif any(.conclusion != "success") then "failure" else "success" end' \

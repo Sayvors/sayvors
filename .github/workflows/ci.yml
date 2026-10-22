@@ -1,15 +1,19 @@
 name: CI
 
 on:
-  # Staging only. The deploy-staging ci-gate waits for these check-runs on
-  # the pushed commit, so one run per merge to staging is all it needs.
-  # Development pushes and PRs run nothing — they cost minutes and nothing
-  # consumes them.
+  # The deploy-staging ci-gate waits for these check-runs on the pushed
+  # commit, so one run per merge to staging is all it needs there.
+  #
+  # Pull requests are gated too: development is where the work lands, and a
+  # branch nothing checks is a branch where the checks only run after the
+  # code has already been merged.
   push:
     branches: [staging]
+  pull_request:
+    branches: [development, staging]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -117,10 +121,29 @@ jobs:
         working-directory: apps/web
         run: npx tsc --noEmit
 
-      - name: Run TypeScript typecheck
-        working-directory: apps/web
-        run: npx tsc --noEmit
-
       - name: Run ESLint (publish feature files only)
         working-directory: apps/web
         run: npx eslint components/dashboard/publish/ConfirmModal.tsx components/dashboard/publish/MediaSink.tsx components/dashboard/publish/PublishComposer.tsx components/dashboard/publish/types.ts lib/api-analytics.ts lib/i18n/en.ts lib/i18n/ar.ts app/invite/\[token\]/page.tsx components/analytics/PresenceSection.tsx
+
+  lint-admin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/admin/package-lock.json
+
+      - name: Install admin dependencies
+        working-directory: apps/admin
+        run: npm ci
+
+      # The admin console is a product surface too: it gets the same
+      # type-check as the customer app, otherwise a broken admin page only
+      # shows up when somebody opens it.
+      - name: Run TypeScript typecheck
+        working-directory: apps/admin
+        run: npx tsc --noEmit
