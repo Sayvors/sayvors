@@ -227,9 +227,32 @@ export default function Header() {
         <span>{t.header.connect}</span>
       </Link>
 
-      {/* Profile — the avatar dropdown lives here now; the sidebar no longer
-           carries a profile item. */}
-      <div className="relative" ref={profileRef}>
+      {/* Settings and tour sit beside the avatar; the avatar itself owns the
+           dropdown. They are siblings in the header's flex row — inside the
+           avatar wrapper they would stack, because that wrapper is not a row. */}
+      <button
+        onClick={() => { setProfileOpen(false); router.push("/dashboard/settings"); }}
+        aria-label={t.header.settings}
+        title={t.header.settings}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] border border-deep-violet/[0.08] text-ink/50 outline-none transition hover:border-deep-violet/25 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:border-fog/[0.1] dark:text-fog/50 dark:hover:text-deep-violet"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </button>
+      <button
+        onClick={() => { setProfileOpen(false); startTour(); }}
+        aria-label="Start tour"
+        title="Start tour"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] border border-deep-violet/[0.08] text-ink/50 outline-none transition hover:border-deep-violet/25 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:border-fog/[0.1] dark:text-fog/50 dark:hover:text-deep-violet"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+          <circle cx="12" cy="12" r="9" />
+          <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+        </svg>
+      </button>
+      <div className="relative shrink-0" ref={profileRef}>
         <button
           onClick={() => setProfileOpen(!profileOpen)}
           aria-label={t.account.menu}
@@ -237,36 +260,12 @@ export default function Header() {
           title={t.account.menu}
           className="flex h-8 items-center gap-1.5 rounded-[2px] ps-1.5 pe-2 outline-none transition hover:bg-deep-violet/[0.06] focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:hover:bg-deep-violet/[0.1]"
         >
-          <span className="flex h-7 w-7 items-center justify-center rounded-[2px] bg-gradient-to-br from-violet-light to-magenta text-[10px] font-semibold text-white">
+          <span className="flex h-7 w-7 items-center justify-center rounded-[2px] bg-deep-violet text-[10px] font-semibold text-white">
             {initials}
           </span>
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={`h-3 w-3 text-ink/40 transition-transform dark:text-fog/40 ${profileOpen ? "rotate-180" : ""}`} aria-hidden>
             <path d="M4 6l4 4 4-4" />
           </svg>
-        </button>
-        {/* Settings button */}
-        <button
-          onClick={() => { setProfileOpen(false); router.push("/dashboard/settings"); }}
-          aria-label={t.header.settings}
-          className="flex h-8 items-center gap-2 rounded-[2px] px-3 py-2 text-[12px] font-medium text-ink/60 transition hover:bg-deep-violet/[0.04] focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 text-deep-violet" aria-hidden>
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-          <span className="text-[12px] font-medium text-ink dark:text-fog">{t.header.settings}</span>
-        </button>
-        {/* Tour button */}
-        <button
-          onClick={() => { closeMenu(); startTour(); }}
-          aria-label="Start tour"
-          className="flex h-8 items-center gap-2 rounded-[2px] px-3 py-2 text-[12px] font-medium text-ink/60 transition hover:bg-deep-violet/[0.04] hover:text-ink focus-visible:bg-deep-violet/[0.04] focus-visible:outline-none dark:text-fog/60 dark:hover:text-fog"
-        >
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-3.5 w-3.5 text-deep-violet" aria-hidden>
-            <circle cx="10" cy="10" r="8" />
-            <path d="M10 14.5v.01M7.5 7.3A2.5 2.5 0 0112.5 8c0 1.7-2.5 2-2.5 3.5" strokeLinecap="round" />
-          </svg>
-          <span className="text-[12px] font-medium text-ink dark:text-fog">Tour</span>
         </button>
         {profileOpen && (
           <div className={`absolute ${dir === "rtl" ? "left-0" : "right-0"} top-full z-50 mt-1 max-h-[80vh] w-60 overflow-y-auto rounded-[2px] border border-deep-violet/[0.08] bg-white shadow-lg dark:border-deep-violet/[0.12] dark:bg-ink`}>
