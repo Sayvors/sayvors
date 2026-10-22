@@ -134,3 +134,10 @@
 - Review enrichment: a heuristic fallback is stored as `failed`, not `done`,
   so the next discovery re-runs the model instead of keeping a keyword guess
   as the final answer; the LLM call itself retries once
+- Job system Phase-0 gaps closed: terminal job rows are swept (the jobs table
+  grew forever), jobs carry a hard deadline (a backlog cannot become a burst
+  of late external calls), the outbox has a nullable UNIQUE dedupe key, and
+  every lane writes a heartbeat the reaper reports when it goes quiet
+- Readiness report updated: CI gating marked done (103 test files, PRs
+  gated), job system marked phases 0–4 built, infra items moved to
+  `docs/tracking/production-later.md`
