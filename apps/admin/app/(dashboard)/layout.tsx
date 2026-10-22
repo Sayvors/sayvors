@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { adminLogout, checkAdminSession } from "@/lib/admin-api";
@@ -85,15 +86,14 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
         <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
           <path d="M12 3.2l1.6 4 4.2.4-3.1 2.7.9 4.1L12 12.1 8.4 14.4l.9-4.1L6.2 7.6l4.2-.4L12 3.2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
           <path d="M5 14.5l.9 1.9 2 .4-1.5 1.3.4 2-1.8-1.1-1.8 1.1.4-2L2.1 16.8l2-.4.9-1.9z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-          <path d="M19 13.2l.7 1.4 1.5.3-1.1 1 .3 1.5-1.4-.8-1.4.8.3-1.5-1.1-1 1.5-.3.7-1.4z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
         </svg>
       );
     case "voice":
       return (
         <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
           <rect x="9" y="3" width="6" height="11.5" rx="3" stroke="currentColor" strokeWidth="1.6" />
-          <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          <path d="M12 18v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M12 18v3" stroke="currentColor" strokeWidth="1.6" />
         </svg>
       );
     case "embeddings":
@@ -110,6 +110,8 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
           />
         </svg>
       );
+    default:
+      return null;
   }
 }
 
@@ -118,7 +120,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const { theme, toggle } = useTheme();
   const [ready, setReady] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return localStorage.getItem(SIDEBAR_KEY) === "1";
+    } catch {
+      /* private mode */
+    }
+    return false;
+  });
   const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
@@ -127,15 +137,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       else setReady(true);
     });
   }, [router]);
-
-  // Restore the saved rail width once, after mount (SSR-safe).
-  useEffect(() => {
-    try {
-      setCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
-    } catch {
-      /* private mode */
-    }
-  }, []);
 
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
@@ -205,6 +206,72 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     </nav>
   );
 
+  const header = (
+    <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3">
+      <div className="flex items-center gap-3">
+        <Image
+          src="/Sayvors_Icon.png"
+          alt="Sayvors"
+          width={24}
+          height={24}
+          className="h-6 w-6 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-0.5"
+          unoptimized
+        />
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-bold tracking-tight text-[var(--ui-ink)]">Sayvors Admin</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => {
+            // Settings placeholder
+          }}
+          title="Settings"
+          className="flex h-8 w-8 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1.5 text-[11px] font-bold outline-none transition focus:border-[var(--ui-ink)] disabled:opacity-50 text-emerald-600"
+        >
+          <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15.4l-1.4 1.4a5.5 5.5 0 0 1-2.1 2.1l-1.4 1.4a5.5 5.5 0 0 1-2.1-2.1l1.4-1.4a5.5 5.5 0 0 1 2.1-2.1l1.4 1.4a5.5 5.5 0 0 1 2.1 2.1z" />
+          </svg>
+        </button>
+        <button
+          onClick={() => {
+            // Tour placeholder
+          }}
+          title="Tour"
+          className="flex h-8 w-8 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1.5 text-[11px] font-bold outline-none transition focus:border-[var(--ui-ink)] disabled:opacity-50 text-emerald-600"
+        >
+          <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M12 15.4l-4.5 4.5L3 15.4l2.7-2.7a10 10 0 0 1 1.4-2.1l1.4-1.4a5.5 5.5 0 0 1 2.1-2.1l1.4 1.4a5.5 5.5 0 0 1 2.1 2.1z" />
+          </svg>
+        </button>
+        <div className="flex items-center gap-2 rounded-[2px] border border-[var(--ui-line)] px-3 py-2.5">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-deep-violet text-[11px] font-bold text-white">AD</div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-semibold leading-none text-[var(--ui-ink)]">Admin</p>
+            <p className="truncate text-[11px] leading-none text-ink/40">Session · secure</p>
+          </div>
+          <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden title="Session active" />
+        </div>
+        <button
+          onClick={() => {
+            adminLogout().finally(() => router.replace("/login"));
+          }}
+          title="Sign out"
+          className="flex flex-1 items-center justify-center gap-2 rounded-[2px] border border-[var(--ui-line-strong)] px-3 py-2.5 text-[12px] font-semibold text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink"
+        >
+          <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-60">
+            <path d="M15.2 18.2L9 12l6.2-6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M9 12H21" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            <path d="M3 5.2a2 2 0 0 1 2-2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M3 18.8a2 2 0 0 0 2 2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          Sign out
+        </button>
+      </div>
+    </header>
+  );
+
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--ui-page)]">
       {/* Sidebar: a drawer under lg, a flat rail on desktop. */}
@@ -219,12 +286,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Brand */}
         <div className="sticky top-0 z-10 bg-[var(--ui-surface)] px-4 pb-3 pt-4">
           <div className={`flex items-center gap-3 ${collapsed ? "lg:justify-center lg:px-0" : ""}`}>
-            <img
+            <Image
               src="/Sayvors_Icon.png"
               alt="Sayvors"
               width={36}
               height={36}
               className="h-9 w-9 shrink-0 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-1"
+              unoptimized
             />
             {!collapsed && (
               <div className="min-w-0">
@@ -242,60 +310,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
 
         {nav}
-
-        {/* Footer */}
-        <div className="sticky bottom-0 mt-auto bg-[var(--ui-surface)] p-3">
-          <div className="h-px bg-[var(--ui-line)]" aria-hidden />
-          <div className={`mt-3 flex items-center gap-2 rounded-[2px] border border-[var(--ui-line)] px-3 py-2.5 ${collapsed ? "lg:justify-center lg:px-0" : ""}`}>
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-deep-violet text-[11px] font-bold text-white">AD</div>
-            {!collapsed && (
-              <>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12px] font-semibold leading-none text-[var(--ui-ink)]">Admin</p>
-                  <p className="truncate text-[11px] leading-none text-ink/40">Session · secure</p>
-                </div>
-                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden title="Session active" />
-              </>
-            )}
-          </div>
-          <div className={`mt-2 flex gap-2 ${collapsed ? "lg:flex-col" : ""}`}>
-            <button
-              onClick={toggle}
-              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-              title={theme === "dark" ? "Light mode" : "Dark mode"}
-              className="flex flex-1 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] px-3 py-2.5 text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink"
-            >
-              {theme === "dark" ? (
-                <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="4.2" stroke="currentColor" strokeWidth="1.7" />
-                  <path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5 5l1.7 1.7M17.3 17.3L19 19M19 5l-1.7 1.7M6.7 17.3L5 19" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                </svg>
-              ) : (
-                <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none">
-                  <path d="M20 13.6A8.4 8.4 0 0 1 10.4 4a8.4 8.4 0 1 0 9.6 9.6z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-                </svg>
-              )}
-            </button>
-            <button
-              onClick={() => {
-                adminLogout().finally(() => router.replace("/login"));
-              }}
-              title="Sign out"
-              className={`flex flex-1 items-center justify-center gap-2 rounded-[2px] border border-[var(--ui-line-strong)] px-3 py-2.5 text-[12px] font-semibold text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink ${collapsed ? "lg:px-0" : ""}`}
-            >
-              <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-60">
-                <path d="M15.2 18.2L9 12l6.2-6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M9 12H21" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                <path d="M3 5.2a2 2 0 0 1 2-2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                <path d="M3 18.8a2 2 0 0 0 2 2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-              {!collapsed && "Sign out"}
-            </button>
-          </div>
-          {!collapsed && (
-            <p className="mt-2.5 text-center text-[10px] font-medium tracking-wide text-ink/30">Sayvors · Admin v1 · Internal</p>
-          )}
-        </div>
         </div>
 
         {/* Collapse toggle: a small circular arrow straddling the sidebar's
@@ -312,6 +326,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </svg>
         </button>
       </aside>
+
+      {/* Desktop header */}
+      {header}
 
       {/* Mobile scrim */}
       {navOpen && (
@@ -337,7 +354,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
             </svg>
           </button>
-          <img src="/Sayvors_Icon.png" alt="Sayvors" width={24} height={24} className="h-6 w-6 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-0.5" />
+          <Image src="/Sayvors_Icon.png" alt="Sayvors" width={24} height={24} className="h-6 w-6 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-0.5" unoptimized />
           <p className="text-[13px] font-bold tracking-tight text-[var(--ui-ink)]">Sayvors Admin</p>
         </header>
 
