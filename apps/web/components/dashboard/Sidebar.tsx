@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
 import { visibleChannelNav, type ChannelNavRow } from "@/lib/channel-nav";
+import { getBudget, type Budget } from "@/lib/api-billing";
 
 interface NavItem {
   key: string;
@@ -17,14 +18,14 @@ interface NavItem {
 // The everyday surfaces. Channels is expandable (Inbox + per-network manage)
 // and rendered separately below so it can hold children.
 const MAIN_ITEMS: NavItem[] = [
-  { key: "dashboard", icon: <NavAsset src="/nav/dashboard.webp" />, href: "/dashboard" },
-  { key: "analytics", icon: <NavAsset src="/nav/analytics.png" />, href: "/dashboard/analytics" },
-  { key: "locations", icon: <NavAsset src="/nav/locations.jpg" />, href: "/dashboard/locations" },
-  { key: "services", icon: <NavAsset src="/nav/services.webp" />, href: "/dashboard/services" },
-  { key: "postsMedia", icon: <NavAsset src="/nav/posts-media.webp" />, href: "/dashboard/posts-media" },
-  { key: "customers", icon: <NavAsset src="/nav/customers.webp" />, href: "/dashboard/customers" },
-  { key: "reviews", icon: <NavAsset src="/nav/reviews.png" />, href: "/dashboard/reviews" },
-  { key: "databank", icon: <NavAsset src="/nav/databank.webp" />, href: "/dashboard/databank" },
+  { key: "dashboard", icon: <DashboardIcon />, href: "/dashboard" },
+  { key: "analytics", icon: <AnalyticsIcon />, href: "/dashboard/analytics" },
+  { key: "locations", icon: <PinIcon />, href: "/dashboard/locations" },
+  { key: "services", icon: <BriefcaseIcon />, href: "/dashboard/services" },
+  { key: "postsMedia", icon: <PhotoIcon />, href: "/dashboard/posts-media" },
+  { key: "customers", icon: <UsersIcon />, href: "/dashboard/customers" },
+  { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
+  { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
 ];
 
 const ADVANCED_ITEMS: NavItem[] = [
@@ -120,8 +121,8 @@ export default function Sidebar() {
     setAdvancedOpen(false);
   }, [pathname]);
 
-  // "Rail" means the icon-only 56px strip. Only the inline desktop sidebar can
-  // be a rail — the mobile drawer is always full width, so gating label
+  // "Rail" means the icon-only strip. Only the inline desktop sidebar can be
+  // a rail — the mobile drawer is always full width, so gating label
   // visibility on `collapsed` alone would render it icon-only for no reason.
   const rail = collapsed && !isMobile;
 
@@ -131,13 +132,13 @@ export default function Sidebar() {
   return (
     <>
       {/* Hamburger — mobile only, fixed so it does not shift page content.
-          Vertically centered inside the 48px header (top-1 + h-10 = 4+40+4). */}
+          Vertically centered inside the 56px header (top-2 + h-10 = 8+40+8). */}
       <button
         onClick={() => setDrawerOpen(true)}
         aria-label={t.nav.openMenu}
         aria-expanded={drawerOpen}
         aria-controls="dashboard-sidebar"
-        className={`fixed ${dir === "rtl" ? "right-1" : "left-1"} top-1 z-40 flex h-10 w-10 items-center justify-center rounded-[2px] border border-ink/[0.08] bg-white text-ink shadow-lg transition hover:bg-fog focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-white/10 dark:bg-[#1e1547] dark:text-white dark:hover:bg-[#251b55] md:hidden ${
+        className={`fixed ${dir === "rtl" ? "right-1" : "left-1"} top-2 z-40 flex h-10 w-10 items-center justify-center rounded-[12px] border border-ink/[0.08] bg-white text-ink shadow-lg transition hover:bg-fog focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-white/10 dark:bg-[#1d1636] dark:text-white dark:hover:bg-[#251b55] md:hidden ${
           drawerOpen ? "pointer-events-none opacity-0" : "opacity-100"
         }`}
       >
@@ -159,119 +160,143 @@ export default function Sidebar() {
       <aside
         id="dashboard-sidebar"
         aria-hidden={isMobile && !drawerOpen ? true : undefined}
-        className={`flex h-screen flex-col ${dir === "rtl" ? "border-l" : "border-r"} border-ink/[0.06] bg-white transition-all duration-200 dark:border-fog/[0.08] dark:bg-[#151030] ${
+        className={`flex shrink-0 flex-col overflow-hidden bg-white text-ink ring-1 ring-ink/[0.06] transition-all duration-200 dark:bg-[#1d1636] dark:text-fog dark:ring-white/[0.08] ${
           isMobile
-            ? `fixed inset-y-0 ${dir === "rtl" ? "right-0" : "left-0"} z-50 w-[248px] shadow-2xl ${
-                drawerOpen ? "translate-x-0" : dir === "rtl" ? "translate-x-full" : "-translate-x-full"
+            ? `fixed inset-y-2 start-2 z-50 w-[264px] rounded-[20px] shadow-2xl ${
+                drawerOpen ? "translate-x-0" : dir === "rtl" ? "translate-x-[calc(100%+8px)]" : "-translate-x-[calc(100%+8px)]"
               }`
-            : collapsed
-              ? "w-[56px]"
-              : "w-[220px]"
+            : `my-2 ms-2 h-[calc(100vh-1rem)] rounded-[20px] shadow-[0_18px_44px_-34px_rgba(26,18,48,0.45)] dark:shadow-none ${collapsed ? "w-[64px]" : "w-[236px]"}`
         }`}
       >
-      {/* Logo */}
-      <div className="flex h-12 items-center gap-2 border-b border-ink/[0.05] px-3 dark:border-fog/[0.06]">
-        <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-5 w-auto" />
-        {/* The drawer is always wide, so the wordmark shows even when the
-            inline rail is collapsed. Dark wordmark = white, for the dark theme. */}
-        {(!collapsed || isMobile) && (
-          <>
-            <Image src="/Sayvors_Wordmark_Light.png" alt="Sayvors" width={110} height={18} className="h-4 w-auto dark:hidden" />
-            <Image src="/Sayvors_Wordmark_Dark.png" alt="Sayvors" width={110} height={18} className="hidden h-4 w-auto dark:block" />
-          </>
-        )}
-        <button
-          onClick={() => setDrawerOpen(false)}
-          aria-label={t.nav.closeMenu}
-          className="ml-auto flex h-7 w-7 items-center justify-center rounded-[2px] text-ink/30 outline-none transition hover:bg-ink/[0.05] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/40 dark:hover:bg-fog/[0.08] dark:hover:text-fog/70 md:hidden"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4">
-            <path d="M6 6l12 12M18 6L6 18" />
-          </svg>
-        </button>
-      </div>
-
-      {/* Nav */}
-      <nav
-        className="flex-1 overflow-y-auto px-2 pt-3 pb-4"
-        aria-label={t.nav.mainNavigation}
-        onClick={(e) => {
-          // Clicking any page link folds Advanced straight away — including a
-          // re-click of the current page, where pathname never changes.
-          if (!(e.target as HTMLElement).closest("[data-advanced-toggle]")) setAdvancedOpen(false);
-        }}
-      >
-        <div className="space-y-0.5">
-          {MAIN_ITEMS.slice(0, 3).map((item) => (
-            <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
-          ))}
-        </div>
-        <ChannelsNav pathname={pathname} rail={rail} dir={dir} labels={t.nav as unknown as Record<string, string>} />
-        <div className="mt-0.5 space-y-0.5">
-          {MAIN_ITEMS.slice(3).map((item) => (
-            <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
-          ))}
-        </div>
-
-        {/* Advanced — the long tail, folded away by default. */}
-        <div className="mt-3 border-t border-ink/[0.05] pt-3 dark:border-fog/[0.06]">
-          <button
-            onClick={toggleAdvanced}
-            data-advanced-toggle
-            aria-expanded={advancedOpen}
-            title={rail ? t.nav.advanced : undefined}
-            className={`flex w-full items-center rounded-[2px] px-2.5 py-2 text-ink/35 outline-none transition hover:bg-ink/[0.04] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/30 dark:text-fog/35 dark:hover:bg-fog/[0.06] dark:hover:text-fog/60 ${
-              rail ? "justify-center" : "gap-2"
-            }`}
-          >
-            {!rail && (
-              <span className="flex-1 text-start text-[10px] font-semibold uppercase tracking-widest">
-                {t.nav.advanced}
-              </span>
-            )}
-            <svg
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              aria-hidden
-              className={`h-3.5 w-3.5 shrink-0 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
+        {/* Brand. The rail is always dark, so the light-on-dark wordmark is
+            used in both themes. */}
+        <div className={`flex h-14 shrink-0 items-center ${rail ? "justify-center" : "gap-2.5 px-4"}`}>
+          {rail ? (
+            <Link
+              href="/dashboard"
+              aria-label="Sayvors"
+              className="rounded-[6px] outline-none focus-visible:ring-2 focus-visible:ring-violet-soft/70"
             >
-              <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          {advancedOpen && (
-            <div className="mt-0.5 space-y-0.5">
-              {ADVANCED_ITEMS.map((item) => (
-                <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} dir={dir} label={labelFor(item)} />
-              ))}
-            </div>
+              <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-6 w-auto" />
+            </Link>
+          ) : (
+            <>
+              {/* The lockup keeps its icon-then-wordmark order in RTL too —
+                  brand marks do not mirror with the reading direction. */}
+              <Link
+                href="/dashboard"
+                aria-label="Sayvors"
+                dir="ltr"
+                className="flex items-center gap-2.5 rounded-[6px] outline-none focus-visible:ring-2 focus-visible:ring-violet-soft/70"
+              >
+                <Image src="/Sayvors_Icon.png" alt="" width={28} height={20} className="h-6 w-auto" />
+                <Image
+                  src="/Sayvors_Wordmark_Light.png"
+                  alt=""
+                  width={110}
+                  height={18}
+                  className="h-4 w-auto dark:hidden"
+                />
+                <Image
+                  src="/Sayvors_Wordmark_Dark.png"
+                  alt=""
+                  width={110}
+                  height={18}
+                  className="hidden h-4 w-auto dark:block"
+                />
+              </Link>
+              <button
+                onClick={() => setDrawerOpen(false)}
+                aria-label={t.nav.closeMenu}
+                className="ms-auto flex h-8 w-8 items-center justify-center rounded-full text-ink/60 outline-none transition hover:bg-ink/[0.06] hover:text-ink focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:hidden dark:text-fog/60 dark:hover:bg-fog/[0.08] dark:hover:text-fog dark:focus-visible:ring-violet-soft/70"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-4 w-4">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </>
           )}
         </div>
-      </nav>
 
-      {/* Collapse — the profile itself lives in the header now. */}
-      <div className="hidden items-center justify-end border-t border-ink/[0.05] p-2 dark:border-fog/[0.06] md:flex">
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          aria-label={collapsed ? t.nav.expand : t.nav.collapse}
-          title={collapsed ? t.nav.expand : t.nav.collapse}
-          /* The drawer is already the compact form on a phone — a collapse
-             toggle there would collapse what is off-screen twice over. */
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] text-ink/25 outline-none transition hover:bg-ink/[0.05] hover:text-ink/50 focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-fog/25 dark:hover:bg-fog/[0.08] dark:hover:text-fog/50"
+        {/* Nav */}
+        <nav
+          className={`flex-1 overflow-y-auto pb-2 pt-1 ${rail ? "px-2" : "px-3"}`}
+          aria-label={t.nav.mainNavigation}
+          onClick={(e) => {
+            // Clicking any page link folds Advanced straight away — including a
+            // re-click of the current page, where pathname never changes.
+            if (!(e.target as HTMLElement).closest("[data-advanced-toggle]")) setAdvancedOpen(false);
+          }}
         >
-          <svg
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            className={`h-3.5 w-3.5 transition-transform ${collapsed ? "rotate-180" : ""}`}
+          <div className="space-y-0.5">
+            {MAIN_ITEMS.slice(0, 3).map((item) => (
+              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
+            ))}
+          </div>
+          <ChannelsNav
+            pathname={pathname}
+            rail={rail}
+            labels={t.nav as unknown as Record<string, string>}
+            loadingLabel={t.common.loading}
+          />
+          <div className="mt-0.5 space-y-0.5">
+            {MAIN_ITEMS.slice(3).map((item) => (
+              <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
+            ))}
+          </div>
+
+          {/* Advanced — the long tail, folded away by default. */}
+          <div className="mt-2">
+            <button
+              onClick={toggleAdvanced}
+              data-advanced-toggle
+              aria-expanded={advancedOpen}
+              title={rail ? t.nav.advanced : undefined}
+              className={`flex w-full items-center rounded-full py-2 text-ink/60 outline-none transition hover:bg-ink/[0.04] hover:text-ink/80 focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-fog/55 dark:hover:bg-fog/[0.05] dark:hover:text-fog/75 dark:focus-visible:ring-violet-soft/70 dark:focus-visible:ring-offset-[#1d1636] ${
+                rail ? "justify-center px-0" : "gap-2 px-3"
+              }`}
+            >
+              {!rail && (
+                <span className="flex-1 text-start text-[11px] font-medium">
+                  {t.nav.advanced}
+                </span>
+              )}
+              <ChevronIcon className={`h-3.5 w-3.5 shrink-0 transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
+            </button>
+            {advancedOpen && (
+              <div className="mt-0.5 space-y-0.5">
+                {ADVANCED_ITEMS.map((item) => (
+                  <NavRow key={item.href} item={item} active={isActive(pathname, item)} rail={rail} label={labelFor(item)} />
+                ))}
+              </div>
+            )}
+          </div>
+        </nav>
+
+        {/* Plan / usage. The plan name opens usage; the white circle — and
+            the Free-plan hint — open billing, so upgrade and usage stay
+            separate destinations. */}
+        <div className={`shrink-0 pb-1 ${rail ? "px-2" : "px-3"}`}>
+          <UsageCard rail={rail} />
+        </div>
+
+        {/* Collapse — the profile itself lives in the header now. */}
+        <div className={`hidden shrink-0 pb-2 md:block ${rail ? "px-2" : "px-3"}`}>
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            aria-label={collapsed ? t.nav.expand : t.nav.collapse}
+            title={collapsed ? t.nav.expand : t.nav.collapse}
+            className={`flex h-9 w-full items-center rounded-full text-ink/60 outline-none transition hover:bg-ink/[0.05] hover:text-ink/80 focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-fog/55 dark:hover:bg-fog/[0.06] dark:hover:text-fog/75 dark:focus-visible:ring-violet-soft/70 dark:focus-visible:ring-offset-[#1d1636] ${
+              rail ? "justify-center" : "gap-2 px-3"
+            }`}
           >
-            <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-      </div>
-    </aside>
+            <ChevronIcon
+              className={`h-3.5 w-3.5 shrink-0 transition-transform rtl:-scale-x-100 ${rail ? "-rotate-90" : "rotate-90"}`}
+            />
+            {!rail && <span className="text-[11px] font-medium">{t.nav.collapse}</span>}
+          </button>
+        </div>
+      </aside>
     </>
   );
 }
@@ -280,13 +305,11 @@ function NavRow({
   item,
   active,
   rail,
-  dir,
   label,
 }: {
   item: NavItem;
   active: boolean;
   rail: boolean;
-  dir: "ltr" | "rtl";
   label: string;
 }) {
   return (
@@ -295,23 +318,18 @@ function NavRow({
       data-tour={`nav-${item.key}`}
       aria-current={active ? "page" : undefined}
       title={rail ? label : undefined}
-      className={`group relative flex items-center gap-2.5 rounded-[2px] px-2.5 py-2 text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/30 ${
+      className={`group relative flex h-9 items-center rounded-full text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-violet-soft/70 dark:focus-visible:ring-offset-[#1d1636] ${
+        rail ? "justify-center px-0" : "gap-2.5 px-3"
+      } ${
         active
-          ? "bg-deep-violet/[0.07] text-deep-violet dark:bg-violet-light/[0.14] dark:text-violet-soft"
-          : "text-ink/55 hover:bg-ink/[0.04] hover:text-ink dark:text-fog/50 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
+          ? "bg-violet-soft font-semibold text-ink shadow-sm shadow-deep-violet/10 dark:shadow-black/20"
+          : "text-ink/65 hover:bg-ink/[0.05] hover:text-ink dark:text-fog/65 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
       }`}
     >
       <span
         aria-hidden
-        className={`absolute ${dir === "rtl" ? "right-0 rounded-l-full" : "left-0 rounded-r-full"} top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-deep-violet transition-opacity dark:bg-violet-light ${
-          active ? "opacity-100" : "opacity-0"
-        }`}
-      />
-      <span
-        className={`h-4 w-4 shrink-0 transition-colors ${
-          active
-            ? "text-deep-violet dark:text-violet-soft"
-            : "text-ink/30 group-hover:text-ink/60 dark:text-fog/30 dark:group-hover:text-fog/60"
+        className={`shrink-0 transition-colors ${
+          active ? "text-ink" : "text-ink/50 group-hover:text-ink/80 dark:text-fog/45 dark:group-hover:text-fog/80"
         }`}
       >
         {item.icon}
@@ -333,7 +351,7 @@ function ChannelLogo({ channel }: { channel: string }) {
   const src = CHANNEL_LOGOS[channel];
   if (!src) {
     return (
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink/35 dark:text-fog/35">
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink/40 dark:text-fog/40">
         <UserIcon />
       </span>
     );
@@ -352,13 +370,13 @@ function ChannelLogo({ channel }: { channel: string }) {
 function ChannelsNav({
   pathname,
   rail,
-  dir,
   labels,
+  loadingLabel,
 }: {
   pathname: string;
   rail: boolean;
-  dir: "ltr" | "rtl";
   labels: Record<string, string>;
+  loadingLabel: string;
 }) {
   const [open, setOpen] = useState(true);
   const [rows, setRows] = useState<ChannelNavRow[] | null>(null);
@@ -398,39 +416,66 @@ function ChannelsNav({
   return (
     <div className="mt-0.5">
       <div
-        className={`group relative flex items-center gap-2.5 rounded-[2px] px-2.5 py-2 text-[13px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/30 ${
-          activeParent ? "bg-deep-violet/[0.07] text-deep-violet" : "text-ink/55 hover:bg-ink/[0.04]"
+        className={`group flex h-9 items-center rounded-full outline-none transition focus-within:ring-2 focus-within:ring-deep-violet/40 focus-within:ring-offset-2 focus-within:ring-offset-white dark:focus-within:ring-violet-soft/70 dark:focus-within:ring-offset-[#1d1636] ${
+          activeParent
+            ? "bg-violet-soft font-semibold text-ink shadow-sm shadow-deep-violet/10 dark:shadow-black/20"
+            : "text-ink/65 hover:bg-ink/[0.05] hover:text-ink dark:text-fog/65 dark:hover:bg-fog/[0.06] dark:hover:text-fog"
         }`}
       >
-        <Link href="/dashboard/channels/inbox" data-tour="nav-channels" className="flex min-w-0 flex-1 items-center gap-2.5">
-          <NavAsset src="/nav/channels.png" />
-          {!rail && <span className="flex-1 truncate">{labels.channels ?? "Channels"}</span>}
+        <Link
+          href="/dashboard/channels/inbox"
+          data-tour="nav-channels"
+          title={rail ? labels.channels : undefined}
+          className={`flex min-w-0 flex-1 items-center outline-none ${rail ? "justify-center" : "gap-2.5 ps-3"}`}
+        >
+          <span
+            aria-hidden
+            className={`shrink-0 transition-colors ${
+              activeParent ? "text-ink" : "text-ink/50 group-hover:text-ink/80 dark:text-fog/45 dark:group-hover:text-fog/80"
+            }`}
+          >
+            <ChannelsIcon />
+          </span>
+          {!rail && <span className="flex-1 truncate text-[13px] font-medium">{labels.channels ?? "Channels"}</span>}
         </Link>
         {!rail && (
-          <button onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label="Toggle channels" className="rounded-[2px] px-1 text-ink/40 hover:text-ink">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`}><path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          <button
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            aria-label="Toggle channels"
+            className={`me-1.5 flex h-6 w-6 items-center justify-center rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-ink/30 ${
+              activeParent ? "hover:bg-ink/10" : "hover:bg-ink/[0.06] dark:hover:bg-fog/10"
+            }`}
+          >
+            <ChevronIcon className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} />
           </button>
         )}
       </div>
       {open && !rail && (
-        <div className="ml-6 mt-0.5 space-y-0.5 border-l border-ink/[0.06] pl-2">
+        <div className="ms-5 mt-1 space-y-0.5 border-s border-ink/[0.08] ps-2 dark:border-fog/[0.08]">
           {/* Publish lives on /dashboard/posts-media (one hub: compose,
               published posts, Google library) — it is a top-level page, not
               a channel, so it is not repeated under Channels. */}
-          {!rows && (
-            <>
-              <div className="h-7 animate-pulse rounded-[2px] bg-ink/[0.05]" />
-              <div className="h-7 animate-pulse rounded-[2px] bg-ink/[0.05]" />
-            </>
-          )}
+          {(!rows || rows.length === 0) && <p className="px-2.5 py-1.5 text-[11px] text-ink/55 dark:text-fog/50">{loadingLabel}</p>}
           {rows?.map((r) =>
             r.key === "overview" ? (
-              <Link key="overview" href="/dashboard/channels" className="block rounded-[2px] px-2 py-1.5 text-[12px] font-semibold text-deep-violet hover:bg-deep-violet/[0.06]">
-                ＋ {labelFor("overview")}
+              <Link
+                key="overview"
+                href="/dashboard/channels"
+                className="flex h-8 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold text-deep-violet outline-none transition hover:bg-ink/[0.05] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-violet-soft dark:hover:bg-fog/[0.06] dark:focus-visible:ring-violet-soft/60"
+              >
+                <PlusIcon className="h-3.5 w-3.5" />
+                {labelFor("overview")}
               </Link>
             ) : r.key === "connect" ? (
-              <Link key="connect" href="/dashboard/channels" data-tour="nav-channels-connect" className="block rounded-[2px] bg-deep-violet/[0.07] px-2 py-1.5 text-[12px] font-semibold text-deep-violet hover:bg-deep-violet/[0.1]">
-                ＋ {labelFor("connect")}
+              <Link
+                key="connect"
+                href="/dashboard/channels"
+                data-tour="nav-channels-connect"
+                className="flex h-8 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold text-deep-violet outline-none transition hover:bg-ink/[0.05] focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:text-violet-soft dark:hover:bg-fog/[0.06] dark:focus-visible:ring-violet-soft/60"
+              >
+                <PlusIcon className="h-3.5 w-3.5" />
+                {labelFor("connect")}
               </Link>
             ) : (
               <Link
@@ -438,16 +483,20 @@ function ChannelsNav({
                 href={hrefFor(r.key)}
                 data-tour={`nav-channels-${r.key}`}
                 aria-current={pathname === hrefFor(r.key) ? "page" : undefined}
-                className={`flex items-center gap-2 rounded-[2px] px-2 py-1.5 text-[12px] font-medium transition hover:bg-ink/[0.04] ${pathname === hrefFor(r.key) ? "bg-deep-violet/[0.07] text-deep-violet" : "text-ink/60"}`}
+                className={`flex h-8 items-center gap-2 rounded-full px-2.5 text-[12px] font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/60 ${
+                  pathname === hrefFor(r.key)
+                    ? "bg-ink/[0.06] font-semibold text-deep-violet dark:bg-fog/[0.08] dark:text-violet-soft"
+                    : "text-ink/60 hover:bg-ink/[0.05] hover:text-ink/90 dark:text-fog/60 dark:hover:bg-fog/[0.05] dark:hover:text-fog/90"
+                }`}
               >
-                {r.key === "inbox" ? <NavAsset src="/nav/inbox.webp" /> : <ChannelLogo channel={r.key} />}
+                {r.key === "inbox" ? <InboxIcon /> : <ChannelLogo channel={r.key} />}
                 <span className="flex-1 truncate">{labelFor(r.key)}</span>
-                {r.key !== "inbox" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" title="connected" />}
+                {r.key !== "inbox" && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" title="connected" />}
               </Link>
             )
           )}
           {rows && rows.some((r) => r.key !== "connect" && r.key !== "inbox" && r.key !== "overview") && (
-            <p className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-widest text-ink/30">{labels.manage ?? "Manage"}</p>
+            <p className="px-2.5 pt-1.5 text-[10px] font-medium text-ink/55 dark:text-fog/50">{labels.manage ?? "Manage"}</p>
           )}
         </div>
       )}
@@ -455,21 +504,220 @@ function ChannelsNav({
   );
 }
 
+function UsageCard({ rail }: { rail: boolean }) {
+  const { t } = useI18n();
+  const [budget, setBudget] = useState<Budget | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getBudget()
+      .then((b) => {
+        if (!cancelled) setBudget(b);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const pro = budget?.plan === "pro";
+  const planLabel = pro ? t.sidebar.managePlan : t.sidebar.upgradePlan;
+
+  if (rail) {
+    return (
+      <Link
+        href="/dashboard/billing"
+        title={planLabel}
+        aria-label={planLabel}
+        className="flex h-10 w-full items-center justify-center rounded-[14px] bg-violet-soft text-ink outline-none transition hover:bg-violet-soft/90 focus-visible:ring-2 focus-visible:ring-violet-soft/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#1d1636]"
+      >
+        <ArrowUpRightIcon />
+      </Link>
+    );
+  }
+
+  if (failed) {
+    return (
+      <Link
+        href="/dashboard/usage"
+        className="flex items-center justify-between rounded-[16px] bg-violet-soft px-3 py-3 text-ink outline-none transition hover:bg-violet-soft/90 focus-visible:ring-2 focus-visible:ring-violet-soft/70"
+      >
+        <span className="text-[12px] font-semibold">{t.sidebar.viewUsage}</span>
+        <ArrowUpRightIcon className="h-3.5 w-3.5" />
+      </Link>
+    );
+  }
+
+  return (
+    <div className="relative overflow-hidden rounded-[16px] bg-violet-soft p-3 text-ink">
+      <div className="flex items-start justify-between gap-2">
+        <p className="pt-0.5 text-[10px] font-semibold text-ink/50">{t.sidebar.plan}</p>
+        <Link
+          href="/dashboard/billing"
+          aria-label={planLabel}
+          title={planLabel}
+          className="-me-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-ink shadow-sm outline-none transition hover:bg-fog focus-visible:ring-2 focus-visible:ring-ink/30"
+        >
+          <ArrowUpRightIcon className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      {budget ? (
+        <div className="mt-0.5">
+          {/* The plan name opens usage; the line under it is the upgrade
+              destination on Free, and stays on usage once the user is Pro. */}
+          <Link
+            href="/dashboard/usage"
+            aria-label={t.sidebar.viewUsage}
+            className="block truncate rounded-[6px] text-[15px] font-bold leading-tight outline-none focus-visible:ring-2 focus-visible:ring-ink/30"
+          >
+            {pro ? t.sidebar.proPlan : t.sidebar.freePlan}
+          </Link>
+          <Link
+            href={pro ? "/dashboard/usage" : "/dashboard/billing"}
+            className="mt-0.5 block truncate rounded-[4px] text-[10.5px] font-medium tabular-nums text-ink/55 outline-none transition hover:text-ink/80 focus-visible:ring-2 focus-visible:ring-ink/30"
+          >
+            {pro ? `$${budget.balance_dollars.toFixed(2)} ${t.sidebar.creditLeft}` : t.sidebar.freeHint}
+          </Link>
+        </div>
+      ) : (
+        <span className="mt-1 block h-7 w-3/4 animate-pulse rounded bg-ink/10" />
+      )}
+      {/* The reference's corner strokes, kept as a quiet texture. */}
+      <span aria-hidden className="pointer-events-none absolute bottom-2 end-3 flex flex-col items-end gap-[3px] opacity-20">
+        <span className="block h-[2px] w-4 rounded-full bg-ink" />
+        <span className="block h-[2px] w-3 rounded-full bg-ink" />
+        <span className="block h-[2px] w-2 rounded-full bg-ink" />
+      </span>
+    </div>
+  );
+}
+
 /* ── Icons ─────────────────────────────────────── */
 
-// Artwork marks (in /public/nav) sit on a white tile so the opaque source
-// images read as intentional chips in both light and dark themes.
-function NavAsset({ src }: { src: string }) {
+function DashboardIcon() {
   return (
-    <span className="flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-[2px] bg-white ring-1 ring-ink/[0.06] dark:bg-white/95 dark:ring-fog/10">
-      <Image src={src} alt="" width={14} height={14} className="h-[14px] w-[14px] object-contain" />
-    </span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
+  );
+}
+
+function AnalyticsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </svg>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0116 0Z" />
+      <circle cx="12" cy="10" r="2.5" />
+    </svg>
+  );
+}
+
+function BriefcaseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <rect x="2.5" y="7" width="19" height="13" rx="2" />
+      <path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2M2.5 12h19" />
+    </svg>
+  );
+}
+
+function PhotoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="9.5" r="1.5" />
+      <path d="M21 15l-5-5L5 20" />
+    </svg>
+  );
+}
+
+function UsersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <path d="M17 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" />
+      <circle cx="9.5" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+    </svg>
+  );
+}
+
+function StarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9L12 2.5Z" />
+    </svg>
+  );
+}
+
+function DatabaseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <ellipse cx="12" cy="5.5" rx="8" ry="3" />
+      <path d="M4 5.5v13c0 1.66 3.58 3 8 3s8-1.34 8-3v-13" />
+      <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+    </svg>
+  );
+}
+
+function ChannelsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <path d="M9 2v6M15 2v6" />
+      <path d="M6 8h12v2a6 6 0 01-12 0V8Z" />
+      <path d="M12 16v6" />
+    </svg>
+  );
+}
+
+function InboxIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+      <path d="M22 12h-6l-2 3h-4l-2-3H2" />
+      <path d="M5.5 5h13l3.5 7v6a2 2 0 01-2 2H4a2 2 0 01-2-2v-6L5.5 5Z" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M4 6l4 4 4-4" />
+    </svg>
+  );
+}
+
+function PlusIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className={className} aria-hidden>
+      <path d="M8 3v10M3 8h10" />
+    </svg>
+  );
+}
+
+function ArrowUpRightIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M5 11L11 5M6 5h5v5" />
+    </svg>
   );
 }
 
 function ChecklistIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M9 6h11M9 12h11M9 18h11" />
       <path d="M3.5 6l1.2 1.2L7 4.9" />
       <path d="M3.5 12l1.2 1.2L7 10.9" />
@@ -480,25 +728,16 @@ function ChecklistIcon() {
 
 function ShieldCheckIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
       <path d="M9 12l2 2 4-4" />
     </svg>
   );
 }
 
-function LinkIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
-      <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
-    </svg>
-  );
-}
-
 function OutboxIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M21 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6" />
       <path d="M12 3v12" />
       <path d="M8 7l4-4 4 4" />
@@ -508,7 +747,7 @@ function OutboxIcon() {
 
 function CardIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <rect x="2" y="5" width="20" height="14" rx="2" />
       <path d="M2 10h20" />
     </svg>
@@ -517,24 +756,16 @@ function CardIcon() {
 
 function BellIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
       <path d="M13.7 21a2 2 0 01-3.4 0" />
     </svg>
   );
 }
 
-function ZapIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-    </svg>
-  );
-}
-
 function BulbIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M9 18h6" />
       <path d="M10 22h4" />
       <path d="M12 2a7 7 0 00-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0012 2z" />
@@ -544,7 +775,7 @@ function BulbIcon() {
 
 function TrendingIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
       <polyline points="17 6 23 6 23 12" />
     </svg>
@@ -553,7 +784,7 @@ function TrendingIcon() {
 
 function TrophyIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
       <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
       <path d="M4 22h16" />
@@ -566,7 +797,7 @@ function TrophyIcon() {
 
 function GaugeIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M12 15l3.5-3.5" />
       <path d="M20.3 18a9.5 9.5 0 10-16.6 0" />
       <circle cx="12" cy="15" r="1" />
@@ -576,7 +807,7 @@ function GaugeIcon() {
 
 function UserIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
       <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
       <circle cx="12" cy="7" r="4" />
     </svg>
@@ -585,7 +816,7 @@ function UserIcon() {
 
 function GearIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
     </svg>

@@ -90,27 +90,27 @@ export default function ReviewPipelineTester() {
   }
 
   return (
-    <section className="rounded-[2px] border border-ink/[0.08] bg-white p-4 shadow-sm">
-      <h2 className="text-[14px] font-bold text-ink">Review pipeline test</h2>
-      <p className="mt-0.5 max-w-3xl text-[12px] leading-relaxed text-ink/55">
+    <section className="rounded-[2px] border border-ink/[0.08] dark:border-fog/[0.08] bg-white dark:bg-[#1d1636] p-4 shadow-sm">
+      <h2 className="text-[14px] font-bold text-ink dark:text-fog">Review pipeline test</h2>
+      <p className="mt-0.5 max-w-3xl text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">
         Run classification, ticketing, handoff, and the public reply preview. This does not fetch
         from Google, publish anything, or message the customer. The preview shows exactly what
         the reviewer would receive, including the WhatsApp handoff link.
       </p>
 
       {channels.length === 0 ? (
-        <p className="mt-3 text-[12px] text-ink/55">
+        <p className="mt-3 text-[12px] text-ink/55 dark:text-fog/55">
           Connect a Google reviews channel before testing the pipeline.
         </p>
       ) : (
         <form onSubmit={submit} className="mt-4 space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-[12px] font-semibold text-ink/70">
+            <label className="text-[12px] font-semibold text-ink/70 dark:text-fog/70">
               Google channel
               <select
                 value={channelId}
                 onChange={(event) => setChannelId(event.target.value)}
-                className="mt-1 w-full rounded-[2px] border border-ink/15 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/50"
+                className="mt-1 w-full rounded-[2px] border border-ink/15 dark:border-fog/15 bg-white dark:bg-[#14101f] px-3 py-2 text-[13px] text-ink dark:text-fog outline-none focus:border-deep-violet/50 dark:focus:border-violet-soft/50"
               >
                 {channels.map((channel) => (
                   <option key={channel.id} value={channel.id}>
@@ -119,12 +119,12 @@ export default function ReviewPipelineTester() {
                 ))}
               </select>
             </label>
-            <label className="text-[12px] font-semibold text-ink/70">
+            <label className="text-[12px] font-semibold text-ink/70 dark:text-fog/70">
               Rating
               <select
                 value={rating}
                 onChange={(event) => setRating(Number(event.target.value))}
-                className="mt-1 w-full rounded-[2px] border border-ink/15 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/50"
+                className="mt-1 w-full rounded-[2px] border border-ink/15 dark:border-fog/15 bg-white dark:bg-[#14101f] px-3 py-2 text-[13px] text-ink dark:text-fog outline-none focus:border-deep-violet/50 dark:focus:border-violet-soft/50"
               >
                 {[1, 2, 3, 4, 5].map((value) => (
                   <option key={value} value={value}>
@@ -135,24 +135,24 @@ export default function ReviewPipelineTester() {
             </label>
           </div>
 
-          <label className="block text-[12px] font-semibold text-ink/70">
+          <label className="block text-[12px] font-semibold text-ink/70 dark:text-fog/70">
             Reviewer name (optional)
             <input
               value={reviewerName}
               onChange={(event) => setReviewerName(event.target.value)}
-              className="mt-1 w-full rounded-[2px] border border-ink/15 bg-white px-3 py-2 text-[13px] text-ink outline-none focus:border-deep-violet/50"
+              className="mt-1 w-full rounded-[2px] border border-ink/15 dark:border-fog/15 bg-white dark:bg-[#14101f] px-3 py-2 text-[13px] text-ink dark:text-fog outline-none focus:border-deep-violet/50 dark:focus:border-violet-soft/50"
               placeholder="Example customer"
             />
           </label>
 
-          <label className="block text-[12px] font-semibold text-ink/70">
+          <label className="block text-[12px] font-semibold text-ink/70 dark:text-fog/70">
             Review text
             <textarea
               value={reviewText}
               onChange={(event) => setReviewText(event.target.value)}
               rows={4}
               required
-              className="mt-1 w-full rounded-[2px] border border-ink/15 bg-white px-3 py-2 text-[13px] leading-relaxed text-ink outline-none focus:border-deep-violet/50"
+              className="mt-1 w-full rounded-[2px] border border-ink/15 dark:border-fog/15 bg-white dark:bg-[#14101f] px-3 py-2 text-[13px] leading-relaxed text-ink dark:text-fog outline-none focus:border-deep-violet/50 dark:focus:border-violet-soft/50"
               placeholder="The restroom was dirty, staff did not help, and I want a refund."
             />
           </label>
@@ -160,7 +160,7 @@ export default function ReviewPipelineTester() {
           <button
             type="submit"
             disabled={busy || !reviewText.trim() || !channelId}
-            className="rounded-[2px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/20 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50"
+            className="rounded-[2px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/20 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 disabled:opacity-50 dark:focus-visible:ring-violet-soft/40"
           >
             {busy ? "Running pipeline…" : "Run review pipeline"}
           </button>
@@ -174,73 +174,73 @@ export default function ReviewPipelineTester() {
       )}
 
       {result && (
-        <div className="mt-4 space-y-2 rounded-[2px] border border-ink/[0.06] bg-white p-3">
-          <h3 className="text-[12px] font-bold text-ink">Pipeline result</h3>
+        <div className="mt-4 space-y-2 rounded-[2px] border border-ink/[0.06] dark:border-fog/[0.06] bg-white dark:bg-[#14101f] p-3">
+          <h3 className="text-[12px] font-bold text-ink dark:text-fog">Pipeline result</h3>
           <dl className="grid gap-2 text-[12px] sm:grid-cols-2">
             <div>
-              <dt className="text-ink/45">Issue created</dt>
-              <dd className="font-semibold text-ink">{result.issue_created ? "Yes" : "No"}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Issue created</dt>
+              <dd className="font-semibold text-ink dark:text-fog">{result.issue_created ? "Yes" : "No"}</dd>
             </div>
             <div>
-              <dt className="text-ink/45">Status</dt>
-              <dd className="font-semibold text-ink">{result.status ?? "—"}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Status</dt>
+              <dd className="font-semibold text-ink dark:text-fog">{result.status ?? "—"}</dd>
             </div>
             <div>
-              <dt className="text-ink/45">Ticket</dt>
-              <dd className="font-semibold text-deep-violet">{result.ticket_number ?? "No ticket"}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Ticket</dt>
+              <dd className="font-semibold text-deep-violet dark:text-violet-soft">{result.ticket_number ?? "No ticket"}</dd>
             </div>
             <div>
-              <dt className="text-ink/45">Handoff code</dt>
-              <dd className="font-semibold text-ink">{result.handoff_code ?? "None"}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Handoff code</dt>
+              <dd className="font-semibold text-ink dark:text-fog">{result.handoff_code ?? "None"}</dd>
             </div>
             <div>
-              <dt className="text-ink/45">Category</dt>
-              <dd className="font-semibold text-ink">{result.primary_category ?? "—"}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Category</dt>
+              <dd className="font-semibold text-ink dark:text-fog">{result.primary_category ?? "—"}</dd>
             </div>
             <div>
-              <dt className="text-ink/45">Subcategory</dt>
-              <dd className="font-semibold text-ink">{result.subcategory ?? "—"}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Subcategory</dt>
+              <dd className="font-semibold text-ink dark:text-fog">{result.subcategory ?? "—"}</dd>
             </div>
             <div>
-              <dt className="text-ink/45">Intent</dt>
-              <dd className="font-semibold text-ink">{result.intent ?? "—"}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Intent</dt>
+              <dd className="font-semibold text-ink dark:text-fog">{result.intent ?? "—"}</dd>
             </div>
             <div>
-              <dt className="text-ink/45">Sentiment</dt>
-              <dd className="font-semibold text-ink">{result.sentiment ?? "—"}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Sentiment</dt>
+              <dd className="font-semibold text-ink dark:text-fog">{result.sentiment ?? "—"}</dd>
             </div>
             <div>
-              <dt className="text-ink/45">Priority</dt>
-              <dd className="font-semibold text-ink">{result.priority ?? "—"}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Priority</dt>
+              <dd className="font-semibold text-ink dark:text-fog">{result.priority ?? "—"}</dd>
             </div>
             <div>
-              <dt className="text-ink/45">Needs attention</dt>
-              <dd className="font-semibold text-ink">{String(result.needs_attention ?? false)}</dd>
+              <dt className="text-ink/45 dark:text-fog/45">Needs attention</dt>
+              <dd className="font-semibold text-ink dark:text-fog">{String(result.needs_attention ?? false)}</dd>
             </div>
           </dl>
 
-          <div className="rounded-[2px] border border-ink/[0.06] bg-ink/[0.02] p-3">
+          <div className="rounded-[2px] border border-ink/[0.06] dark:border-fog/[0.06] bg-ink/[0.02] dark:bg-fog/[0.02] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h4 className="text-[11px] font-bold uppercase tracking-[0.1em] text-ink/45">
+              <h4 className="text-[11px] font-bold uppercase tracking-[0.1em] text-ink/45 dark:text-fog/45">
                 Public review reply preview
               </h4>
-              <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+              <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-400/15 dark:text-amber-300">
                 Not published
               </span>
             </div>
             {result.reply_preview ? (
-              <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-ink">
+              <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-ink dark:text-fog">
                 {result.reply_preview}
               </p>
             ) : (
-              <p className="mt-2 text-[12px] text-ink/50">No reply preview was generated.</p>
+              <p className="mt-2 text-[12px] text-ink/50 dark:text-fog/50">No reply preview was generated.</p>
             )}
             {result.handoff_link ? (
               <a
                 href={result.handoff_link}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-2 inline-block text-[12px] font-bold text-deep-violet underline underline-offset-2"
+                className="mt-2 inline-block text-[12px] font-bold text-deep-violet dark:text-violet-soft underline underline-offset-2"
               >
                 Open the reviewer WhatsApp handoff
               </a>
@@ -249,7 +249,7 @@ export default function ReviewPipelineTester() {
                 href={result.sales_link}
                 target="_blank"
                 rel="noreferrer"
-                className="mt-2 inline-block text-[12px] font-bold text-deep-violet underline underline-offset-2"
+                className="mt-2 inline-block text-[12px] font-bold text-deep-violet dark:text-violet-soft underline underline-offset-2"
               >
                 Open the WhatsApp sales conversation
               </a>
@@ -262,8 +262,8 @@ export default function ReviewPipelineTester() {
             </p>
           )}
           {result.summary && (
-            <p className="text-[12px] text-ink/70">
-              <span className="font-semibold text-ink">Summary:</span> {result.summary}
+            <p className="text-[12px] text-ink/70 dark:text-fog/70">
+              <span className="font-semibold text-ink dark:text-fog">Summary:</span> {result.summary}
             </p>
           )}
           {result.skipped_reason && (

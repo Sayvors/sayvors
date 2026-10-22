@@ -170,9 +170,9 @@ export default function GlanceStrip() {
       {/* Messages card. Distinguishes "connected, nothing received yet" from
           "not connected" — a bare 0 next to a channel icon reads as the second
           when it is usually the first. */}
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink">
+      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
         <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Messages</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Messages</p>
           <Image src="/meta.png" alt="Meta" width={32} height={32} />
         </div>
         <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalMsgs}</p>
@@ -205,9 +205,9 @@ export default function GlanceStrip() {
           from inbound messages, so a zero with no messages is an explanation,
           not a failure. */}
       <Link href="/dashboard/leads" aria-label="Open leads">
-        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-ink">
+        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
           <div className="flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Leads</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Leads</p>
             <Image src="/leads.png" alt="Leads" width={32} height={32} />
           </div>
           <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{leadStats ? leadStats.total : "-"}</p>
@@ -219,7 +219,7 @@ export default function GlanceStrip() {
               </div>
               <div className="flex items-center justify-between text-[12px]">
                 <span className="text-ink/55 dark:text-fog/55">In follow-up</span>
-                <span className="font-bold text-deep-violet">{leadStats.followUp}</span>
+                <span className="font-bold text-deep-violet dark:text-violet-soft">{leadStats.followUp}</span>
               </div>
               <div className="flex items-center justify-between text-[12px]">
                 <span className="text-ink/55 dark:text-fog/55">Converted</span>
@@ -238,9 +238,9 @@ export default function GlanceStrip() {
         </div>
       </Link>
 
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
+      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
         <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Reviews</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Reviews</p>
           <Image src="/google-review.png" alt="Google Reviews" width={32} height={32} />
         </div>
         <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{totalReviews ?? "-"}</p>
@@ -259,9 +259,9 @@ export default function GlanceStrip() {
         </div>
       </div>
 
-      <div className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
+      <div className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
         <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Avg rating</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Avg rating</p>
           <Image src="/google-business.png" alt="Google Business" width={32} height={32} />
         </div>
         <p className="mt-1 text-[22px] font-bold text-amber-500">{avgRating != null ? avgRating.toFixed(1) : "-"}</p>
@@ -282,10 +282,10 @@ export default function GlanceStrip() {
 
       {/* Posts card — everything in one view */}
       <Link href="/dashboard/posts-media" aria-label="Open posts and media">
-        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-ink/80">
+        <div className="h-full rounded-[2px] border border-ink/[0.06] bg-white p-4 transition hover:border-deep-violet/30 dark:border-fog/[0.06] dark:bg-[#1d1636] dark:hover:border-violet-soft/30">
           <div className="flex items-center justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">Posts</p>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-5 w-5 text-deep-violet/70" aria-hidden>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">Posts</p>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-5 w-5 text-deep-violet/70 dark:text-violet-soft/70" aria-hidden>
               <rect x="3" y="4" width="18" height="17" rx="2" />
               <path d="M3 9h18M8 2v4M16 2v4" />
             </svg>
@@ -299,7 +299,7 @@ export default function GlanceStrip() {
               </div>
               <div className="flex items-center justify-between text-[12px]">
                 <span className="text-ink/55 dark:text-fog/55">Scheduled</span>
-                <span className="font-bold text-deep-violet">{postStats.scheduled}</span>
+                <span className="font-bold text-deep-violet dark:text-violet-soft">{postStats.scheduled}</span>
               </div>
               <div className="flex items-center justify-between text-[12px]">
                 <span className="text-ink/55 dark:text-fog/55">Draft</span>
@@ -307,7 +307,7 @@ export default function GlanceStrip() {
               </div>
             </div>
           ) : (
-            <p className="mt-2 text-[11px] text-ink/40">Loading…</p>
+            <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">Loading…</p>
           )}
         </div>
       </Link>

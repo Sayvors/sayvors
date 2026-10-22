@@ -185,11 +185,11 @@ export default function ServicesPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f4f1ff] p-4 sm:p-6">
+    <div className="h-full overflow-y-auto bg-[#f4f1ff] p-4 sm:p-6 dark:bg-[#14101f]">
       <div className="mx-auto max-w-4xl space-y-5">
             <PageHeader connected={channels.length > 0} copy={copy} />
             {loading ? (
-              <div className="flex justify-center rounded-[2px] bg-white/70 py-24"><LogoLoader size={34} /></div>
+              <div className="flex justify-center rounded-[2px] border border-white bg-white py-24 dark:border-fog/[0.06] dark:bg-[#1d1636]"><LogoLoader size={34} /></div>
             ) : (
               <>
                 <LocationPicker
@@ -218,7 +218,7 @@ export default function ServicesPage() {
                 <ServiceGroup title={copy.customGroup} source="custom" services={services.filter((service) => service.source !== "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
               </>
             )}
-        {message && <div className="rounded-[2px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70">{message}</div>}
+        {message && <div className="rounded-[2px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70 dark:border-violet-soft/20 dark:bg-[#1d1636] dark:text-fog/70">{message}</div>}
       </div>
     </div>
   );
@@ -228,10 +228,10 @@ function PageHeader({ connected, copy }: { connected: boolean; copy: ServicesCop
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 className="text-[22px] font-bold text-ink">{copy.title}</h1>
-        <p className="mt-1 text-[13px] text-ink/55">{copy.subtitle}</p>
+        <h1 className="text-[22px] font-bold text-ink dark:text-fog">{copy.title}</h1>
+        <p className="mt-1 text-[13px] text-ink/55 dark:text-fog/55">{copy.subtitle}</p>
       </div>
-      <span className={`rounded-[2px] px-3 py-1.5 text-[11px] font-bold ${connected ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+      <span className={`rounded-[2px] px-3 py-1.5 text-[11px] font-bold ${connected ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300"}`}>
         {connected ? copy.googleConnected : copy.googleNotConnected}
       </span>
     </div>
@@ -247,8 +247,8 @@ function LocationPicker({ selectedId, channels, onChange, copy, groups, listingM
   listingMap: Record<string, string>;
 }) {
   return (
-    <div className="rounded-[2px] border border-white bg-white/80 p-5">
-      <label className="block text-[11px] font-bold text-ink/55">
+    <div className="rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-5">
+      <label className="block text-[11px] font-bold text-ink/55 dark:text-fog/55">
         {copy.locationLabel}
         <select value={selectedId} onChange={(event) => onChange(event.target.value)} className="input-field mt-2">
           <option value="">{copy.noLocationData}</option>
@@ -290,14 +290,14 @@ function AddServiceForm({ name, category, description, onName, onCategory, onDes
   multiSelectCopy: MultiSelectCopy;
 }) {
   return (
-    <div className="rounded-[2px] border border-white bg-white/80 p-5">
-      <h2 className="text-[15px] font-bold text-ink">{copy.addService}</h2>
-      <p className="mt-1 text-[11px] text-ink/45">
+    <div className="rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-5">
+      <h2 className="text-[15px] font-bold text-ink dark:text-fog">{copy.addService}</h2>
+      <p className="mt-1 text-[11px] text-ink/45 dark:text-fog/45">
         {isAll ? copy.addServiceAllHint : copy.addServiceSingleHint}
       </p>
       {isAll && channels.length > 0 && (
         <div className="mt-3">
-          <p className="text-[11px] font-bold text-ink/55">{copy.addToBranches}</p>
+          <p className="text-[11px] font-bold text-ink/55 dark:text-fog/55">{copy.addToBranches}</p>
           <span className="mt-2 block">
             <LocationMultiSelect
               locations={channels.map((c) => ({ id: c.id, name: c.display_name || copy.unnamedLocation }))}
@@ -317,7 +317,7 @@ function AddServiceForm({ name, category, description, onName, onCategory, onDes
         <input value={category} onChange={(event) => onCategory(event.target.value)} placeholder={copy.categoryPlaceholder} className="input-field" />
         <input value={description} onChange={(event) => onDescription(event.target.value)} placeholder={copy.descriptionPlaceholder} className="input-field" />
       </div>
-      <p className="mt-2 text-[11px] text-ink/40">{copy.aiHint}</p>
+      <p className="mt-2 text-[11px] text-ink/40 dark:text-fog/40">{copy.aiHint}</p>
       <button onClick={onAdd} disabled={saving || !canSave} className="mt-4 rounded-[2px] bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white disabled:opacity-40">
         {saving
           ? copy.saving
@@ -330,9 +330,9 @@ function AddServiceForm({ name, category, description, onName, onCategory, onDes
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
-  return <div className="rounded-[2px] border border-white bg-white/80 p-4"><div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{label}</div><div className="mt-2 text-[22px] font-bold text-ink">{value}</div></div>;
+  return <div className="rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636] p-4"><div className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 dark:text-fog/40">{label}</div><div className="mt-2 text-[22px] font-bold text-ink dark:text-fog">{value}</div></div>;
 }
 
 function ServiceGroup({ title, source, services, onToggle, onDelete, branchNames, copy }: { title: string; source: "google" | "custom"; services: Service[]; onToggle: (service: Service) => Promise<void>; onDelete: (service: Service) => Promise<void>; branchNames?: Record<string, string>; copy: ServicesCopy }) {
-  return <section className="overflow-hidden rounded-[2px] border border-white bg-white/80"><header className="flex items-center justify-between border-b border-ink/[0.05] px-4 py-3"><div><h2 className="text-[14px] font-bold text-ink">{title}</h2><p className="mt-0.5 text-[11px] text-ink/40">{source === "google" ? copy.googleGroupSub : copy.customGroupSub}</p></div><span className="rounded-[2px] bg-ink/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ink/45">{services.length}</span></header>{services.length === 0 ? <div className="border-dashed px-4 py-8 text-center text-[12px] text-ink/35">{copy.noServiceData}</div> : <div className="divide-y divide-ink/[0.04]">{services.map((service) => <div key={service.id} className="flex items-center gap-3 px-4 py-3"><button onClick={() => void onToggle(service)} className={`h-5 w-5 shrink-0 rounded-[2px] border-2 ${service.is_offered ? "border-deep-violet bg-deep-violet" : "border-ink/20"}`} aria-label={copy.toggleOffered}>{service.is_offered && <span className="text-[11px] text-white">✓</span>}</button><div className="min-w-0 flex-1"><div className="text-[13px] font-bold text-ink">{service.name}</div><div className="text-[11px] text-ink/45">{branchNames?.[service.channel_id] ? `${branchNames[service.channel_id]} · ` : ""}{service.category} · {service.is_offered ? copy.offered : copy.notOffered}{service.description ? ` · ${service.description}` : ""}</div></div><button onClick={() => void onDelete(service)} className="shrink-0 text-[11px] font-semibold text-red-500">{copy.delete}</button></div>)}</div>}</section>;
+  return <section className="overflow-hidden rounded-[2px] border border-white bg-white dark:border-fog/[0.06] dark:bg-[#1d1636]"><header className="flex items-center justify-between border-b border-ink/[0.05] dark:border-fog/[0.05] px-4 py-3"><div><h2 className="text-[14px] font-bold text-ink dark:text-fog">{title}</h2><p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">{source === "google" ? copy.googleGroupSub : copy.customGroupSub}</p></div><span className="rounded-[2px] bg-ink/[0.04] dark:bg-fog/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ink/45 dark:text-fog/45">{services.length}</span></header>{services.length === 0 ? <div className="border-dashed px-4 py-8 text-center text-[12px] text-ink/35 dark:text-fog/35">{copy.noServiceData}</div> : <div className="divide-y divide-ink/[0.04] dark:divide-fog/[0.04]">{services.map((service) => <div key={service.id} className="flex items-center gap-3 px-4 py-3"><button onClick={() => void onToggle(service)} className={`h-5 w-5 shrink-0 rounded-[2px] border-2 ${service.is_offered ? "border-deep-violet bg-deep-violet" : "border-ink/20 dark:border-fog/20"}`} aria-label={copy.toggleOffered}>{service.is_offered && <span className="text-[11px] text-white">✓</span>}</button><div className="min-w-0 flex-1"><div className="text-[13px] font-bold text-ink dark:text-fog">{service.name}</div><div className="text-[11px] text-ink/45 dark:text-fog/45">{branchNames?.[service.channel_id] ? `${branchNames[service.channel_id]} · ` : ""}{service.category} · {service.is_offered ? copy.offered : copy.notOffered}{service.description ? ` · ${service.description}` : ""}</div></div><button onClick={() => void onDelete(service)} className="shrink-0 text-[11px] font-semibold text-red-500">{copy.delete}</button></div>)}</div>}</section>;
 }
