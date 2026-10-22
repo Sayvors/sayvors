@@ -169,3 +169,93 @@ async def test_a_silent_lane_is_reported(db, jobs_factory):
 
     stuck = await report_stuck_lanes(db)
     assert "realtime" in stuck
+
+
+def test_the_worker_id_names_its_replica():
+    """A shared id cannot answer 'which replica holds this job?'."""
+    from app.modules.jobs.runner import JobRunner
+
+    worker_id = JobRunner(lane="realtime").worker_id
+    assert worker_id.startswith("realtime-")
+    assert worker_id != JobRunner(lane="realtime", worker_id="realtime-1").worker_id
+
+
+async def _redis():
+    from app.modules.redis.client import get_redis
+
+    return await get_redis()
+
+
+def _aware(value):
+    """SQLite hands back a naive datetime for a timezone-aware column."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_at_its_cap_has_the_job_deferred(db, jobs_factory, monkeypatch):
+    """At the per-tenant cap the job waits its turn instead of running."""
+    from app.modules.jobs import runner as runner_module
+
+    tenant = "tenant-cap-0001"
+    key = f"job_inflight:realtime:{tenant}"
+    redis = await _redis()
+    await redis.set(key, runner_module.PER_TENANT_INFLIGHT_LIMIT)
+
+    called = {"handler": False}
+
+    async def _handler(job, db):
+        called["handler"] = True
+        return {"ok": True}
+
+    monkeypatch.setitem(runner_module.HANDLERS, "stt.job", _handler)
+
+    job = await _job(db, "job-cap-blocked", lane="realtime", tenant_id=tenant)
+    claimed = await claim_due_jobs(db, lane="realtime", worker_id="worker-1", limit=10)
+    await db.commit()
+    assert [j.id for j in claimed] == ["job-cap-blocked"]
+
+    runner = runner_module.JobRunner(lane="realtime", worker_id="worker-1")
+    await runner._process_job(claimed[0])
+
+    async with jobs_factory() as fresh:
+        row = (
+            await fresh.execute(select(Job).where(Job.id == job.id))
+        ).scalar_one()
+        assert row.status == JobStatus.queued.value
+        assert _aware(row.next_run_at) > datetime.now(timezone.utc)
+    assert called["handler"] is False
+    await redis.delete(key)
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_under_the_cap_runs_its_job(db, jobs_factory, monkeypatch):
+    tenant = "tenant-cap-0002"
+    key = f"job_inflight:realtime:{tenant}"
+    redis = await _redis()
+    await redis.delete(key)
+
+    from app.modules.jobs import runner as runner_module
+
+    called = {"handler": False}
+
+    async def _handler(job, db):
+        called["handler"] = True
+        return {"ok": True}
+
+    monkeypatch.setitem(runner_module.HANDLERS, "stt.job", _handler)
+
+    job = await _job(db, "job-cap-allowed", lane="realtime", tenant_id=tenant)
+    claimed = await claim_due_jobs(db, lane="realtime", worker_id="worker-1", limit=10)
+    await db.commit()
+    assert [j.id for j in claimed] == ["job-cap-allowed"]
+
+    runner = runner_module.JobRunner(lane="realtime", worker_id="worker-1")
+    await runner._process_job(claimed[0])
+
+    async with jobs_factory() as fresh:
+        row = (
+            await fresh.execute(select(Job).where(Job.id == job.id))
+        ).scalar_one()
+        assert row.status == JobStatus.succeeded.value, row.last_error
+    assert called["handler"] is True
+    await redis.delete(key)

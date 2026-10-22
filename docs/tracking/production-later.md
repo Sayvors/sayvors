@@ -63,8 +63,8 @@ With 6–8 GB, you have plenty of headroom for: 100k+ active sessions, rate-limi
 | Item | Why it can't be done now | What to do later |
 |------|-------------------------|------------------|
 | Second box / AZ / container platform | One t3.small runs everything; one OOM kills auth + messaging + ingestion | Second box behind LB, or ECS/Fly/Render |
-| Fan the job workers out | The worker container runs one runner per lane; a second box means a second copy of each lane | `docker compose --scale worker=N` (or two hosts) — the claim is `FOR UPDATE SKIP LOCKED`, so replicas never double-claim. Give each replica its own worker id (today every replica of a lane shares `realtime-1`, so "which replica holds this job" cannot be answered) |
-| Per-tenant in-flight cap on the realtime lane | Needs a cap value per lane (a product decision, not a code change) | Redis counter per tenant, checked before a job runs; today only lane-level concurrency exists, so one tenant with a burst can occupy a whole lane |
+| Fan the job workers out | The worker container runs one runner per lane; a second box means a second copy of each lane | `docker compose --scale worker=N` (or two hosts) — the claim is `FOR UPDATE SKIP LOCKED`, so replicas never double-claim. Each replica now names itself (`lane-host-pid`), so a heartbeat says which machine holds a job |
+| Lane concurrency is per process | Decided 2026-10-22: it stays per process | Global realtime concurrency = replicas × cap. The fairness guarantee is the per-tenant in-flight cap (2 per lane, Redis, deferred not dropped) — write the arithmetic down when the fleet grows |
 
 ## Job queue at scale (added 2026-10-22)
 

@@ -112,10 +112,12 @@ async def _amain() -> None:
         # Job queue lanes — unified job processing (Phase 0+1).
         # Each JobRunner claims jobs from Postgres (SKIP LOCKED), runs the
         # handler, records outcome, commits Kafka offset.
-        "job-runner-realtime": lambda: JobRunner(lane="realtime", worker_id="realtime-1").start(),
-        "job-runner-publishing": lambda: JobRunner(lane="publishing", worker_id="publishing-1").start(),
-        "job-runner-media": lambda: JobRunner(lane="media", worker_id="media-1").start(),
-        "job-runner-bulk": lambda: JobRunner(lane="bulk", worker_id="bulk-1").start(),
+        # No explicit worker id: the runner derives one per replica
+        # (lane-host-pid), so the heartbeat names the machine holding a job.
+        "job-runner-realtime": lambda: JobRunner(lane="realtime").start(),
+        "job-runner-publishing": lambda: JobRunner(lane="publishing").start(),
+        "job-runner-media": lambda: JobRunner(lane="media").start(),
+        "job-runner-bulk": lambda: JobRunner(lane="bulk").start(),
         # Lease reaper + `accepted` reconciler — returns crashed workers'
         # jobs to the queue and un-strands rows the dispatcher never
         # promoted.
