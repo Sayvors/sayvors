@@ -576,7 +576,7 @@
   <div class="phase">
     <div class="ph"><h3>Phase C — Scale architecture</h3><span class="when">weeks 4–10</span></div>
     <ul>
-      <li>⬜ <strong>Unified job system, Phase 0 → 4</strong> — the jobs table + lease-based runner exist (SCALE-1); the full lane migration is the 1M-user unlock.</li>
+      <li>⬜ <strong>Unified job system, Phase 0 → 4</strong> — Phase 0 shipped (topic provisioning, JOB_LANES allowlist, pool headroom check, cancel-without-await fix, kafka re-arm prober). Phase 1–4 remaining: migrate 25 enqueue_event call sites, dead-letter replay, job status API, per-tenant fairness, provider rate-limit pacer, move slow endpoints to jobs, migration of 4 job tables, admin UI, k6 load test.</li>
       <li>✅ Shared Redis pub/sub for WS fan-out (SCALE-6). <em>TanStack Query + virtualization + WS buffer cap in the frontend still open.</em></li>
       <li>⬜ Admin: named operator accounts + action audit log. <em>The in-web admin duplicate was removed; the separate <code>apps/admin</code> app is the single surface.</em></li>
       <li>✅ GDPR delete/export (SEC-M1); encrypt message content and phones (SEC-M2).</li>
