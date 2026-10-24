@@ -26,6 +26,8 @@ class LocationMedia(Base):
         String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     listing_id: Mapped[str] = mapped_column(String(64), index=True)
+    # Link to the unified jobs table. NULL for rows created before migration.
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     image_url: Mapped[str] = mapped_column(Text)
     type: Mapped[str] = mapped_column(
         Enum("PHOTO", "VIDEO", name="media_type"), default="PHOTO"

@@ -157,6 +157,8 @@ class ScrapeJob(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     databank_id: Mapped[str] = mapped_column(String(36), ForeignKey("databanks.id"))
     user_id: Mapped[str] = mapped_column(String(36))
+    # Link to the unified jobs table. NULL for rows created before migration.
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     url: Mapped[str] = mapped_column(String(2000))
     crawl_mode: Mapped[str] = mapped_column(
         Enum("single", "full", name="scrape_crawl_mode"), default="single"
@@ -179,6 +181,8 @@ class IngestJob(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), index=True)
     databank_id: Mapped[str] = mapped_column(String(36), ForeignKey("databanks.id"))
+    # Link to the unified jobs table. NULL for rows created before migration.
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     document_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("documents.id"), nullable=True
     )

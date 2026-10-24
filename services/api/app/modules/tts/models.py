@@ -67,6 +67,8 @@ class TTSJob(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), index=True)
+    # Link to the unified jobs table. NULL for rows created before migration.
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     text: Mapped[str] = mapped_column(Text)
     voice_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("voices.id"), nullable=True)
     language: Mapped[str] = mapped_column(String(10), default="en")
