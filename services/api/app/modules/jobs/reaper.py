@@ -63,6 +63,15 @@ async def report_stuck_lanes(db: AsyncSession) -> list[str]:
             LANE_STUCK_SECONDS,
             ", ".join(stuck),
         )
+        try:
+            import sentry_sdk
+
+            sentry_sdk.capture_message(
+                f"Stuck job lanes: {', '.join(stuck)} (silent for {LANE_STUCK_SECONDS}s)",
+                level="error",
+            )
+        except Exception:
+            pass
     return stuck
 
 

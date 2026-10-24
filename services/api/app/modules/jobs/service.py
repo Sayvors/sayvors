@@ -170,7 +170,7 @@ async def claim_due_jobs(
     # Priority aging: effective_priority = max(1, priority - age_minutes).
     # Without aging, a steady stream of priority-0 realtime work starves
     # bulk jobs forever. Age is minutes since created_at.
-    from sqlalchemy import case, func
+    from sqlalchemy import Integer, case, func
 
     age_minutes = func.extract("epoch", func.now() - Job.created_at) / 60.0
     effective_priority = Job.priority - func.cast(age_minutes, Integer)
@@ -380,6 +380,46 @@ async def get_job(db: AsyncSession, job_id: str, tenant_id: str) -> Job | None:
         select(Job).where(Job.id == job_id, Job.tenant_id == tenant_id)
     )
     return result.scalar_one_or_none()
+
+
+async def get_queue_metrics() -> dict:
+    """Return queue depth and oldest-job age per lane for Prometheus."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    from ...database import async_session
+
+    async with async_session() as db:
+        now = datetime.now(timezone.utc)
+        depth: dict[str, int] = {}
+        oldest_age: dict[str, int] = {}
+        for lane in ("realtime", "publishing", "media", "bulk"):
+            count = (
+                await db.execute(
+                    select(func.count()).where(
+                        Job.lane == lane,
+                        Job.status.in_([JobStatus.queued.value, JobStatus.retrying.value]),
+                    )
+                )
+            ).scalar() or 0
+            depth[lane] = int(count)
+
+            oldest = (
+                await db.execute(
+                    select(func.min(Job.created_at)).where(
+                        Job.lane == lane,
+                        Job.status.in_([JobStatus.queued.value, JobStatus.retrying.value]),
+                    )
+                )
+            ).scalar()
+            if oldest is not None:
+                if oldest.tzinfo is None:
+                    oldest = oldest.replace(tzinfo=timezone.utc)
+                oldest_age[lane] = int((now - oldest).total_seconds())
+            else:
+                oldest_age[lane] = 0
+        return {"depth": depth, "oldest_age": oldest_age}
 
 
 async def list_jobs(

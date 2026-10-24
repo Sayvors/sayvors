@@ -466,6 +466,25 @@ async def metrics():
     lines.append(f"sayvors_http_request_duration_seconds_sum {_METRICS_LATENCY_SUM}")
     lines.append(f"sayvors_http_request_duration_seconds_count {total_count}")
     lines.append("")
+
+    # Job queue metrics (dependency-free, queries Postgres)
+    try:
+        from .modules.jobs.service import get_queue_metrics
+
+        qm = await get_queue_metrics()
+        lines.append("# HELP sayvors_job_queue_depth Number of queued+retrying jobs per lane.")
+        lines.append("# TYPE sayvors_job_queue_depth gauge")
+        for lane, depth in qm.get("depth", {}).items():
+            lines.append(f'sayvors_job_queue_depth{{lane="{lane}"}} {depth}')
+        lines.append("")
+        lines.append("# HELP sayvors_job_oldest_age_seconds Age of oldest queued job per lane.")
+        lines.append("# TYPE sayvors_job_oldest_age_seconds gauge")
+        for lane, age in qm.get("oldest_age", {}).items():
+            lines.append(f'sayvors_job_oldest_age_seconds{{lane="{lane}"}} {age}')
+        lines.append("")
+    except Exception:
+        pass
+
     return Response(
         content="\n".join(lines),
         media_type="text/plain; version=0.0.4; charset=utf-8",
