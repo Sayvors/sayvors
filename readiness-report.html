@@ -576,7 +576,7 @@
   <div class="phase">
     <div class="ph"><h3>Phase C — Scale architecture</h3><span class="when">weeks 4–10</span></div>
     <ul>
-      <li>⬜ <strong>Unified job system, Phase 0 → 4</strong> — Phase 0 shipped. Phase 1 shipped: migrated 14 enqueue_event → enqueue_event_in call sites (channels, analytics, localith), dead-letter replay endpoint, job status/cancel/list API, per-lane max_attempts, unique comment index. Remaining Phase 1: auth/profile fire-and-forget events (intentionally kept as enqueue_event). Phase 2–4 remaining: per-tenant fairness, provider rate-limit pacer, move slow endpoints to jobs, migration of 4 job tables, admin UI, k6 load test.</li>
+      <li>⬜ <strong>Unified job system, Phase 0 → 4</strong> — Phase 0 shipped. Phase 1 shipped. Phase 2 shipped: priority aging, provider rate-limit pacer, post publish moved to job (returns 202), rag.jobs worker registered. Remaining Phase 2: move remaining slow endpoints to jobs (Localith, media), remove blocking publish from posts/service. Phase 3–4 remaining: migration of 4 job tables, admin UI, k6 load test.</li>
       <li>✅ Shared Redis pub/sub for WS fan-out (SCALE-6). <em>TanStack Query + virtualization + WS buffer cap in the frontend still open.</em></li>
       <li>⬜ Admin: named operator accounts + action audit log. <em>The in-web admin duplicate was removed; the separate <code>apps/admin</code> app is the single surface.</em></li>
       <li>✅ GDPR delete/export (SEC-M1); encrypt message content and phones (SEC-M2).</li>
