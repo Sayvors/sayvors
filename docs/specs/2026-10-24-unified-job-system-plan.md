@@ -113,13 +113,13 @@ spurious drops.
 
 **Acceptance:** `alembic revision --autogenerate` produces no unexpected drops.
 
-### 0.5 `run_followup_worker` in API lifespan
+### 0.5 `run_lead_action_worker` in API lifespan
 
 **File:** `app/main.py`
-**Change:** Add `run_followup_worker()` to the lifespan loop list (currently only
+**Change:** Add `run_lead_action_worker()` to the lifespan loop list (currently only
 in worker entrypoint). Dev/single-process mode needs it.
 
-**Acceptance:** Follow-up worker runs in dev mode (`RUN_BACKGROUND_WORKERS=true`).
+**Acceptance:** Lead action worker runs in dev mode (`RUN_BACKGROUND_WORKERS=true`).
 
 ### 0.6 Cancel-without-await fix
 
