@@ -546,6 +546,7 @@ class MessagingChannelRow(BaseModel):
     label: str
     messages_in: int
     messages_out: int
+    ai_handled_out: int = 0
     messages_in_prev: int
     conversations: int
     conversations_prev: int
@@ -559,6 +560,8 @@ class MessagingChannelRow(BaseModel):
 class MessagingTotals(BaseModel):
     messages_in: int
     messages_out: int
+    ai_handled_out: int = 0
+    ai_handled_out_prev: int = 0
     messages_in_prev: int
     messages_out_prev: int
     conversations: int
@@ -580,3 +583,4 @@ class MessagingOverviewResponse(BaseModel):
     goal: dict[str, float]
     totals: MessagingTotals
     channels: list[MessagingChannelRow]
+    by_hour_in: list[int] = []  # 24-int heatmap feed, summed across the window

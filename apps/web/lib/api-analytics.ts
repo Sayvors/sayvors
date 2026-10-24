@@ -395,6 +395,7 @@ export interface MessagingChannelRow {
   label: string;
   messages_in: number;
   messages_out: number;
+  ai_handled_out: number;
   messages_in_prev: number;
   conversations: number;
   conversations_prev: number;
@@ -408,6 +409,8 @@ export interface MessagingChannelRow {
 export interface MessagingTotals {
   messages_in: number;
   messages_out: number;
+  ai_handled_out: number;
+  ai_handled_out_prev: number;
   messages_in_prev: number;
   messages_out_prev: number;
   conversations: number;
@@ -428,6 +431,7 @@ export interface MessagingOverview {
   goal: { response_rate: number; median_seconds: number };
   totals: MessagingTotals;
   channels: MessagingChannelRow[];
+  by_hour_in: number[];
 }
 
 export const fetchMessagingOverview = (

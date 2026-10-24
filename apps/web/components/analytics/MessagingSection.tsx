@@ -232,37 +232,107 @@ export default function MessagingSection({
           )}
         </div>
 
-        {/* AI vs human — deflection framing. Reads stored ai_handled_out
-            from the daily rollup; no request-time computation. */}
-        <div className="ui-card p-5">
-          <h3 className={`text-[13px] font-bold ${INK}`}>AI vs human</h3>
-          <div className="mt-4 grid grid-cols-2 gap-4">
-            <div>
-              <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
-                {t.ai_handled_out ?? 0}
-              </p>
-              <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
-                AI-handled
-              </p>
+        {/* Best-time heatmap — inbound volume by hour of day */}
+        {data.by_hour_in && data.by_hour_in.some((v) => v > 0) && (
+          <div className="ui-card p-5">
+            <h3 className={`text-[13px] font-bold ${INK}`}>Best time to reply</h3>
+            <p className={`mt-1 text-[11.5px] ${INK2}`}>
+              When customers message you (last {days}d, UTC). Reply fastest in these hours.
+            </p>
+            <div className="mt-4 flex items-end gap-1" style={{ height: 64 }}>
+              {data.by_hour_in.map((count, hour) => {
+                const max = Math.max(...data.by_hour_in, 1);
+                const pct = (count / max) * 100;
+                return (
+                  <div
+                    key={hour}
+                    className="flex flex-1 flex-col items-center justify-end"
+                    title={`${hour}:00 — ${count} messages`}
+                  >
+                    <div
+                      className="w-full rounded-t-[2px] bg-[var(--ui-ink)] transition-all"
+                      style={{ height: `${Math.max(2, pct)}%`, opacity: count > 0 ? 1 : 0.15 }}
+                    />
+                  </div>
+                );
+              })}
             </div>
-            <div>
-              <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
-                {Math.max(0, (t.messages_out ?? 0) - (t.ai_handled_out ?? 0))}
-              </p>
-              <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
-                human-handled
-              </p>
+            <div className="mt-1 flex justify-between text-[9px] tabular-nums text-[var(--ui-ink-2)]">
+              <span>0h</span>
+              <span>6h</span>
+              <span>12h</span>
+              <span>18h</span>
+              <span>23h</span>
             </div>
           </div>
-          {(t.messages_out ?? 0) > 0 && (
-            <p className={`mt-4 border-t border-[var(--ui-line)] pt-3 text-[11.5px] font-medium leading-relaxed ${INK2}`}>
-              AI handled {Math.round(((t.ai_handled_out ?? 0) / t.messages_out) * 100)}% of outbound replies
-              {t.ai_handled_out_prev !== null && (t.ai_handled_out_prev ?? 0) > 0
-                ? ` (was ${Math.round(((t.ai_handled_out_prev ?? 0) / Math.max(1, t.messages_out_prev)) * 100)}% last period)`
-                : ""}
-            </p>
-          )}
+        )}
+      </div>
+
+      {/* Best-time heatmap — inbound volume by hour of day */}
+      {data.by_hour_in && data.by_hour_in.some((v) => v > 0) && (
+        <div className="ui-card p-5">
+          <h3 className={`text-[13px] font-bold ${INK}`}>Best time to reply</h3>
+          <p className={`mt-1 text-[11.5px] ${INK2}`}>
+            When customers message you (last {days}d, UTC). Reply fastest in these hours.
+          </p>
+          <div className="mt-4 flex items-end gap-1" style={{ height: 64 }}>
+            {data.by_hour_in.map((count, hour) => {
+              const max = Math.max(...data.by_hour_in, 1);
+              const pct = (count / max) * 100;
+              return (
+                <div
+                  key={hour}
+                  className="flex flex-1 flex-col items-center justify-end"
+                  title={`${hour}:00 — ${count} messages`}
+                >
+                  <div
+                    className="w-full rounded-t-[2px] bg-[var(--ui-ink)] transition-all"
+                    style={{ height: `${Math.max(2, pct)}%`, opacity: count > 0 ? 1 : 0.15 }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-1 flex justify-between text-[9px] tabular-nums text-[var(--ui-ink-2)]">
+            <span>0h</span>
+            <span>6h</span>
+            <span>12h</span>
+            <span>18h</span>
+            <span>23h</span>
+          </div>
         </div>
+      )}
+
+      {/* AI vs human — deflection framing. Reads stored ai_handled_out
+          from the daily rollup; no request-time computation. */}
+      <div className="ui-card p-5">
+        <h3 className={`text-[13px] font-bold ${INK}`}>AI vs human</h3>
+        <div className="mt-4 grid grid-cols-2 gap-4">
+          <div>
+            <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
+              {t.ai_handled_out ?? 0}
+            </p>
+            <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
+              AI-handled
+            </p>
+          </div>
+          <div>
+            <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
+              {Math.max(0, (t.messages_out ?? 0) - (t.ai_handled_out ?? 0))}
+            </p>
+            <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
+              human-handled
+            </p>
+          </div>
+        </div>
+        {(t.messages_out ?? 0) > 0 && (
+          <p className={`mt-4 border-t border-[var(--ui-line)] pt-3 text-[11.5px] font-medium leading-relaxed ${INK2}`}>
+            AI handled {Math.round(((t.ai_handled_out ?? 0) / t.messages_out) * 100)}% of outbound replies
+            {t.ai_handled_out_prev !== null && (t.ai_handled_out_prev ?? 0) > 0
+              ? ` (was ${Math.round(((t.ai_handled_out_prev ?? 0) / Math.max(1, t.messages_out_prev)) * 100)}% last period)`
+              : ""}
+          </p>
+        )}
       </div>
     </section>
   );

@@ -459,6 +459,14 @@ async def get_messaging_overview(
     cur_samples = _samples(all_cur)
     prev_samples = _samples(all_prev)
 
+    # Best-time heatmap: sum the per-day 24-bucket arrays across the window.
+    by_hour_in = [0] * 24
+    for r in all_cur:
+        arr = r.by_hour_in or []
+        for i in range(24):
+            if i < len(arr):
+                by_hour_in[i] += arr[i] or 0
+
     # Unanswered NOW = today's snapshots across channels; the oldest one
     # sets the worst age. NULL only when the worker has not run yet.
     latest_per_channel = [
@@ -505,4 +513,4 @@ async def get_messaging_overview(
             "as_of": as_of,
         },
         "channels": channel_rows,
-    }
+        "by_hour_in": by_hour_in,
