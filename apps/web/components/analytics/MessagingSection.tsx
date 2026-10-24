@@ -231,6 +231,38 @@ export default function MessagingSection({
             </div>
           )}
         </div>
+
+        {/* AI vs human — deflection framing. Reads stored ai_handled_out
+            from the daily rollup; no request-time computation. */}
+        <div className="ui-card p-5">
+          <h3 className={`text-[13px] font-bold ${INK}`}>AI vs human</h3>
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <div>
+              <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
+                {t.ai_handled_out ?? 0}
+              </p>
+              <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
+                AI-handled
+              </p>
+            </div>
+            <div>
+              <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
+                {Math.max(0, (t.messages_out ?? 0) - (t.ai_handled_out ?? 0))}
+              </p>
+              <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
+                human-handled
+              </p>
+            </div>
+          </div>
+          {(t.messages_out ?? 0) > 0 && (
+            <p className={`mt-4 border-t border-[var(--ui-line)] pt-3 text-[11.5px] font-medium leading-relaxed ${INK2}`}>
+              AI handled {Math.round(((t.ai_handled_out ?? 0) / t.messages_out) * 100)}% of outbound replies
+              {t.ai_handled_out_prev !== null && (t.ai_handled_out_prev ?? 0) > 0
+                ? ` (was ${Math.round(((t.ai_handled_out_prev ?? 0) / Math.max(1, t.messages_out_prev)) * 100)}% last period)`
+                : ""}
+            </p>
+          )}
+        </div>
       </div>
     </section>
   );
