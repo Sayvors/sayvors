@@ -25,3 +25,4 @@ cj*.txt
 
 # Local agent tooling state - never commit
 .commandcode/
+.mentee/
