@@ -682,6 +682,21 @@ async def admin_embedding_update(
     )
 
 
+@router.get("/embeddings/models")
+async def admin_embedding_models(
+    provider: str,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+):
+    """List available embedding models from a provider's API."""
+    from ..rag.embeddings import list_available_models
+
+    models = await list_available_models(provider, api_key=api_key, base_url=base_url)
+    return {"provider": provider, "models": models}
+
+
 @router.post("/embeddings/test", response_model=EmbeddingTestResult)
 async def admin_embedding_test(
     body: EmbeddingTestRequest | None = None,

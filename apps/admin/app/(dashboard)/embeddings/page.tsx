@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import { adminFetch } from "@/lib/admin-api";
 
 interface EmbeddingProvider {
@@ -31,10 +32,14 @@ interface TestResult {
   detail: string;
 }
 
+const FOCUS_RING = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deep-violet";
+
 const BRAND: Record<string, { gradient: string; initial: string; icon?: string }> = {
   gemini: { gradient: "from-[#4285F4] to-[#9b72cb]", initial: "G", icon: "googlegemini" },
   openai: { gradient: "from-zinc-800 to-black", initial: "O", icon: "openai" },
   ollama: { gradient: "from-pink-500 to-violet-600", initial: "O", icon: "ollama" },
+  openrouter: { gradient: "from-[#6366F1] to-[#8B5CF6]", initial: "R", icon: "openrouter" },
+  nvidia: { gradient: "from-[#76B900] to-[#5A8F00]", initial: "N", icon: "nvidia" },
 };
 
 function ProviderLogo({ provider }: { provider: string }) {
@@ -49,7 +54,7 @@ function ProviderLogo({ provider }: { provider: string }) {
       className={`flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-[2px] bg-gradient-to-br text-[18px] font-bold text-white ${brand.gradient}`}
     >
       {!failed && brand.icon ? (
-        <img
+        <Image
           src={`https://cdn.jsdelivr.net/npm/simple-icons@v15/icons/${brand.icon}.svg`}
           alt=""
           width={26}
@@ -57,6 +62,7 @@ function ProviderLogo({ provider }: { provider: string }) {
           loading="lazy"
           onError={() => setFailed(true)}
           className="h-[26px] w-[26px] brightness-0 invert"
+          unoptimized
         />
       ) : (
         brand.initial
@@ -76,6 +82,26 @@ export default function AdminEmbeddingsPage() {
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [models, setModels] = useState<Record<string, string>>({});
   const [baseUrls, setBaseUrls] = useState<Record<string, string>>({});
+  const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
+
+  const fetchModels = useCallback(async (provider: string, apiKey?: string, baseUrl?: string) => {
+    try {
+      const qs = new URLSearchParams({ provider });
+      if (apiKey) qs.set("api_key", apiKey);
+      if (baseUrl) qs.set("base_url", baseUrl);
+      const res = await adminFetch<{ provider: string; models: string[] }>(`/api/v1/admin/embeddings/models?${qs}`);
+      setAvailableModels((prev) => ({ ...prev, [provider]: res.models }));
+      // Auto-select first model if none chosen yet
+      setModels((prev) => {
+        if (prev[provider]) return prev;
+        const first = res.models[0];
+        if (!first) return prev;
+        return { ...prev, [provider]: first };
+      });
+    } catch {
+      // Fall back to supported_models from overview
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,12 +123,16 @@ export default function AdminEmbeddingsPage() {
         return next;
       });
       setError(null);
+      // Fetch available models for each provider
+      for (const p of overview.providers) {
+        fetchModels(p.provider, undefined, p.base_url ?? undefined);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchModels]);
 
   useEffect(() => {
     let cancelled = false;
@@ -298,19 +328,32 @@ export default function AdminEmbeddingsPage() {
                 <label className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   Model
                 </label>
-                <select
-                  value={models[p.provider] ?? ""}
-                  disabled={isBusy}
-                  onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
-                  aria-label={`${p.provider} embedding model`}
-                  className="input-field mt-1 cursor-pointer"
-                >
-                  {p.supported_models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1 flex items-center gap-2">
+                  <select
+                    value={models[p.provider] ?? ""}
+                    disabled={isBusy}
+                    onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
+                    aria-label={`${p.provider} embedding model`}
+                    className="input-field flex-1 cursor-pointer"
+                  >
+                    {(availableModels[p.provider] ?? p.supported_models).map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => fetchModels(p.provider, keys[p.provider], baseUrls[p.provider])}
+                    disabled={isBusy}
+                    title="Fetch available models from the provider's API"
+                    className={`shrink-0 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
+                  >
+                    ↻
+                  </button>
+                </div>
+                {availableModels[p.provider] && availableModels[p.provider].length > 0 && (
+                  <p className="mt-1 text-[10px] text-ink/35">{availableModels[p.provider].length} models available</p>
+                )}
 
                 {p.provider === "ollama" && (
                   <>

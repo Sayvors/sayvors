@@ -38,6 +38,16 @@ EMBEDDING_MODELS: dict[str, tuple[str, ...]] = {
     "gemini": ("gemini-embedding-001",),
     "openai": ("text-embedding-3-small", "text-embedding-3-large"),
     "ollama": ("bge-m3",),
+    "openrouter": (
+        "openai/text-embedding-3-small",
+        "openai/text-embedding-3-large",
+        "thenlper/gte-large",
+    ),
+    "nvidia": (
+        "nvidia/nv-embed-v2",
+        "nvidia/nv-embedqa-e5-v5",
+        "nvidia/nv-embedqa-mistral-7b-v2",
+    ),
 }
 
 # How long a built provider is reused before the configuration is re-read.
@@ -179,6 +189,90 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         return all_embeddings
 
 
+class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
+    """OpenAI-compatible embedding provider (OpenRouter, NVIDIA Build, etc.).
+
+    Reuses the OpenAI SDK with a custom base URL. The API key is resolved
+    from the admin config or the LLM provider registry.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        default_model: str = "",
+        default_base_url: str = "",
+    ):
+        self.model = model or default_model
+        self._dims = CANONICAL_DIMENSIONS
+        self._api_key = api_key
+        self._base_url = base_url or default_base_url
+
+    def dimensions(self) -> int:
+        return self._dims
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        from openai import AsyncOpenAI
+
+        from ..llm.providers.registry import resolve_provider_key
+
+        api_key = self._api_key
+        if not api_key:
+            # Try to resolve from LLM registry
+            for provider_name in ("openrouter", "nvidia", "openai"):
+                try:
+                    key, _ = resolve_provider_key(provider_name)
+                    if key:
+                        api_key = key
+                        break
+                except Exception:
+                    pass
+        if not api_key:
+            raise RuntimeError(
+                "No API key configured. Add one under Admin → Embeddings."
+            )
+
+        client = AsyncOpenAI(api_key=api_key, base_url=self._base_url)
+        batch_size = 2048
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            resp = await client.embeddings.create(
+                model=self.model,
+                input=batch,
+                dimensions=self._dims,
+            )
+            all_embeddings.extend([e.embedding for e in resp.data])
+        return all_embeddings
+
+
+class OpenRouterEmbeddingProvider(OpenAICompatibleEmbeddingProvider):
+    """OpenRouter embeddings (OpenAI-compatible)."""
+
+    def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            default_model=EMBEDDING_MODELS["openrouter"][0],
+            default_base_url="https://openrouter.ai/api/v1",
+        )
+
+
+class NvidiaEmbeddingProvider(OpenAICompatibleEmbeddingProvider):
+    """NVIDIA Build embeddings (OpenAI-compatible, free tier available)."""
+
+    def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            default_model=EMBEDDING_MODELS["nvidia"][0],
+            default_base_url="https://integrate.api.nvidia.com/v1",
+        )
+
+
 # ── Configuration (admin-managed) ─────────────────────────────────────
 
 
@@ -304,13 +398,11 @@ async def save_embedding_config(
 
     ``api_key`` of None keeps the stored key, an empty string clears it.
     """
-    if provider not in EMBEDDING_MODELS:
-        raise ValueError(f"Unknown embedding provider: {provider}")
-    if model is not None and model not in EMBEDDING_MODELS[provider]:
-        raise ValueError(
-            f"Unsupported embedding model for {provider}: {model}. "
-            f"Supported: {', '.join(EMBEDDING_MODELS[provider])}"
-        )
+    KNOWN_PROVIDERS = set(EMBEDDING_MODELS) | {"openrouter", "nvidia"}
+    if provider not in KNOWN_PROVIDERS:
+        raise ValueError(f"Unknown embedding provider: {provider}. Known: {', '.join(sorted(KNOWN_PROVIDERS))}")
+    # Model is free-form: the admin picks from a live list fetched from the
+    # provider's API, so we no longer hardcode or validate model names.
 
     from sqlalchemy import select
 
@@ -462,6 +554,10 @@ async def _build_provider(config: dict[str, Any] | None) -> EmbeddingProvider:
         return OpenAIEmbeddingProvider(api_key=key, model=model)
     if provider == "ollama":
         return OllamaEmbeddingProvider(api_key=key, base_url=base_url, model=model)
+    if provider == "openrouter":
+        return OpenRouterEmbeddingProvider(api_key=key, base_url=base_url, model=model)
+    if provider == "nvidia":
+        return NvidiaEmbeddingProvider(api_key=key, base_url=base_url, model=model)
     raise ValueError(f"Unknown embedding provider: {provider}")
 
 
@@ -505,6 +601,66 @@ async def get_embedding_provider() -> EmbeddingProvider:
         _provider_signature = signature
     _provider_loaded_at = now
     return _provider
+
+
+async def list_available_models(provider: str, api_key: str | None = None, base_url: str | None = None) -> list[str]:
+    """Fetch available embedding models from a provider's API.
+
+    Used by the admin UI to populate a model dropdown. Falls back to the
+    known model list if the API is unreachable.
+    """
+    import httpx
+
+    if provider == "ollama":
+        url = (base_url or "http://localhost:11434").rstrip("/") + "/api/tags"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+                models = [m.get("name", "") for m in data.get("models", [])]
+                embed = [m for m in models if "embed" in m.lower() or "bge" in m.lower() or "e5" in m.lower()]
+                return embed if embed else models
+        except Exception:
+            return list(EMBEDDING_MODELS.get(provider, ()))
+
+    if provider in ("openai", "openrouter", "nvidia"):
+        url_map = {
+            "openai": "https://api.openai.com/v1",
+            "openrouter": "https://openrouter.ai/api/v1",
+            "nvidia": "https://integrate.api.nvidia.com/v1",
+        }
+        base = (base_url or url_map.get(provider, "")).rstrip("/")
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(f"{base}/models", headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                models = [m.get("id", "") for m in data.get("data", [])]
+                embed = [m for m in models if "embed" in m.lower() or "bge" in m.lower() or "e5" in m.lower()]
+                return embed if embed else models[:20]
+        except Exception:
+            return list(EMBEDDING_MODELS.get(provider, ()))
+
+    if provider == "gemini":
+        try:
+            from google import genai
+
+            client = genai.Client(api_key=api_key or "")
+            models = []
+            for m in client.models.list():
+                name = getattr(m, "name", "") or ""
+                if "embed" in name.lower():
+                    models.append(name)
+            return models if models else list(EMBEDDING_MODELS.get(provider, ()))
+        except Exception:
+            return list(EMBEDDING_MODELS.get(provider, ()))
+
+    return list(EMBEDDING_MODELS.get(provider, ()))
+
 
 
 async def test_embedding_provider(
