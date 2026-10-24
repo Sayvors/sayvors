@@ -177,6 +177,7 @@ class Settings(BaseSettings):
     # enough that the unanswered snapshot reads as "now", cheap enough to
     # never matter.
     MESSAGING_ROLLUP_INTERVAL_SECONDS: int = 900
+    CONVERSATION_INSIGHTS_INTERVAL_SECONDS: int = 86400  # daily
 
     # ── LLM ────────────────────────────────────────────
     # Provider keys live exclusively in the database (Admin → LLMs).
