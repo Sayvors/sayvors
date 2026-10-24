@@ -196,7 +196,8 @@ export default function BenchmarkPage() {
               <ul className="mt-4 divide-y divide-[var(--ui-line)]">
                 {[
                   { label: "Review response rate", you: benchmark.current_response_rate, unit: "%", median: 75.5, good: 90 },
-                  { label: "Average rating", you: benchmark.current_avg_rating, unit: "★", median: 4.3, good: 4.7 },
+                  { label: "Average rating", you: benchmark.current_avg_rating, unit: "", median: 4.3, good: 4.7 },
+                  { label: "Sentiment (positive %)", you: benchmark.current_sentiment_positive_pct, unit: "%", median: 70, good: 85 },
                 ].map((b) => {
                   const you = b.you ?? 0;
                   const status = you >= b.good ? "Excellent" : you >= b.median ? "On par" : "Below median";
@@ -205,7 +206,7 @@ export default function BenchmarkPage() {
                     <li key={b.label} className="flex items-center gap-3 py-3 first:pt-1 last:pb-1">
                       <div className="min-w-0 flex-1">
                         <p className="text-[12.5px] font-semibold text-[var(--ui-ink)]">{b.label}</p>
-                        <p className="mt-0.5 text-[10.5px] text-[var(--ui-ink-2)]">Market median {b.median}{b.unit} · Good = {b.good}{b.unit}</p>
+                        <p className="mt-0.5 text-[10.5px] text-[var(--ui-ink-2)]">Median {b.median}{b.unit} / Good {b.good}{b.unit}</p>
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{typeof you === "number" ? you.toFixed(1) : "—"}{b.unit}</p>
@@ -215,10 +216,16 @@ export default function BenchmarkPage() {
                   );
                 })}
               </ul>
+              {benchmark.current_response_rate < 90 && (
+                <div className="mt-4 rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-3">
+                  <p className="text-[12px] font-semibold text-[var(--ui-ink)]">Nudge: every +25% response rate = +4.1% GBP conversions (SOCi 2024)</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">You are at {benchmark.current_response_rate.toFixed(0)}%. Reaching 90% could lift conversions.</p>
+                </div>
+              )}
             </section>
           )}
 
-          {/* Metric focus filter */}
+                    {/* Metric focus filter */}
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison metric">
             {(Object.keys(FOCUS_META) as MetricFocus[]).map((f) => (
               <button
