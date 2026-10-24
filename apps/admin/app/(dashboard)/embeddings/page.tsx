@@ -328,29 +328,52 @@ export default function AdminEmbeddingsPage() {
                 <label className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   Model
                 </label>
-                <div className="mt-1 flex items-center gap-2">
-                  <select
-                    value={models[p.provider] ?? ""}
-                    disabled={isBusy}
-                    onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
-                    aria-label={`${p.provider} embedding model`}
-                    className="input-field flex-1 cursor-pointer"
-                  >
-                    {(availableModels[p.provider] ?? p.supported_models).map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => fetchModels(p.provider, keys[p.provider], baseUrls[p.provider])}
-                    disabled={isBusy}
-                    title="Fetch available models from the provider's API"
-                    className={`shrink-0 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
-                  >
-                    ↻
-                  </button>
-                </div>
+                {availableModels[p.provider] && availableModels[p.provider].length > 0 ? (
+                  <div className="mt-1 flex items-center gap-2">
+                    <select
+                      value={models[p.provider] ?? ""}
+                      disabled={isBusy}
+                      onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
+                      aria-label={`${p.provider} embedding model`}
+                      className="input-field flex-1 cursor-pointer"
+                    >
+                      {availableModels[p.provider].map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => fetchModels(p.provider, keys[p.provider], baseUrls[p.provider])}
+                      disabled={isBusy}
+                      title="Re-fetch available models from the provider's API"
+                      className={`shrink-0 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
+                    >
+                      ↻
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-1.5">
+                    <input
+                      type="text"
+                      value={models[p.provider] ?? ""}
+                      disabled={isBusy}
+                      onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
+                      placeholder="e.g. openai/text-embedding-3-small"
+                      className="input-field"
+                    />
+                    <button
+                      onClick={() => fetchModels(p.provider, keys[p.provider], baseUrls[p.provider])}
+                      disabled={isBusy}
+                      className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
+                    >
+                      ↻ Fetch models from API
+                    </button>
+                    <p className="text-[10px] text-ink/35">
+                      No embedding models found via API. Type a model name manually, or click fetch to try again.
+                    </p>
+                  </div>
+                )}
                 {availableModels[p.provider] && availableModels[p.provider].length > 0 && (
                   <p className="mt-1 text-[10px] text-ink/35">{availableModels[p.provider].length} models available</p>
                 )}

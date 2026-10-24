@@ -45,9 +45,9 @@ async def test_list_reports_the_fallback_before_anything_is_configured(
     assert body["active_provider"] is None
     assert body["canonical_dimensions"] == 1024
     providers = {p["provider"] for p in body["providers"]}
-    assert providers == {"gemini", "openai", "ollama"}
+    assert providers == {"gemini", "openai", "ollama", "openrouter", "nvidia"}
     gemini = next(p for p in body["providers"] if p["provider"] == "gemini")
-    assert gemini["supported_models"] == ["gemini-embedding-001"]
+    assert gemini["supported_models"] == []
 
 
 @pytest.mark.asyncio
@@ -85,8 +85,9 @@ async def test_unsupported_model_is_400(client, admin_headers, embedding_factory
         json={"model": "some-other-model"},
         headers=admin_headers,
     )
-    assert r.status_code == 400
-    assert "Unsupported embedding model" in r.json()["detail"]
+    # Models are no longer validated against a hardcoded list — any model
+    # string is accepted and the live API list is used in the UI.
+    assert r.status_code == 200
 
 
 @pytest.mark.asyncio

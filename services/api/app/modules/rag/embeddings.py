@@ -34,20 +34,15 @@ CANONICAL_DIMENSIONS = 1024
 # The embedding models this codebase knows how to call, and that can be
 # normalised to the canonical width. An admin picks from this list; a model
 # outside it is rejected instead of being saved and silently mismatched.
+# Provider names the system knows how to build. Model names are NOT
+# hardcoded — the admin fetches the live list from the provider's API
+# (see list_available_models) and can also type a custom model name.
 EMBEDDING_MODELS: dict[str, tuple[str, ...]] = {
-    "gemini": ("gemini-embedding-001",),
-    "openai": ("text-embedding-3-small", "text-embedding-3-large"),
-    "ollama": ("bge-m3",),
-    "openrouter": (
-        "openai/text-embedding-3-small",
-        "openai/text-embedding-3-large",
-        "thenlper/gte-large",
-    ),
-    "nvidia": (
-        "nvidia/nv-embed-v2",
-        "nvidia/nv-embedqa-e5-v5",
-        "nvidia/nv-embedqa-mistral-7b-v2",
-    ),
+    "gemini": (),
+    "openai": (),
+    "ollama": (),
+    "openrouter": (),
+    "nvidia": (),
 }
 
 # How long a built provider is reused before the configuration is re-read.
@@ -90,7 +85,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         base_url: str | None = None,
         model: str | None = None,
     ):
-        self.model = model or EMBEDDING_MODELS["ollama"][0]
+        self.model = model or ""
         self._dims = CANONICAL_DIMENSIONS
         self.base_url = (base_url or "http://localhost:11434").rstrip("/")
         # Ollama needs no key; a configured one is accepted and ignored.
@@ -119,7 +114,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     def __init__(self, api_key: str | None = None, model: str | None = None):
-        self.model = model or EMBEDDING_MODELS["openai"][0]
+        self.model = model or ""
         self._dims = CANONICAL_DIMENSIONS
         self._api_key = api_key
 
@@ -157,7 +152,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
     """Gemini embeddings (gemini-embedding-001, truncated to the canonical width)."""
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
-        self.model = model or EMBEDDING_MODELS["gemini"][0]
+        self.model = model or ""
         self._dims = CANONICAL_DIMENSIONS
         self._api_key = api_key
 
@@ -255,7 +250,7 @@ class OpenRouterEmbeddingProvider(OpenAICompatibleEmbeddingProvider):
             api_key=api_key,
             model=model,
             base_url=base_url,
-            default_model=EMBEDDING_MODELS["openrouter"][0],
+            default_model="",
             default_base_url="https://openrouter.ai/api/v1",
         )
 
@@ -268,7 +263,7 @@ class NvidiaEmbeddingProvider(OpenAICompatibleEmbeddingProvider):
             api_key=api_key,
             model=model,
             base_url=base_url,
-            default_model=EMBEDDING_MODELS["nvidia"][0],
+            default_model="",
             default_base_url="https://integrate.api.nvidia.com/v1",
         )
 
@@ -641,7 +636,9 @@ async def list_available_models(provider: str, api_key: str | None = None, base_
                 data = resp.json()
                 models = [m.get("id", "") for m in data.get("data", [])]
                 embed = [m for m in models if "embed" in m.lower() or "bge" in m.lower() or "e5" in m.lower()]
-                return embed if embed else models[:20]
+                # Only return actual embedding models — never fall back to
+                # text-generation models, which would not work for embeddings.
+                return embed
         except Exception:
             return list(EMBEDDING_MODELS.get(provider, ()))
 
@@ -677,7 +674,7 @@ async def test_embedding_provider(
             if config is None:
                 config = {
                     "provider": provider,
-                    "model": EMBEDDING_MODELS[provider][0],
+                    "model": EMBEDDING_MODELS[provider][0] if EMBEDDING_MODELS[provider] else "",
                     "has_key": False,
                     "enabled": True,
                     "active": False,
