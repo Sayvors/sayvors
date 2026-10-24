@@ -166,6 +166,29 @@ class JobRunner:
                     await db.commit()
                 return
 
+        # Provider rate-limit pacer: if the provider is cooled down, move
+        # the job to blocked instead of burning an attempt.
+        _PROVIDER_MAP = {
+            "post.publish": "localith",
+            "post.delete": "localith",
+            "media.publish": "localith",
+            "meta.send_reply": "meta",
+            "meta.send_template": "meta",
+        }
+        provider = _PROVIDER_MAP.get(job.job_type)
+        if provider:
+            from .pacer import is_cooled_down
+
+            cooldown = await is_cooled_down(provider)
+            if cooldown > 0:
+                async with async_session() as db:
+                    db_job = await self._get_job_for_update(db, job.id, job.tenant_id)
+                    if db_job:
+                        await block_job(db, job=db_job, release_at=datetime.now(timezone.utc) + timedelta(seconds=cooldown))
+                        await db.commit()
+                logger.info("Job %s blocked: provider %s cooled down for %ds", job.id, provider, cooldown)
+                return
+
         # 1. Write the external intent durably BEFORE the external call.
         #    This is the crash-recovery record: if the worker dies
         #    mid-call, the intent is on disk and the lease expires, so

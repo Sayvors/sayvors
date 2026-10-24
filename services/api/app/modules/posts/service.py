@@ -420,6 +420,51 @@ async def _publish_post_inner(
     }
 
 
+async def submit_publish_job(
+    db: AsyncSession, tenant_id: str, post_id: str
+) -> Job:
+    """Submit a post.publish job instead of publishing inline.
+
+    Returns the Job row. The caller commits the session. The handler
+    does the actual publishing in the publishing lane.
+    """
+    from ...modules.jobs.service import submit_job
+    from ...modules.jobs.types import JobType
+
+    post = await _owned_post(db, tenant_id, post_id)
+    if post is None:
+        raise ValueError("Post not found")
+    if post.status not in PUBLISHABLE_FROM:
+        raise ValueError(f"Cannot publish a {post.status} post.")
+
+    payload = {
+        "post_id": post.id,
+        "tenant_id": tenant_id,
+        "listing_id": post.listing_id,
+        "title": post.title,
+        "content": post.content,
+        "media_url": post.media_url,
+        "scheduled_at": post.scheduled_on.isoformat() if post.scheduled_on else None,
+    }
+
+    job = await submit_job(
+        db,
+        tenant_id=tenant_id,
+        job_type=JobType.post_publish.value,
+        payload=payload,
+        lane="publishing",
+        priority=40,
+        max_attempts=5,
+        subject_type="location_post",
+        subject_id=post.id,
+        lane_key=str(post.listing_id or post.id),
+    )
+
+    post.status = "scheduled"
+    db.add(post)
+
+    return job
+
 def _register_publish_failure(post: LocationPost, error: str) -> None:
     """Retry-then-park: stay scheduled with backoff until MAX_PUBLISH_ATTEMPTS,
     then park as failed for the manual Retry button. Non-scheduled rows

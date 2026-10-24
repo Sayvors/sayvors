@@ -99,6 +99,7 @@ async def _amain() -> None:
     from ..modules.jobs.runner import JobRunner
     from ..modules.localith.worker import run_localith_sync_worker
     from ..modules.posts.worker import run_post_publish_worker
+    from ..modules.rag import jobs as rag_jobs
     from ..modules.redis.client import run_redis_rearmer
     from ..modules.kafka.client import run_kafka_rearmer
 
@@ -129,6 +130,9 @@ async def _amain() -> None:
         "meta-events-ai-replies": run_meta_events_worker,
         "lead-actions": run_lead_action_worker,
     }
+    # RAG ingest worker (was lazily started from request handlers).
+    loops["rag-ingest"] = rag_jobs.start_worker
+
     # Job queue lanes — only start the requested lanes.
     if "realtime" in wanted_lanes:
         loops["job-runner-realtime"] = lambda: JobRunner(lane="realtime").start()

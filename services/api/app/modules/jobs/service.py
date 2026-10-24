@@ -166,6 +166,16 @@ async def claim_due_jobs(
     # (LEAST(next_run_at, hard_deadline_at)): a job scheduled far out but
     # with a nearer deadline becomes due AT the deadline, so a backlog after
     # an outage is worked through in order instead of bursting at once.
+    #
+    # Priority aging: effective_priority = max(1, priority - age_minutes).
+    # Without aging, a steady stream of priority-0 realtime work starves
+    # bulk jobs forever. Age is minutes since created_at.
+    from sqlalchemy import case, func
+
+    age_minutes = func.extract("epoch", func.now() - Job.created_at) / 60.0
+    effective_priority = Job.priority - func.cast(age_minutes, Integer)
+    order_expr = case((effective_priority < 1, 1), else_=effective_priority)
+
     result = await db.execute(
         select(Job)
         .where(
@@ -177,7 +187,7 @@ async def claim_due_jobs(
                 & (Job.hard_deadline_at <= now)
             ),
         )
-        .order_by(Job.priority, Job.next_run_at, Job.created_at)
+        .order_by(order_expr, Job.next_run_at, Job.created_at)
         .with_for_update(skip_locked=True)
         .limit(limit)
     )
