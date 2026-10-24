@@ -514,3 +514,4 @@ async def get_messaging_overview(
         },
         "channels": channel_rows,
         "by_hour_in": by_hour_in,
+    }
