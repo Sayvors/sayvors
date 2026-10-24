@@ -123,16 +123,13 @@ export default function AdminEmbeddingsPage() {
         return next;
       });
       setError(null);
-      // Fetch available models for each provider
-      for (const p of overview.providers) {
-        fetchModels(p.provider, undefined, p.base_url ?? undefined);
-      }
+      // Don't auto-fetch models here — user clicks refresh per provider
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed.");
     } finally {
       setLoading(false);
     }
-  }, [fetchModels]);
+  }, []); // No dependencies — load only runs on mount
 
   useEffect(() => {
     let cancelled = false;
