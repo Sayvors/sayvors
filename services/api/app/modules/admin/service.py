@@ -286,7 +286,7 @@ async def _check_redis() -> str:
 async def _check_kafka() -> str:
     from ..kafka import client as kafka_client
 
-    if not kafka_client._kafka_available:
+    if not kafka_client.is_kafka_available():
         raise RuntimeError("producer not connected (outbox fallback active)")
     return "producer connected"
 

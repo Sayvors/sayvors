@@ -63,8 +63,8 @@ class OutboxWorker:
                     last_cleanup = now
 
                 # If Kafka is down, periodically try to reconnect
-                from ..kafka.client import _kafka_available
-                if not _kafka_available and now - last_kafka_check > KAFKA_RETRY_INTERVAL:
+                from ..kafka.client import is_kafka_available
+                if not is_kafka_available() and now - last_kafka_check > KAFKA_RETRY_INTERVAL:
                     last_kafka_check = now
                     try:
                         from ..kafka.client import get_kafka_producer, mark_kafka_available

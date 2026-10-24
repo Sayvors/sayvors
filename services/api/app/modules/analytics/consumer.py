@@ -368,12 +368,19 @@ async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> 
 async def _process_message(value: bytes | None) -> None:
     if value is None:
         return
-    try:
-        event = json.loads(value.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.warning("Discarding malformed event: %s", e)
+    # The consumer's value_deserializer already parses JSON into a dict.
+    # Handle both raw bytes and pre-parsed dicts for robustness.
+    if isinstance(value, dict):
+        event = value
+    elif isinstance(value, (bytes, bytearray, str)):
+        try:
+            event = json.loads(value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else value)
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+            logger.warning("Discarding malformed event: %s", e)
+            return
+    else:
+        logger.warning("Unexpected event value type: %s", type(value))
         return
-
     event_type = event.get("event_type", "")
     payload = event.get("payload", event)
     try:
@@ -455,7 +462,7 @@ async def run_analytics_consumer() -> None:
     while True:
         consumer = None
         try:
-            if not kafka_client._kafka_available:
+            if not kafka_client.is_kafka_available():
                 if not fallback_logged:
                     logger.info(
                         "Kafka unavailable — analytics consumer draining review events from the DB outbox"
@@ -478,7 +485,8 @@ async def run_analytics_consumer() -> None:
             if consumer:
                 await consumer.stop()
             raise
-        except Exception:
+        except Exception as _e:
+            logger.exception("Analytics consumer error: %s", _e)
             # Connection failed — flip the flag so the outbox fallback kicks
             # in until the outbox worker's reconnect loop restores Kafka.
             if not fallback_logged:

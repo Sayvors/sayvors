@@ -1848,12 +1848,19 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
 async def _process_message(value: bytes | None) -> None:
     if value is None:
         return
-    try:
-        event = json.loads(value.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.warning("Discarding malformed meta event: %s", e)
+    # The consumer's value_deserializer already parses JSON into a dict.
+    # Handle both raw bytes and pre-parsed dicts for robustness.
+    if isinstance(value, dict):
+        event = value
+    elif isinstance(value, (bytes, bytearray, str)):
+        try:
+            event = json.loads(value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else value)
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+            logger.warning("Discarding malformed event: %s", e)
+            return
+    else:
+        logger.warning("Unexpected event value type: %s", type(value))
         return
-
     # The outbox worker sends the normalized envelope raw; accept the wrapped
     # {"event_type": "meta...", "payload": envelope} shape defensively too.
     if event.get("event_type", "").startswith("meta."):
@@ -1956,7 +1963,7 @@ async def run_meta_events_consumer() -> None:
     while True:
         consumer = None
         try:
-            if not kafka_client._kafka_available:
+            if not kafka_client.is_kafka_available():
                 if not fallback_logged:
                     logger.info(
                         "Kafka unavailable — meta consumer draining events from the DB outbox"
