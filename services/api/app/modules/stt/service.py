@@ -28,7 +28,7 @@ async def create_stt_job(body: STTRequest, user: User, db: AsyncSession) -> STTJ
     db.add(job)
     await db.flush()
 
-    await submit_job(
+    unified = await submit_job(
         db,
         tenant_id=tenant_id_of(user),
         job_type=JobType.stt_job.value,
@@ -37,6 +37,8 @@ async def create_stt_job(body: STTRequest, user: User, db: AsyncSession) -> STTJ
         subject_type="stt_job",
         subject_id=job.id,
     )
+    job.job_id = unified.id
+    db.add(job)
     await db.commit()
     await db.refresh(job)
     return job

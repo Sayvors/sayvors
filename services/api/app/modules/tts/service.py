@@ -39,7 +39,7 @@ async def create_tts_job(
     db.add(job)
     await db.flush()
 
-    await submit_job(
+    unified = await submit_job(
         db,
         tenant_id=user.id,
         job_type=JobType.tts_job.value,
@@ -48,6 +48,8 @@ async def create_tts_job(
         subject_type="tts_job",
         subject_id=job.id,
     )
+    job.job_id = unified.id
+    db.add(job)
     await db.commit()
     await db.refresh(job)
     return job

@@ -309,12 +309,28 @@ async def process_pending(
         progress=0,
     )
     db.add(job)
+    await db.flush()
+
+    from ..jobs.service import submit_job
+    from ..jobs.types import JobType
+
+    unified = await submit_job(
+        db,
+        tenant_id=tenant_id_of(user),
+        job_type=JobType.rag_ingest.value,
+        payload={"ingest_job_id": job.id},
+        idempotency_key=f"rag-ingest:{job.id}",
+        subject_type="ingest_job",
+        subject_id=job.id,
+        lane_key=str(databank_id),
+    )
+    job.job_id = unified.id
+    db.add(job)
     await db.commit()
     await db.refresh(job)
 
-    from .jobs import enqueue_job, start_worker
+    from .jobs import start_worker
 
-    await enqueue_job(str(job.id))
     await start_worker()
 
     return job
@@ -338,12 +354,28 @@ async def process_document(doc_id: str, user: User, db: AsyncSession) -> IngestJ
         progress=0,
     )
     db.add(job)
+    await db.flush()
+
+    from ..jobs.service import submit_job
+    from ..jobs.types import JobType
+
+    unified = await submit_job(
+        db,
+        tenant_id=tenant_id_of(user),
+        job_type=JobType.rag_ingest.value,
+        payload={"ingest_job_id": job.id},
+        idempotency_key=f"rag-ingest:{job.id}",
+        subject_type="ingest_job",
+        subject_id=job.id,
+        lane_key=str(doc.databank_id),
+    )
+    job.job_id = unified.id
+    db.add(job)
     await db.commit()
     await db.refresh(job)
 
-    from .jobs import enqueue_job, start_worker
+    from .jobs import start_worker
 
-    await enqueue_job(str(job.id))
     await start_worker()
 
     return job
