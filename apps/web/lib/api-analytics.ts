@@ -440,6 +440,14 @@ export const fetchMessagingOverview = (
 ): Promise<MessagingOverview> =>
   apiFetch(`/api/v1/analytics/messaging/overview?${qs(days, channelId)}`);
 
+export const fetchConversationInsights = (): Promise<{
+  insights: Record<string, unknown>;
+  message_count: number;
+  window_start: string | null;
+  window_end: string | null;
+  computed_at: string | null;
+}> => apiFetch("/api/v1/analytics/conversations/insights");
+
 /* ── Benchmark pillar ─────────────────────────────────────────────── */
 
 export interface BenchmarkResponse {

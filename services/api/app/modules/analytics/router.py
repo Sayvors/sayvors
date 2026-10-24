@@ -216,6 +216,40 @@ async def get_messaging_overview(
     return await service.get_messaging_overview(db, uid, channel_id, days)
 
 
+@router.get("/conversations/insights")
+async def get_conversation_insights(
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stored conversation insights (what customers ask). Reads stored rows only.
+
+    Returns the latest insight row for the tenant, or an empty object when no
+    insights have been computed yet (worker hasn't run or there's no data).
+    """
+    from ..models import ConversationInsight
+    from sqlalchemy import select
+
+    uid = tenant_id_of(user)
+    row = (
+        await db.execute(
+            select(ConversationInsight)
+            .where(ConversationInsight.tenant_id == uid)
+            .order_by(ConversationInsight.window_end.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return {"insights": {}, "message_count": 0, "window_start": None, "window_end": None, "computed_at": None}
+    return {
+        "insights": row.insights or {},
+        "message_count": row.message_count,
+        "window_start": row.window_start.isoformat() if row.window_start else None,
+        "window_end": row.window_end.isoformat() if row.window_end else None,
+        "computed_at": row.computed_at.isoformat() if row.computed_at else None,
+    }
+
+
 @router.get("/timeseries", response_model=TimeseriesResponse)
 async def get_timeseries(
     channel_id: str | None = Query(None),

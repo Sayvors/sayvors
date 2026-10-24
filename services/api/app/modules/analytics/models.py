@@ -447,3 +447,21 @@ class SearchKeywordStat(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class ConversationInsight(Base):
+    __tablename__ = "conversation_insights"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "window_start", "window_end", name="uq_conversation_insights_tenant_window"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    window_start: Mapped[datetime] = mapped_column(Date, nullable=False)
+    window_end: Mapped[datetime] = mapped_column(Date, nullable=False)
+    insights: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
