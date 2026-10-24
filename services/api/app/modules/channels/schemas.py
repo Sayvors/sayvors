@@ -168,7 +168,7 @@ class AutoReplyConfigUpdate(BaseModel):
     edited_review_autopost: bool | None = Field(None, description="Auto-post the follow-up reply when a reviewer edits an already-answered review (still gated by approval_mode and min_rating_auto); default waits for approval")
     custom_instructions: str | None = Field(None, max_length=2000, description="Brand voice / house rules injected into every reply prompt; empty to clear")
     dialect: str | None = Field(None, max_length=30, description="Arabic dialect catalog code or 'auto'")
-    reply_language: str | None = Field(None, pattern="^(match|en|ar)$", description="match = reply in the review's language; en/ar = force a language")
+    reply_language: str | None = Field(None, pattern="^(match|en|ar|ur|ur-Latn)$", description="match = reply in the review's language; en/ar/ur = force a language")
     promo_product_mentions: bool | None = Field(None, description="Allow promotional product mentions in replies")
     promo_links: bool | None = Field(None, description="Allow promotional links in replies")
     promo_only_relevant: bool | None = Field(None, description="Only promote when relevant to the review")

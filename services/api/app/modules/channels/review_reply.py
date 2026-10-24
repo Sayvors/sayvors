@@ -18,9 +18,19 @@ from .models import AutoReplyConfig
 
 logger = logging.getLogger(__name__)
 
-# Arabic-script characters (also covers Urdu, Persian) — mock replies match
-# the review language (Arabic review → Arabic reply).
-_ARABIC_SCRIPT = re.compile(r"[؀-ۿ]")
+# Language detection for link-line selection. Uses the shared detector so
+# Urdu (Arabic script) is not mistaken for Arabic.
+def _review_language(review_text: str | None) -> str:
+    try:
+        from app.core.language import detect_language
+        v = detect_language(review_text)
+        if v.confident:
+            return v.code
+    except Exception:
+        pass
+    if review_text and re.search(r"[\u0600-\u06FF]", review_text):
+        return "ar"
+    return "en"
 
 # The one line added to needs-attention replies: an invitation to continue
 # privately, with the wa.me deep link that prefills the handoff code. Both
@@ -29,8 +39,18 @@ _ARABIC_SCRIPT = re.compile(r"[؀-ۿ]")
 # appear).
 _HANDOFF_LINE_EN = "To sort this out quickly, message us on WhatsApp:"
 _HANDOFF_LINE_AR = "لحل الأمر سريعاً، راسلنا على واتساب:"
+_HANDOFF_LINE_UR = "اسے جلدی حل کرنے کے لیے، ہمیں واٹس ایپ پر پیغام بھیجیں:"
+_HANDOFF_LINE_UR_LATN = "Isay jaldi hal karne ke liye, humein WhatsApp par message bhejein:"
 _SALES_LINE_EN = "We can share the details privately on WhatsApp:"
 _SALES_LINE_AR = "يمكننا مشاركة التفاصيل على واتساب:"
+_SALES_LINE_UR = "ہم تفصیلات واٹس ایپ پر شیئر کر سکتے ہیں:"
+_SALES_LINE_UR_LATN = "Hum tafseelat WhatsApp par share kar sakte hain:"
+
+_LINK_LINES = {
+    "ar": (_HANDOFF_LINE_AR, _SALES_LINE_AR),
+    "ur": (_HANDOFF_LINE_UR, _SALES_LINE_UR),
+    "ur-Latn": (_HANDOFF_LINE_UR_LATN, _SALES_LINE_UR_LATN),
+}
 
 # Google caps the public review reply at 4000 characters. Engine replies
 # target <=90 words, so this is belt-and-braces — but the guard is one
@@ -95,11 +115,8 @@ async def _append_handoff_link(
         link = wa_me_link(number or "", code)
         if not link:
             return text
-        line = (
-            _HANDOFF_LINE_AR
-            if review_text and _ARABIC_SCRIPT.search(review_text)
-            else _HANDOFF_LINE_EN
-        )
+        lang = _review_language(review_text)
+        line = _LINK_LINES.get(lang, (_HANDOFF_LINE_EN, _SALES_LINE_EN))[0]
         addition = f"{line} {link}"
         if len(text) + len(addition) + 1 > _REPLY_MAX_CHARS:
             return text
@@ -151,7 +168,7 @@ async def _append_sales_link(
 
         commercial = bool(
             issue is not None
-            and issue.primary_category in {"information_inquiries", "pricing_promotions"}
+            and issue.primary_category == "pricing_promotions"
             and issue.intent in {"ask_question", "information_request"}
         )
         if issue is None:
@@ -167,11 +184,8 @@ async def _append_sales_link(
         if not number:
             return text
         link = f"https://wa.me/{number}"
-        line = (
-            _SALES_LINE_AR
-            if review_text and _ARABIC_SCRIPT.search(review_text)
-            else _SALES_LINE_EN
-        )
+        lang = _review_language(review_text)
+        line = _LINK_LINES.get(lang, (_HANDOFF_LINE_EN, _SALES_LINE_EN))[1]
         addition = f"{line} {link}"
         if len(text) + len(addition) + 1 > _REPLY_MAX_CHARS:
             return text
@@ -186,9 +200,14 @@ def _mock_reply(rating: int, review_text: str | None,
     """Canned, policy-safe replies for dev mock mode — no LLM call."""
     from ..review_engine.understanding import looks_like_question
 
-    lang = "ar" if review_text and _ARABIC_SCRIPT.search(review_text) else None
+    lang = _review_language(review_text)
     name = reviewer_name.split(" ")[0] if reviewer_name else "there"
     if looks_like_question(review_text):
+        if lang.startswith("ur"):
+            return (
+                f"سوال کا شکریہ {name}! ہم آپ کی مدد کے لیے حاضر ہیں، براہ کرم "
+                f"ہم سے رابطہ کریں تاکہ ہم آپ کو درست تفصیلات فراہم کر سکیں۔"
+            )
         if lang == "ar":
             return (
                 f"شكراً على سؤالك يا {name}! يسعدنا مساعدتك، وتواصل معنا مباشرة "
@@ -296,9 +315,16 @@ async def generate_auto_reply(
     with_handoff = await _append_handoff_link(
         cleaned, db, channel, review_id, review_text, config=config
     )
-    final_text = await _append_sales_link(
-        with_handoff, db, channel, review_id, review_text, config=config
-    )
+    # Sales links are a lead path, not a complaint handoff. Never attach one
+    # to an off-topic or needs-review reply, and only for pricing/purchase
+    # questions (the _append_sales_link guard enforces the category).
+    _off_topic = getattr(getattr(resp, "relevance", None), "verdict", None) == "off_topic"
+    if _off_topic:
+        final_text = with_handoff
+    else:
+        final_text = await _append_sales_link(
+            with_handoff, db, channel, review_id, review_text, config=config
+        )
     # Surface the engine's needs_review verdict so callers (e.g. the
     # reviews worker) can gate auto-posting on it.
     _validation = getattr(resp, "validation", None)

@@ -615,7 +615,7 @@ export default function SettingsPage() {
     const d = dialects.find((x) => x.code === code);
     return d ? `${d.dialect_ar} · ${d.dialect_en}` : code;
   };
-  const langName = replyLang === "en" ? "English" : replyLang === "ar" ? "Arabic" : "match review";
+  const langName = replyLang === "en" ? "English" : replyLang === "ar" ? "Arabic" : replyLang === "ur" ? "Urdu" : replyLang === "ur-Latn" ? "Roman Urdu" : "match review";
   const countryName = COUNTRIES.find((c) => c.code === savedCountry)?.name ?? savedCountry ?? "unset";
   const selectedName = channels.find((c) => c.id === selectedId)?.display_name ?? "location";
 
@@ -930,6 +930,8 @@ export default function SettingsPage() {
                       { id: "match", label: "Match the review", hint: "Arabic review → Arabic reply, English → English" },
                       { id: "en", label: "Always English", hint: "Every reply in English" },
                       { id: "ar", label: "Always Arabic", hint: "Every reply in Arabic" },
+{ id: "ur", label: "Always Urdu", hint: "Every reply in Urdu script" },
+{ id: "ur-Latn", label: "Always Roman Urdu", hint: "Every reply in Roman Urdu" },
                     ].map((l) => (
                       <label key={l.id} className="flex cursor-pointer items-start gap-2.5 rounded-[2px] border border-ink/[0.06] px-3 py-2 transition hover:border-deep-violet/25 dark:border-fog/[0.06]">
                         <input
@@ -949,7 +951,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <Field label="Arabic dialect" hint="used whenever a reply is written in Arabic" varies={bulk?.varies.has("dialect") ?? false}>
-                  <select value={dialect} onChange={(e) => setDialect(e.target.value)} disabled={busy !== null} className={selectCls}>
+                  <select value={dialect} onChange={(e) => setDialect(e.target.value)} disabled={busy !== null || replyLang === "en" || replyLang === "ur" || replyLang === "ur-Latn"} className={selectCls}>
                     <option value="auto">Auto — match the review</option>
                     {dialects
                       .filter((d) => d.code !== "auto")

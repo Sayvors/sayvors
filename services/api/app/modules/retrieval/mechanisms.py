@@ -365,9 +365,9 @@ async def identity_block(db, tenant_id: str | None,
 
 
 def _words(text: str) -> list[str]:
-    import re
+    from app.core.text import tokens
 
-    return [w for w in re.findall(r"[a-z0-9]{2,}", (text or "").lower())]
+    return tokens(text, min_len=2)
 
 
 async def domain_vocabulary(db, tenant_id: str,

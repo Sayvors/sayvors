@@ -422,8 +422,52 @@ async def process_review(
     # Assessed after retrieval so databank hits corroborate relevance.
     # Complaint topics count too: "cold food" fires without a product ref.
     domain = await resolve_business_domain(req.channel_id, tenant_id, db)
+    det_verdict = assess_relevance(req.review_text, analysis, domain, issues)
+    # Cross-language fallback: when the deterministic check is uncertain and
+    # the review mentions a concrete product in a different script than the
+    # business domain, ask the LLM (with the tenant's business context) to
+    # judge relevance. This preserves the original entity text and tenant
+    # context rather than relying on English translation.
+    try:
+        from app.core.language import detect_language, has_arabic_script
+        from app.modules.review_engine.relevance import judge_relevance_llm
+
+        product_ref = (getattr(analysis, "product_reference", None) or "").strip()
+        domain_terms = (domain or {}).get("terms") or []
+        scripts_differ = False
+        if product_ref and domain_terms:
+            prod_script = detect_language(product_ref).script
+            # Domain is mostly Latin (business_type etc.) unless it has Arabic script.
+            domain_script = "arabic" if any(
+                has_arabic_script(t) for t in domain_terms
+            ) else "latin"
+            scripts_differ = prod_script != domain_script
+        if (
+            det_verdict.get("verdict") == "uncertain"
+            and product_ref
+            and scripts_differ
+            and business_context
+            and model
+        ):
+            judged = await judge_relevance_llm(
+                review_text=req.review_text,
+                product_reference=product_ref,
+                business_context=business_context,
+                model=model,
+                tenant_id=tenant_id,
+                channel_id=req.channel_id,
+            )
+            if judged.get("verdict") in ("on_topic", "off_topic"):
+                det_verdict = {
+                    **det_verdict,
+                    "verdict": judged["verdict"],
+                    "reason": judged.get("reason", det_verdict.get("reason", "")),
+                }
+    except Exception as e:
+        logger.debug("Relevance judge skipped: %s", e)
+
     relevance = RelevanceVerdict(**apply_retrieval_corroboration(
-        assess_relevance(req.review_text, analysis, domain, issues), has_product_data))
+        det_verdict, has_product_data))
     if relevance.verdict == "off_topic":
         logger.info("Review flagged off-topic: %s", relevance.reason)
 
@@ -508,6 +552,9 @@ async def process_review(
             tier=tier, business_context=business_context,
             has_offer_data=has_offer_data, rating=req.rating,
             promo_max_ctas=promo_cap,
+            reply_language=prefs.get("reply_language"),
+            relevance_verdict=relevance.verdict,
+            off_topic_product=analysis.product_reference,
         )
 
         if validation.passed:
@@ -745,6 +792,9 @@ async def process_review_stream(
             tier=tier, business_context=business_context,
             has_offer_data=has_offer_data, rating=req.rating,
             promo_max_ctas=promo_cap,
+            reply_language=prefs.get("reply_language"),
+            relevance_verdict=relevance.verdict,
+            off_topic_product=analysis.product_reference,
         )
         yield {"step": "fulfillment", "message": f"Validation attempt {iteration + 1}: {'passed' if validation.passed else 'failed'}.",
                 "fulfillment": [f.model_dump() for f in validation.strategy_fulfillment],

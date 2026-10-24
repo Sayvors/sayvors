@@ -787,7 +787,7 @@ async def test_append_adds_generic_sales_link_for_a_question(
 
     await _issue(
         db, channel_id, user_id,
-        primary_category="information_inquiries",
+        primary_category="pricing_promotions",
         intent="ask_question",
         sentiment="positive",
         priority="low",
@@ -980,7 +980,7 @@ async def test_generate_auto_reply_appends_generic_sales_link(
     await db.commit()
     await _issue(
         db, ch_id, user_id,
-        primary_category="information_inquiries",
+        primary_category="pricing_promotions",
         intent="ask_question",
         sentiment="positive",
         priority="low",

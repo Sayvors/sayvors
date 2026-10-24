@@ -36,6 +36,7 @@ def _salvage_response_text(raw: str) -> str:
 _LANGUAGE_NAMES = {
     "ar": "Arabic",
     "ur": "Urdu",
+    "ur-Latn": "Urdu (Roman)",
     "es": "Spanish",
     "fr": "French",
     "de": "German",
@@ -203,7 +204,15 @@ async def generate_response(
                 "Avoid generic filler such as نعتذر عن أي إزعاج when the review states a "
                 "specific problem."
             )
-        if dialect:
+        if eff.startswith("ur"):
+            user_parts.append(
+                "URDU CUSTOMER CARE (binding): natural, everyday Urdu. Use آپ and common "
+                "Urdu words. Avoid Hindi/Sanskritized vocabulary and unnecessary English "
+                "code-switching. If the review is Roman Urdu, reply in Roman Urdu; "
+                "otherwise reply in Urdu script. Keep the same warm, simple tone."
+            )
+        # Dialect instructions apply to Arabic only.
+        if eff == "ar" and dialect:
             examples = " / ".join(dialect.get("examples", [])[:4])
             user_parts.append(
                 f"DIALECT (binding): write in {dialect.get('dialect_en')} "
