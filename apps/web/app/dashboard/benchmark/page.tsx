@@ -188,6 +188,36 @@ export default function BenchmarkPage() {
             </section>
           )}
 
+          {/* Industry benchmark bands */}
+          {benchmark && (
+            <section aria-label="Industry benchmarks" className="ui-card p-5">
+              <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">You vs. the market</h3>
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Industry medians from published studies.</p>
+              <ul className="mt-4 divide-y divide-[var(--ui-line)]">
+                {[
+                  { label: "Review response rate", you: benchmark.current_response_rate, unit: "%", median: 75.5, good: 90 },
+                  { label: "Average rating", you: benchmark.current_avg_rating, unit: "★", median: 4.3, good: 4.7 },
+                ].map((b) => {
+                  const you = b.you ?? 0;
+                  const status = you >= b.good ? "Excellent" : you >= b.median ? "On par" : "Below median";
+                  const statusCls = you >= b.good ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : you >= b.median ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]";
+                  return (
+                    <li key={b.label} className="flex items-center gap-3 py-3 first:pt-1 last:pb-1">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12.5px] font-semibold text-[var(--ui-ink)]">{b.label}</p>
+                        <p className="mt-0.5 text-[10.5px] text-[var(--ui-ink-2)]">Market median {b.median}{b.unit} · Good = {b.good}{b.unit}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{typeof you === "number" ? you.toFixed(1) : "—"}{b.unit}</p>
+                        <span className={`mt-1 inline-block rounded-[2px] px-2 py-0.5 text-[10px] font-bold ${statusCls}`}>{status}</span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+
           {/* Metric focus filter */}
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison metric">
             {(Object.keys(FOCUS_META) as MetricFocus[]).map((f) => (
