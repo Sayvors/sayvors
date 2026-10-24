@@ -91,6 +91,7 @@ async def _amain() -> None:
     from ..modules.analytics.performance import run_performance_sync_worker
     from ..modules.analytics.insights_worker import run_conversation_insights_worker
     from ..modules.analytics.market_benchmarks_worker import run_market_benchmarks_worker
+    from ..modules.analytics.follower_snapshot_worker import run_follower_snapshot_worker
     from ..modules.channels.meta.meta_events_worker import run_meta_events_worker
     from ..modules.channels.meta.lead_action_worker import run_lead_action_worker
     from ..modules.channels.meta.digest_worker import run_lead_digest_sweeps
@@ -131,6 +132,7 @@ async def _amain() -> None:
         "messaging-rollup": run_messaging_rollup_worker,
         "conversation-insights": run_conversation_insights_worker,
         "market-benchmarks": run_market_benchmarks_worker,
+        "follower-snapshot": run_follower_snapshot_worker,
         "meta-events-ai-replies": run_meta_events_worker,
         "lead-actions": run_lead_action_worker,
     }

@@ -291,6 +291,7 @@ async def lifespan(app: FastAPI):
         from .modules.analytics.performance import run_performance_sync_worker
         from .modules.analytics.insights_worker import run_conversation_insights_worker
         from .modules.analytics.market_benchmarks_worker import run_market_benchmarks_worker
+        from .modules.analytics.follower_snapshot_worker import run_follower_snapshot_worker
         from .modules.channels.meta.meta_events_worker import run_meta_events_worker
         from .modules.channels.meta.lead_action_worker import run_lead_action_worker
         from .modules.billing.ledger import run_hold_reaper
@@ -305,6 +306,7 @@ async def lifespan(app: FastAPI):
         bg_tasks.append(asyncio.create_task(run_messaging_rollup_worker()))
         bg_tasks.append(asyncio.create_task(run_conversation_insights_worker()))
         bg_tasks.append(asyncio.create_task(run_market_benchmarks_worker()))
+        bg_tasks.append(asyncio.create_task(run_follower_snapshot_worker()))
         bg_tasks.append(asyncio.create_task(run_meta_events_worker()))
         bg_tasks.append(asyncio.create_task(run_lead_action_worker()))
 
