@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     DB_POOL_TIMEOUT_SECONDS: int = 30
     DB_STATEMENT_TIMEOUT_MS: int = 30000  # 30s — kills runaway queries
     DB_IDLE_IN_TX_TIMEOUT_MS: int = 60000  # 60s — kills stuck transactions
+    # A query waiting on a row lock is holding a pool connection the whole
+    # time. At 1M tenants the hot rows (wallet, jobs, thread counters) are
+    # contended, so fail the wait fast and let the caller retry instead of
+    # pinning a connection for the full statement timeout.
+    DB_LOCK_TIMEOUT_MS: int = 5000  # 5s
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_EXPIRATION_MINUTES: int = 15

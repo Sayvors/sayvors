@@ -155,7 +155,11 @@ class ScrapeJob(Base):
     __tablename__ = "scrape_jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    databank_id: Mapped[str] = mapped_column(String(36), ForeignKey("databanks.id"))
+    # Postgres does not index a foreign key automatically. Without this,
+    # deleting a databank (or listing its jobs) scans the whole table.
+    databank_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("databanks.id"), index=True
+    )
     user_id: Mapped[str] = mapped_column(String(36))
     # Link to the unified jobs table. NULL for rows created before migration.
     job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
@@ -180,11 +184,15 @@ class IngestJob(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), index=True)
-    databank_id: Mapped[str] = mapped_column(String(36), ForeignKey("databanks.id"))
+    # Indexed: both are FK columns, and a databank/document delete would
+    # otherwise scan every ingest job. Postgres indexes only the PK.
+    databank_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("databanks.id"), index=True
+    )
     # Link to the unified jobs table. NULL for rows created before migration.
     job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     document_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("documents.id"), nullable=True
+        String(36), ForeignKey("documents.id"), nullable=True, index=True
     )
     job_type: Mapped[str] = mapped_column(
         Enum("upload", "scrape", "reembed", "reindex", name="ingest_job_type")

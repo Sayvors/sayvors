@@ -83,6 +83,11 @@ class ChannelMessage(Base):
         # Inbox GROUP BY on (contact_phone_hash, channel_id) + ORDER BY
         # max(created_at) — composite index avoids full table scan.
         Index("ix_channel_messages_inbox", "channel_id", "contact_phone_hash", "created_at"),
+        # Newest-first scan of a whole channel. The two indexes above put
+        # contact_phone(_hash) before created_at, so neither can satisfy
+        # `WHERE channel_id = ? ORDER BY created_at DESC LIMIT n` without a
+        # sort. Search uses exactly that shape, per channel, on every query.
+        Index("ix_channel_messages_channel_created", "channel_id", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

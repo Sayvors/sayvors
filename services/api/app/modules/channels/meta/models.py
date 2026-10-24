@@ -78,8 +78,11 @@ class MetaAsset(Base):
         index=True,
     )
     external_asset_id: Mapped[str] = mapped_column(String(100), index=True)
+    # Self-referencing FK: indexed so cascading a WABA delete does not scan
+    # every asset row (Postgres indexes primary keys, not foreign keys).
     parent_asset_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("meta_assets.id", ondelete="SET NULL"), nullable=True
+        String(36), ForeignKey("meta_assets.id", ondelete="SET NULL"),
+        nullable=True, index=True,
     )
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -127,6 +130,10 @@ class MetaWebhookEvent(Base):
             name="uq_meta_webhook_events_dedupe",
         ),
         Index("ix_meta_webhook_tenant", "tenant_id"),
+        # Retention sweeps terminal rows by status and age. Without this the
+        # hourly DELETE walks the whole webhook ledger (millions of rows at
+        # scale) to find the few it is allowed to remove.
+        Index("ix_meta_webhook_events_status_created", "status", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

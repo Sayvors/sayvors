@@ -27,6 +27,7 @@ engine = create_async_engine(
         "server_settings": {
             "statement_timeout": str(settings.DB_STATEMENT_TIMEOUT_MS),
             "idle_in_transaction_session_timeout": str(settings.DB_IDLE_IN_TX_TIMEOUT_MS),
+            "lock_timeout": str(settings.DB_LOCK_TIMEOUT_MS),
         }
     },
 )
@@ -47,6 +48,7 @@ engine_read = create_async_engine(
         "server_settings": {
             "statement_timeout": str(settings.DB_STATEMENT_TIMEOUT_MS),
             "idle_in_transaction_session_timeout": str(settings.DB_IDLE_IN_TX_TIMEOUT_MS),
+            "lock_timeout": str(settings.DB_LOCK_TIMEOUT_MS),
         }
     },
 )

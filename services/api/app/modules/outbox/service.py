@@ -19,6 +19,14 @@ BASE_BACKOFF_SECONDS = 2
 MAX_BACKOFF_SECONDS = 300
 # Cleanup: delete sent events older than this
 SENT_RETENTION_HOURS = 24
+# Dead events are the terminal failure record: kept longer than sent rows so
+# an operator can still inspect what failed, but not forever. Without this
+# window the dispatch log grows for every event that ever exhausted retries.
+DEAD_RETENTION_DAYS = 30
+# Delete in bounded batches. One unbounded DELETE on a large outbox holds
+# locks for the whole statement; the sweep walks it in small transactions.
+OUTBOX_DELETE_BATCH = 2000
+OUTBOX_MAX_BATCHES = 10
 
 
 async def enqueue_event(
@@ -192,20 +200,43 @@ async def mark_failed(event_id: str, error: str) -> None:
         await db.commit()
 
 
-async def cleanup_sent_events() -> int:
-    """Delete sent events older than retention period. Returns count deleted."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=SENT_RETENTION_HOURS)
-    async with async_session() as db:
-        from sqlalchemy import delete
+async def cleanup_outbox_events() -> int:
+    """Delete terminal outbox events older than their retention window.
 
-        result = await db.execute(
-            delete(EventOutbox).where(
-                EventOutbox.status == "sent",
-                EventOutbox.created_at < cutoff,
-            )
-        )
-        await db.commit()
-        return result.rowcount
+    Sent rows are dispatch history and go after a day; dead rows are the
+    failure record and are kept for a month. Pending and failed rows are
+    still deliverable work and are never touched. Deletes are batched so a
+    large backlog cannot hold row locks for one long statement.
+    """
+    from sqlalchemy import delete
+
+    now = datetime.now(timezone.utc)
+    windows = (
+        (["sent"], now - timedelta(hours=SENT_RETENTION_HOURS)),
+        (["dead"], now - timedelta(days=DEAD_RETENTION_DAYS)),
+    )
+    deleted = 0
+    async with async_session() as db:
+        for statuses, cutoff in windows:
+            for _ in range(OUTBOX_MAX_BATCHES):
+                batch_ids = (
+                    select(EventOutbox.id)
+                    .where(
+                        EventOutbox.status.in_(statuses),
+                        EventOutbox.created_at < cutoff,
+                    )
+                    .limit(OUTBOX_DELETE_BATCH)
+                )
+                result = await db.execute(
+                    delete(EventOutbox).where(EventOutbox.id.in_(batch_ids))
+                )
+                await db.commit()
+                if not result.rowcount:
+                    break
+                deleted += result.rowcount
+                if result.rowcount < OUTBOX_DELETE_BATCH:
+                    break
+    return deleted
 
 
 async def get_outbox_stats() -> dict:

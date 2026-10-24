@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import Request
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,7 +15,7 @@ from ...core.crypto import encrypt_secret as _encrypt_secret
 from ...core.crypto import get_fernet as _get_fernet
 from ..team.context import tenant_id_of
 from ..users.models import User
-from .models import Channel, ChannelMessage
+from .models import Channel, ChannelMessage, ChannelThread, ContactProfile
 from . import thread_maintenance  # noqa: F401  registers event listeners
 from .schemas import ChannelCreate, ChannelMessageSend
 
@@ -540,9 +540,196 @@ async def handle_webhook(
 
 UNKNOWN_THREAD_KEY = "unknown"
 
+# Message content is encrypted at rest (SEC-M2), so Postgres cannot index it
+# or answer a LIKE against it. Search therefore decrypts a bounded window of
+# the newest messages instead of the tenant's whole history: one keystroke
+# must never become a full-table scan of a multi-year archive. 5,000 rows is
+# a few MB of ciphertext and tens of milliseconds of AES per request.
+INBOX_SEARCH_MESSAGE_LIMIT = 5000
+# Per-channel slice of that budget. One channel gets the whole window; many
+# channels each get a fair share so one busy number cannot starve the rest.
+# The slice is derived from the total (never a fixed floor) so a tenant with
+# thousands of channels still fetches at most INBOX_SEARCH_MESSAGE_LIMIT rows.
+# The page size is at most 100; a search for a common word can match
+# thousands of threads. Cap the keys we ask Postgres to resolve.
+INBOX_SEARCH_MAX_THREADS = 500
+# One-character queries match nearly everything. Treat them as "no filter"
+# rather than letting them drive the bounded scan.
+INBOX_SEARCH_MIN_QUERY_CHARS = 2
+# Pre-backfill fallback only (no channel_threads rows exist yet). Bounded so
+# a tenant whose summary rows are missing cannot make one inbox load read
+# the entire message table.
+INBOX_FALLBACK_MESSAGE_LIMIT = 5000
+
 
 def thread_key(contact_phone: str | None) -> str:
     return contact_phone or UNKNOWN_THREAD_KEY
+
+
+def _as_utc(value: datetime | None) -> datetime:
+    """Normalise SQLite's naive datetimes so Python-side sorts never mix
+    aware and naive values."""
+    if value is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+async def _thread_profiles(
+    db: AsyncSession,
+    tenant_id: str,
+    threads: list[ChannelThread],
+    by_id: dict[str, Channel],
+) -> dict:
+    """Load cached contact profiles for a page of threads in one query."""
+    profile_keys = {
+        (by_id[t.channel_id].platform, decrypt_contact_phone(t.contact_phone))
+        for t in threads
+        if t.contact_phone is not None and t.channel_id in by_id
+    }
+    if not profile_keys:
+        return {}
+    rows = (
+        await db.execute(
+            select(ContactProfile).where(
+                ContactProfile.tenant_id == tenant_id,
+                # Match the exact (platform, contact) pairs. Two separate IN
+                # clauses would also fetch the cross-product pairs.
+                tuple_(
+                    ContactProfile.platform, ContactProfile.contact_id
+                ).in_(profile_keys),
+            )
+        )
+    ).scalars().all()
+    return {(r.platform, r.contact_id): r for r in rows}
+
+
+def _thread_payloads(
+    threads: list[ChannelThread],
+    by_id: dict[str, Channel],
+    profiles: dict,
+) -> list[dict]:
+    """Serialise thread rows for the inbox response."""
+    out: list[dict] = []
+    for t in threads:
+        ch = by_id.get(t.channel_id)
+        if ch is None:
+            continue
+        phone = t.contact_phone
+        decrypted_phone = decrypt_contact_phone(phone) if phone is not None else None
+        profile = (
+            profiles.get((ch.platform, decrypted_phone))
+            if decrypted_phone is not None
+            else None
+        )
+        name = t.contact_name
+        if profile is not None and profile.name:
+            name = profile.name
+        decrypted_last = (
+            decrypt_message_content(t.last_message_preview)
+            if t.last_message_preview
+            else ""
+        )
+        category = t.category or "normal"
+        priority = t.priority or "normal"
+        out.append(
+            {
+                "key": thread_key(decrypted_phone),
+                "contact_phone": decrypted_phone,
+                "display_name": name or decrypted_phone,
+                "username": profile.username if profile else None,
+                "avatar_url": profile.avatar_url if profile else None,
+                "channel_id": t.channel_id,
+                "channel_name": ch.display_name,
+                "platform": ch.platform,
+                "last_message": (decrypted_last or "")[:280],
+                "last_message_at": t.last_message_at.isoformat() if t.last_message_at else None,
+                "last_direction": t.last_direction,
+                "message_count": int(t.total_count or 0),
+                "unread": 0 if phone is None else int(t.unread_count or 0),
+                "is_unknown": phone is None,
+                "category": category,
+                "priority": priority,
+                "important": is_important(priority, category),
+                "can_reply": ch.platform != "google_reviews" and phone is not None,
+            }
+        )
+    return out
+
+
+async def _search_threads(
+    db: AsyncSession,
+    channel_ids: list[str],
+    needle: str,
+    limit: int,
+    cursor: str | None,
+) -> list[ChannelThread]:
+    """Find threads whose *recent* messages contain ``needle``.
+
+    The scan is deliberately bounded (see the constants above). It reads the
+    newest slice of each channel, decrypts it, keeps the first
+    ``INBOX_SEARCH_MAX_THREADS`` matches, then resolves those keys against
+    the denormalized thread table so counts and ordering stay authoritative.
+    """
+    total_budget = INBOX_SEARCH_MESSAGE_LIMIT
+    # At least one row per channel so every channel is represented, but the
+    # sum across channels never exceeds the total budget.
+    per_channel = max(1, total_budget // len(channel_ids))
+
+    scanned: list = []
+    for channel_id in channel_ids:
+        rows = (
+            await db.execute(
+                select(
+                    ChannelMessage.channel_id,
+                    ChannelMessage.contact_phone_hash,
+                    ChannelMessage.content,
+                    ChannelMessage.created_at,
+                )
+                .where(ChannelMessage.channel_id == channel_id)
+                .order_by(ChannelMessage.created_at.desc())
+                .limit(per_channel)
+            )
+        ).all()
+        scanned.extend(rows)
+
+    scanned.sort(key=lambda r: _as_utc(r.created_at), reverse=True)
+    del scanned[total_budget:]
+
+    matched: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in scanned:
+        text = decrypt_message_content(row.content) or ""
+        if needle not in text.lower():
+            continue
+        key = (row.channel_id, row.contact_phone_hash or "__unknown__")
+        if key in seen:
+            continue
+        seen.add(key)
+        matched.append(key)
+        if len(matched) >= INBOX_SEARCH_MAX_THREADS:
+            break
+    if not matched:
+        return []
+
+    stmt = (
+        select(ChannelThread)
+        .where(
+            tuple_(
+                ChannelThread.channel_id, ChannelThread.contact_phone_hash
+            ).in_(matched)
+        )
+        .order_by(ChannelThread.last_message_at.desc())
+        .limit(limit)
+    )
+    if cursor:
+        try:
+            cursor_dt = datetime.fromisoformat(cursor)
+            if cursor_dt.tzinfo is None:
+                cursor_dt = cursor_dt.replace(tzinfo=timezone.utc)
+            stmt = stmt.where(ChannelThread.last_message_at < cursor_dt)
+        except (ValueError, TypeError):
+            pass
+    return list((await db.execute(stmt)).scalars().all())
 
 
 async def list_inbox_threads(
@@ -598,19 +785,23 @@ async def list_inbox_threads(
     by_id = {c.id: c for c in channels}
 
     needle = search.strip().lower() if search and search.strip() else None
+    if needle and len(needle) < INBOX_SEARCH_MIN_QUERY_CHARS:
+        # A one-character query matches almost everything; show the normal
+        # inbox instead of spending the bounded scan on it.
+        needle = None
 
     # Fallback: if no thread rows exist yet (pre-backfill), use the old
-    # GROUP BY approach so the inbox is never empty.
-    from .models import ContactProfile, ChannelThread
+    # GROUP BY approach so the inbox is never empty. EXISTS stops at the
+    # first row; COUNT(*) would scan every thread a large tenant has on
+    # every inbox load just to answer a yes/no question.
+    has_threads = (await db.execute(
+        select(ChannelThread.id)
+        .where(ChannelThread.channel_id.in_(channel_ids))
+        .limit(1)
+    )).scalar_one_or_none() is not None
 
-    thread_count = (await db.execute(
-        select(func.count()).select_from(ChannelThread).where(
-            ChannelThread.channel_id.in_(channel_ids)
-        )
-    )).scalar() or 0
-
-    if thread_count == 0 or needle:
-        # --- Legacy path: GROUP BY + full message load ---
+    if not has_threads:
+        # --- Legacy fallback: GROUP BY (pre-backfill only) ---
         stmt = (
             select(
                 ChannelMessage.contact_phone_hash,
@@ -636,11 +827,16 @@ async def list_inbox_threads(
         if not summaries:
             return []
 
+        # Bounded on purpose: this path only runs before the channel_threads
+        # backfill, but a missing backfill must not turn one dashboard load
+        # into a full-history read. Newest messages win; older threads are
+        # still reachable once the backfill runs.
         all_msgs = (
             await db.execute(
                 select(ChannelMessage)
                 .where(ChannelMessage.channel_id.in_(channel_ids))
                 .order_by(ChannelMessage.created_at.desc())
+                .limit(INBOX_FALLBACK_MESSAGE_LIMIT)
             )
         ).scalars().all()
 
@@ -733,6 +929,14 @@ async def list_inbox_threads(
             )
         return out
 
+    # --- Search path: bounded recent-message scan + thread table lookup ---
+    if needle:
+        threads = await _search_threads(db, channel_ids, needle, limit, cursor)
+        if not threads:
+            return []
+        profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
+        return _thread_payloads(threads, by_id, profiles)
+
     # --- Fast path: read from denormalized thread table (1 query) ---
     t_stmt = (
         select(ChannelThread)
@@ -753,64 +957,8 @@ async def list_inbox_threads(
     if not threads:
         return []
 
-    profile_keys = {
-        (by_id[t.channel_id].platform, decrypt_contact_phone(t.contact_phone))
-        for t in threads
-        if t.contact_phone is not None
-    }
-    profiles: dict = {}
-    if profile_keys:
-        rows = (
-            await db.execute(
-                select(ContactProfile).where(
-                    ContactProfile.tenant_id == tenant_id_of(user),
-                    ContactProfile.platform.in_({p for p, _ in profile_keys}),
-                    ContactProfile.contact_id.in_({c for _, c in profile_keys}),
-                )
-            )
-        ).scalars().all()
-        profiles = {(r.platform, r.contact_id): r for r in rows}
-
-    out: list[dict] = []
-    for t in threads:
-        ch = by_id.get(t.channel_id)
-        if ch is None:
-            continue
-        phone = t.contact_phone
-        decrypted_phone = decrypt_contact_phone(phone) if phone is not None else None
-        profile = (
-            profiles.get((ch.platform, decrypted_phone)) if decrypted_phone is not None else None
-        )
-        name = t.contact_name
-        if profile is not None and profile.name:
-            name = profile.name
-        decrypted_last = decrypt_message_content(t.last_message_preview) if t.last_message_preview else ""
-        category = t.category or "normal"
-        priority = t.priority or "normal"
-        platform = ch.platform
-        out.append(
-            {
-                "key": thread_key(decrypted_phone),
-                "contact_phone": decrypted_phone,
-                "display_name": name or decrypted_phone,
-                "username": profile.username if profile else None,
-                "avatar_url": profile.avatar_url if profile else None,
-                "channel_id": t.channel_id,
-                "channel_name": ch.display_name,
-                "platform": platform,
-                "last_message": (decrypted_last or "")[:280],
-                "last_message_at": t.last_message_at.isoformat() if t.last_message_at else None,
-                "last_direction": t.last_direction,
-                "message_count": int(t.total_count or 0),
-                "unread": 0 if phone is None else int(t.unread_count or 0),
-                "is_unknown": phone is None,
-                "category": category,
-                "priority": priority,
-                "important": is_important(priority, category),
-                "can_reply": platform != "google_reviews" and phone is not None,
-            }
-        )
-    return out
+    profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
+    return _thread_payloads(threads, by_id, profiles)
 
 
 async def list_thread_messages(

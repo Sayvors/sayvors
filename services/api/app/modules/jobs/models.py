@@ -115,6 +115,10 @@ class Job(Base):
         Index("ix_jobs_due", "status", "next_run_at"),
         Index("ix_jobs_lane_due", "lane", "status", "next_run_at"),
         Index("ix_jobs_lease", "status", "lease_expires_at"),
+        # Retention deletes terminal rows by status + created_at. The claim
+        # indexes above are ordered by next_run_at, so they cannot serve the
+        # sweep — it would scan the whole jobs table every hour.
+        Index("ix_jobs_status_created", "status", "created_at"),
     )
 
 

@@ -15,7 +15,7 @@ mirroring the existing event architecture in `modules/outbox`.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -37,6 +37,10 @@ class ReviewInsight(Base):
     __tablename__ = "review_insights"
     __table_args__ = (
         UniqueConstraint("channel_id", "review_id", name="uq_review_insights_channel_review"),
+        # The reviews page filters by tenant and orders by created_at desc.
+        # The single-column user_id index forces a sort of every review the
+        # tenant has; this one returns the page already ordered.
+        Index("ix_review_insights_user_created", "user_id", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -253,6 +257,10 @@ class LocationDailyMetric(Base):
     __tablename__ = "location_daily_metrics"
     __table_args__ = (
         UniqueConstraint("channel_id", "date", name="uq_location_daily_channel_date"),
+        # Analytics reads a tenant's date range and orders by date. Two
+        # single-column indexes force Postgres to choose one and sort the
+        # result; this composite serves the filter and the ORDER BY.
+        Index("ix_location_daily_metrics_user_date", "user_id", "date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -312,6 +320,9 @@ class ChannelDailyMetric(Base):
     __tablename__ = "channel_daily_metrics"
     __table_args__ = (
         UniqueConstraint("channel_id", "date", name="uq_channel_daily_channel_date"),
+        # Same shape as location_daily_metrics: tenant + date range, ordered
+        # by date. Keeps growth/messaging analytics off a sort of every row.
+        Index("ix_channel_daily_metrics_user_date", "user_id", "date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -429,6 +440,9 @@ class SearchKeywordStat(Base):
     __tablename__ = "search_keyword_stats"
     __table_args__ = (
         UniqueConstraint("channel_id", "keyword", "date", name="uq_keyword_channel_day"),
+        # Keyword reports query one tenant over a date range and group by
+        # keyword; the composite keeps the range scan inside the tenant.
+        Index("ix_search_keyword_stats_user_date", "user_id", "date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

@@ -16,14 +16,15 @@ from .models import ChannelMessage
 
 logger = logging.getLogger(__name__)
 
-PREVIEW_LEN = 280
-
 
 def _upsert_thread(mapper, connection: Connection, target: ChannelMessage) -> None:
     """Upsert the thread summary for ``target``'s (channel, contact)."""
     now = datetime.now(timezone.utc)
     created_at = target.created_at or now
-    preview = (target.content or "")[:PREVIEW_LEN]
+    # ``content`` is Fernet ciphertext at rest. Truncating it here would
+    # corrupt the token and the read path would show base64 instead of the
+    # message. Keep the full token; the inbox truncates the decrypted text.
+    preview = target.content or ""
     is_inbound = target.direction == "inbound"
 
     # Unread logic: inbound after last outbound resets to 0 on outbound.
@@ -61,7 +62,13 @@ def _upsert_thread(mapper, connection: Connection, target: ChannelMessage) -> No
                     WHEN EXCLUDED.last_message_at >= COALESCE(channel_threads.last_message_at, EXCLUDED.last_message_at)
                     THEN EXCLUDED.last_message_preview ELSE channel_threads.last_message_preview END,
                 total_count = channel_threads.total_count + 1,
-                unread_count = 0,
+                -- Only a *newest* outbound marks the thread read. A delayed
+                -- or backfilled send whose created_at is older than the
+                -- latest inbound must not clear messages that arrived after
+                -- it in real time.
+                unread_count = CASE
+                    WHEN EXCLUDED.last_message_at >= COALESCE(channel_threads.last_message_at, EXCLUDED.last_message_at)
+                    THEN 0 ELSE channel_threads.unread_count END,
                 category = COALESCE(EXCLUDED.category, channel_threads.category),
                 priority = COALESCE(EXCLUDED.priority, channel_threads.priority),
                 updated_at = :now
@@ -94,7 +101,13 @@ def _upsert_thread(mapper, connection: Connection, target: ChannelMessage) -> No
                     WHEN EXCLUDED.last_message_at >= COALESCE(channel_threads.last_message_at, EXCLUDED.last_message_at)
                     THEN EXCLUDED.last_message_preview ELSE channel_threads.last_message_preview END,
                 total_count = channel_threads.total_count + 1,
-                unread_count = channel_threads.unread_count + 1,
+                -- Same rule for inbound: an older backfilled message was
+                -- already answered by the time it is inserted, so it must
+                -- not add an unread count on top of the newer exchange.
+                unread_count = CASE
+                    WHEN EXCLUDED.last_message_at >= COALESCE(channel_threads.last_message_at, EXCLUDED.last_message_at)
+                    THEN channel_threads.unread_count + 1
+                    ELSE channel_threads.unread_count END,
                 category = COALESCE(EXCLUDED.category, channel_threads.category),
                 priority = COALESCE(EXCLUDED.priority, channel_threads.priority),
                 updated_at = :now
@@ -121,7 +134,17 @@ def _upsert_thread(mapper, connection: Connection, target: ChannelMessage) -> No
     try:
         connection.execute(sql, params)
     except Exception as exc:
-        logger.warning("thread maintenance failed for %s: %s", target.id, exc)
+        # Best-effort by design: a summary-table failure must not drop the
+        # customer message that triggered it. The error is loud and names the
+        # repair tool, because a swallowed warning here becomes permanent
+        # inbox drift that no later read can detect.
+        logger.error(
+            "channel_threads upsert failed for message %s (channel %s): %s. "
+            "Run scripts/rebuild_channel_threads.py to repair the summary.",
+            target.id,
+            target.channel_id,
+            exc,
+        )
 
 
 def register_listeners() -> None:

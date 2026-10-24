@@ -1,16 +1,27 @@
 """Retention cleanup for unbounded tables.
 
-Runs as part of the outbox worker's hourly cleanup cycle. Each function
-deletes rows older than the configured retention period and returns the
-count deleted. Failures are logged but never break the cleanup loop.
+Runs as part of the outbox worker's hourly cleanup cycle. Each sweep deletes
+rows older than the configured retention period and returns the count
+deleted. Failures are logged but never break the cleanup loop.
+
+Every delete is batched. One unbounded ``DELETE`` on a table with millions of
+rows holds row locks for the whole statement, bloats the WAL, and can stall
+writes for minutes — exactly when a big backlog exists and cleanup matters
+most. The sweep walks the table in bounded chunks instead and gives up after
+a fixed number of chunks so one run cannot monopolise the worker; the next
+hourly run continues where this one stopped.
+
+Only terminal rows are ever touched. A queued, running or retrying job, an
+unread notification, or a webhook event still being processed is live data,
+not history.
 """
 import logging
 from datetime import datetime, timedelta, timezone
 
-from ..config import settings
+from sqlalchemy import delete, select
+
 from ..database import async_session
 from .channels.meta.models import MetaWebhookEvent
-from .channels.models import ChannelMessage
 from .jobs.models import Job
 from .llm.models import LLMUsageEvent
 from .notifications.models import Notification
@@ -29,60 +40,69 @@ JOB_RETENTION_DAYS = 30
 # Failed and dead jobs are what an operator reads when something went wrong,
 # so they are kept three times longer than the successful ones.
 JOB_FAILURE_RETENTION_DAYS = 90
-# Rows deleted per statement. One unbounded DELETE on a large table holds a
-# lock for a long time, so the sweep walks in batches.
-JOB_DELETE_BATCH = 2000
-# Upper bound on batches per window per run, so a huge backlog is worked
+# Rows deleted per statement. A batch small enough to keep each transaction
+# short and its lock footprint tiny.
+DELETE_BATCH_SIZE = 2000
+# Upper bound on batches per table per run, so a huge backlog is worked
 # through over several runs instead of one long transaction.
-JOB_MAX_BATCHES = 20
-# channel_messages: keep all (conversation history). Prune only if needed.
+MAX_BATCHES_PER_RUN = 20
+
+
+async def _batched_delete(db, model, *conditions) -> int:
+    """Delete ``model`` rows matching ``conditions`` in bounded batches.
+
+    Uses ``DELETE ... WHERE id IN (SELECT id ... LIMIT n)`` rather than an
+    unbounded ``DELETE`` so each statement only locks the rows it removes.
+    Returns the number of rows deleted in this run.
+    """
+    deleted = 0
+    for _ in range(MAX_BATCHES_PER_RUN):
+        batch_ids = select(model.id).where(*conditions).limit(DELETE_BATCH_SIZE)
+        result = await db.execute(delete(model).where(model.id.in_(batch_ids)))
+        await db.commit()
+        if not result.rowcount:
+            break
+        deleted += result.rowcount
+        # A short batch means the backlog is drained; no point paying for
+        # another round trip just to discover the next SELECT is empty.
+        if result.rowcount < DELETE_BATCH_SIZE:
+            break
+    return deleted
 
 
 async def cleanup_webhook_events() -> int:
     """Delete processed/rejected webhook events older than retention period."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=WEBHOOK_EVENT_RETENTION_DAYS)
     async with async_session() as db:
-        from sqlalchemy import delete
-
-        result = await db.execute(
-            delete(MetaWebhookEvent).where(
-                MetaWebhookEvent.created_at < cutoff,
-                MetaWebhookEvent.status.in_(["processed", "duplicate", "rejected"]),
-            )
+        return await _batched_delete(
+            db,
+            MetaWebhookEvent,
+            MetaWebhookEvent.created_at < cutoff,
+            MetaWebhookEvent.status.in_(["processed", "duplicate", "rejected"]),
         )
-        await db.commit()
-        return result.rowcount
 
 
 async def cleanup_notifications() -> int:
     """Delete read notifications older than retention period."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=NOTIFICATION_RETENTION_DAYS)
     async with async_session() as db:
-        from sqlalchemy import delete
-
-        result = await db.execute(
-            delete(Notification).where(
-                Notification.created_at < cutoff,
-                Notification.read_at.is_not(None),
-            )
+        return await _batched_delete(
+            db,
+            Notification,
+            Notification.created_at < cutoff,
+            Notification.read_at.is_not(None),
         )
-        await db.commit()
-        return result.rowcount
 
 
 async def cleanup_usage_events() -> int:
     """Delete usage events older than retention period."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=USAGE_EVENT_RETENTION_DAYS)
     async with async_session() as db:
-        from sqlalchemy import delete
-
-        result = await db.execute(
-            delete(LLMUsageEvent).where(
-                LLMUsageEvent.created_at < cutoff,
-            )
+        return await _batched_delete(
+            db,
+            LLMUsageEvent,
+            LLMUsageEvent.created_at < cutoff,
         )
-        await db.commit()
-        return result.rowcount
 
 
 async def cleanup_jobs() -> int:
@@ -100,26 +120,13 @@ async def cleanup_jobs() -> int:
     )
     deleted = 0
     async with async_session() as db:
-        from sqlalchemy import delete, select
-
         for statuses, cutoff in windows:
-            for _ in range(JOB_MAX_BATCHES):
-                result = await db.execute(
-                    delete(Job).where(
-                        Job.id.in_(
-                            select(Job.id)
-                            .where(
-                                Job.status.in_(statuses),
-                                Job.created_at < cutoff,
-                            )
-                            .limit(JOB_DELETE_BATCH)
-                        )
-                    )
-                )
-                await db.commit()
-                if not result.rowcount:
-                    break
-                deleted += result.rowcount
+            deleted += await _batched_delete(
+                db,
+                Job,
+                Job.status.in_(statuses),
+                Job.created_at < cutoff,
+            )
     return deleted
 
 

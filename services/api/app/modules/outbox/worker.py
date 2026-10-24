@@ -50,10 +50,10 @@ class OutboxWorker:
 
                 # Periodic cleanup of old sent events + retention for growing tables
                 if now - last_cleanup > CLEANUP_INTERVAL:
-                    from .service import cleanup_sent_events
-                    deleted = await cleanup_sent_events()
+                    from .service import cleanup_outbox_events
+                    deleted = await cleanup_outbox_events()
                     if deleted:
-                        logger.info("Outbox cleanup: deleted %d sent events", deleted)
+                        logger.info("Outbox cleanup: deleted %d terminal events", deleted)
                     # Retention: prune old rows from unbounded tables
                     from ..retention import cleanup_all
                     counts = await cleanup_all()

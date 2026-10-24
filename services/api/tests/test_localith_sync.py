@@ -21,6 +21,7 @@ import pytest
 from integrations.channels import embedsocial
 from app.modules.localith import service
 from app.modules.localith import worker as localith_worker
+from app.modules.outbox import service as outbox_service
 
 
 def _listing_payload():
@@ -506,15 +507,15 @@ async def test_autopilot_auto_posts_high_and_queues_low(db, user_id, channel_id,
 
     monkeypatch.setattr(service, "post_reply", _post)
 
-    # enqueue_event writes to the REAL Postgres outbox via its own global
-    # session (not the test engine) — keep the test hermetic.
+    # The sync writes through the transactional outbox helper, imported
+    # inside the function, so the patch targets the source module.
     events = []
 
-    async def _fake_enqueue(event_type, payload, topic="review-events"):
+    async def _fake_enqueue_in(db_, event_type, payload, topic="review-events"):
         events.append((event_type, payload.get("review_id")))
         return "evt"
 
-    monkeypatch.setattr(service, "enqueue_event", _fake_enqueue)
+    monkeypatch.setattr(outbox_service, "enqueue_event_in", _fake_enqueue_in)
 
     totals = await service.sync_connection(SimpleNamespace(id=user_id), db)
 

@@ -258,6 +258,71 @@ async def test_search_filters_threads_by_message_text(db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_long_message_preview_decrypts_and_truncates(db, user_id):
+    """The thread preview is encrypted like the message body. Truncating the
+    ciphertext at insert time corrupts it for long messages; the read path
+    must decrypt first and then cut to 280 characters."""
+    ch, _ = _channel(db, user_id)
+    long_text = "x" * 1000
+    await _msg(db, ch.id, phone="966500000001", content=long_text, minutes_ago=1)
+    await db.commit()
+
+    threads = await channels.list_inbox_threads(db=db, user=_user(user_id))
+    t = next(x for x in threads if x["contact_phone"] == "966500000001")
+    assert t["last_message"] == long_text[:280]
+
+
+@pytest.mark.asyncio
+async def test_late_outbound_does_not_mark_newer_inbound_read(db, user_id):
+    """A delayed or backfilled outbound message is older than the inbound
+    messages already waiting. It must not reset unread to zero just because
+    it was inserted last."""
+    ch, _ = _channel(db, user_id)
+    await _msg(db, ch.id, phone="966500000001", content="q1", minutes_ago=30)
+    await _msg(db, ch.id, phone="966500000001", content="q2", minutes_ago=10)
+    await _msg(
+        db, ch.id, phone="966500000001", content="late reply",
+        minutes_ago=60, direction="outbound", status="read",
+    )
+    await db.commit()
+
+    threads = await channels.list_inbox_threads(db=db, user=_user(user_id))
+    t = next(x for x in threads if x["contact_phone"] == "966500000001")
+    assert t["unread"] == 2
+
+
+@pytest.mark.asyncio
+async def test_search_scans_only_a_bounded_recent_window(db, user_id, monkeypatch):
+    """Message bodies are encrypted, so search decrypts a recent window
+    instead of the whole archive. The window is a hard bound: an old match
+    outside it is not returned, and the query never loads all history."""
+    monkeypatch.setattr(channels, "INBOX_SEARCH_MESSAGE_LIMIT", 2)
+    ch, _ = _channel(db, user_id)
+    await _msg(db, ch.id, phone="966500000001", content="ancient order", minutes_ago=100)
+    await _msg(db, ch.id, phone="966500000002", content="recent hello", minutes_ago=5)
+    await _msg(db, ch.id, phone="966500000003", content="newest note", minutes_ago=1)
+    await db.commit()
+
+    u = _user(user_id)
+    assert await channels.list_inbox_threads(u, db, search="order") == []
+    hits = await channels.list_inbox_threads(u, db, search="hello")
+    assert [t["contact_phone"] for t in hits] == ["966500000002"]
+
+
+@pytest.mark.asyncio
+async def test_single_character_search_does_not_trigger_a_scan(db, user_id, monkeypatch):
+    """A one-character query matches nearly everything. It is treated as
+    "no filter" so it cannot be used to drive the bounded scan."""
+    monkeypatch.setattr(channels, "INBOX_SEARCH_MESSAGE_LIMIT", 0)
+    ch, _ = _channel(db, user_id)
+    await _msg(db, ch.id, phone="966500000001", content="anything", minutes_ago=1)
+    await db.commit()
+
+    hits = await channels.list_inbox_threads(_user(user_id), db, search="a")
+    assert [t["contact_phone"] for t in hits] == ["966500000001"]
+
+
+@pytest.mark.asyncio
 async def test_threads_are_scoped_to_owner(db, user_id, other_user_id):
     ch, _ = _channel(db, user_id)
     await _msg(db, ch.id, phone="966500000001", content="mine")

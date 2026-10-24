@@ -70,7 +70,11 @@ class TTSJob(Base):
     # Link to the unified jobs table. NULL for rows created before migration.
     job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     text: Mapped[str] = mapped_column(Text)
-    voice_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("voices.id"), nullable=True)
+    # Indexed so deleting a voice does not scan every TTS job (Postgres
+    # indexes primary keys, not foreign keys).
+    voice_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("voices.id"), nullable=True, index=True
+    )
     language: Mapped[str] = mapped_column(String(10), default="en")
     speed: Mapped[float] = mapped_column(default=1.0)
     status: Mapped[str] = mapped_column(

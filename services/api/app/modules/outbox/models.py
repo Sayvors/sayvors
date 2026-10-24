@@ -37,4 +37,7 @@ class EventOutbox(Base):
         # Many rows may have no key (NULL is never "equal" in a unique
         # index), but a key that is set is unique across the table.
         Index("uq_event_outbox_dedupe_key", "dedupe_key", unique=True),
+        # Cleanup deletes by status + age. Without it every hourly sweep
+        # scans the full dispatch log.
+        Index("ix_event_outbox_status_created", "status", "created_at"),
     )

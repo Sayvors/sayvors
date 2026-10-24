@@ -181,8 +181,13 @@ def test_admin_prefix_belongs_only_to_admin_router():
         if name.endswith("_router") and hasattr(obj, "prefix")
     }
     assert routers, "expected mounted routers"
+    # Both routers are admin-only surfaces: every route on each carries
+    # Depends(require_admin), which test_every_admin_route_requires_admin
+    # verifies route by route. The rule below is about tenant routers that
+    # must never be mounted under the admin prefix.
+    admin_routers = {"admin_router", "jobs_admin_router"}
     for name, router in routers.items():
-        if name == "admin_router":
+        if name in admin_routers:
             assert router.prefix == "/api/v1/admin"
         else:
             assert not str(router.prefix).startswith("/api/v1/admin"), name
