@@ -54,6 +54,97 @@ def _delta(cur: int, prev: int) -> float | None:
     return round(((cur - prev) / prev) * 100.0, 1)
 
 
+async def get_messaging_growth(
+    db: AsyncSession,
+    user_id: str,
+    channel_id: str | None,
+    days: int,
+) -> dict:
+    """Messaging growth: new contacts, message volume, conversation trends.
+
+    Reads stored `channel_daily_metrics` rows only. Groups by week for
+    the customer-growth curve. Follower snapshots are returned as-is
+    (may be empty until the snapshot worker has run ~7 days).
+    """
+    today = datetime.now(timezone.utc).date()
+    cur_start = today - timedelta(days=days - 1)
+
+    filters = [ChannelDailyMetric.user_id == user_id, ChannelDailyMetric.date >= cur_start]
+    if channel_id:
+        filters.append(ChannelDailyMetric.channel_id == channel_id)
+
+    rows = (
+        await db.execute(
+            select(ChannelDailyMetric).where(*filters).order_by(ChannelDailyMetric.date)
+        )
+    ).scalars().all()
+
+    # Group by ISO week for customer growth
+    weekly_contacts: dict[str, int] = {}
+    weekly_messages_in: dict[str, int] = {}
+    weekly_messages_out: dict[str, int] = {}
+    weekly_conversations: dict[str, int] = {}
+    follower_snapshots: list[dict] = []
+
+    for r in rows:
+        week_key = r.date.strftime("%Y-W%W")
+        weekly_contacts[week_key] = weekly_contacts.get(week_key, 0) + (r.contacts_new or 0)
+        weekly_messages_in[week_key] = weekly_messages_in.get(week_key, 0) + (r.messages_in or 0)
+        weekly_messages_out[week_key] = weekly_messages_out.get(week_key, 0) + (r.messages_out or 0)
+        weekly_conversations[week_key] = weekly_conversations.get(week_key, 0) + (r.conversations_in or 0)
+        if r.followers_count is not None:
+            follower_snapshots.append({"date": r.date.isoformat(), "count": r.followers_count})
+
+    # Sort weeks chronologically
+    sorted_weeks = sorted(weekly_contacts.keys())
+    customer_growth = [
+        {
+            "week": w,
+            "new_contacts": weekly_contacts.get(w, 0),
+            "messages_in": weekly_messages_in.get(w, 0),
+            "messages_out": weekly_messages_out.get(w, 0),
+            "conversations": weekly_conversations.get(w, 0),
+        }
+        for w in sorted_weeks
+    ]
+
+    # Follower growth: net change + rate %
+    follower_growth = None
+    if len(follower_snapshots) >= 2:
+        first = follower_snapshots[0]["count"]
+        last = follower_snapshots[-1]["count"]
+        net = last - first
+        rate = round((net / first) * 100, 1) if first > 0 else None
+        follower_growth = {
+            "first": first,
+            "last": last,
+            "net": net,
+            "rate_pct": rate,
+            "snapshots": follower_snapshots,
+            "collecting": False,
+        }
+    elif len(follower_snapshots) > 0:
+        follower_growth = {
+            "first": follower_snapshots[0]["count"],
+            "last": follower_snapshots[-1]["count"],
+            "net": 0,
+            "rate_pct": None,
+            "snapshots": follower_snapshots,
+            "collecting": True,
+        }
+
+    total_new_contacts = sum(weekly_contacts.values())
+    total_messages_in = sum(weekly_messages_in.values())
+    total_messages_out = sum(weekly_messages_out.values())
+
+    return {
+        "days": days,
+        "customer_growth": customer_growth,
+        "total_new_contacts": total_new_contacts,
+        "total_messages_in": total_messages_in,
+        "total_messages_out": total_messages_out,
+        "follower_growth": follower_growth,
+    }
 async def get_visibility(db: AsyncSession, user_id: str, channel_id: str | None, days: int = 30) -> dict:
     start, end, prev_start, prev_end = _prev_window(days)
     cur = await _totals(db, user_id, channel_id, start, end)

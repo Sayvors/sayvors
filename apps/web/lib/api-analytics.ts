@@ -440,6 +440,28 @@ export const fetchMessagingOverview = (
 ): Promise<MessagingOverview> =>
   apiFetch(`/api/v1/analytics/messaging/overview?${qs(days, channelId)}`);
 
+export type MessagingGrowthResponse = {
+  days: number;
+  customer_growth: { week: string; new_contacts: number; messages_in: number; messages_out: number; conversations: number }[];
+  total_new_contacts: number;
+  total_messages_in: number;
+  total_messages_out: number;
+  follower_growth: {
+    first: number;
+    last: number;
+    net: number;
+    rate_pct: number | null;
+    snapshots: { date: string; count: number }[];
+    collecting: boolean;
+  } | null;
+};
+
+export const fetchMessagingGrowth = (
+  days: number,
+  channelId?: string | null
+): Promise<MessagingGrowthResponse> =>
+  apiFetch(`/api/v1/analytics/messaging/growth?${qs(days, channelId)}`);
+
 export const fetchConversationInsights = (): Promise<{
   insights: Record<string, unknown>;
   message_count: number;

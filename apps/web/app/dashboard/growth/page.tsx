@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import {
   fetchAcquisition,
   fetchKeywords,
+  fetchMessagingGrowth,
   fetchOpportunities,
   fetchOverview,
   fetchTimeseries,
   fetchVisibility,
   type AcquisitionResponse,
   type KeywordsResponse,
+  type MessagingGrowthResponse,
   type OpportunitiesResponse,
   type Overview,
   type TimeseriesPoint,
@@ -184,6 +186,7 @@ export default function GrowthPage() {
   const [acquisition, setAcquisition] = useState<AcquisitionResponse | null>(null);
   const [opportunities, setOpportunities] = useState<OpportunitiesResponse | null>(null);
   const [keywords, setKeywords] = useState<KeywordsResponse | null>(null);
+  const [messagingGrowth, setMessagingGrowth] = useState<MessagingGrowthResponse | null>(null);
   const [granularity, setGranularity] = useState<"day" | "month">("day");
   const [trendMetric, setTrendMetric] = useState<"impressions" | "website" | "calls" | "directions">("impressions");
   const [points, setPoints] = useState<TimeseriesPoint[]>([]);
@@ -203,9 +206,10 @@ export default function GrowthPage() {
       fetchTimeseries(days, channelId),
       fetchKeywords(days, channelId).catch(() => null),
       fetchOverview(days, channelId).catch(() => null),
+      fetchMessagingGrowth(days, channelId).catch(() => null),
       apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
     ])
-      .then(([v, a, o, t, k, ov, prof]) => {
+      .then(([v, a, o, t, k, ov, mg, prof]) => {
         if (cancelled) return;
         setVisibility(v);
         setAcquisition(a);
@@ -213,6 +217,7 @@ export default function GrowthPage() {
         setPoints(t);
         setKeywords(k);
         setOverview(ov);
+        setMessagingGrowth(mg);
         setPresence(presencePerf(prof));
         setError(false);
         hasLoaded.current = true;
@@ -484,6 +489,64 @@ export default function GrowthPage() {
               </ol>
             )}
           </section>
+
+          {/* Messaging growth — customer growth from stored daily rollups */}
+          {messagingGrowth && (
+            <section aria-label="Messaging growth" className="ui-card p-5">
+              <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">Customer growth (messaging)</h3>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">New contacts</p>
+                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messagingGrowth.total_new_contacts}</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">unique contacts who messaged you</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Messages in</p>
+                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messagingGrowth.total_messages_in}</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">inbound messages</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Messages out</p>
+                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messagingGrowth.total_messages_out}</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">outbound replies</p>
+                </div>
+              </div>
+              {messagingGrowth.customer_growth.length > 0 && (
+                <div className="mt-5">
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">New contacts per week</p>
+                  <div className="flex items-end gap-2" style={{ height: 80 }}>
+                    {messagingGrowth.customer_growth.map((w) => {
+                      const max = Math.max(...messagingGrowth.customer_growth.map((x) => x.new_contacts), 1);
+                      const pct = (w.new_contacts / max) * 100;
+                      return (
+                        <div key={w.week} className="flex flex-1 flex-col items-center justify-end gap-1" title={`${w.week}: ${w.new_contacts} new contacts`}>
+                          <div className="w-full rounded-t-[2px] bg-[var(--ui-ink)] transition-all" style={{ height: `${Math.max(2, pct)}%` }} />
+                          <span className="text-[9px] tabular-nums text-[var(--ui-ink-2)]">{w.week.split("-W")[1]}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {messagingGrowth.follower_growth && (
+                <div className="mt-5 border-t border-[var(--ui-line)] pt-4">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Follower growth</p>
+                  {messagingGrowth.follower_growth.collecting ? (
+                    <p className="mt-2 text-[12px] text-[var(--ui-ink-2)]">Collecting history — need 7+ days of snapshots for a trend.</p>
+                  ) : (
+                    <div className="mt-2 flex items-baseline gap-4">
+                      <span className="text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
+                        {messagingGrowth.follower_growth.net >= 0 ? "+" : ""}{messagingGrowth.follower_growth.net}
+                      </span>
+                      <span className="text-[12px] text-[var(--ui-ink-2)]">
+                        {messagingGrowth.follower_growth.rate_pct !== null ? `${messagingGrowth.follower_growth.rate_pct}%` : "—"} change
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
         </div>
       )}
     </div>

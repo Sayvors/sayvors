@@ -608,6 +608,21 @@ async def get_acquisition(
     return await growth.get_acquisition(db, tenant_id_of(user), channel_id, days)
 
 
+@router.get("/messaging/growth")
+async def get_messaging_growth(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Messaging growth: new contacts, message volume, follower trends.
+
+    Reads stored `channel_daily_metrics` rows only.
+    """
+    return await growth.get_messaging_growth(db, tenant_id_of(user), channel_id, days)
+
+
 @router.get("/opportunities", response_model=OpportunitiesResponse)
 async def get_opportunities(
     channel_id: str | None = Query(None),
