@@ -7,6 +7,7 @@ import {
   fetchProducts,
   fetchTopics,
   fetchMessagingOverview,
+  fetchConversationInsights,
   type ProblemsResponse,
   type ProductsResponse,
   type TopicsResponse,
@@ -141,6 +142,7 @@ export default function InsightsPage() {
   const [problems, setProblems] = useState<ProblemsResponse | null>(null);
   const [products, setProducts] = useState<ProductsResponse | null>(null);
   const [messaging, setMessaging] = useState<MessagingOverview | null>(null);
+  const [conversationInsights, setConversationInsights] = useState<{ insights: Record<string, unknown>; message_count: number; computed_at: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -153,13 +155,15 @@ export default function InsightsPage() {
       fetchProblems(days, channelId),
       fetchProducts(days, channelId),
       fetchMessagingOverview(days, channelId),
+      fetchConversationInsights(),
     ])
-      .then(([t, p, pr, m]) => {
+      .then(([t, p, pr, m, ci]) => {
         if (cancelled) return;
         setTopics(t);
         setProblems(p);
         setProducts(pr);
         setMessaging(m);
+        setConversationInsights(ci);
         setError(false);
         hasLoaded.current = true;
       })
@@ -279,6 +283,37 @@ export default function InsightsPage() {
                   {messaging.totals.messages_in} inbound · {messaging.totals.conversations} conversations
                 </p>
               </div>
+            </div>
+          )}
+          {conversationInsights && conversationInsights.message_count > 0 && (
+            <div className="mb-6 ui-card p-5">
+              <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">What customers ask</h3>
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                Mined from {conversationInsights.message_count} inbound messages
+                {conversationInsights.computed_at ? ` · updated ${new Date(conversationInsights.computed_at).toLocaleDateString()}` : ""}
+              </p>
+              {Array.isArray((conversationInsights.insights as Record<string, unknown>)?.top_questions) && (
+                <ul className="mt-4 space-y-2">
+                  {((conversationInsights.insights as Record<string, unknown>).top_questions as { question: string; count: number }[]).slice(0, 5).map((q, i) => (
+                    <li key={i} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--ui-ink)]">{q.question}</span>
+                      <span className="shrink-0 rounded-[2px] bg-[var(--ui-sunken)] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[var(--ui-ink)]">{q.count}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {Array.isArray((conversationInsights.insights as Record<string, unknown>)?.intents) && (
+                <div className="mt-4 border-t border-[var(--ui-line)] pt-3">
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Intents</p>
+                  <div className="flex flex-wrap gap-2">
+                    {((conversationInsights.insights as Record<string, unknown>).intents as { intent: string; count: number }[]).slice(0, 6).map((intent, i) => (
+                      <span key={i} className="rounded-[2px] bg-[var(--ui-sunken)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-ink)]">
+                        {intent.intent} <span className="text-[var(--ui-ink-2)]">({intent.count})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {(() => {
