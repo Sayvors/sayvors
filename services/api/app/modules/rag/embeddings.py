@@ -60,9 +60,8 @@ _provider_loaded_at: float = 0.0
 
 class EmbeddingProvider(ABC):
     @abstractmethod
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], input_type: str = "query") -> list[list[float]]:
         ...
-
     @abstractmethod
     def dimensions(self) -> int:
         ...
@@ -94,7 +93,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
     def dimensions(self) -> int:
         return self._dims
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], input_type: str = "query") -> list[list[float]]:
         batch_size = 32
         all_embeddings: list[list[float]] = []
 
@@ -121,7 +120,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     def dimensions(self) -> int:
         return self._dims
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], input_type: str = "query") -> list[list[float]]:
         from openai import AsyncOpenAI
 
         from ..llm.providers.registry import resolve_provider_key
@@ -159,7 +158,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
     def dimensions(self) -> int:
         return self._dims
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], input_type: str = "query") -> list[list[float]]:
         from google import genai
 
         from ..llm.providers.registry import resolve_provider_key
@@ -207,7 +206,7 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
     def dimensions(self) -> int:
         return self._dims
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], input_type: str = "query") -> list[list[float]]:
         from openai import AsyncOpenAI
 
         from ..llm.providers.registry import resolve_provider_key
@@ -233,18 +232,17 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
         all_embeddings: list[list[float]] = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
+            kwargs: dict = {"model": self.model, "input": batch}
+            # NVIDIA asymmetric models require input_type
+            if "nvidia" in (self._base_url or ""):
+                kwargs["extra_body"] = {"input_type": input_type}
             try:
-                resp = await client.embeddings.create(
-                    model=self.model,
-                    input=batch,
-                    dimensions=self._dims,
-                )
+                resp = await client.embeddings.create(**kwargs, dimensions=self._dims)
             except Exception:
-                # Some models don't support the dimensions parameter
-                resp = await client.embeddings.create(
-                    model=self.model,
-                    input=batch,
-                )
+                try:
+                    resp = await client.embeddings.create(**kwargs)
+                except Exception:
+                    raise
             all_embeddings.extend([e.embedding for e in resp.data])
         return all_embeddings
 

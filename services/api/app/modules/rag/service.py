@@ -585,7 +585,7 @@ async def _embed_and_store(
                 idx = 0
                 for i in range(0, len(texts), batch_size):
                     batch = texts[i : i + batch_size]
-                    vectors = await provider.embed(batch)
+                    vectors = await provider.embed(batch, input_type="passage")
                     for v in vectors:
                         all_vectors[idx] = v
                         idx += 1
