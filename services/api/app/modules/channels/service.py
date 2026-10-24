@@ -364,6 +364,7 @@ async def send_message(
         contact_phone=encrypt_contact_phone(contact_phone),
         contact_phone_hash=hash_contact_phone(contact_phone),
         contact_name=body.contact_name or None,
+        handled_by="human",
     )
 
     try:

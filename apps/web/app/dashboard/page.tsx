@@ -313,7 +313,7 @@ function AttentionQueue() {
         if (typeof delta === "number" && delta < 0) {
           found.push({
             severity: "high",
-            title: `Rating dipped ${Math.abs(delta)}â˜… this month`,
+            title: `Rating dipped ${Math.abs(delta)}★ this month`,
             detail: "Check what changed and respond fast",
             href: "/dashboard/reviews",
           });
@@ -655,7 +655,7 @@ function AttentionQueue() {
                      return (
                        <div key={d.id} className="rounded-[2px] border border-ink/[0.06] dark:border-fog/[0.06] bg-white dark:bg-[#1d1636] p-3">
                          <div className="flex items-center gap-1.5 text-[11px] text-ink/50 dark:text-fog/50">
-                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"â˜…".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
                            <span className="truncate font-semibold text-ink dark:text-fog">{d.reviewer_name ?? "Anonymous"}</span>
                            <span className="rounded-[2px] bg-ink/[0.06] dark:bg-fog/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:text-fog/50">{locName}</span>
                          </div>
@@ -860,7 +860,7 @@ function AttentionQueue() {
                      return (
                        <div key={d.id} className="rounded-[2px] border border-ink/[0.06] dark:border-fog/[0.06] bg-white dark:bg-[#1d1636] p-3">
                          <div className="flex items-center gap-1.5 text-[11px] text-ink/50 dark:text-fog/50">
-                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"â˜…".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
                            <span className="truncate font-semibold text-ink dark:text-fog">{d.reviewer_name ?? "Anonymous"}</span>
                            <span className="rounded-[2px] bg-ink/[0.06] dark:bg-fog/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:text-fog/50">{locName}</span>
                          </div>
@@ -948,9 +948,9 @@ function AttentionQueue() {
                      return (
                        <div key={d.id} className="rounded-[2px] border border-ink/[0.06] dark:border-fog/[0.06] bg-white dark:bg-[#1d1636] p-3">
                          <div className="flex items-center gap-1.5 text-[11px] text-ink/50 dark:text-fog/50">
-                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"â˜…".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
                            {d.previous_rating != null && d.previous_rating !== d.rating && (
-                             <span aria-label={`was ${d.previous_rating} stars`} className="text-[10px] font-medium text-ink/40 dark:text-fog/40 line-through">{d.previous_rating}â˜…</span>
+                             <span aria-label={`was ${d.previous_rating} stars`} className="text-[10px] font-medium text-ink/40 dark:text-fog/40 line-through">{d.previous_rating}★</span>
                            )}
                            <span className="truncate font-semibold text-ink dark:text-fog">{d.reviewer_name ?? "Anonymous"}</span>
                            <span className="rounded-[2px] bg-ink/[0.06] dark:bg-fog/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:text-fog/50">{locName}</span>
@@ -1036,7 +1036,7 @@ function AttentionQueue() {
                      return (
                        <div key={d.review_id} className="rounded-[2px] border border-ink/[0.06] dark:border-fog/[0.06] bg-white dark:bg-[#1d1636] p-3">
                          <div className="flex items-center gap-1.5 text-[11px] text-ink/50 dark:text-fog/50">
-                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"â˜…".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
+                           <span aria-label={`${d.rating} out of 5 stars`} className="font-bold text-amber-600">{"★".repeat(Math.max(0, Math.min(5, d.rating)))}</span>
                            <span className="truncate font-semibold text-ink dark:text-fog">{d.reviewer_name ?? "Anonymous"}</span>
                            <span className="rounded-[2px] bg-ink/[0.06] dark:bg-fog/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:text-fog/50">{locName}</span>
                          </div>

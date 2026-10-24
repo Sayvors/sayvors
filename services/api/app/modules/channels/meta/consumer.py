@@ -793,6 +793,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     contact_phone=encrypt_contact_phone(from_wa or None),
                     contact_phone_hash=hash_contact_phone(from_wa or None),
                     is_ai=True,
+                    handled_by="ai",
                 )
                 db.add(row)
                 await db.commit()
@@ -919,6 +920,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             contact_phone=encrypt_contact_phone(from_wa or None),
                             contact_phone_hash=hash_contact_phone(from_wa or None),
                             is_ai=True,  # drives the escalation counter
+                            handled_by="ai",
                         )
                     db.add(row)
                     # The voice note is the remedy for the confusion that
@@ -1005,6 +1007,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         contact_phone=encrypt_contact_phone(from_wa or None),
                         contact_phone_hash=hash_contact_phone(from_wa or None),
                         is_ai=True,  # drives the escalation counter
+                        handled_by="ai",
                     )
                 db.add(row)
                 await db.commit()
@@ -1782,6 +1785,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 contact_phone=encrypt_contact_phone(igsid or None),
                 contact_phone_hash=hash_contact_phone(igsid or None),
                 is_ai=True,  # drives the escalation counter
+                handled_by="ai",
             )
             db.add(row)
             await db.commit()

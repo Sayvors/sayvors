@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-rag";
+import { fetchMessagingOverview, type MessagingOverview } from "@/lib/api-analytics";
 import { ChannelLogo } from "../ChannelLogos";
 
 interface AnalyticsTabProps {
@@ -7,111 +10,147 @@ interface AnalyticsTabProps {
   channelName: string;
 }
 
-const stats = [
-  { label: "Total Chats", value: "1,284", change: "+12.5%", up: true },
-  { label: "Leads Generated", value: "342", change: "+8.3%", up: true },
-  { label: "Tokens Used", value: "2.4M", change: "+15.2%", up: true },
-  { label: "Avg Response Time", value: "1.2s", change: "-18%", up: true },
-];
+interface ChannelRow {
+  id: string;
+  platform: string;
+}
 
-const weeklyData = [
-  { day: "Mon", chats: 45, leads: 12 },
-  { day: "Tue", chats: 62, leads: 18 },
-  { day: "Wed", chats: 38, leads: 9 },
-  { day: "Thu", chats: 75, leads: 22 },
-  { day: "Fri", chats: 88, leads: 28 },
-  { day: "Sat", chats: 52, leads: 15 },
-  { day: "Sun", chats: 35, leads: 8 },
-];
-
-const recentActivity = [
-  { time: "2m ago", event: "New lead captured", type: "lead" },
-  { time: "15m ago", event: "Conversation resolved", type: "resolved" },
-  { time: "32m ago", event: "Agent responded to inquiry", type: "agent" },
-  { time: "1h ago", event: "New follower acquired", type: "lead" },
-  { time: "2h ago", event: "Campaign click-through", type: "campaign" },
-];
+function fmtDuration(seconds: number | null): string {
+  if (seconds === null) return "—";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  if (seconds < 86_400) return `${(seconds / 3600).toFixed(1)} h`;
+  return `${(seconds / 86_400).toFixed(1)} d`;
+}
 
 export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabProps) {
-  const maxChats = Math.max(...weeklyData.map((d) => d.chats));
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [data, setData] = useState<MessagingOverview | null>(null);
+  const [channelId, setChannelId] = useState<string | null>(null);
+
+  // Resolve the channel UUID from the slug (slug == platform for messaging channels).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = (await apiFetch("/api/v1/channels?limit=100")) as { channels?: ChannelRow[] };
+        const match = (res?.channels ?? []).find(
+          (c: ChannelRow) => c.platform === channelSlug,
+        );
+        if (!cancelled) setChannelId(match?.id ?? null);
+      } catch {
+        if (!cancelled) setChannelId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [channelSlug]);
+
+  useEffect(() => {
+    if (channelId === null) {
+      // No channel found for this slug — nothing to show.
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    fetchMessagingOverview(30, channelId)
+      .then((d) => {
+        if (cancelled) return;
+        setData(d);
+      })
+      .catch(() => {
+        if (!cancelled) setError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId]);
+
+  const totals = data?.totals;
+  const stats = totals
+    ? [
+        { label: "Messages In", value: totals.messages_in.toLocaleString(), change: null },
+        { label: "Messages Out", value: totals.messages_out.toLocaleString(), change: null },
+        { label: "Conversations", value: totals.conversations.toLocaleString(), change: null },
+        { label: "Response Rate", value: totals.response_rate !== null ? `${totals.response_rate}%` : "—", change: null },
+      ]
+    : [];
 
   return (
     <div className="p-4 sm:p-6 space-y-6">
       {/* Header */}
       <div>
-        <h2 className="text-[16px] font-bold text-ink">{channelName} Analytics</h2>
-        <p className="mt-0.5 text-[13px] text-ink/60">Overview of your channel performance.</p>
+        <h2 className="text-[16px] font-bold text-ink flex items-center gap-2">
+          <ChannelLogo channel={channelSlug} />
+          {channelName} Analytics
+        </h2>
+        <p className="mt-0.5 text-[13px] text-ink/60">
+          Messaging performance over the last 30 days (stored rollups).
+        </p>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {stats.map((s) => (
-          <div key={s.label} className="rounded-2xl border-2 border-white bg-white/80 p-4">
-            <p className="text-[11px] font-semibold text-ink/50">{s.label}</p>
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className="text-[22px] font-bold text-ink">{s.value}</span>
-              <span className={`text-[11px] font-bold ${s.up ? "text-emerald-600" : "text-coral"}`}>{s.change}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Chart + Activity */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Bar chart */}
-        <div className="lg:col-span-2 rounded-2xl border-2 border-white bg-white/80 p-4 sm:p-5">
-          <h3 className="mb-4 text-[13px] font-bold text-ink">Weekly Conversations</h3>
-          <div className="flex items-end gap-2" style={{ height: 160 }}>
-            {weeklyData.map((d) => (
-              <div key={d.day} className="flex flex-1 flex-col items-center gap-1.5">
-                <div className="w-full rounded-t-lg bg-gradient-to-t from-deep-violet/30 to-deep-violet/5 transition-all hover:from-deep-violet/50 hover:to-deep-violet/10" style={{ height: `${(d.chats / maxChats) * 100}%` }} />
-                <span className="text-[10px] font-semibold text-ink/40">{d.day}</span>
-              </div>
-            ))}
-          </div>
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-ink/20 border-t-deep-violet" />
         </div>
+      )}
 
-        {/* Recent activity */}
-        <div className="rounded-2xl border-2 border-white bg-white/80 p-4 sm:p-5">
-          <h3 className="mb-3 text-[13px] font-bold text-ink">Recent Activity</h3>
-          <div className="space-y-3">
-            {recentActivity.map((a, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <div className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${
-                  a.type === "lead" ? "bg-emerald-500" :
-                  a.type === "resolved" ? "bg-deep-violet" :
-                  a.type === "agent" ? "bg-sky-500" :
-                  "bg-amber-500"
-                }`} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-medium text-ink">{a.event}</p>
-                  <p className="text-[10px] text-ink/40">{a.time}</p>
+      {!loading && error && (
+        <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-6 text-center">
+          <p className="text-[13px] text-ink/60">Could not load analytics. Try again later.</p>
+        </div>
+      )}
+
+      {!loading && !error && !data && (
+        <div className="rounded-2xl border border-ink/[0.06] bg-white/80 p-6 text-center">
+          <p className="text-[13px] text-ink/60">No messaging data yet. Data appears after the daily rollup runs.</p>
+        </div>
+      )}
+
+      {!loading && !error && data && (
+        <>
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {stats.map((s) => (
+              <div key={s.label} className="rounded-2xl border-2 border-white bg-white/80 p-4">
+                <p className="text-[11px] font-semibold text-ink/50">{s.label}</p>
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="text-[22px] font-bold text-ink">{s.value}</span>
                 </div>
               </div>
             ))}
           </div>
-        </div>
-      </div>
 
-      {/* Token usage breakdown */}
-      <div className="rounded-2xl border-2 border-white bg-white/80 p-4 sm:p-5">
-        <h3 className="mb-3 text-[13px] font-bold text-ink">Token Usage</h3>
-        <div className="space-y-2.5">
-          {[
-            { name: "Input Tokens", used: 1.2, total: 5, color: "bg-deep-violet" },
-            { name: "Output Tokens", used: 0.8, total: 5, color: "bg-magenta" },
-            { name: "Cached Tokens", used: 0.4, total: 5, color: "bg-sky-500" },
-          ].map((t) => (
-            <div key={t.name} className="flex items-center gap-3">
-              <span className="w-28 text-[11px] font-semibold text-ink/55">{t.name}</span>
-              <div className="flex-1 h-2 overflow-hidden rounded-full bg-ink/[0.06]">
-                <div className={`h-full rounded-full ${t.color}`} style={{ width: `${(t.used / t.total) * 100}%` }} />
+          {/* Response health */}
+          <div className="rounded-2xl border-2 border-white bg-white/80 p-4 sm:p-5">
+            <h3 className="mb-3 text-[13px] font-bold text-ink">Response Health</h3>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <div>
+                <p className="text-[11px] font-semibold text-ink/50">Median First Reply</p>
+                <p className="mt-1 text-[18px] font-bold text-ink">{fmtDuration(totals!.median_first_response_seconds)}</p>
               </div>
-              <span className="w-12 text-right text-[11px] font-bold text-ink">{t.used}M</span>
+              <div>
+                <p className="text-[11px] font-semibold text-ink/50">P90 First Reply</p>
+                <p className="mt-1 text-[18px] font-bold text-ink">{fmtDuration(totals!.p90_first_response_seconds)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold text-ink/50">Unanswered Now</p>
+                <p className="mt-1 text-[18px] font-bold text-ink">{totals!.unanswered_now ?? "—"}</p>
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
+            <p className="mt-3 text-[10px] text-ink/40">
+              Meta "Very responsive" gate: 90% answered, median under 15 min.
+            </p>
+          </div>
+        </>
+      )}
     </div>
   );
 }
