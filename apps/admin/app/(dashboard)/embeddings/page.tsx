@@ -83,7 +83,7 @@ export default function AdminEmbeddingsPage() {
   const [models, setModels] = useState<Record<string, string>>({});
   const [baseUrls, setBaseUrls] = useState<Record<string, string>>({});
   const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
-
+  const [modelSearch, setModelSearch] = useState<Record<string, string>>({});
   const fetchModels = useCallback(async (provider: string, apiKey?: string, baseUrl?: string) => {
     try {
       const qs = new URLSearchParams({ provider });
@@ -329,28 +329,43 @@ export default function AdminEmbeddingsPage() {
                   Model
                 </label>
                 {availableModels[p.provider] && availableModels[p.provider].length > 0 ? (
-                  <div className="mt-1 flex items-center gap-2">
-                    <select
-                      value={models[p.provider] ?? ""}
-                      disabled={isBusy}
-                      onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
-                      aria-label={`${p.provider} embedding model`}
-                      className="input-field flex-1 cursor-pointer"
-                    >
-                      {availableModels[p.provider].map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={() => fetchModels(p.provider, keys[p.provider], baseUrls[p.provider])}
-                      disabled={isBusy}
-                      title="Re-fetch available models from the provider's API"
-                      className={`shrink-0 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
-                    >
-                      ↻
-                    </button>
+                  <div className="mt-1 space-y-1.5">
+                    <input
+                      type="search"
+                      value={modelSearch[p.provider] ?? ""}
+                      onChange={(e) => setModelSearch((prev) => ({ ...prev, [p.provider]: e.target.value }))}
+                      placeholder="Filter models…"
+                      className="input-field text-[11px]"
+                    />
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={models[p.provider] ?? ""}
+                        disabled={isBusy}
+                        onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
+                        aria-label={`${p.provider} embedding model`}
+                        className="input-field flex-1 cursor-pointer"
+                        size={1}
+                      >
+                        {(availableModels[p.provider] ?? [])
+                          .filter((m) => !modelSearch[p.provider] || m.toLowerCase().includes(modelSearch[p.provider].toLowerCase()))
+                          .map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        onClick={() => fetchModels(p.provider, keys[p.provider], baseUrls[p.provider])}
+                        disabled={isBusy}
+                        title="Re-fetch available models from the provider's API"
+                        className={`shrink-0 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
+                      >
+                        ↻
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-ink/35">
+                      {(availableModels[p.provider] ?? []).filter((m) => !modelSearch[p.provider] || m.toLowerCase().includes((modelSearch[p.provider] ?? "").toLowerCase())).length} of {availableModels[p.provider].length} models
+                    </p>
                   </div>
                 ) : (
                   <div className="mt-1 space-y-1.5">
@@ -370,7 +385,7 @@ export default function AdminEmbeddingsPage() {
                       ↻ Fetch models from API
                     </button>
                     <p className="text-[10px] text-ink/35">
-                      No embedding models found via API. Type a model name manually, or click fetch to try again.
+                      No models found via API. Type a model name manually, or click fetch to try again.
                     </p>
                   </div>
                 )}
