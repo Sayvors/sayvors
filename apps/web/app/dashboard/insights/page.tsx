@@ -6,9 +6,11 @@ import {
   fetchProblems,
   fetchProducts,
   fetchTopics,
+  fetchMessagingOverview,
   type ProblemsResponse,
   type ProductsResponse,
   type TopicsResponse,
+  type MessagingOverview,
 } from "@/lib/api-analytics";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import { useI18n } from "@/lib/i18n/I18nProvider";
@@ -138,6 +140,7 @@ export default function InsightsPage() {
   const [topics, setTopics] = useState<TopicsResponse | null>(null);
   const [problems, setProblems] = useState<ProblemsResponse | null>(null);
   const [products, setProducts] = useState<ProductsResponse | null>(null);
+  const [messaging, setMessaging] = useState<MessagingOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -145,12 +148,18 @@ export default function InsightsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchTopics(days, channelId), fetchProblems(days, channelId), fetchProducts(days, channelId)])
-      .then(([t, p, pr]) => {
+    Promise.all([
+      fetchTopics(days, channelId),
+      fetchProblems(days, channelId),
+      fetchProducts(days, channelId),
+      fetchMessagingOverview(days, channelId),
+    ])
+      .then(([t, p, pr, m]) => {
         if (cancelled) return;
         setTopics(t);
         setProblems(p);
         setProducts(pr);
+        setMessaging(m);
         setError(false);
         hasLoaded.current = true;
       })
@@ -245,6 +254,33 @@ export default function InsightsPage() {
               </div>
             );
           })()}
+          {messaging && (messaging.totals.messages_out ?? 0) > 0 && (
+            <div className="mb-6 grid gap-3 sm:grid-cols-3">
+              <div className="ui-card p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">AI-handled replies</p>
+                <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messaging.totals.ai_handled_out}</p>
+                <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                  {Math.round((messaging.totals.ai_handled_out / messaging.totals.messages_out) * 100)}% of outbound
+                </p>
+              </div>
+              <div className="ui-card p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Human-handled replies</p>
+                <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
+                  {Math.max(0, messaging.totals.messages_out - messaging.totals.ai_handled_out)}
+                </p>
+                <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                  {Math.round(((messaging.totals.messages_out - messaging.totals.ai_handled_out) / messaging.totals.messages_out) * 100)}% of outbound
+                </p>
+              </div>
+              <div className="ui-card p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Total outbound</p>
+                <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messaging.totals.messages_out}</p>
+                <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                  {messaging.totals.messages_in} inbound · {messaging.totals.conversations} conversations
+                </p>
+              </div>
+            </div>
+          )}
           {(() => {
             const topProblem = [...(problems?.problems ?? [])].sort((a, b) => b.impact_score - a.impact_score)[0];
             if (loading || !topProblem) return null;
