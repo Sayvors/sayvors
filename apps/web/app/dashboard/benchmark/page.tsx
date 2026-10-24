@@ -233,41 +233,53 @@ export default function BenchmarkPage() {
 
  
            {/* Market response ranking — your median vs. other Sayvors businesses */}
-           {marketBenchmarks.length > 0 && (
+           {marketBenchmarks.length > 0 ? (
              <section aria-label="Market response ranking" className="ui-card p-5">
                <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Your response speed vs. the market</h3>
                <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
-                 Median first reply across {marketBenchmarks[0]?.business_count ?? 0} businesses on Sayvors.
+                 Median first reply across {marketBenchmarks[0]?.business_count ?? 0} businesses on Sayvors. Aggregates only.
                </p>
-               <div className="mt-4 grid gap-3 sm:grid-cols-3">
+               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                  {marketBenchmarks.map((mb) => (
                    <div key={mb.metric} className="rounded-[2px] bg-[var(--ui-sunken)] p-3">
                      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{mb.metric.replace(/_/g, " ")}</p>
                      <p className="mt-1 text-[18px] font-black tabular-nums text-[var(--ui-ink)]">
-                       {mb.median !== null ? Math.round(mb.median) : "—"}{mb.metric.includes("response") ? "s" : ""}
+                       {mb.median !== null ? (mb.metric.includes("seconds") ? Math.round(mb.median) + "s" : mb.median.toFixed(1)) : "—"}
                      </p>
                      {mb.p25 !== null && mb.p75 !== null && (
                        <p className="mt-1 text-[10.5px] text-[var(--ui-ink-2)]">
-                         p25: {Math.round(mb.p25)} · p75: {Math.round(mb.p75)}
+                         p25: {mb.metric.includes("seconds") ? Math.round(mb.p25) + "s" : mb.p25.toFixed(1)} · p75: {mb.metric.includes("seconds") ? Math.round(mb.p75) + "s" : mb.p75.toFixed(1)}
                        </p>
                      )}
+                     <p className="mt-1 text-[10px] text-[var(--ui-ink-2)]">{mb.business_count} businesses</p>
                    </div>
                  ))}
                </div>
-               {benchmark && marketBenchmarks.some((mb) => mb.metric === "median_first_response_seconds" && mb.median !== null) && (
-                 <p className="mt-3 text-[11.5px] text-[var(--ui-ink-2)]">
-                   {(() => {
-                     const mb = marketBenchmarks.find((m) => m.metric === "median_first_response_seconds");
-                     const yours = benchmark.current_response_rate; // placeholder for median FRT
-                     if (!mb?.median) return null;
-                     return `Market median first reply: ${Math.round(mb.median)}s. ${mb.business_count} businesses compared.`;
-                   })()}
-                 </p>
-               )}
+               {benchmark && marketBenchmarks.some((mb) => mb.metric === "median_first_response_seconds" && mb.median !== null) && (() => {
+                 const mb = marketBenchmarks.find((m) => m.metric === "median_first_response_seconds");
+                 if (!mb?.median) return null;
+                 return (
+                   <div className="mt-4 rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-3">
+                     <p className="text-[12px] font-semibold text-[var(--ui-ink)]">
+                       Market median first reply: {Math.round(mb.median)}s across {mb.business_count} businesses
+                     </p>
+                     <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                       Your response rate: {benchmark.current_response_rate.toFixed(0)}% (market median for response rate: {marketBenchmarks.find((m) => m.metric === "response_rate")?.median?.toFixed(0) ?? "—"}%)
+                     </p>
+                   </div>
+                 );
+               })()}
+             </section>
+           ) : (
+             <section aria-label="Market response ranking" className="ui-card p-5">
+               <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Your response speed vs. the market</h3>
+               <p className="mt-2 text-[12px] text-[var(--ui-ink-2)]">
+                 Collecting history — market benchmarks appear after the daily aggregation worker has run across multiple businesses. Check back tomorrow.
+               </p>
              </section>
            )}
 
-           {/* Metric focus filter */}
+                      {/* Metric focus filter */}
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison metric">
             {(Object.keys(FOCUS_META) as MetricFocus[]).map((f) => (
               <button
