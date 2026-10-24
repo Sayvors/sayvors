@@ -233,11 +233,18 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
         all_embeddings: list[list[float]] = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            resp = await client.embeddings.create(
-                model=self.model,
-                input=batch,
-                dimensions=self._dims,
-            )
+            try:
+                resp = await client.embeddings.create(
+                    model=self.model,
+                    input=batch,
+                    dimensions=self._dims,
+                )
+            except Exception:
+                # Some models don't support the dimensions parameter
+                resp = await client.embeddings.create(
+                    model=self.model,
+                    input=batch,
+                )
             all_embeddings.extend([e.embedding for e in resp.data])
         return all_embeddings
 
@@ -613,9 +620,7 @@ async def list_available_models(provider: str, api_key: str | None = None, base_
                 resp = await client.get(url)
                 resp.raise_for_status()
                 data = resp.json()
-                models = [m.get("name", "") for m in data.get("models", [])]
-                embed = [m for m in models if "embed" in m.lower() or "bge" in m.lower() or "e5" in m.lower()]
-                return embed if embed else models
+                return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
         except Exception:
             return list(EMBEDDING_MODELS.get(provider, ()))
 
@@ -634,11 +639,7 @@ async def list_available_models(provider: str, api_key: str | None = None, base_
                 resp = await client.get(f"{base}/models", headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-                models = [m.get("id", "") for m in data.get("data", [])]
-                embed = [m for m in models if "embed" in m.lower() or "bge" in m.lower() or "e5" in m.lower()]
-                # Only return actual embedding models — never fall back to
-                # text-generation models, which would not work for embeddings.
-                return embed
+                return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
         except Exception:
             return list(EMBEDDING_MODELS.get(provider, ()))
 
@@ -647,12 +648,7 @@ async def list_available_models(provider: str, api_key: str | None = None, base_
             from google import genai
 
             client = genai.Client(api_key=api_key or "")
-            models = []
-            for m in client.models.list():
-                name = getattr(m, "name", "") or ""
-                if "embed" in name.lower():
-                    models.append(name)
-            return models if models else list(EMBEDDING_MODELS.get(provider, ()))
+            return [getattr(m, "name", "") for m in client.models.list() if getattr(m, "name", "")]
         except Exception:
             return list(EMBEDDING_MODELS.get(provider, ()))
 
