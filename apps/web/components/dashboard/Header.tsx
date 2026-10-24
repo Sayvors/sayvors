@@ -152,7 +152,7 @@ export default function Header() {
   const atRoot = currentCrumb === navLabels.dashboard;
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-deep-violet/[0.06] bg-white px-3 sm:px-5 dark:border-fog/[0.07] dark:bg-[#1d1636]">
+    <header className="mx-2 mt-2 flex h-14 shrink-0 items-center gap-2 rounded-[20px] border border-ink/[0.06] bg-white px-3 shadow-[0_18px_44px_-34px_rgba(26,18,48,0.45)] sm:px-5 dark:border-white/[0.08] dark:bg-[#1d1636] dark:shadow-none">
       {/* Where am I. ps-11 clears the floating drawer trigger on phones. */}
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 ps-11 md:ps-0">
         {!atRoot && (
