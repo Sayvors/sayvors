@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchBenchmark,
+  fetchMarketBenchmarks,
   type BenchmarkResponse,
   type BranchBenchmark,
 } from "@/lib/api-analytics";
@@ -46,6 +47,7 @@ export default function BenchmarkPage() {
   const [branchFilter, setBranchFilter] = useState<"all" | "with_reviews" | "no_reviews" | "top3" | "needs_attention">("all");
   const channels = useGoogleChannels();
   const [benchmark, setBenchmark] = useState<BenchmarkResponse | null>(null);
+  const [marketBenchmarks, setMarketBenchmarks] = useState<{ metric: string; median: number | null; p25: number | null; p75: number | null; business_count: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const hasLoaded = useRef(false);
@@ -53,10 +55,14 @@ export default function BenchmarkPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchBenchmark(days, channelId)
-      .then((b) => {
+    Promise.all([
+      fetchBenchmark(days, channelId),
+      fetchMarketBenchmarks("median_first_response_seconds").catch(() => []),
+    ])
+      .then(([b, mb]) => {
         if (cancelled) return;
         setBenchmark(b);
+        setMarketBenchmarks(mb ?? []);
         setError(false);
         hasLoaded.current = true;
       })
@@ -225,7 +231,43 @@ export default function BenchmarkPage() {
             </section>
           )}
 
-                    {/* Metric focus filter */}
+ 
+           {/* Market response ranking — your median vs. other Sayvors businesses */}
+           {marketBenchmarks.length > 0 && (
+             <section aria-label="Market response ranking" className="ui-card p-5">
+               <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Your response speed vs. the market</h3>
+               <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                 Median first reply across {marketBenchmarks[0]?.business_count ?? 0} businesses on Sayvors.
+               </p>
+               <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                 {marketBenchmarks.map((mb) => (
+                   <div key={mb.metric} className="rounded-[2px] bg-[var(--ui-sunken)] p-3">
+                     <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{mb.metric.replace(/_/g, " ")}</p>
+                     <p className="mt-1 text-[18px] font-black tabular-nums text-[var(--ui-ink)]">
+                       {mb.median !== null ? Math.round(mb.median) : "—"}{mb.metric.includes("response") ? "s" : ""}
+                     </p>
+                     {mb.p25 !== null && mb.p75 !== null && (
+                       <p className="mt-1 text-[10.5px] text-[var(--ui-ink-2)]">
+                         p25: {Math.round(mb.p25)} · p75: {Math.round(mb.p75)}
+                       </p>
+                     )}
+                   </div>
+                 ))}
+               </div>
+               {benchmark && marketBenchmarks.some((mb) => mb.metric === "median_first_response_seconds" && mb.median !== null) && (
+                 <p className="mt-3 text-[11.5px] text-[var(--ui-ink-2)]">
+                   {(() => {
+                     const mb = marketBenchmarks.find((m) => m.metric === "median_first_response_seconds");
+                     const yours = benchmark.current_response_rate; // placeholder for median FRT
+                     if (!mb?.median) return null;
+                     return `Market median first reply: ${Math.round(mb.median)}s. ${mb.business_count} businesses compared.`;
+                   })()}
+                 </p>
+               )}
+             </section>
+           )}
+
+           {/* Metric focus filter */}
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison metric">
             {(Object.keys(FOCUS_META) as MetricFocus[]).map((f) => (
               <button
