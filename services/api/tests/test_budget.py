@@ -1,6 +1,5 @@
-"""P0 D1: AI credit budget — pricing, reserve/settle, provider gate, grants."""
+"""AI credit budget — pricing, durable reserve/settle, provider gate, grants."""
 import pytest
-import pytest_asyncio
 
 from app.modules.billing import budget
 from app.modules.billing.budget import (
@@ -9,24 +8,77 @@ from app.modules.billing.budget import (
     get_balance,
     reserve,
     settle,
-    sync_balance,
 )
 
 _TENANT = "budget-test-tenant-0001"
 
-
-async def _redis():
-    from app.modules.redis.client import get_redis
-
-    return await get_redis()
+# In-memory Redis double. The durable tests must pass with no Redis server.
+_CACHE: dict[str, int] = {}
 
 
-@pytest_asyncio.fixture
-async def _clean_key():
-    r = await _redis()
-    await r.delete(f"ai_balance:{_TENANT}")
+@pytest.fixture(autouse=True)
+def _fake_cache(monkeypatch):
+    _CACHE.clear()
+
+    async def _get(uid: str):
+        return _CACHE.get(uid)
+
+    async def _set(uid: str, cents: int) -> bool:
+        _CACHE[uid] = int(cents)
+        return True
+
+    async def _seed(uid: str, cents: int) -> bool:
+        _CACHE.setdefault(uid, int(cents))
+        return True
+
+    monkeypatch.setattr(budget, "get_cached_balance", _get)
+    monkeypatch.setattr(budget, "sync_balance", _set)
+    monkeypatch.setattr(budget, "seed_balance", _seed)
     yield
-    await r.delete(f"ai_balance:{_TENANT}")
+    _CACHE.clear()
+
+
+async def _seed_live_wallet(db, uid: str, cents: int = 0) -> None:
+    """Create a tenant that already has a ledger opening row.
+
+    The wallet column is authoritative once the opening row exists, so tests
+    can set the balance directly without replaying historical usage.
+    """
+    from app.modules.billing.models import BillingEvent
+    from app.modules.users.models import User
+
+    db.add(User(
+        id=uid, email=f"{uid}@sayvors.com", first_name="B",
+        last_name="T", password_hash="x", onboarded=True,
+        plan="pro", ai_credit_cents=cents,
+    ))
+    db.add(BillingEvent(
+        id=f"opening-{uid}", tenant_id=uid, kind="balance_resync",
+        status="posted", amount_cents=0, balance_after_cents=cents,
+        idempotency_key=f"ledger-opening:{uid}", created_by="test",
+    ))
+    await db.commit()
+
+
+async def _set_wallet(db, uid: str, cents: int) -> None:
+    from app.modules.users.models import User
+
+    db.expire_all()
+    user = await db.get(User, uid)
+    assert user is not None
+    user.ai_credit_cents = cents
+    await db.commit()
+
+
+@pytest.fixture
+def _allow_admin_auth(monkeypatch):
+    """Billing tests run without Redis; the auth blacklist fails closed."""
+    from app.modules.auth import rate_limit
+
+    async def _not_revoked(_jti: str) -> bool:
+        return False
+
+    monkeypatch.setattr(rate_limit, "is_token_blacklisted", _not_revoked)
 
 
 def test_cost_cents_math():
@@ -40,25 +92,26 @@ def test_cost_cents_math():
 
 
 @pytest.mark.asyncio
-async def test_reserve_settle_roundtrip(_clean_key):
-    await sync_balance(_TENANT, 100)
+async def test_reserve_settle_roundtrip(db):
+    await _seed_live_wallet(db, _TENANT, 100)
     assert await get_balance(_TENANT) == 100
-    assert await reserve(_TENANT) == budget.RESERVE_CENTS
+    reservation = await reserve(_TENANT)
+    assert reservation.amount_cents == budget.RESERVE_CENTS
     assert await get_balance(_TENANT) == 100 - budget.RESERVE_CENTS
-    await settle(_TENANT, budget.RESERVE_CENTS, 1)
+    await settle(reservation, 1)
     assert await get_balance(_TENANT) == 99
 
 
 @pytest.mark.asyncio
-async def test_reserve_empty_wallet_raises_and_refunds(_clean_key):
-    await sync_balance(_TENANT, 0)
+async def test_reserve_empty_wallet_raises_and_refunds(db):
+    await _seed_live_wallet(db, _TENANT, 0)
     with pytest.raises(BudgetExhausted):
         await reserve(_TENANT)
-    assert await get_balance(_TENANT) == 0  # refunded, never negative
+    assert await get_balance(_TENANT) == 0  # never negative
 
 
 @pytest.mark.asyncio
-async def test_provider_complete_gated(monkeypatch, _clean_key):
+async def test_provider_complete_gated(monkeypatch, db):
     """Zero balance → 402 before _complete; funded → called + settled."""
     from app.modules.llm.providers.base import (
         LLMProvider,
@@ -89,13 +142,13 @@ async def test_provider_complete_gated(monkeypatch, _clean_key):
     p = _P()
     req = LLMRequest(model="m", model_id="groq:oss-120b", tenant_id=_TENANT)
 
-    await sync_balance(_TENANT, 0)
+    await _seed_live_wallet(db, _TENANT, 0)
     with pytest.raises(ProviderError) as exc:
         await p.complete(req)
     assert exc.value.status_code == 402
     assert p.calls == 0
 
-    await sync_balance(_TENANT, 10_000)
+    await _set_wallet(db, _TENANT, 10_000)
     resp = await p.complete(req)
     assert resp.content == "hi"
     assert p.calls == 1
@@ -130,7 +183,7 @@ async def test_provider_complete_untracked_without_tenant(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gateway_stream_reserves_meters_and_settles(monkeypatch, _clean_key):
+async def test_gateway_stream_reserves_meters_and_settles(monkeypatch, db):
     """A streamed call is budgeted and metered even without provider usage."""
     from app.modules.llm import gateway
     from app.modules.llm.providers import registry
@@ -152,7 +205,7 @@ async def test_gateway_stream_reserves_meters_and_settles(monkeypatch, _clean_ke
         lambda req, resp, latency_ms, **kw: captured.update(resp=resp, **kw),
     )
 
-    await sync_balance(_TENANT, 100)
+    await _seed_live_wallet(db, _TENANT, 100)
     chunks = [
         c async for c in gateway.stream(
             model="groq:oss-120b",
@@ -173,7 +226,7 @@ async def test_gateway_stream_reserves_meters_and_settles(monkeypatch, _clean_ke
 
 @pytest.mark.asyncio
 async def test_gateway_stream_refunds_the_reservation_on_provider_failure(
-    monkeypatch, _clean_key
+    monkeypatch, db
 ):
     from app.modules.llm import gateway
     from app.modules.llm.providers import registry
@@ -195,7 +248,7 @@ async def test_gateway_stream_refunds_the_reservation_on_provider_failure(
         lambda req, resp, latency_ms, **kw: captured.update(resp=resp, **kw),
     )
 
-    await sync_balance(_TENANT, 100)
+    await _seed_live_wallet(db, _TENANT, 100)
     with pytest.raises(RuntimeError, match="upstream died"):
         async for _ in gateway.stream(
             model="groq:oss-120b",
@@ -212,7 +265,7 @@ async def test_gateway_stream_refunds_the_reservation_on_provider_failure(
 
 @pytest.mark.asyncio
 async def test_gateway_stream_refuses_an_empty_wallet_before_calling_provider(
-    monkeypatch, _clean_key
+    monkeypatch, db
 ):
     from app.modules.llm import gateway
     from app.modules.llm.providers import registry
@@ -231,7 +284,7 @@ async def test_gateway_stream_refuses_an_empty_wallet_before_calling_provider(
         "app.modules.llm.service._resolve_model", lambda model: ("api-x", "groq")
     )
 
-    await sync_balance(_TENANT, 0)
+    await _seed_live_wallet(db, _TENANT, 0)
     with pytest.raises(ProviderError) as exc:
         async for _ in gateway.stream(
             model="groq:oss-120b",
@@ -332,22 +385,21 @@ async def test_grant_plan_bundles_pro_credits(db):
     from app.modules.billing.models import BillingEvent
 
     events = (await db.execute(
-        select(BillingEvent).where(BillingEvent.tenant_id == uid)
+        select(BillingEvent).where(
+            BillingEvent.tenant_id == uid,
+            BillingEvent.kind == "plan_grant",
+        )
     )).scalars().all()
     assert len(events) == 1
-    assert events[0].kind == "plan_grant"
     assert events[0].amount_cents == 2000
 
     # Second grant on same plan + explicit top-up → credit_topup kind.
     out2 = await billing_service.grant_plan(uid, "pro", 500, "topup", "admin", db)
     assert out2["balance_cents"] == 2500
 
-    r = await _redis()
-    await r.delete(f"ai_balance:{uid}")
-
 
 @pytest.mark.asyncio
-async def test_admin_grant_endpoint_and_budget(client, db, user_id):
+async def test_admin_grant_endpoint_and_budget(client, db, user_id, _allow_admin_auth):
     """Admin POST /tenants/{id}/plan → 200; tenant GET /billing/budget shows it."""
     from app.modules.users.models import User
     from app.security import create_admin_token
@@ -384,58 +436,46 @@ async def test_admin_grant_endpoint_and_budget(client, db, user_id):
 
 
 @pytest.mark.asyncio
-async def test_balance_keys_never_expire(_clean_key):
-    """The old 24h TTL is gone; reserve/settle must not put one back."""
-    r = await _redis()
-    key = f"ai_balance:{_TENANT}"
-    await sync_balance(_TENANT, 100)
-    assert await r.ttl(key) == -1
-    await reserve(_TENANT)
-    assert await r.ttl(key) == -1
-    await settle(_TENANT, budget.RESERVE_CENTS, 1)
-    assert await r.ttl(key) == -1
+async def test_cache_is_a_mirror_not_the_balance(db):
+    """A poisoned cache cannot block a funded wallet; the mirror is repaired."""
+    await _seed_live_wallet(db, _TENANT, 100)
+    await budget.sync_balance(_TENANT, 0)
+
+    reservation = await reserve(_TENANT)
+    assert reservation.amount_cents == budget.RESERVE_CENTS
+    assert await get_balance(_TENANT) == 95
+    assert _CACHE[_TENANT] == 95
 
 
 @pytest.mark.asyncio
-async def test_reserve_rehydrates_a_missing_key(monkeypatch, _clean_key):
-    """A missing key is rebuilt once from the DB, not silently treated as 0."""
-    seeded = False
+async def test_reserve_uses_db_when_cache_is_missing(db):
+    """A missing cache key is irrelevant: the DB wallet is authoritative."""
+    await _seed_live_wallet(db, _TENANT, 12)
+    _CACHE.pop(_TENANT, None)
 
-    async def _seed(tenant_id):
-        nonlocal seeded
-        seeded = True
-        await sync_balance(tenant_id, 12)
-        return True
-
-    monkeypatch.setattr(budget, "_rehydrate_balance", _seed)
-    assert await reserve(_TENANT) == budget.RESERVE_CENTS
-    assert seeded is True
-    assert await get_balance(_TENANT) == 12 - budget.RESERVE_CENTS
+    reservation = await reserve(_TENANT)
+    assert reservation.amount_cents == budget.RESERVE_CENTS
+    assert await get_balance(_TENANT) == 7
+    assert _CACHE[_TENANT] == 7
 
 
 @pytest.mark.asyncio
-async def test_reserve_missing_unfunded_wallet_stays_at_zero(monkeypatch, _clean_key):
-    """A tenant with no grants rehydrates to 0 and gets a clean 402."""
-
-    async def _seed(tenant_id):
-        await sync_balance(tenant_id, 0)
-        return True
-
-    monkeypatch.setattr(budget, "_rehydrate_balance", _seed)
+async def test_reserve_empty_wallet_never_goes_negative(db):
+    await _seed_live_wallet(db, _TENANT, 0)
     with pytest.raises(BudgetExhausted):
         await reserve(_TENANT)
     assert await get_balance(_TENANT) == 0
 
 
 @pytest.mark.asyncio
-async def test_settle_does_not_recreate_a_missing_key(_clean_key):
-    """A vanished key must stay missing; usage rows are the durable record."""
-    await sync_balance(_TENANT, 100)
-    await reserve(_TENANT)
-    r = await _redis()
-    await r.delete(f"ai_balance:{_TENANT}")
-    await settle(_TENANT, budget.RESERVE_CENTS, 1)
-    assert await get_balance(_TENANT) is None
+async def test_settle_repairs_a_missing_cache_key(db):
+    """Settle commits to the DB and re-creates the mirror if it vanished."""
+    await _seed_live_wallet(db, _TENANT, 100)
+    reservation = await reserve(_TENANT)
+    _CACHE.pop(_TENANT, None)
+    await settle(reservation, 1)
+    assert await get_balance(_TENANT) == 99
+    assert _CACHE[_TENANT] == 99
 
 
 def _wallet_user(uid: str):
@@ -607,25 +647,25 @@ async def test_grant_uses_ledger_not_a_stale_zero(db):
     ))
     await db.commit()
 
-    # Simulate the production bug: the key exists at 0 after the old TTL.
-    await sync_balance(uid, 0)
+    # Simulate the production bug: the cache exists at 0 after the old TTL.
+    await budget.sync_balance(uid, 0)
     out = await billing_service.grant_plan(uid, "pro", 500, "topup", "admin", db)
     assert out["balance_cents"] == 2499
     assert await get_balance(uid) == 2499
     row = await db.get(User, uid)
     assert row.ai_credit_cents == 2499
 
-    r = await _redis()
-    await r.delete(f"ai_balance:{uid}")
-
 
 @pytest.mark.asyncio
-async def test_admin_resync_preview_and_apply(client, db, user_id):
-    """The repair endpoint is dry-run by default and idempotent when applied."""
+async def test_admin_resync_previews_and_repairs_redis_to_db(
+    client, db, user_id, _allow_admin_auth
+):
+    """The endpoint reconciles cache drift to the DB and is idempotent."""
     from datetime import datetime, timedelta, timezone
 
     from sqlalchemy import select
 
+    from app.modules.billing.ledger import ensure_ledger_initialized
     from app.modules.billing.models import BillingEvent
     from app.modules.llm.models import LLMUsageEvent
     from app.modules.users.models import User
@@ -649,6 +689,10 @@ async def test_admin_resync_preview_and_apply(client, db, user_id):
         status="ok", created_at=now - timedelta(days=1),
     ))
     await db.commit()
+    # Cut over the tenant to the ledger, then poison the cache.
+    assert await ensure_ledger_initialized(uid, db) == 1999
+    await db.commit()
+    await budget.sync_balance(uid, 0)
 
     headers = {"Authorization": f"Bearer {create_admin_token()}"}
     url = f"/api/v1/admin/tenants/{uid}/resync-balance"
@@ -656,29 +700,40 @@ async def test_admin_resync_preview_and_apply(client, db, user_id):
     preview = client.post(url, json={"dry_run": True}, headers=headers)
     assert preview.status_code == 200, preview.text[:300]
     assert preview.json()["applied"] is False
-    assert preview.json()["balance_cents"] == 1999
-    assert preview.json()["spent_cents"] == 1
+    assert preview.json()["db_balance_cents"] == 1999
+    assert preview.json()["redis_balance_cents"] == 0
+    assert preview.json()["delta_cents"] == 1999
 
     applied = client.post(url, json={"dry_run": False}, headers=headers)
     assert applied.status_code == 200, applied.text[:300]
     assert applied.json()["applied"] is True
     assert applied.json()["balance_cents"] == 1999
     assert applied.json()["redis_synced"] is True
+    assert _CACHE[uid] == 1999
 
-    budget = client.get("/api/v1/billing/budget")
-    assert budget.status_code == 200
-    assert budget.json()["balance_cents"] == 1999
+    b = client.get("/api/v1/billing/budget")
+    assert b.status_code == 200
+    assert b.json()["balance_cents"] == 1999
 
     events = (await db.execute(
         select(BillingEvent).where(
             BillingEvent.tenant_id == uid,
-            BillingEvent.kind == "balance_resync",
+            BillingEvent.kind == "balance_reconcile",
         )
     )).scalars().all()
     assert len(events) == 1
+    assert events[0].amount_cents == 0
     assert events[0].balance_after_cents == 1999
 
-    # Re-running the apply is safe: the baseline is the new starting point.
+    # Re-running with no drift is safe and writes no second audit row.
     again = client.post(url, json={"dry_run": False}, headers=headers)
     assert again.status_code == 200, again.text[:300]
     assert again.json()["balance_cents"] == 1999
+    db.expire_all()
+    events = (await db.execute(
+        select(BillingEvent).where(
+            BillingEvent.tenant_id == uid,
+            BillingEvent.kind == "balance_reconcile",
+        )
+    )).scalars().all()
+    assert len(events) == 1

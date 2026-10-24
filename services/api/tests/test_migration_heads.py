@@ -187,3 +187,29 @@ def test_guard_detects_each_failure_mode(scenario, tmp_path, monkeypatch):
         f"guard did not detect the {scenario} scenario; "
         f"problems were: {report.problems}"
     )
+
+
+def test_guard_sees_columns_in_split_sql_literals(tmp_path, monkeypatch):
+    """A migration split across Python string literals still counts.
+
+    Real migrations format long ``ALTER TABLE`` statements across adjacent
+    literals. The guard reads source text, so it must join implicit string
+    concatenation before parsing or it reports a false "column missing".
+    """
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    (versions / "a_split_sql.py").write_text(
+        "revision: str = 'aaa000000001'\n"
+        "down_revision: Union[str, None] = None\n"
+        "\n"
+        "def upgrade() -> None:\n"
+        "    op.execute(\n"
+        "        \"ALTER TABLE widgets \"\n"
+        "        \"ADD COLUMN IF NOT EXISTS cost_cents INTEGER NOT NULL DEFAULT 0\"\n"
+        "    )\n"
+    )
+
+    monkeypatch.setattr(guard, "VERSIONS_DIR", versions)
+    by_table, _ = guard._migrated_columns()
+
+    assert "cost_cents" in by_table["widgets"]

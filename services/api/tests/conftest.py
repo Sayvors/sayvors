@@ -42,6 +42,21 @@ TEST_ENGINE = create_async_engine(
 TEST_SESSION = async_sessionmaker(TEST_ENGINE, class_=AsyncSession, expire_on_commit=False)
 
 
+@pytest.fixture(autouse=True)
+def _test_billing_sessions(monkeypatch):
+    """Point background billing/metering writes at the in-memory test DB.
+
+    Both modules own their own session factory because they run outside the
+    request session (fire-and-forget usage, wallet locks). Without this every
+    test would write usage events to the dev Postgres database.
+    """
+    from app.modules.billing import ledger
+    from app.modules.llm import usage
+
+    monkeypatch.setattr(ledger, "_session_factory", TEST_SESSION, raising=False)
+    monkeypatch.setattr(usage, "_session_factory", TEST_SESSION, raising=False)
+
+
 @asynccontextmanager
 async def _noop_lifespan(_app):
     yield

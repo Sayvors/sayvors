@@ -9,7 +9,16 @@ rows are `verified=False` records the merchant maintains.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -78,26 +87,53 @@ class PaymentMethod(Base):
 
 
 class BillingEvent(Base):
-    """Audit ledger for plan/credit changes (admin-visible purchases).
+    """Durable credit ledger: grants, holds, charges, refunds, and baselines.
 
-    One row per grant/topup/adjustment — NEVER per AI call (per-call spend
-    lives in llm_usage_events, priced by the TOKEN_PRICES table).
+    One ``ai_usage`` row per LLM call. It is inserted as ``pending`` when the
+    wallet is reserved and finalized exactly once by ``settle`` (``settled``
+    or ``released``). Grants/top-ups use ``posted`` and carry the full amount.
 
-    ``balance_resync`` is an audit-only wallet baseline written by the admin
-    repair endpoint. It is deliberately excluded from credit sums so running
-    the repair twice cannot double-count the adjustment."""
+    ``balance_resync`` is a one-time opening baseline for a tenant that
+    predates the ledger. ``balance_reconcile`` is a zero-amount audit row
+    written when an operator repairs a drifted Redis cache. Neither is counted
+    as new credit.
+
+    The row is the idempotency boundary: settle changes this row, never
+    inserts a second charge for the same reservation.
+    """
 
     __tablename__ = "billing_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "idempotency_key", name="uq_billing_events_tenant_idempotency"
+        ),
+        Index("ix_billing_events_status_expires", "status", "expires_at"),
+        Index("ix_billing_events_tenant_status", "tenant_id", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    kind: Mapped[str] = mapped_column(String(32))  # plan_grant | credit_topup | credit_adjust | balance_resync
+    kind: Mapped[str] = mapped_column(String(32))
+    # posted | pending | settled | released | expired
+    status: Mapped[str] = mapped_column(String(16), default="posted")
     amount_cents: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_cents: Mapped[int] = mapped_column(Integer, default=0)
     balance_after_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )

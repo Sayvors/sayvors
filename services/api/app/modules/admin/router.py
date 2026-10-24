@@ -280,7 +280,6 @@ class WalletResyncRequest(BaseModel):
     """Preview by default; applying a repair requires dry_run=false."""
 
     dry_run: bool = True
-    force: bool = False
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -288,16 +287,13 @@ class WalletResyncResponse(BaseModel):
     tenant_id: str
     applied: bool
     balance_cents: int
+    db_balance_cents: int
+    redis_balance_cents: int | None = None
     previous_balance_cents: int | None = None
-    delta_cents: int
-    opening_cents: int
-    credits_cents: int
-    spent_cents: int
-    calls: int
-    window_started_at: str | None = None
-    reliable: bool
-    warning: str | None = None
+    delta_cents: int | None = None
     redis_synced: bool | None = None
+    reliable: bool = True
+    warning: str | None = None
 
 
 @router.post("/tenants/{user_id}/plan", response_model=PlanGrantResponse)
@@ -331,29 +327,24 @@ async def admin_resync_balance(
     _rate_limit: None = Depends(admin_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
-    """Preview or apply a wallet repair from grants minus metered usage.
+    """Preview or repair Redis drift against the durable DB wallet.
 
-    Dry-run is the default so a stray POST cannot move money. The preview
-    includes the spend window and a reliability flag; apply with
-    ``{"dry_run": false}``. If the window predates usage retention, the
-    endpoint returns 409 unless ``force`` is explicitly set.
+    The DB is the source of truth: this endpoint never accepts a balance and
+    never recomputes one from usage. Dry-run is the default. Applying writes a
+    zero-amount ``balance_reconcile`` audit row only when the cache is missing
+    or differs, then overwrites the cache with the DB value. Re-running with no
+    drift is a no-op.
     """
-    from ..billing.wallet import UnsafeWalletResync, resync_wallet
+    from ..billing.ledger import reconcile_wallet
 
     request = body or WalletResyncRequest()
     try:
-        return await resync_wallet(
+        return await reconcile_wallet(
             user_id,
             db,
             dry_run=request.dry_run,
-            force=request.force,
             note=request.note,
             created_by="admin",
-        )
-    except UnsafeWalletResync as e:
-        raise HTTPException(
-            status_code=409,
-            detail={"message": str(e), "preview": e.preview},
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

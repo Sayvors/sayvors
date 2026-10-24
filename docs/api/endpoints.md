@@ -520,7 +520,9 @@ See the [RAG / Databanks guide](rag.md) for the ingestion and query workflows.
 | DELETE | `/methods/{method_id}` | Remove a payment method |
 
 The gateway endpoints currently use a stub provider; they do not process real
-payments or grant credits.
+payments or grant credits. `GET /budget` reads the durable Postgres wallet
+(`users.ai_credit_cents` + `billing_events`), not Redis; deleting the Redis
+mirror does not change the response.
 
 ---
 
@@ -754,6 +756,7 @@ GET /health
 | GET | `/tenants/{user_id}` | Tenant detail |
 | GET | `/tenants/{user_id}/usage` | Tenant LLM usage |
 | POST | `/tenants/{user_id}/plan` | Grant plan + credits |
+| POST | `/tenants/{user_id}/resync-balance` | Preview/repair Redis drift against the durable DB wallet |
 | GET | `/llm` | LLM provider status |
 | PUT | `/llm/{provider}` | Update provider key/enabled |
 | POST | `/llm/{provider}/test` | Test provider connection |

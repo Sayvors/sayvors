@@ -93,6 +93,7 @@ async def _amain() -> None:
     from ..modules.channels.meta.lead_action_worker import run_lead_action_worker
     from ..modules.channels.meta.digest_worker import run_lead_digest_sweeps
     from ..modules.channels.meta.escalation_worker import run_escalation_sweeps
+    from ..modules.billing.ledger import run_hold_reaper
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.jobs.reaper import run_job_reaper
     from ..modules.jobs.runner import JobRunner
@@ -122,6 +123,9 @@ async def _amain() -> None:
         # jobs to the queue and un-strands rows the dispatcher never
         # promoted.
         "job-reaper": run_job_reaper,
+        # AI-credit hold reaper — settles holds that already have a priced
+        # usage row, then refunds crashed/abandoned holds after the TTL.
+        "credit-hold-reaper": run_hold_reaper,
         # Redis re-arm prober — re-latches Redis after an outage so fail-closed
         # paths (rate limiting, auth) recover once Redis is back.
         "redis-rearmer": run_redis_rearmer,

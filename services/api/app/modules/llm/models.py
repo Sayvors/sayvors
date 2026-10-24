@@ -115,6 +115,11 @@ class LLMUsageEvent(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default="ok")
     error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Billing link: the actual charge (USD cents) and the durable hold row.
+    # cost_cents is duplicated from the ledger so a lost settle can be
+    # recovered from the usage row by the hold reaper.
+    cost_cents: Mapped[int] = mapped_column(Integer, default=0)
+    ledger_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )

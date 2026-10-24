@@ -224,11 +224,15 @@ async def get_tenant(db: AsyncSession, user_id: str) -> dict | None:
         }
         for p in recent_posts
     ]
-    # AI wallet: live Redis balance + estimated 30d spend (upper bound —
+    # AI wallet: durable DB balance + estimated 30d spend (upper bound —
     # by_model rows carry totals only, priced at the completion rate).
     from ..billing.budget import TOKEN_PRICES, get_balance
 
     base["ai_balance_cents"] = await get_balance(user_id)
+    # Keep the detail payload consistent with the authoritative wallet even
+    # for a tenant whose column has not been cut over yet.
+    if base["ai_balance_cents"] is not None:
+        base["ai_credit_cents"] = base["ai_balance_cents"]
     try:
         from ..llm.usage import get_tenant_summary
 

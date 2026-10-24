@@ -289,8 +289,10 @@ async def lifespan(app: FastAPI):
         from .modules.analytics.messaging_rollup import run_messaging_rollup_worker
         from .modules.analytics.performance import run_performance_sync_worker
         from .modules.channels.meta.meta_events_worker import run_meta_events_worker
+        from .modules.billing.ledger import run_hold_reaper
         from .modules.outbox.worker import OutboxWorker
 
+        bg_tasks.append(asyncio.create_task(run_hold_reaper()))
         bg_tasks.append(asyncio.create_task(run_google_reviews_worker()))
         bg_tasks.append(asyncio.create_task(run_localith_sync_worker()))
         bg_tasks.append(asyncio.create_task(run_post_publish_worker()))

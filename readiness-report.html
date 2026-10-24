@@ -377,7 +377,7 @@
 <section id="billing">
   <div class="eyebrow">§§ 6b · new workstream</div>
   <h2>Billing, plans &amp; wallet</h2>
-  <p><span class="chip warn">Wallet hotfix in tree · plans not built</span>&nbsp; This is a product workstream, separate from the 21/3 audit ledger. The target is simple to state and hard to get wrong: a tenant can buy a plan without an admin, the backend activates it and grants the included AI credit, every metered AI call spends from a durable balance, and plan limits are enforced at every write path.</p>
+  <p><span class="chip ok">Durable credit ledger in tree · plans not built</span>&nbsp; This is a product workstream, separate from the 21/3 audit ledger. The target is simple to state and hard to get wrong: a tenant can buy a plan without an admin, the backend activates it and grants the included AI credit, every metered AI call spends from a durable balance, and plan limits are enforced at every write path.</p>
 
   <div class="card">
     <h3>What broke</h3>
@@ -423,18 +423,50 @@
       <td class="path">billing/router.py; rag/agent.py</td>
     </tr>
   </table></div>
-  <p class="note"><strong>Operational step after deploy:</strong> preview the affected tenant first, then apply. <code>POST /api/v1/admin/tenants/{id}/resync-balance</code> defaults to <code>dry_run=true</code>; send <code>{"dry_run": false}</code> to write. A 409 means the spend window predates usage retention (90 days); inspect the preview before forcing. Resync before granting a top-up to a tenant whose key is already <code>0</code>. The rebuild prices old calls with the current <code>TOKEN_PRICES</code> table, so a price-table change makes an unbaselined old window an estimate; the baseline locks the corrected figure.</p>
-  <p class="note"><strong>Verified locally:</strong> 22 tests in <code>tests/test_budget.py</code> and 43 related billing/LLM/admin/RAG tests pass. The hotfix does <em>not</em> make Redis durable — see the Redis section for AOF/HA.</p>
+  <p class="note"><strong>Historical hotfix note (superseded by the durable ledger):</strong> the old <code>resync-balance</code> recomputed the DB from grants minus usage and could write a balance. That is no longer safe once the ledger is authoritative. The endpoint now reconciles Redis to the DB, writes a zero-amount <code>balance_reconcile</code> audit row only on drift, and never accepts a balance from the caller. See the durable section below.</p>
+  <p class="note"><strong>Verified locally:</strong> 58 targeted billing/LLM tests pass (13 ledger, 22 budget, 23 LLM). The hotfix does <em>not</em> make Redis durable — see the Redis section for AOF/HA.</p>
 
-  <h3>Wallet — durable fix (next)</h3>
-  <p>Redis remains the live counter, so a Redis loss still loses the last few seconds of spend and relies on metered usage to rehydrate. That is acceptable as a bridge, not as the billing system of record. The durable design:</p>
-  <ul>
-    <li><strong>One DB ledger entry per charge/refund</strong> — amount, tenant, model, reservation id, idempotency key, balance after, timestamp. <code>llm_usage_events</code> gets the cost or references the ledger row.</li>
-    <li><strong>Atomic reserve/settle in Postgres</strong> — reserve locks the wallet row and checks <code>balance ≥ amount</code>; settle writes the actual charge and releases the difference. A hold/reaper handles crashed requests.</li>
-    <li><strong>Idempotent by construction</strong> — one charge per reservation, one usage row per call, retries cannot double-apply.</li>
-    <li><strong>Backfill + cutover</strong> — replay current grants and metered usage into the ledger, reconcile Redis against it, then remove the computed-reseed path.</li>
-    <li><strong>Admin reconciler</strong> — compare Redis vs DB, show the delta, repair with an audit row; never accept a client-supplied balance.</li>
-  </ul>
+  <h3>Wallet — durable credit ledger (implemented)</h3>
+  <p>Postgres is now the source of truth. <code>users.ai_credit_cents</code> is the locked available balance; <code>billing_events</code> is the ledger; Redis is a best-effort mirror. Deleting the Redis key no longer changes the true balance.</p>
+  <div class="scroll"><table>
+    <tr><th>Change</th><th>Why</th><th>Where</th></tr>
+    <tr>
+      <td><strong>One <code>ai_usage</code> row per call.</strong> Reserve inserts it as <code>pending</code> with the hold amount and expiry; settle finalizes the same row as <code>settled</code> or <code>released</code>.</td>
+      <td>The row id is the reservation id and the idempotency boundary. A retried settle returns the recorded result instead of charging again.</td>
+      <td class="path">billing/ledger.py; billing/models.py</td>
+    </tr>
+    <tr>
+      <td><strong>Row-locked wallet.</strong> Reserve/settle/grant lock the tenant's <code>users</code> row with <code>SELECT ... FOR UPDATE</code> before changing the balance.</td>
+      <td>Two workers cannot spend the last cents twice; a grant cannot race a settle.</td>
+      <td class="path">billing/ledger.py; billing/service.py</td>
+    </tr>
+    <tr>
+      <td><strong>Fail-closed DB gate.</strong> A DB failure raises <code>BudgetUnavailable</code> (503) before the provider is called; a Redis failure is only a cache warning.</td>
+      <td>An unavailable ledger must not become free unmetered AI usage.</td>
+      <td class="path">billing/ledger.py; llm/providers/base.py; llm/gateway.py</td>
+    </tr>
+    <tr>
+      <td><strong>Hold reaper.</strong> Every 60s, settle holds that already have a priced <code>llm_usage_events</code> row; expire the rest after 15 minutes and refund the hold. A late settle reverses the refund and charges the real cost.</td>
+      <td>A crashed worker no longer leaks a hold forever, and a slow-but-alive request is not made free.</td>
+      <td class="path">billing/ledger.py; workers/main.py; app/main.py</td>
+    </tr>
+    <tr>
+      <td><strong>One-time opening baseline.</strong> A tenant that predates the ledger gets one <code>balance_resync</code> row keyed <code>ledger-opening:&lt;tenant&gt;</code>, with the legacy computed balance, in the same transaction as the wallet update.</td>
+      <td>Cutover is idempotent and auditable; a retry cannot double-apply the historical balance.</td>
+      <td class="path">billing/ledger.py; scripts/backfill_credit_ledger.py</td>
+    </tr>
+    <tr>
+      <td><strong>Usage row links cost + ledger id.</strong> <code>llm_usage_events.cost_cents</code> and <code>ledger_id</code> let the reaper recover a charge whose settle call died.</td>
+      <td>Metering remains fire-and-forget but is now the recovery point for the money path.</td>
+      <td class="path">llm/usage.py; llm/models.py</td>
+    </tr>
+    <tr>
+      <td><strong>Admin reconciler, DB-target.</strong> Preview shows DB vs Redis and the delta; apply writes a zero-amount audit row only on drift, then overwrites Redis with the DB value.</td>
+      <td>Operators repair the cache without inventing a balance; a re-run with no drift is a no-op.</td>
+      <td class="path">billing/ledger.py; admin/router.py</td>
+    </tr>
+  </table></div>
+  <p class="note"><strong>Cutover:</strong> apply migration <code>i4j5k6l7m8n9</code>, run <code>scripts/backfill_credit_ledger.py</code> as a dry run, review every <code>UNRELIABLE</code> tenant, then <code>--apply</code>. Deploy the API and the <code>credit-hold-reaper</code> worker loop. Full procedure: <code>docs/operations/credit-ledger-runbook.md</code>; design: <code>docs/specs/2026-10-24-durable-credit-ledger-design.md</code>.</p>
 
   <h3>Plans as data, not <code>if plan ==</code></h3>
   <div class="scroll"><table>
@@ -496,7 +528,7 @@
   <h3>Order of work</h3>
   <ol>
     <li><strong>Wallet hotfix</strong> — in tree; run the admin resync for affected tenants and watch for rehydrate warnings.</li>
-    <li><strong>DB spend ledger</strong> — schema, atomic reserve/settle, holds/reaper, idempotency, backfill, reconciler. Remove the computed-reseed path only after the ledger is live.</li>
+    <li><strong>DB spend ledger</strong> — <span class="chip ok">Implemented</span> schema, atomic reserve/settle, holds/reaper, idempotency, backfill, reconciler. Run the backfill + deploy per the runbook; the computed path is now cutover/audit only, not the runtime balance.</li>
     <li><strong>Plans/subscriptions/entitlements</strong> — tables, seed Starter/Pro, one activation function, central entitlements service.</li>
     <li><strong>Demo Pro + limits</strong> — server-side demo mode, Google/social enforcement at every write path, structured upgrade errors.</li>
     <li><strong>Customer + admin UI</strong> — plan card, usage, upgrade, limit banners; admin catalog/resync/audit.</li>

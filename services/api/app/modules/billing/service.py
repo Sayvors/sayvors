@@ -211,30 +211,48 @@ async def set_default(method_id: str, user_id: str, db: AsyncSession) -> dict:
 # ── Plan + AI credits (D1) ─────────────────────────────────
 
 async def get_budget(tenant_id: str, db: AsyncSession) -> dict:
-    """Tenant-facing wallet: plan + live balance.
+    """Tenant-facing wallet: plan + durable available balance.
 
-    A missing Redis key is rebuilt from grants minus metered usage, never
-    from ``users.ai_credit_cents`` alone — that column may be a stale or
-    grants-only figure and would hand already-spent credits back. It is only
-    a last-resort display fallback when the rebuild itself fails.
+    The DB wallet is authoritative. A tenant that predates the ledger gets its
+    one-time opening baseline on first read; after that this is a plain row
+    read. Redis is never consulted for the number.
     """
     from ..users.models import User
-    from .wallet import ensure_wallet_balance
+    from .ledger import OPENING_KEY_PREFIX, ensure_ledger_initialized
+    from .models import BillingEvent
 
     user = await db.get(User, tenant_id)
     if user is None:
         raise ValueError("Tenant not found.")
+    fallback = int(user.ai_credit_cents or 0)
+    plan = user.plan or "free"
     try:
-        balance = await ensure_wallet_balance(tenant_id, db)
+        # Fast path: after cutover the opening row exists, so a dashboard read
+        # is a plain row read with no wallet lock. Only a tenant that still
+        # predates the ledger pays for the one-time reconstruction.
+        opening = (
+            await db.execute(
+                select(BillingEvent.id).where(
+                    BillingEvent.tenant_id == tenant_id,
+                    BillingEvent.idempotency_key == f"{OPENING_KEY_PREFIX}{tenant_id}",
+                )
+            )
+        ).scalar_one_or_none()
+        if opening is not None:
+            balance = fallback
+        else:
+            balance = int(await ensure_ledger_initialized(tenant_id, db))
+            await db.commit()
     except Exception as e:
-        logger.error(
-            "Wallet rehydrate failed for %s; showing DB grant fallback: %s",
+        logger.exception(
+            "Wallet read failed for %s; showing the last committed DB balance: %s",
             tenant_id,
             e,
         )
-        balance = max(0, user.ai_credit_cents or 0)
+        await db.rollback()
+        balance = fallback
     return {
-        "plan": user.plan or "free",
+        "plan": plan,
         "balance_cents": balance,
         "balance_dollars": round(balance / 100, 2),
         "currency": "usd",
@@ -247,15 +265,14 @@ async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
     """Admin purchase flow: set the plan, add credits, ledger it, sync Redis.
 
     A Pro purchase grants PLAN_INCLUDED_CENTS bundled credits on top of any
-    explicit top-up — the DB is updated as a pro user with a $20 AI budget.
-
-    The new balance is computed from the event ledger, not from the raw
-    grants column or a possibly stale Redis key. Otherwise a top-up after
-    the old TTL bug would re-add credits the tenant had already spent.
+    explicit top-up. The grant adds to the locked durable wallet; it never
+    recomputes a balance from grants, so a top-up cannot re-grant credit the
+    tenant already spent. A tenant that predates the ledger gets its one-time
+    opening baseline in the same transaction.
     """
     from ..users.models import User
     from .budget import PLAN_INCLUDED_CENTS, sync_balance
-    from .wallet import compute_balance
+    from .ledger import ensure_ledger_initialized
 
     if plan not in ("free", "pro"):
         raise ValueError("Unknown plan.")
@@ -272,24 +289,18 @@ async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
     plan_changed = old_plan != plan
     bundled = PLAN_INCLUDED_CENTS.get(plan, 0) if plan_changed else 0
     total_add = (add_credit_cents or 0) + bundled
-    # The event ledger is authoritative here, not the live Redis key: a
-    # stale/lost key must not re-add credits the tenant already spent. The
-    # expensive part happens only on an admin grant, never on an AI call.
-    before = await compute_balance(user_id, db)
-    if before["warning"]:
-        logger.warning(
-            "Plan grant for %s uses an approximate wallet window: %s",
-            user_id,
-            before["warning"],
-        )
-    new_balance = int(before["balance_cents"]) + total_add
+
+    before = int(await ensure_ledger_initialized(user_id, db))
+    new_balance = before + total_add
     user.plan = plan
     user.ai_credit_cents = new_balance
     db.add(BillingEvent(
         id=str(uuid.uuid4()),
         tenant_id=user_id,
         kind="plan_grant" if plan_changed else "credit_topup",
+        status="posted",
         amount_cents=total_add,
+        reserved_cents=0,
         balance_after_cents=new_balance,
         note=note,
         created_by=created_by,
@@ -297,15 +308,15 @@ async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
     await db.commit()
     synced = await sync_balance(user_id, new_balance)
     if not synced:
-        logger.error(
-            "Plan grant committed but Redis sync failed: tenant=%s balance=%s¢",
+        logger.warning(
+            "Plan grant committed; Redis mirror sync failed: tenant=%s balance=%s¢",
             user_id,
             new_balance,
         )
     logger.info("Plan grant: tenant=%s plan=%s +%s¢ (by=%s)", user_id, plan, total_add, created_by)
     return {
-        "plan": user.plan,
-        "balance_cents": user.ai_credit_cents,
-        "balance_dollars": round(user.ai_credit_cents / 100, 2),
+        "plan": plan,
+        "balance_cents": new_balance,
+        "balance_dollars": round(new_balance / 100, 2),
         "currency": "usd",
     }

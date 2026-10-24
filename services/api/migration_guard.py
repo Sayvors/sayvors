@@ -268,6 +268,18 @@ _ALTER_TABLE = re.compile(
 # when a table-scoped match cannot be established.
 _ANY_IDENTIFIER = re.compile(r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
 
+# Migrations often build one SQL statement from adjacent string literals:
+#     op.execute(
+#         "ALTER TABLE widgets "
+#         "ADD COLUMN IF NOT EXISTS cost_cents INTEGER"
+#     )
+# The parser reads source text, not the runtime string, so the ALTER TABLE
+# regex would never see the two halves as one statement. Join implicit
+# concatenations first. A comma-separated list ("a", "b") is untouched because
+# the pattern only matches a closing quote followed by whitespace and an
+# opening quote.
+_IMPLICIT_CONCAT = re.compile(r"(['\"])\s*\n\s*(['\"])")
+
 
 def _model_tables() -> dict[str, set[str]]:
     """Map table name -> column names, from the ORM metadata.
@@ -321,7 +333,7 @@ def _migrated_columns() -> tuple[dict[str, set[str]], set[str]]:
     for path in sorted(VERSIONS_DIR.glob("*.py")):
         if path.name == "__init__.py":
             continue
-        src = path.read_text(encoding="utf-8")
+        src = _IMPLICIT_CONCAT.sub("", path.read_text(encoding="utf-8"))
 
         all_identifiers.update(_ANY_IDENTIFIER.findall(src))
 

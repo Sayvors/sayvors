@@ -26,7 +26,13 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..billing.budget import BudgetExhausted, cost_cents, reserve, settle
+from ..billing.budget import (
+    BudgetExhausted,
+    BudgetUnavailable,
+    cost_cents,
+    reserve,
+    settle,
+)
 from .providers import registry
 from .providers.base import (
     LLMMessage,
@@ -208,12 +214,12 @@ async def stream(
         channel_id=channel_id,
     )
 
-    reserved = 0
+    reservation = None
     if tenant_id:
         try:
-            reserved = await reserve(tenant_id) or 0
-        except BudgetExhausted as e:
-            raise ProviderError("budget", str(e), 402) from e
+            reservation = await reserve(tenant_id, model_id=model, purpose=purpose)
+        except (BudgetExhausted, BudgetUnavailable) as e:
+            raise ProviderError("budget", str(e), e.status_code) from e
 
     prompt_tokens = (
         len(system_prompt or "")
@@ -240,9 +246,28 @@ async def stream(
         completion_tokens = (
             max(1, len(text) // _STREAM_CHARS_PER_TOKEN) if text else 0
         )
+        actual = (
+            0
+            if failure is not None
+            else cost_cents(model, prompt_tokens, completion_tokens)
+        )
+        if reservation is not None:
+            await settle(
+                reservation,
+                actual,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+        ledger_id = reservation.id if reservation is not None else None
         if failure is not None:
             record_usage_event(
-                req, None, latency_ms, status="error", error=str(failure)[:300]
+                req,
+                None,
+                latency_ms,
+                status="error",
+                error=str(failure)[:300],
+                cost_cents=0,
+                ledger_id=ledger_id,
             )
         elif completed or text:
             record_usage_event(
@@ -260,11 +285,6 @@ async def stream(
                 ),
                 latency_ms,
                 status="ok" if completed else "cancelled",
+                cost_cents=actual,
+                ledger_id=ledger_id,
             )
-        if reserved and tenant_id:
-            actual = (
-                0
-                if failure is not None
-                else cost_cents(model, prompt_tokens, completion_tokens)
-            )
-            await settle(tenant_id, reserved, actual)

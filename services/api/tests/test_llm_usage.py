@@ -72,56 +72,58 @@ async def _events(db):
     return (await db.execute(select(LLMUsageEvent))).scalars().all()
 
 
-async def _fund(tenant_id: str, cents: int = 100):
-    """Budget gate is real in these tests — fund the wallet first."""
-    from app.modules.billing.budget import sync_balance
+async def _fund(db, tenant_id: str, cents: int = 100):
+    """Budget gate is real in these tests — seed a ledger-backed wallet."""
+    from app.modules.billing.models import BillingEvent
+    from app.modules.users.models import User
 
-    await sync_balance(tenant_id, cents)
-
-
-async def _defund(tenant_id: str):
-    from app.modules.redis.client import get_redis
-
-    redis = await get_redis()
-    await redis.delete(f"ai_balance:{tenant_id}")
+    db.add(User(
+        id=tenant_id, email=f"{tenant_id}@sayvors.com", first_name="T",
+        last_name="1", password_hash="x", onboarded=True, plan="pro",
+        ai_credit_cents=cents,
+    ))
+    db.add(BillingEvent(
+        id=f"opening-{tenant_id}", tenant_id=tenant_id,
+        kind="balance_resync", status="posted", amount_cents=0,
+        balance_after_cents=cents,
+        idempotency_key=f"ledger-opening:{tenant_id}", created_by="test",
+    ))
+    await db.commit()
 
 
 async def test_complete_records_event(engine, db, usage_factory):
-    await _fund("t1")
-    try:
-        p = _FakeProvider()
-        resp = await p.complete(_req())
-        assert resp.content == "hi"
-        await _flush()
-        rows = await _events(db)
-        assert len(rows) == 1
-        e = rows[0]
-        assert e.tenant_id == "t1"
-        assert e.provider == "fake"
-        assert e.model_id == "fake:fake-1"
-        assert e.api_model == "fake-1"
-        assert e.purpose == "test.ping"
-        assert (e.prompt_tokens, e.completion_tokens, e.total_tokens) == (10, 20, 30)
-        assert e.status == "ok"
-        assert e.latency_ms >= 0
-    finally:
-        await _defund("t1")
+    await _fund(db, "t1")
+    p = _FakeProvider()
+    resp = await p.complete(_req())
+    assert resp.content == "hi"
+    await _flush()
+    rows = await _events(db)
+    assert len(rows) == 1
+    e = rows[0]
+    assert e.tenant_id == "t1"
+    assert e.provider == "fake"
+    assert e.model_id == "fake:fake-1"
+    assert e.api_model == "fake-1"
+    assert e.purpose == "test.ping"
+    assert (e.prompt_tokens, e.completion_tokens, e.total_tokens) == (10, 20, 30)
+    assert e.status == "ok"
+    assert e.latency_ms >= 0
+    assert e.cost_cents == 0  # fake family is free
+    assert e.ledger_id is not None
 
 
 async def test_complete_error_records_and_reraises(engine, db, usage_factory):
-    await _fund("t1")
-    try:
-        p = _FakeProvider(fail=True)
-        with pytest.raises(ProviderError):
-            await p.complete(_req())
-        await _flush()
-        rows = await _events(db)
-        assert len(rows) == 1
-        assert rows[0].status == "error"
-        assert "boom" in (rows[0].error or "")
-        assert rows[0].total_tokens == 0
-    finally:
-        await _defund("t1")
+    await _fund(db, "t1")
+    p = _FakeProvider(fail=True)
+    with pytest.raises(ProviderError):
+        await p.complete(_req())
+    await _flush()
+    rows = await _events(db)
+    assert len(rows) == 1
+    assert rows[0].status == "error"
+    assert "boom" in (rows[0].error or "")
+    assert rows[0].total_tokens == 0
+    assert rows[0].ledger_id is not None
 
 
 async def test_record_without_loop_is_silent():

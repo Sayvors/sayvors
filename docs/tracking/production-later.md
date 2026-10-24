@@ -36,9 +36,9 @@ Items **deferred for later** because they need a production VM (not your laptop,
 | RAG cache (embeddings/chunks) | `rag/cache.py` | ✅ Yes | `ex=EMBED_CACHE_TTL` |
 | Job progress | `rag/cache.py` | ✅ Yes | `ex=3600` (1 hour) |
 | Profile cache | `profile/service.py` | ✅ Yes | `setex(..., ttl, ...)` |
-| Billing budget balance | `billing/budget.py` | ❌ **No TTL — on purpose** | The 24h TTL was the disappearing-balance bug: the key expired, the next reserve created a permanent `0`. The wallet is now rebuilt from grants minus metered spend when the key is missing. **This is a wallet key, not a cache: it must not expire.** |
+| Billing budget mirror | `billing/budget.py` | ❌ **No TTL — on purpose** | The durable balance is `users.ai_credit_cents` + `billing_events` in Postgres. This key is only a read mirror; the 24h TTL was the original disappearing-balance bug. Deleting it does not change the true balance, and reserve/settle repair it after commit. |
 
-**Bottom line:** Almost every Redis key has a TTL, so nothing critical is lost on Redis restart. Auth, OTP, sessions, rate limits, connect tickets, and billing balances all auto-expire — they won't accumulate forever.
+**Bottom line:** Almost every Redis key has a TTL, so nothing critical is lost on Redis restart. Auth, OTP, sessions, rate limits, and connect tickets all auto-expire. The billing key is an exception by design: it is a mirror of durable Postgres state, not the state itself.
 
 With 6–8 GB, you have plenty of headroom for: 100k+ active sessions, rate-limit windows, blacklist JTIs, OTP codes, connect tickets, and billing balances — all with TTLs keeping growth bounded.
 
