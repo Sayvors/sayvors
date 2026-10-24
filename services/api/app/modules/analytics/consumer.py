@@ -213,7 +213,7 @@ async def _handle_discovered(payload: dict) -> None:
         # than an empty review while the provider is down.
         insight.enrichment_status = "failed" if result.get("heuristic") else "done"
 
-        bucket_date = (insight.review_updated_at or insight.created_at).date()
+        bucket_date = (insight.review_updated_at or insight.created_at or datetime.now(timezone.utc)).date()
 
         from ..outbox.service import enqueue_event_in
 
@@ -267,7 +267,7 @@ async def _handle_replied(payload: dict) -> None:
             insight.enrichment_status = insight.enrichment_status or "pending"
             db.add(insight)
             await db.commit()
-            bucket_date = (insight.review_updated_at or insight.created_at).date()
+            bucket_date = (insight.review_updated_at or insight.created_at or datetime.now(timezone.utc)).date()
     if insight:
         await recompute_daily_rollup(channel_id, owner or insight.user_id, bucket_date)
 
