@@ -347,6 +347,7 @@ class ChannelDailyMetric(Base):
     # ── Future pillars (filled by later phases, columns exist so the
     #    rollup worker never needs a second migration) ──
     ai_handled_out: Mapped[int] = mapped_column(Integer, default=0)  # needs handled_by flag
+    human_handled_out: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # needs handled_by flag
     contacts_new: Mapped[int] = mapped_column(Integer, default=0)  # first-ever inbound that day
     followers_count: Mapped[int | None] = mapped_column(Integer, nullable=True)  # daily snapshot
     posts_count: Mapped[int | None] = mapped_column(Integer, nullable=True)  # daily snapshot
