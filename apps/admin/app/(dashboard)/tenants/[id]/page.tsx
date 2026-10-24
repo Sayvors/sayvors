@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { adminFetch, type AdminTenantDetail } from "@/lib/admin-api";
+import { fetchTenantBilling, reconcileWallet, type TenantBilling, type WalletReconcileResult } from "@/lib/billing-api";
 
 type Review = AdminTenantDetail["recent_reviews"][number];
 
@@ -55,35 +56,17 @@ function statusStyle(s: string): string {
   if (v === "pending") return "bg-violet-500 text-white";
   return "bg-ink/10 text-ink/60";
 }
+function fmtCents(c: number): string {
+  const sign = c < 0 ? "-" : "";
+  const abs = Math.abs(c);
+  return `${sign}$${(abs / 100).toFixed(2)}`;
+}
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
 }
 function fmtMs(ms: number): string { return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`; }
-
-// Count-up numeral: animates once on first paint, final value for reduced motion.
-function useCountUp(target: number, decimals = 0, duration = 900): string {
-  const reduceMotion =
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const [frame, setFrame] = useState(reduceMotion ? 1 : 0);
-  useEffect(() => {
-    if (reduceMotion) return;
-    let raf = 0;
-    const t0 = performance.now();
-    const tick = (t: number) => {
-      const p = Math.min(1, (t - t0) / duration);
-      setFrame(1 - Math.pow(1 - p, 3));
-      if (p < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target, duration, reduceMotion]);
-  const shown = target * frame;
-  return decimals > 0 ? shown.toFixed(decimals) : Math.round(shown).toLocaleString("en-US");
-}
 
 function Stars({ rating }: { rating: number }) {
   const n = Math.max(0, Math.min(5, Math.round(rating)));
@@ -131,6 +114,14 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const [usageLoading, setUsageLoading] = useState(true);
   const [usageError, setUsageError] = useState<string | null>(null);
 
+  const [billing, setBilling] = useState<TenantBilling | null>(null);
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [billingError, setBillingError] = useState<string | null>(null);
+  const [reconcileDry, setReconcileDry] = useState(true);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileResult, setReconcileResult] = useState<WalletReconcileResult | null>(null);
+  const [reconcileError, setReconcileError] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     adminFetch<AdminTenantDetail>(`/api/v1/admin/tenants/${encodeURIComponent(id)}`)
@@ -143,8 +134,6 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   // the per-tenant endpoint. Promise chain only — safe inside the effect.
   useEffect(() => {
     let cancelled = false;
-    setUsageLoading(true);
-    setUsageError(null);
     adminFetch<TenantUsage>(`/api/v1/admin/tenants/${encodeURIComponent(id)}/usage?days=${usageDays}`)
       .then((u) => { if (!cancelled) { setUsage(u); setUsageLoading(false); } })
       .catch((e: unknown) => {
@@ -189,6 +178,41 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       });
     return () => { cancelled = true; };
   }, [id, usageDays]);
+
+  // billing ledger for this tenant
+  useEffect(() => {
+    let cancelled = false;
+    setBillingLoading(true);
+    setBillingError(null);
+    fetchTenantBilling(id)
+      .then((b) => { if (!cancelled) { setBilling(b); setBillingLoading(false); } })
+      .catch((e) => { if (!cancelled) { setBillingError(e instanceof Error ? e.message : "Billing load failed."); setBillingLoading(false); } });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  const reloadBilling = useCallback(() => {
+    setBillingLoading(true);
+    setBillingError(null);
+    fetchTenantBilling(id)
+      .then((b) => { setBilling(b); })
+      .catch((e) => { setBillingError(e instanceof Error ? e.message : "Billing load failed."); })
+      .finally(() => setBillingLoading(false));
+  }, [id]);
+
+  const runReconcile = useCallback(async () => {
+    setReconciling(true);
+    setReconcileError(null);
+    setReconcileResult(null);
+    try {
+      const r = await reconcileWallet(id, reconcileDry);
+      setReconcileResult(r);
+      if (!reconcileDry) reloadBilling();
+    } catch (e) {
+      setReconcileError(e instanceof Error ? e.message : "Reconcile failed.");
+    } finally {
+      setReconciling(false);
+    }
+  }, [id, reconcileDry, reloadBilling]);
 
   const retryUsage = useCallback(() => {
     setUsageLoading(true);
@@ -530,6 +554,166 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
             <button onClick={retryUsage} className={`font-bold underline ${FOCUS_RING}`}>Retry</button>
             <span className="ml-1 text-amber-700/70">· Restart the API to enable full per-tenant history if needed.</span>
           </div>
+        ) : null}
+      </section>
+
+      {/* ── billing / AI credit ledger ────────────────────── */}
+      <section id="billing" aria-labelledby="billing-heading" className="admin-rise panel p-4 sm:p-5" style={{ animationDelay: "240ms" }}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 id="billing-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-ink/40">
+              Billing · AI credit ledger
+            </h2>
+            <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-ink/60">
+              Postgres is the source of truth. Available is what the tenant can spend now; held is reserved by in-flight calls.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button onClick={reloadBilling} className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        {billingLoading ? (
+          <div className="mt-4 grid gap-2.5 sm:grid-cols-4" aria-hidden aria-label="Loading billing">
+            {[1, 2, 3, 4].map((i) => <div key={i} className="h-20 animate-pulse rounded-[2px] bg-ink/[0.04]" />)}
+          </div>
+        ) : billingError ? (
+          <div className="mt-4 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] leading-relaxed text-amber-800">
+            {billingError} <button onClick={reloadBilling} className={`ml-1 font-bold underline ${FOCUS_RING}`}>Retry</button>
+          </div>
+        ) : billing ? (
+          <>
+            <dl className="mt-4 grid gap-2.5 sm:grid-cols-4">
+              {[
+                { label: "Available", value: fmtCents(billing.balance_cents), note: billing.status === "debt" ? "In debt — top up required" : billing.status === "empty" ? "No credit left" : billing.status === "low" ? "Running low" : "Ready to spend", tone: billing.balance_cents < 0 ? "text-red-600" : "text-ink" },
+                { label: "Held in flight", value: billing.held_cents > 0 ? fmtCents(billing.held_cents) : "—", note: `${billing.holds.length} pending hold${billing.holds.length === 1 ? "" : "s"}`, tone: "text-deep-violet" },
+                { label: "Total committed", value: fmtCents(billing.total_cents), note: "Available + held", tone: "text-ink" },
+                { label: "Plan", value: billing.plan, note: billing.email, tone: "text-ink" },
+              ].map((c) => (
+                <div key={c.label} className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3">
+                  <dt className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</dt>
+                  <dd className={`mt-1 text-[18px] font-bold leading-none tabular-nums ${c.tone}`}>{c.value}</dd>
+                  <dd className="mt-1 text-[11px] text-ink/45">{c.note}</dd>
+                </div>
+              ))}
+            </dl>
+
+            {/* reconcile */}
+            <div className="mt-4 rounded-[2px] border border-[var(--ui-line)] bg-ink/[0.02] p-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/50">Reconcile Redis mirror</p>
+                  <p className="mt-0.5 text-[11px] text-ink/45">Preview by default. Apply overwrites Redis with the DB balance and writes an audit row only on drift.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-ink/60">
+                    <input type="checkbox" checked={reconcileDry} onChange={(e) => setReconcileDry(e.target.checked)} className="h-3.5 w-3.5 rounded border-[var(--ui-line-strong)]" />
+                    Dry run
+                  </label>
+                  <button
+                    onClick={runReconcile}
+                    disabled={reconciling}
+                    className={`rounded-[2px] bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50 ${FOCUS_RING}`}
+                  >
+                    {reconciling ? "Working…" : reconcileDry ? "Preview" : "Apply"}
+                  </button>
+                </div>
+              </div>
+              {reconcileError && (
+                <div className="mt-3 rounded-[2px] border border-red-200 bg-red-50 px-3 py-2 text-[11px] leading-relaxed text-red-700">{reconcileError}</div>
+              )}
+              {reconcileResult && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                  {[
+                    { label: "DB balance", value: fmtCents(reconcileResult.db_balance_cents) },
+                    { label: "Redis mirror", value: reconcileResult.redis_balance_cents == null ? "missing" : fmtCents(reconcileResult.redis_balance_cents) },
+                    { label: "Delta", value: reconcileResult.delta_cents == null ? "—" : fmtCents(reconcileResult.delta_cents) },
+                    { label: "Result", value: reconcileResult.applied ? (reconcileResult.redis_synced ? "Synced" : "No drift") : "Preview only" },
+                  ].map((c) => (
+                    <div key={c.label} className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2">
+                      <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</p>
+                      <p className="mt-1 text-[13px] font-bold tabular-nums text-ink">{c.value}</p>
+                    </div>
+                  ))}
+                  {reconcileResult.warning && <p className="col-span-full text-[11px] text-amber-700">{reconcileResult.warning}</p>}
+                </div>
+              )}
+            </div>
+
+            {/* pending holds */}
+            {billing.holds.length > 0 && (
+              <div className="mt-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/50">Pending holds · {billing.holds.length}</p>
+                <div className="mt-2 overflow-x-auto rounded-[2px] border border-[var(--ui-line)]">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-ink/[0.02] text-[10px] font-bold uppercase tracking-[0.12em] text-ink/45">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Hold</th>
+                        <th className="px-3 py-2 text-left">Model</th>
+                        <th className="px-3 py-2 text-right">Reserved</th>
+                        <th className="px-3 py-2 text-right">Expires</th>
+                        <th className="px-3 py-2 text-left">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--ui-line)]">
+                      {billing.holds.map((h) => (
+                        <tr key={h.id}>
+                          <td className="px-3 py-2 font-mono text-[10px] text-ink/50">{h.id.slice(0, 8)}…</td>
+                          <td className="px-3 py-2 text-ink/70">{h.model_id ?? "—"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums font-semibold text-deep-violet">{fmtCents(h.reserved_cents)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-ink/50">{h.expires_at ? new Date(h.expires_at).toLocaleTimeString() : "—"}</td>
+                          <td className="px-3 py-2 text-ink/45">{h.created_at ? new Date(h.created_at).toLocaleString() : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ledger history */}
+            <div className="mt-4">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-ink/50">Ledger history · {billing.ledger.length} rows</p>
+              <div className="mt-2 overflow-x-auto rounded-[2px] border border-[var(--ui-line)]">
+                <table className="w-full text-[11px]">
+                  <thead className="bg-ink/[0.02] text-[10px] font-bold uppercase tracking-[0.12em] text-ink/45">
+                    <tr>
+                      <th className="px-3 py-2 text-left">When</th>
+                      <th className="px-3 py-2 text-left">Kind</th>
+                      <th className="px-3 py-2 text-left">Status</th>
+                      <th className="px-3 py-2 text-left">Model</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-right">Reserved</th>
+                      <th className="px-3 py-2 text-right">Balance after</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--ui-line)]">
+                    {billing.ledger.map((e) => (
+                      <tr key={e.id} className="transition hover:bg-ink/[0.02]">
+                        <td className="px-3 py-2 tabular-nums text-ink/45">{e.created_at ? new Date(e.created_at).toLocaleString() : "—"}</td>
+                        <td className="px-3 py-2">
+                          <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase text-ink/60">{e.kind}</span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${e.status === "settled" ? "bg-emerald-50 text-emerald-700" : e.status === "pending" ? "bg-amber-50 text-amber-700" : e.status === "released" ? "bg-sky-50 text-sky-700" : e.status === "expired" ? "bg-red-50 text-red-700" : "bg-ink/[0.06] text-ink/50"}`}>
+                            {e.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-ink/60">{e.model_id ?? "—"}</td>
+                        <td className={`px-3 py-2 text-right tabular-nums font-semibold ${e.amount_cents < 0 ? "text-red-600" : e.amount_cents > 0 ? "text-emerald-600" : "text-ink/40"}`}>
+                          {e.amount_cents === 0 ? "—" : `${e.amount_cents > 0 ? "+" : ""}${fmtCents(e.amount_cents)}`}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink/50">{e.reserved_cents > 0 ? fmtCents(e.reserved_cents) : "—"}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-ink/60">{e.balance_after_cents == null ? "—" : fmtCents(e.balance_after_cents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         ) : null}
       </section>
 

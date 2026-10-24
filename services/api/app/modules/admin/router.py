@@ -350,6 +350,32 @@ async def admin_resync_balance(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.get("/billing/overview")
+async def admin_billing_overview(
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .service import get_billing_overview
+
+    return await get_billing_overview(db)
+
+
+@router.get("/tenants/{user_id}/billing")
+async def admin_tenant_billing(
+    user_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .service import get_tenant_billing
+
+    result = await get_tenant_billing(db, user_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    return result
+
+
 @router.get("/health", response_model=AdminHealth)
 async def admin_health(
     probe: bool = Query(False),

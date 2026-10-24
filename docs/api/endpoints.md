@@ -509,8 +509,10 @@ See the [RAG / Databanks guide](rag.md) for the ingestion and query workflows.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/budget` | Read plan and remaining AI credit balance |
+| GET | `/budget` | Read plan and remaining AI credit balance (durable Postgres wallet) |
 | GET | `/profile` | Read billing profile |
+| GET | `/admin/billing/overview` | Wallet summary for every tenant (debt first) |
+| GET | `/admin/tenants/{user_id}/billing` | Wallet, pending holds, and recent ledger rows |
 | PUT | `/profile` | Create or update billing profile |
 | GET | `/methods` | List saved payment methods |
 | POST | `/gateway/tokenize` | Tokenize card metadata using the current stub gateway |

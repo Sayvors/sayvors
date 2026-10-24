@@ -11,7 +11,7 @@ type NavItem = {
   href: string;
   label: string;
   desc: string;
-  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings";
+  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings" | "billing";
 };
 
 const SECTIONS: { title: string; items: NavItem[] }[] = [
@@ -26,6 +26,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Operations",
     items: [
       { href: "/usage", label: "Usage", desc: "Tokens & metering", icon: "usage" },
+      { href: "/billing", label: "Billing", desc: "Wallets & ledger", icon: "billing" },
       { href: "/logs", label: "Logs", desc: "Services & failures", icon: "logs" },
     ],
   },
@@ -108,6 +109,15 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
             strokeWidth="1.5"
             strokeLinecap="round"
           />
+        </svg>
+      );
+    case "billing":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <rect x="3.5" y="6" width="17" height="12" rx="2" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M3.5 10h17" stroke="currentColor" strokeWidth="1.6" />
+          <circle cx="7.5" cy="14" r="1.2" fill="currentColor" />
+          <path d="M11 14h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
         </svg>
       );
     default:
