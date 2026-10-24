@@ -16,6 +16,7 @@ from ...core.crypto import get_fernet as _get_fernet
 from ..team.context import tenant_id_of
 from ..users.models import User
 from .models import Channel, ChannelMessage
+from . import thread_maintenance  # noqa: F401  registers event listeners
 from .schemas import ChannelCreate, ChannelMessageSend
 
 
@@ -596,68 +597,165 @@ async def list_inbox_threads(
     by_id = {c.id: c for c in channels}
 
     needle = search.strip().lower() if search and search.strip() else None
-    stmt = (
-        select(
-            ChannelMessage.contact_phone_hash,
-            func.max(ChannelMessage.contact_phone).label("contact_phone"),
-            ChannelMessage.channel_id,
-            func.max(ChannelMessage.created_at).label("last_at"),
-            func.count(ChannelMessage.id).label("total"),
+
+    # Fallback: if no thread rows exist yet (pre-backfill), use the old
+    # GROUP BY approach so the inbox is never empty.
+    from .models import ContactProfile, ChannelThread
+
+    thread_count = (await db.execute(
+        select(func.count()).select_from(ChannelThread).where(
+            ChannelThread.channel_id.in_(channel_ids)
         )
-        .where(ChannelMessage.channel_id.in_(channel_ids))
-        .group_by(ChannelMessage.contact_phone_hash, ChannelMessage.channel_id)
+    )).scalar() or 0
+
+    if thread_count == 0 or needle:
+        # --- Legacy path: GROUP BY + full message load ---
+        stmt = (
+            select(
+                ChannelMessage.contact_phone_hash,
+                func.max(ChannelMessage.contact_phone).label("contact_phone"),
+                ChannelMessage.channel_id,
+                func.max(ChannelMessage.created_at).label("last_at"),
+                func.count(ChannelMessage.id).label("total"),
+            )
+            .where(ChannelMessage.channel_id.in_(channel_ids))
+            .group_by(ChannelMessage.contact_phone_hash, ChannelMessage.channel_id)
+        )
+        if cursor:
+            try:
+                cursor_dt = datetime.fromisoformat(cursor)
+                if cursor_dt.tzinfo is None:
+                    cursor_dt = cursor_dt.replace(tzinfo=timezone.utc)
+                stmt = stmt.having(func.max(ChannelMessage.created_at) < cursor_dt)
+            except (ValueError, TypeError):
+                pass
+        stmt = stmt.order_by(func.max(ChannelMessage.created_at).desc()).limit(limit)
+
+        summaries = (await db.execute(stmt)).all()
+        if not summaries:
+            return []
+
+        all_msgs = (
+            await db.execute(
+                select(ChannelMessage)
+                .where(ChannelMessage.channel_id.in_(channel_ids))
+                .order_by(ChannelMessage.created_at.desc())
+            )
+        ).scalars().all()
+
+        msgs_by_thread: dict[tuple, list] = {}
+        for m in all_msgs:
+            key = (m.channel_id, m.contact_phone_hash)
+            msgs_by_thread.setdefault(key, []).append(m)
+
+        if needle:
+            filtered_summaries = []
+            for phone_hash, phone, channel_id, last_at, total in summaries:
+                msgs = msgs_by_thread.get((channel_id, phone_hash), [])
+                if any(needle in (decrypt_message_content(m.content) or "").lower() for m in msgs):
+                    filtered_summaries.append((phone_hash, phone, channel_id, last_at, total))
+            summaries = filtered_summaries
+            if not summaries:
+                return []
+
+        profile_keys = {
+            (by_id[cid].platform, decrypt_contact_phone(phone))
+            for phone_hash, phone, cid, _la, _t in summaries
+            if phone is not None
+        }
+        profiles: dict = {}
+        if profile_keys:
+            rows = (
+                await db.execute(
+                    select(ContactProfile).where(
+                        ContactProfile.tenant_id == tenant_id_of(user),
+                        ContactProfile.platform.in_({p for p, _ in profile_keys}),
+                        ContactProfile.contact_id.in_({c for _, c in profile_keys}),
+                    )
+                )
+            ).scalars().all()
+            profiles = {(r.platform, r.contact_id): r for r in rows}
+
+        out: list[dict] = []
+        for phone_hash, phone, channel_id, last_at, total in summaries:
+            msgs = msgs_by_thread.get((channel_id, phone_hash), [])
+            if not msgs:
+                continue
+
+            last_row = msgs[0]
+
+            last_outbound_at = None
+            for m in msgs:
+                if m.direction == "outbound":
+                    last_outbound_at = m.created_at
+                    break
+            unread = 0
+            if last_outbound_at:
+                unread = sum(1 for m in msgs if m.direction == "inbound" and m.created_at > last_outbound_at)
+            else:
+                unread = total if phone is not None else 0
+
+            name = last_row.contact_name
+            profile = (
+                profiles.get((by_id[channel_id].platform, decrypt_contact_phone(phone)))
+                if phone is not None
+                else None
+            )
+            if profile is not None and profile.name:
+                name = profile.name
+            decrypted_phone = decrypt_contact_phone(phone) if phone is not None else None
+            decrypted_last = decrypt_message_content(last_row.content) if last_row.content else ""
+            category = last_row.category or "normal"
+            priority = last_row.priority or "normal"
+            platform = by_id[channel_id].platform
+            out.append(
+                {
+                    "key": thread_key(decrypted_phone),
+                    "contact_phone": decrypted_phone,
+                    "display_name": name or decrypted_phone,
+                    "username": profile.username if profile else None,
+                    "avatar_url": profile.avatar_url if profile else None,
+                    "channel_id": channel_id,
+                    "channel_name": by_id[channel_id].display_name,
+                    "platform": platform,
+                    "last_message": (decrypted_last or "")[:280],
+                    "last_message_at": last_at.isoformat() if last_at else None,
+                    "last_direction": last_row.direction,
+                    "message_count": total,
+                    "unread": int(unread or 0),
+                    "is_unknown": phone is None,
+                    "category": category,
+                    "priority": priority,
+                    "important": is_important(priority, category),
+                    "can_reply": platform != "google_reviews" and phone is not None,
+                }
+            )
+        return out
+
+    # --- Fast path: read from denormalized thread table (1 query) ---
+    t_stmt = (
+        select(ChannelThread)
+        .where(ChannelThread.channel_id.in_(channel_ids))
+        .order_by(ChannelThread.last_message_at.desc())
     )
     if cursor:
         try:
             cursor_dt = datetime.fromisoformat(cursor)
             if cursor_dt.tzinfo is None:
                 cursor_dt = cursor_dt.replace(tzinfo=timezone.utc)
-            stmt = stmt.having(func.max(ChannelMessage.created_at) < cursor_dt)
+            t_stmt = t_stmt.where(ChannelThread.last_message_at < cursor_dt)
         except (ValueError, TypeError):
             pass
-    stmt = stmt.order_by(func.max(ChannelMessage.created_at).desc()).limit(limit)
+    t_stmt = t_stmt.limit(limit)
 
-    summaries = (await db.execute(stmt)).all()
-    if not summaries:
+    threads = (await db.execute(t_stmt)).scalars().all()
+    if not threads:
         return []
 
-    # Batch fetch ALL messages for these channels in one query instead of
-    # N per-thread queries. Group in Python — eliminates N+1.
-    all_msgs = (
-        await db.execute(
-            select(ChannelMessage)
-            .where(ChannelMessage.channel_id.in_(channel_ids))
-            .order_by(ChannelMessage.created_at.desc())
-        )
-    ).scalars().all()
-
-    # Index messages by (channel_id, contact_phone_hash) for fast lookup
-    msgs_by_thread: dict[tuple, list] = {}
-    for m in all_msgs:
-        key = (m.channel_id, m.contact_phone_hash)
-        msgs_by_thread.setdefault(key, []).append(m)
-
-    # When searching, filter threads by decrypting message content in Python.
-    # SQL ILIKE cannot match encrypted content.
-    if needle:
-        filtered_summaries = []
-        for phone_hash, phone, channel_id, last_at, total in summaries:
-            msgs = msgs_by_thread.get((channel_id, phone_hash), [])
-            if any(needle in (decrypt_message_content(m.content) or "").lower() for m in msgs):
-                filtered_summaries.append((phone_hash, phone, channel_id, last_at, total))
-        summaries = filtered_summaries
-        if not summaries:
-            return []
-
-    # Cached contact profiles (names/usernames/avatars) in one read — the
-    # map lookup stays exact per (platform, contact) even though the IN
-    # filters can over-fetch.
-    from .models import ContactProfile
-
     profile_keys = {
-        (by_id[cid].platform, decrypt_contact_phone(phone))
-        for phone_hash, phone, cid, _la, _t in summaries
-        if phone is not None
+        (by_id[t.channel_id].platform, decrypt_contact_phone(t.contact_phone))
+        for t in threads
+        if t.contact_phone is not None
     }
     profiles: dict = {}
     if profile_keys:
@@ -672,40 +770,23 @@ async def list_inbox_threads(
         ).scalars().all()
         profiles = {(r.platform, r.contact_id): r for r in rows}
 
-    # Build output from batched data — no per-thread queries.
     out: list[dict] = []
-    for phone_hash, phone, channel_id, last_at, total in summaries:
-        msgs = msgs_by_thread.get((channel_id, phone_hash), [])
-        if not msgs:
+    for t in threads:
+        ch = by_id.get(t.channel_id)
+        if ch is None:
             continue
-
-        last_row = msgs[0]  # already sorted by created_at desc
-
-        # Unread = inbound messages after the most recent outbound one.
-        last_outbound_at = None
-        for m in msgs:
-            if m.direction == "outbound":
-                last_outbound_at = m.created_at
-                break
-        unread = 0
-        if last_outbound_at:
-            unread = sum(1 for m in msgs if m.direction == "inbound" and m.created_at > last_outbound_at)
-        else:
-            unread = total if phone is not None else 0
-
-        name = last_row.contact_name
+        phone = t.contact_phone
+        decrypted_phone = decrypt_contact_phone(phone) if phone is not None else None
         profile = (
-            profiles.get((by_id[channel_id].platform, decrypt_contact_phone(phone)))
-            if phone is not None
-            else None
+            profiles.get((ch.platform, decrypted_phone)) if decrypted_phone is not None else None
         )
+        name = t.contact_name
         if profile is not None and profile.name:
             name = profile.name
-        decrypted_phone = decrypt_contact_phone(phone) if phone is not None else None
-        decrypted_last = decrypt_message_content(last_row.content) if last_row.content else ""
-        category = last_row.category or "normal"
-        priority = last_row.priority or "normal"
-        platform = by_id[channel_id].platform
+        decrypted_last = decrypt_message_content(t.last_message_preview) if t.last_message_preview else ""
+        category = t.category or "normal"
+        priority = t.priority or "normal"
+        platform = ch.platform
         out.append(
             {
                 "key": thread_key(decrypted_phone),
@@ -713,23 +794,18 @@ async def list_inbox_threads(
                 "display_name": name or decrypted_phone,
                 "username": profile.username if profile else None,
                 "avatar_url": profile.avatar_url if profile else None,
-                "channel_id": channel_id,
-                "channel_name": by_id[channel_id].display_name,
+                "channel_id": t.channel_id,
+                "channel_name": ch.display_name,
                 "platform": platform,
                 "last_message": (decrypted_last or "")[:280],
-                "last_message_at": last_at.isoformat() if last_at else None,
-                "last_direction": last_row.direction,
-                "message_count": total,
-                "unread": int(unread or 0),
+                "last_message_at": t.last_message_at.isoformat() if t.last_message_at else None,
+                "last_direction": t.last_direction,
+                "message_count": int(t.total_count or 0),
+                "unread": 0 if phone is None else int(t.unread_count or 0),
                 "is_unknown": phone is None,
                 "category": category,
                 "priority": priority,
-                # One rule, every source: an urgent/high conversation or
-                # a complaint needs a human now.
                 "important": is_important(priority, category),
-                # A Google review is a public post, not a message — it is
-                # answered through the review-reply flow, so the inbox's
-                # send box must not offer to reply to it.
                 "can_reply": platform != "google_reviews" and phone is not None,
             }
         )

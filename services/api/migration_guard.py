@@ -264,6 +264,22 @@ _ALTER_TABLE = re.compile(
     re.I,
 )
 
+# ``CREATE TABLE ... (...)`` in raw SQL (op.execute). Captures the table
+# name and the parenthesized column list so individual columns can be
+# extracted by ``_RAW_COLUMN``.
+_CREATE_TABLE_RAW = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?['\"]?(?P<table>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*\((?P<body>.*)\)\s*['\"]",
+    re.S | re.I,
+)
+
+# Column definitions inside a raw ``CREATE TABLE``: ``column_name TYPE``.
+_RAW_COLUMN = re.compile(
+    r"(?P<column>[A-Za-z_][A-Za-z0-9_]*)\s+"
+    r"(?:VARCHAR|CHAR|TEXT|INTEGER|BIGINT|SMALLINT|BOOLEAN|TIMESTAMPTZ|TIMESTAMP|DATE|TIME|"
+    r"JSON|JSONB|FLOAT|REAL|DOUBLE|NUMERIC|DECIMAL|UUID|BYTEA|SERIAL|BIGSERIAL)\b",
+    re.I,
+)
+
 # Any quoted identifier appearing anywhere in a migration - the fallback used
 # when a table-scoped match cannot be established.
 _ANY_IDENTIFIER = re.compile(r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
@@ -350,6 +366,11 @@ def _migrated_columns() -> tuple[dict[str, set[str]], set[str]]:
         for match in _CREATE_TABLE.finditer(src):
             table = match.group("table").lower()
             for column in _COLUMN_ANYWHERE.finditer(match.group("body")):
+                by_table.setdefault(table, set()).add(column.group("column"))
+
+        for match in _CREATE_TABLE_RAW.finditer(src):
+            table = match.group("table").lower()
+            for column in _RAW_COLUMN.finditer(match.group("body")):
                 by_table.setdefault(table, set()).add(column.group("column"))
 
     return by_table, all_identifiers

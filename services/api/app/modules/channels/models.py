@@ -70,6 +70,8 @@ class Channel(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
     messages = relationship("ChannelMessage", back_populates="channel", cascade="all, delete-orphan")
+    threads = relationship("ChannelThread", back_populates="channel", cascade="all, delete-orphan")
+    threads = relationship("ChannelThread", back_populates="channel", cascade="all, delete-orphan")
 
 
 class ChannelMessage(Base):
@@ -124,6 +126,50 @@ class ChannelMessage(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     channel = relationship("Channel", back_populates="messages")
+
+class ChannelThread(Base):
+    """Denormalized per-thread summary for the unified inbox.
+
+    One row per (channel, contact). Maintained by SQLAlchemy event
+    listeners on ChannelMessage so every insert site updates it
+    without touching 15+ call sites. The inbox reads this table in a
+    single query instead of GROUP BY + full message load.
+
+    unread_count = inbound messages after the most recent outbound.
+    """
+    __tablename__ = "channel_threads"
+    __table_args__ = (
+        UniqueConstraint(
+            "channel_id", "contact_phone_hash",
+            name="uq_channel_threads_channel_contact",
+        ),
+        Index("ix_channel_threads_channel_last", "channel_id", "last_message_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True
+    )
+    contact_phone: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_direction: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    last_message_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
+    total_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    unread_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    priority: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    channel = relationship("Channel", back_populates="threads")
+
 
 
 class ChannelComment(Base):
