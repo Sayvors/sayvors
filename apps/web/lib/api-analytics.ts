@@ -470,6 +470,17 @@ export const fetchConversationInsights = (): Promise<{
   computed_at: string | null;
 }> => apiFetch("/api/v1/analytics/conversations/insights");
 
+export const fetchMarketBenchmarks = (metric?: string): Promise<{
+  date: string;
+  scope_market: string;
+  scope_network: string;
+  metric: string;
+  median: number | null;
+  p25: number | null;
+  p75: number | null;
+  business_count: number;
+}[]> => apiFetch(`/api/v1/analytics/market-benchmarks${metric ? `?metric=${encodeURIComponent(metric)}` : ""}`);
+
 /* ── Benchmark pillar ─────────────────────────────────────────────── */
 
 export interface BenchmarkResponse {

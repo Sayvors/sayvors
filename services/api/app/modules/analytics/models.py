@@ -465,3 +465,24 @@ class ConversationInsight(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class MarketBenchmark(Base):
+    __tablename__ = "market_benchmarks"
+    __table_args__ = (
+        UniqueConstraint("date", "scope_market", "scope_network", "metric", name="uq_market_benchmarks_date_scope_metric"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    date: Mapped[datetime] = mapped_column(Date, nullable=False, index=True)
+    scope_market: Mapped[str] = mapped_column(String(64), nullable=False, server_default="global")
+    scope_network: Mapped[str] = mapped_column(String(32), nullable=False, server_default="all")
+    metric: Mapped[str] = mapped_column(String(64), nullable=False)
+    median: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p25: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p75: Mapped[float | None] = mapped_column(Float, nullable=True)
+    business_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )

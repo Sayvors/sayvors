@@ -216,6 +216,43 @@ async def get_messaging_overview(
     return await service.get_messaging_overview(db, uid, channel_id, days)
 
 
+@router.get("/market-benchmarks")
+async def get_market_benchmarks(
+    metric: str | None = Query(None),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stored market benchmarks (cross-tenant aggregates). Reads stored rows only."""
+    from ..models import MarketBenchmark
+    from sqlalchemy import select
+
+    filters = []
+    if metric:
+        filters.append(MarketBenchmark.metric == metric)
+    rows = (
+        await db.execute(
+            select(MarketBenchmark)
+            .where(*filters)
+            .order_by(MarketBenchmark.date.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    return [
+        {
+            "date": r.date.isoformat(),
+            "scope_market": r.scope_market,
+            "scope_network": r.scope_network,
+            "metric": r.metric,
+            "median": r.median,
+            "p25": r.p25,
+            "p75": r.p75,
+            "business_count": r.business_count,
+        }
+        for r in rows
+    ]
+
+
 @router.get("/conversations/insights")
 async def get_conversation_insights(
     user: User = Depends(get_current_user),

@@ -178,6 +178,7 @@ class Settings(BaseSettings):
     # never matter.
     MESSAGING_ROLLUP_INTERVAL_SECONDS: int = 900
     CONVERSATION_INSIGHTS_INTERVAL_SECONDS: int = 86400  # daily
+    MARKET_BENCHMARKS_INTERVAL_SECONDS: int = 86400  # daily
 
     # ── LLM ────────────────────────────────────────────
     # Provider keys live exclusively in the database (Admin → LLMs).
