@@ -60,6 +60,23 @@ def mark_kafka_available():
     logger.info("Kafka marked available")
 
 
+async def run_kafka_rearmer() -> None:
+    """Background prober that re-arms Kafka after an outage.
+
+    ``mark_kafka_unavailable()`` latches Kafka offline. This prober
+    periodically unlatches it so the next ``get_kafka_producer()`` call
+    attempts a real reconnect. Mirrors the Redis rearmer pattern.
+    """
+    import asyncio
+
+    while True:
+        await asyncio.sleep(30)
+        global _kafka_available
+        if not _kafka_available:
+            _kafka_available = True
+            logger.info("Kafka re-arm prober: re-latching, will retry on next call")
+
+
 async def close_kafka() -> None:
     global _producer
     if _producer is not None:

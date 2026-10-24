@@ -315,6 +315,7 @@ async def lifespan(app: FastAPI):
     retention_task.cancel()
     for task in bg_tasks:
         task.cancel()
+    await asyncio.gather(retention_task, *bg_tasks, return_exceptions=True)
     if outbox_worker is not None:
         await outbox_worker.stop()
     try:

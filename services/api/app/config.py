@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # app.workers`) sets this false on the api so HTTP traffic can never
     # delay message replies.
     RUN_BACKGROUND_WORKERS: bool = True
+    # Comma-separated job lane allowlist for the worker process. Empty = all
+    # lanes. Lets a single lane be scaled independently (e.g. JOB_LANES=realtime
+    # on a dedicated replica) without running every lane. Unknown names fail fast.
+    JOB_LANES: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
     # pgvector-backed semantic search. None = auto: on in production, off

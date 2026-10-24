@@ -53,6 +53,36 @@ engine_read = create_async_engine(
 async_session_read = async_sessionmaker(engine_read, class_=AsyncSession, expire_on_commit=False)
 
 
+def _check_pool_headroom() -> None:
+    """Warn if the configured pool could exhaust a small Postgres instance."""
+    import os
+
+    # Estimate worker count: 1 (api) + N (workers). Default to 2 for the check.
+    worker_count = int(os.getenv("WORKER_REPLICA_COUNT", "2"))
+    per_process = settings.DB_POOL_SIZE + settings.DB_POOL_MAX_OVERFLOW
+    total = per_process * (1 + worker_count)  # api + workers
+    # Leave 10 connections of headroom for admin/migrations/monitoring.
+    headroom = 10
+    # Assume a small RDS instance (t4g.micro = 87 max connections).
+    max_connections = int(os.getenv("DB_MAX_CONNECTIONS", "87"))
+    if total + headroom > max_connections:
+        logger.warning(
+            "DB pool headroom low: %d connections needed (%d per process x %d "
+            "processes) + %d headroom = %d, but max_connections=%d. "
+            "Reduce DB_POOL_SIZE or DB_POOL_MAX_OVERFLOW.",
+            total, per_process, 1 + worker_count, headroom, total + headroom,
+            max_connections,
+        )
+    else:
+        logger.info(
+            "DB pool headroom OK: %d/%d connections (%d per process x %d processes)",
+            total + headroom, max_connections, per_process, 1 + worker_count,
+        )
+
+
+_check_pool_headroom()
+
+
 async def _register_vector_codec(connection) -> None:
     """Teach asyncpg the pgvector ``vector`` type.
 

@@ -33,6 +33,14 @@ from app.modules.profile import models as profile_models  # noqa: F401
 from app.modules.localith import models as localith_models  # noqa: F401
 from app.modules.posts import models as posts_models  # noqa: F401
 from app.modules.review_engine import models as review_engine_models  # noqa: F401
+from app.modules.team import models as team_models  # noqa: F401
+from app.modules.channels import meta as _channels_meta  # noqa: F401
+from app.modules.channels.meta import models as channels_meta_models  # noqa: F401
+from app.modules.notifications import models as notifications_models  # noqa: F401
+from app.modules.media import models as media_models  # noqa: F401
+from app.modules.locations import models as locations_models  # noqa: F401
+from app.modules.billing import models as billing_models  # noqa: F401
+from app.modules.user_feedback import models as user_feedback_models  # noqa: F401
 
 target_metadata = Base.metadata
 
