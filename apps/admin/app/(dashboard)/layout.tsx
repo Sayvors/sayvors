@@ -218,46 +218,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const header = (
     <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3">
+      {/* Brand — mirrors the sidebar rail */}
       <div className="flex items-center gap-3">
         <Image
           src="/Sayvors_Icon.png"
           alt="Sayvors"
-          width={24}
-          height={24}
-          className="h-6 w-6 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-0.5"
+          width={32}
+          height={32}
+          className="h-8 w-8 shrink-0 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-1"
           unoptimized
         />
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-bold tracking-tight text-[var(--ui-ink)]">Sayvors Admin</p>
+        <div className="min-w-0">
+          <p className="text-[13px] font-bold leading-none tracking-tight text-[var(--ui-ink)]">Sayvors</p>
+          <p className="mt-0.5 text-[11px] font-medium leading-none text-ink/45">Admin console</p>
         </div>
+        <span className="ml-1 rounded-[2px] border border-[var(--ui-line)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-ink/50">
+          Admin
+        </span>
       </div>
+
+      {/* Right rail — identity + sign out, styled like sidebar items */}
       <div className="flex items-center gap-2">
-        <button
-          onClick={() => {
-            // Settings placeholder
-          }}
-          title="Settings"
-          className="flex h-8 w-8 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1.5 text-[11px] font-bold outline-none transition focus:border-[var(--ui-ink)] disabled:opacity-50 text-emerald-600"
-        >
-          <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15.4l-1.4 1.4a5.5 5.5 0 0 1-2.1 2.1l-1.4 1.4a5.5 5.5 0 0 1-2.1-2.1l1.4-1.4a5.5 5.5 0 0 1 2.1-2.1l1.4 1.4a5.5 5.5 0 0 1 2.1 2.1z" />
-          </svg>
-        </button>
-        <button
-          onClick={() => {
-            // Tour placeholder
-          }}
-          title="Tour"
-          className="flex h-8 w-8 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 py-1.5 text-[11px] font-bold outline-none transition focus:border-[var(--ui-ink)] disabled:opacity-50 text-emerald-600"
-        >
-          <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M12 15.4l-4.5 4.5L3 15.4l2.7-2.7a10 10 0 0 1 1.4-2.1l1.4-1.4a5.5 5.5 0 0 1 2.1-2.1l1.4 1.4a5.5 5.5 0 0 1 2.1 2.1z" />
-          </svg>
-        </button>
-        <div className="flex items-center gap-2 rounded-[2px] border border-[var(--ui-line)] px-3 py-2.5">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-deep-violet text-[11px] font-bold text-white">AD</div>
-          <div className="min-w-0 flex-1">
+        <div className="hidden items-center gap-2.5 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 sm:flex">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-deep-violet text-[11px] font-bold text-white">
+            AD
+          </div>
+          <div className="min-w-0">
             <p className="truncate text-[12px] font-semibold leading-none text-[var(--ui-ink)]">Admin</p>
             <p className="truncate text-[11px] leading-none text-ink/40">Session · secure</p>
           </div>
@@ -268,7 +254,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             adminLogout().finally(() => router.replace("/login"));
           }}
           title="Sign out"
-          className="flex flex-1 items-center justify-center gap-2 rounded-[2px] border border-[var(--ui-line-strong)] px-3 py-2.5 text-[12px] font-semibold text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink"
+          className="flex items-center justify-center gap-2 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-semibold text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink"
         >
           <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-60">
             <path d="M15.2 18.2L9 12l6.2-6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
@@ -276,7 +262,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <path d="M3 5.2a2 2 0 0 1 2-2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             <path d="M3 18.8a2 2 0 0 0 2 2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
-          Sign out
+          <span className="hidden sm:inline">Sign out</span>
         </button>
       </div>
     </header>

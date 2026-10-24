@@ -132,3 +132,15 @@ async def delete_method(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"ok": True}
+
+
+@router.get("/ledger")
+async def read_ledger(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Durable AI credit ledger for the workspace: wallet, pending holds,
+    and recent ledger rows. Employees see the owner's workspace ledger."""
+    from ..admin.service import get_tenant_billing
+
+    result = await get_tenant_billing(db, tenant_id_of(user))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    return result

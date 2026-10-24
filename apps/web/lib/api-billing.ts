@@ -126,3 +126,36 @@ export interface Budget {
 export async function getBudget(): Promise<Budget> {
   return apiFetch("/api/v1/billing/budget");
 }
+
+export interface BillingLedgerEntry {
+  id: string;
+  kind: string;
+  status: string;
+  amount_cents: number;
+  reserved_cents: number;
+  balance_after_cents: number | null;
+  model_id: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  idempotency_key: string | null;
+  expires_at: string | null;
+  settled_at: string | null;
+  note: string | null;
+  created_at: string | null;
+}
+
+export interface TenantBilling {
+  tenant_id: string;
+  email: string;
+  plan: string;
+  balance_cents: number;
+  held_cents: number;
+  total_cents: number;
+  status: "ok" | "low" | "empty" | "debt";
+  holds: BillingLedgerEntry[];
+  ledger: BillingLedgerEntry[];
+}
+
+export async function getLedger(): Promise<TenantBilling> {
+  return apiFetch("/api/v1/billing/ledger");
+}
