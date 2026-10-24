@@ -90,7 +90,7 @@ class JobRunner:
             self._producer = await get_kafka_producer()
         except Exception:
             logger.warning("Kafka unavailable for lane %s — running without dispatch", self.lane)
-            mark_kafka_unavailable()
+            mark_kafka_unavailable(f"sayvors-jobs-{self.lane}")
 
         topic = f"{self.lane}-dispatch"
         try:

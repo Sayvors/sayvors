@@ -482,7 +482,7 @@ async def run_analytics_consumer() -> None:
             if not fallback_logged:
                 logger.warning("Kafka connection failed — switching to outbox fallback")
                 fallback_logged = True
-            kafka_client.mark_kafka_unavailable()
+            kafka_client.mark_kafka_unavailable(GROUP_ID)
             if consumer:
                 try:
                     await consumer.stop()

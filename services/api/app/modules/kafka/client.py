@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 
@@ -8,26 +9,35 @@ from ...config import settings
 logger = logging.getLogger(__name__)
 
 _producer: AIOKafkaProducer | None = None
-_kafka_available = True
 _producer_lock = asyncio.Lock()
+_producer_available = True
+_producer_marked_unavailable_at = 0.0
+
+# Per-consumer-group availability. Keyed by group_id so one lane or
+# consumer going down does not disable Kafka for the whole process.
+_consumer_available: dict[str, bool] = {}
+_consumer_marked_unavailable_at: dict[str, float] = {}
+# How long to wait before re-probing a consumer after it was marked
+# unavailable. Mirrors the Redis reprobe cooldown.
+KAFKA_REPROBE_COOLDOWN_SECONDS = 5.0
 
 
 async def get_kafka_producer(*, retry: bool = False) -> AIOKafkaProducer:
-    global _producer, _kafka_available
-    if _producer is not None and _kafka_available:
+    global _producer, _producer_available, _producer_marked_unavailable_at
+    if _producer is not None and _producer_available:
         return _producer
-    # The availability latch may only be bypassed by an explicit recovery
-    # attempt (the outbox worker's retry loop); everyone else fails fast so
-    # request paths never queue behind a dead broker.
-    if not _kafka_available and not retry:
-        raise ConnectionError("Kafka marked unavailable")
+    if not _producer_available and not retry:
+        if (time.monotonic() - _producer_marked_unavailable_at) < KAFKA_REPROBE_COOLDOWN_SECONDS:
+            raise ConnectionError("Kafka producer marked unavailable")
+        # Cooldown elapsed — re-probe.
+        _producer_marked_unavailable_at = 0.0
+        _producer_available = True
 
     async with _producer_lock:
         if _producer is None:
             _producer = AIOKafkaProducer(
                 bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
                 client_id="sayvors-api",
-                # Hardened for durability: exactly-once semantics, no lost messages.
                 acks="all",
                 enable_idempotence=True,
                 linger_ms=5,
@@ -37,44 +47,46 @@ async def get_kafka_producer(*, retry: bool = False) -> AIOKafkaProducer:
             )
             try:
                 await asyncio.wait_for(_producer.start(), timeout=15.0)
-                # Clear the latch at the point of success — recovery must never
-                # depend on a separate call sitting behind this same guard.
-                _kafka_available = True
+                _producer_available = True
             except Exception as e:
                 _producer = None
-                _kafka_available = False
-                logger.warning("Kafka unavailable (will retry): %s", e)
+                _producer_available = False
+                _producer_marked_unavailable_at = time.monotonic()
+                logger.warning("Kafka producer unavailable (will retry): %s", e)
                 raise
     return _producer
 
 
-def mark_kafka_unavailable():
-    global _kafka_available
-    _kafka_available = False
-    logger.warning("Kafka marked unavailable, will retry in worker")
+def mark_kafka_unavailable(group_id: str | None = None) -> None:
+    """Latch Kafka offline for a consumer group (or the producer if None).
 
-
-def mark_kafka_available():
-    global _kafka_available
-    _kafka_available = True
-    logger.info("Kafka marked available")
-
-
-async def run_kafka_rearmer() -> None:
-    """Background prober that re-arms Kafka after an outage.
-
-    ``mark_kafka_unavailable()`` latches Kafka offline. This prober
-    periodically unlatches it so the next ``get_kafka_producer()`` call
-    attempts a real reconnect. Mirrors the Redis rearmer pattern.
+    Process-global unavailability is avoided: a blip on one consumer
+    disables only that consumer, not every lane.
     """
-    import asyncio
+    global _producer_available, _producer_marked_unavailable_at
+    if group_id is None:
+        _producer_available = False
+        _producer_marked_unavailable_at = time.monotonic()
+        logger.warning("Kafka producer marked unavailable, re-probing in %ss", KAFKA_REPROBE_COOLDOWN_SECONDS)
+    else:
+        _consumer_available[group_id] = False
+        _consumer_marked_unavailable_at[group_id] = time.monotonic()
+        logger.warning("Kafka consumer %s marked unavailable, re-probing in %ss", group_id, KAFKA_REPROBE_COOLDOWN_SECONDS)
 
-    while True:
-        await asyncio.sleep(30)
-        global _kafka_available
-        if not _kafka_available:
-            _kafka_available = True
-            logger.info("Kafka re-arm prober: re-latching, will retry on next call")
+
+def mark_kafka_available(group_id: str | None = None) -> None:
+    global _producer_available
+    if group_id is None:
+        _producer_available = True
+    else:
+        _consumer_available[group_id] = True
+    logger.info("Kafka %s marked available", group_id or "producer")
+
+
+def is_kafka_available(group_id: str | None = None) -> bool:
+    if group_id is None:
+        return _producer_available
+    return _consumer_available.get(group_id, True)
 
 
 async def close_kafka() -> None:
@@ -96,11 +108,11 @@ async def create_consumer(
     max_poll_records: int = 1,
     enable_auto_commit: bool = False,
 ) -> AIOKafkaConsumer:
-    """Create a Kafka consumer with manual offset commit.
+    """Create a Kafka consumer with manual offset commit."""
+    # Register this consumer group for availability tracking.
+    _consumer_available[group_id] = True
+    _consumer_marked_unavailable_at.pop(group_id, None)
 
-    enable_auto_commit=False by default: offsets are committed only after
-    the job reaches a durable terminal-or-retry state (R1 in the design doc).
-    """
     consumer = AIOKafkaConsumer(
         *topics,
         bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
@@ -114,3 +126,21 @@ async def create_consumer(
     )
     await consumer.start()
     return consumer
+
+
+async def run_kafka_rearmer() -> None:
+    """Background prober that re-arms Kafka consumers and producer after an outage."""
+    import asyncio
+
+    while True:
+        await asyncio.sleep(30)
+        global _producer_available
+        # Re-latch producer if it was unavailable
+        if not _producer_available:
+            _producer_available = True
+            logger.info("Kafka re-arm prober: producer re-latched, will retry on next call")
+        # Re-latch all consumers
+        for gid in list(_consumer_available):
+            if not _consumer_available.get(gid, True):
+                _consumer_available[gid] = True
+                logger.info("Kafka re-arm prober: consumer %s re-latched", gid)
