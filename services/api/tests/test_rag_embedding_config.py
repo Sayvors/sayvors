@@ -3,7 +3,8 @@
 Covers the three things that matter:
 * an admin can pick the provider, the model and its own API key;
 * the embedding backend really uses that key, not the text-generation one;
-* an unsupported model is rejected instead of being saved and mismatched.
+* model names are never hardcoded — the provider's live list is the only
+  source, and a provider with no saved model fails closed.
 """
 import pytest
 import pytest_asyncio
@@ -47,7 +48,9 @@ async def test_list_reports_the_fallback_before_anything_is_configured(
     providers = {p["provider"] for p in body["providers"]}
     assert providers == {"gemini", "openai", "ollama", "openrouter", "nvidia"}
     gemini = next(p for p in body["providers"] if p["provider"] == "gemini")
-    assert gemini["supported_models"] == []
+    # No model list is shipped with the code: the dropdown is filled from the
+    # provider's API, so an unconfigured provider has no models to report.
+    assert "supported_models" not in gemini
 
 
 @pytest.mark.asyncio
@@ -79,14 +82,15 @@ async def test_unknown_provider_is_404(client, admin_headers, embedding_factory)
 
 
 @pytest.mark.asyncio
-async def test_unsupported_model_is_400(client, admin_headers, embedding_factory):
+async def test_free_form_model_is_accepted(client, admin_headers, embedding_factory):
     r = client.put(
         "/api/v1/admin/embeddings/gemini",
         json={"model": "some-other-model"},
         headers=admin_headers,
     )
-    # Models are no longer validated against a hardcoded list — any model
-    # string is accepted and the live API list is used in the UI.
+    # Models are never validated against a hardcoded list — the admin picks
+    # from the provider's live list (or types a name it added recently), and
+    # the provider rejects genuinely invalid names.
     assert r.status_code == 200
 
 
@@ -149,3 +153,91 @@ async def test_switching_provider_deactivates_the_previous_one(
     listed = client.get("/api/v1/admin/embeddings", headers=admin_headers).json()
     active = [p["provider"] for p in listed["providers"] if p["active"]]
     assert active == ["openai"]
+
+
+@pytest.mark.asyncio
+async def test_provider_without_a_saved_model_fails_closed(embedding_factory):
+    """No hardcoded default may stand in for the admin's choice."""
+    with pytest.raises(RuntimeError, match="No embedding model configured"):
+        await embeddings._build_provider(
+            {"provider": "gemini", "model": None, "key": "k", "base_url": None}
+        )
+
+
+@pytest.mark.asyncio
+async def test_test_endpoint_reports_an_unconfigured_provider(
+    client, admin_headers, embedding_factory
+):
+    r = client.post(
+        "/api/v1/admin/embeddings/test",
+        json={"provider": "gemini"},
+        headers=admin_headers,
+    )
+    assert r.status_code == 200, r.text[:300]
+    body = r.json()
+    assert body["ok"] is False
+    assert "No embedding model configured" in body["detail"]
+
+
+@pytest.mark.asyncio
+async def test_model_list_surfaces_provider_errors(
+    client, admin_headers, monkeypatch
+):
+    """A failed fetch must not look like a provider with zero models."""
+
+    async def _boom(provider, api_key=None, base_url=None):
+        raise RuntimeError("provider rejected the key")
+
+    monkeypatch.setattr(embeddings, "list_available_models", _boom)
+
+    r = client.get(
+        "/api/v1/admin/embeddings/models?provider=openai", headers=admin_headers
+    )
+    assert r.status_code == 502
+    assert "provider rejected the key" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_model_list_rejects_an_unknown_provider(client, admin_headers):
+    r = client.get(
+        "/api/v1/admin/embeddings/models?provider=nope", headers=admin_headers
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_model_list_uses_the_saved_key(
+    client, admin_headers, embedding_factory, monkeypatch
+):
+    """Refreshing must work without re-pasting a stored key.
+
+    This is the regression that left the dropdown empty: the endpoint used to
+    forward only the query-string key, so every refresh of a configured
+    provider was sent unauthenticated.
+    """
+    client.put(
+        "/api/v1/admin/embeddings/openai",
+        json={
+            "model": "text-embedding-3-small",
+            "api_key": "stored-embed-key",
+            "base_url": "https://proxy.example/v1",
+        },
+        headers=admin_headers,
+    )
+    seen: dict = {}
+
+    async def _capture(provider, api_key=None, base_url=None):
+        seen.update(provider=provider, api_key=api_key, base_url=base_url)
+        return ["text-embedding-3-small"]
+
+    monkeypatch.setattr(embeddings, "list_available_models", _capture)
+
+    r = client.get(
+        "/api/v1/admin/embeddings/models?provider=openai", headers=admin_headers
+    )
+    assert r.status_code == 200, r.text[:300]
+    assert seen == {
+        "provider": "openai",
+        "api_key": "stored-embed-key",
+        "base_url": "https://proxy.example/v1",
+    }

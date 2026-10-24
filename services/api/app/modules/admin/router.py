@@ -561,7 +561,6 @@ class EmbeddingProviderStatus(BaseModel):
     enabled: bool = True
     active: bool = False
     base_url: str | None = None
-    supported_models: list[str] = Field(default_factory=list)
 
 
 class EmbeddingConfigOverview(BaseModel):
@@ -605,7 +604,7 @@ async def admin_embedding_config(
     """The embedding providers, configured apart from the text-generation ones."""
     from ..rag.embeddings import (
         CANONICAL_DIMENSIONS,
-        EMBEDDING_MODELS,
+        EMBEDDING_PROVIDERS,
         corpus_stats,
         get_active_embedding_config,
         list_embedding_configs,
@@ -613,7 +612,7 @@ async def admin_embedding_config(
 
     configs = {c["provider"]: c for c in await list_embedding_configs(db)}
     providers = []
-    for name in EMBEDDING_MODELS:
+    for name in EMBEDDING_PROVIDERS:
         config = configs.get(name, {})
         providers.append(
             EmbeddingProviderStatus(
@@ -623,7 +622,6 @@ async def admin_embedding_config(
                 enabled=bool(config.get("enabled", True)),
                 active=bool(config.get("active")),
                 base_url=config.get("base_url"),
-                supported_models=list(EMBEDDING_MODELS[name]),
             )
         )
 
@@ -647,9 +645,9 @@ async def admin_embedding_update(
     db: AsyncSession = Depends(get_db),
 ):
     """Store/clear the embedding key, pick the model, activate the provider."""
-    from ..rag.embeddings import EMBEDDING_MODELS, save_embedding_config
+    from ..rag.embeddings import EMBEDDING_PROVIDERS, save_embedding_config
 
-    if provider not in EMBEDDING_MODELS:
+    if provider not in EMBEDDING_PROVIDERS:
         raise HTTPException(
             status_code=404, detail=f"Unknown embedding provider: {provider}"
         )
@@ -678,7 +676,6 @@ async def admin_embedding_update(
         enabled=result["enabled"],
         active=result["active"],
         base_url=result["base_url"],
-        supported_models=list(EMBEDDING_MODELS[provider]),
     )
 
 
@@ -689,11 +686,29 @@ async def admin_embedding_models(
     base_url: str | None = None,
     _admin: dict = Depends(require_admin),
     _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
 ):
-    """List available embedding models from a provider's API."""
-    from ..rag.embeddings import list_available_models
+    """List the live model list from a provider's API.
 
-    models = await list_available_models(provider, api_key=api_key, base_url=base_url)
+    There is no built-in fallback: if the provider cannot answer, the admin
+    sees the reason instead of a dropdown that looks legitimately empty.
+    """
+    from ..rag.embeddings import get_embedding_config, list_available_models
+
+    # A refresh must work with the key already stored — asking the admin to
+    # paste it again just to browse models is how the dropdown stayed empty.
+    saved = await get_embedding_config(provider, db=db)
+    effective_key = api_key or (saved or {}).get("key")
+    effective_base = base_url or (saved or {}).get("base_url")
+
+    try:
+        models = await list_available_models(
+            provider, api_key=effective_key, base_url=effective_base
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     return {"provider": provider, "models": models}
 
 
@@ -704,10 +719,10 @@ async def admin_embedding_test(
     db: AsyncSession = Depends(get_db),
 ):
     """Embed one sample string and report the width that came back."""
-    from ..rag.embeddings import EMBEDDING_MODELS, test_embedding_provider
+    from ..rag.embeddings import EMBEDDING_PROVIDERS, test_embedding_provider
 
     request = body or EmbeddingTestRequest()
-    if request.provider and request.provider not in EMBEDDING_MODELS:
+    if request.provider and request.provider not in EMBEDDING_PROVIDERS:
         raise HTTPException(
             status_code=404, detail=f"Unknown embedding provider: {request.provider}"
         )

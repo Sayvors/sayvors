@@ -31,19 +31,21 @@ EMBED_CACHE_TTL = 86400 * 30
 # them.
 CANONICAL_DIMENSIONS = 1024
 
-# The embedding models this codebase knows how to call, and that can be
-# normalised to the canonical width. An admin picks from this list; a model
-# outside it is rejected instead of being saved and silently mismatched.
-# Provider names the system knows how to build. Model names are NOT
-# hardcoded — the admin fetches the live list from the provider's API
-# (see list_available_models) and can also type a custom model name.
-EMBEDDING_MODELS: dict[str, tuple[str, ...]] = {
-    "gemini": (),
-    "openai": (),
-    "ollama": (),
-    "openrouter": (),
-    "nvidia": (),
-}
+# The embedding backends this codebase knows how to call.
+#
+# Model names are deliberately absent. Providers add, rename and retire models
+# on their own schedule, so the only authoritative list is the provider's own
+# API: the admin fetches it live (see list_available_models) and the choice is
+# stored in the database. A built-in default would silently route tenants to a
+# model the admin never picked — which is how vectors end up from two
+# different models and stop being comparable.
+EMBEDDING_PROVIDERS: tuple[str, ...] = (
+    "gemini",
+    "openai",
+    "ollama",
+    "openrouter",
+    "nvidia",
+)
 
 # How long a built provider is reused before the configuration is re-read.
 # Mirrors the LLM provider overlay: an admin save reaches one worker
@@ -131,18 +133,21 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
                 "No OpenAI embedding key configured. Add one under "
                 "Admin → Embeddings, or in Admin → LLMs."
             )
-        client = AsyncOpenAI(api_key=api_key)
-        batch_size = 2048
-        all_embeddings: list[list[float]] = []
+        # The async context manager closes the underlying httpx client; a
+        # per-call client that is never closed leaks sockets and makes the
+        # SDK's __del__ raise AttributeError at GC time.
+        async with AsyncOpenAI(api_key=api_key) as client:
+            batch_size = 2048
+            all_embeddings: list[list[float]] = []
 
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            resp = await client.embeddings.create(
-                model=self.model,
-                input=batch,
-                dimensions=self._dims,
-            )
-            all_embeddings.extend([e.embedding for e in resp.data])
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                resp = await client.embeddings.create(
+                    model=self.model,
+                    input=batch,
+                    dimensions=self._dims,
+                )
+                all_embeddings.extend([e.embedding for e in resp.data])
 
         return all_embeddings
 
@@ -169,17 +174,19 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                 "No Gemini embedding key configured. Add one under "
                 "Admin → Embeddings, or in Admin → LLMs."
             )
-        client = genai.Client(api_key=api_key)
-        batch_size = 100
-        all_embeddings: list[list[float]] = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            resp = await client.aio.models.embed_content(
-                model=self.model,
-                contents=batch,
-                config={"output_dimensionality": self._dims},
-            )
-            all_embeddings.extend([list(e.values) for e in resp.embeddings])
+        # Async context manager closes the httpx client even when the
+        # request fails; otherwise every embed call leaks a connection pool.
+        async with genai.Client(api_key=api_key).aio as client:
+            batch_size = 100
+            all_embeddings: list[list[float]] = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                resp = await client.models.embed_content(
+                    model=self.model,
+                    contents=batch,
+                    config={"output_dimensionality": self._dims},
+                )
+                all_embeddings.extend([list(e.values) for e in resp.embeddings])
         return all_embeddings
 
 
@@ -227,23 +234,24 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
                 "No API key configured. Add one under Admin → Embeddings."
             )
 
-        client = AsyncOpenAI(api_key=api_key, base_url=self._base_url)
-        batch_size = 2048
-        all_embeddings: list[list[float]] = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            kwargs: dict = {"model": self.model, "input": batch}
-            # NVIDIA asymmetric models require input_type
-            if "nvidia" in (self._base_url or ""):
-                kwargs["extra_body"] = {"input_type": input_type}
-            try:
-                resp = await client.embeddings.create(**kwargs, dimensions=self._dims)
-            except Exception:
+        # One client per call, closed on exit: a shared client cannot be
+        # reused safely across event loops (tests, worker threads).
+        async with AsyncOpenAI(api_key=api_key, base_url=self._base_url) as client:
+            batch_size = 2048
+            all_embeddings: list[list[float]] = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                kwargs: dict = {"model": self.model, "input": batch}
+                # NVIDIA asymmetric models require input_type
+                if "nvidia" in (self._base_url or ""):
+                    kwargs["extra_body"] = {"input_type": input_type}
                 try:
-                    resp = await client.embeddings.create(**kwargs)
+                    resp = await client.embeddings.create(**kwargs, dimensions=self._dims)
                 except Exception:
-                    raise
-            all_embeddings.extend([e.embedding for e in resp.data])
+                    # Some models reject `dimensions`; retry without it and
+                    # let canonical_vector drop non-canonical widths.
+                    resp = await client.embeddings.create(**kwargs)
+                all_embeddings.extend([e.embedding for e in resp.data])
         return all_embeddings
 
 
@@ -384,6 +392,18 @@ async def get_active_embedding_config(db=None) -> dict[str, Any] | None:
         return await _read_active(session)
 
 
+async def get_embedding_config(provider: str, db=None) -> dict[str, Any] | None:
+    """One provider's configuration, including its decrypted key.
+
+    The model-list endpoint uses this so a refresh works with the key already
+    stored, instead of forcing the admin to paste it again just to browse.
+    """
+    if db is not None:
+        return await _read_one(db, provider)
+    async with _session() as session:
+        return await _read_one(session, provider)
+
+
 async def save_embedding_config(
     provider: str,
     *,
@@ -398,7 +418,7 @@ async def save_embedding_config(
 
     ``api_key`` of None keeps the stored key, an empty string clears it.
     """
-    KNOWN_PROVIDERS = set(EMBEDDING_MODELS) | {"openrouter", "nvidia"}
+    KNOWN_PROVIDERS = set(EMBEDDING_PROVIDERS)
     if provider not in KNOWN_PROVIDERS:
         raise ValueError(f"Unknown embedding provider: {provider}. Known: {', '.join(sorted(KNOWN_PROVIDERS))}")
     # Model is free-form: the admin picks from a live list fetched from the
@@ -495,15 +515,6 @@ async def corpus_stats(db=None) -> dict[str, int]:
 # ── Provider selection ────────────────────────────────────────────────
 
 
-async def _check_ollama() -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            resp = await client.get("http://localhost:11434/api/tags")
-            return resp.status_code == 200
-    except Exception:
-        return False
-
-
 def _config_signature(config: dict[str, Any] | None) -> str:
     if not config:
         return "fallback"
@@ -514,38 +525,36 @@ def _config_signature(config: dict[str, Any] | None) -> str:
     )
 
 
-async def _build_provider(config: dict[str, Any] | None) -> EmbeddingProvider:
-    """Build the provider for a configuration row (or the legacy fallback)."""
-    if not config:
-        from ..llm.providers.registry import resolve_provider_key
+def _configured_model(config: dict[str, Any]) -> str:
+    """The model the admin saved for this provider.
 
-        gemini_key, _ = resolve_provider_key("gemini")
-        if gemini_key:
-            logger.warning(
-                "No embedding provider configured separately; falling back to "
-                "the text-generation Gemini key. Configure one under "
-                "Admin → Embeddings."
-            )
-            return GeminiEmbeddingProvider()
-        if await _check_ollama():
-            logger.warning(
-                "No embedding provider configured separately; falling back to "
-                "the local Ollama embedding model. Configure one under "
-                "Admin → Embeddings."
-            )
-            return OllamaEmbeddingProvider()
-        openai_key, _ = resolve_provider_key("openai")
-        if openai_key:
-            logger.warning(
-                "No embedding provider configured separately; falling back to "
-                "the text-generation OpenAI key. Configure one under "
-                "Admin → Embeddings."
-            )
-            return OpenAIEmbeddingProvider()
-        return OllamaEmbeddingProvider()
+    There is no built-in default: only the provider knows which model names
+    exist today, and guessing one turns a configuration mistake into an
+    opaque provider error on the first embed call.
+    """
+    model = (config.get("model") or "").strip()
+    if not model:
+        raise RuntimeError(
+            f"No embedding model configured for {config.get('provider')}. "
+            "Pick one under Admin → Embeddings."
+        )
+    return model
+
+
+async def _build_provider(config: dict[str, Any] | None) -> EmbeddingProvider:
+    """Build the provider for a configuration row.
+
+    Fails closed when nothing is configured: keyword-only search is better
+    than silently embedding queries with a model nobody selected.
+    """
+    if not config:
+        raise RuntimeError(
+            "No embedding provider is configured. Pick a provider and a model "
+            "under Admin → Embeddings."
+        )
 
     provider = config["provider"]
-    model = config.get("model")
+    model = _configured_model(config)
     key = config.get("key")
     base_url = config.get("base_url")
     if provider == "gemini":
@@ -604,12 +613,18 @@ async def get_embedding_provider() -> EmbeddingProvider:
 
 
 async def list_available_models(provider: str, api_key: str | None = None, base_url: str | None = None) -> list[str]:
-    """Fetch available embedding models from a provider's API.
+    """Fetch the live model list from a provider's API.
 
-    Used by the admin UI to populate a model dropdown. Falls back to the
-    known model list if the API is unreachable.
+    Model names are never hardcoded: providers add and retire models on their
+    own schedule, so the admin picks from whatever the provider offers right
+    now. Raises RuntimeError with a diagnosable message when the provider is
+    unreachable or rejects the key — an empty dropdown must never look like
+    "this provider has no models".
     """
     import httpx
+
+    if provider not in EMBEDDING_PROVIDERS:
+        raise ValueError(f"Unknown embedding provider: {provider}")
 
     if provider == "ollama":
         url = (base_url or "http://localhost:11434").rstrip("/") + "/api/tags"
@@ -618,9 +633,11 @@ async def list_available_models(provider: str, api_key: str | None = None, base_
                 resp = await client.get(url)
                 resp.raise_for_status()
                 data = resp.json()
-                return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
-        except Exception:
-            return list(EMBEDDING_MODELS.get(provider, ()))
+        except Exception as exc:
+            raise RuntimeError(f"Ollama model list unavailable at {url}: {exc}") from exc
+        return sorted(
+            {m["name"] for m in data.get("models", []) if m.get("name")}
+        )
 
     if provider in ("openai", "openrouter", "nvidia"):
         url_map = {
@@ -628,8 +645,8 @@ async def list_available_models(provider: str, api_key: str | None = None, base_
             "openrouter": "https://openrouter.ai/api/v1",
             "nvidia": "https://integrate.api.nvidia.com/v1",
         }
-        base = (base_url or url_map.get(provider, "")).rstrip("/")
-        headers = {}
+        base = (base_url or url_map[provider]).rstrip("/")
+        headers: dict[str, str] = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
@@ -637,20 +654,40 @@ async def list_available_models(provider: str, api_key: str | None = None, base_
                 resp = await client.get(f"{base}/models", headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-                return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
-        except Exception:
-            return list(EMBEDDING_MODELS.get(provider, ()))
+        except Exception as exc:
+            raise RuntimeError(
+                f"{provider} model list unavailable at {base}: {exc}"
+            ) from exc
+        return sorted(
+            {m["id"] for m in data.get("data", []) if m.get("id")}
+        )
 
     if provider == "gemini":
+        from google import genai
+
+        key = api_key
+        if not key:
+            from ..llm.providers.registry import resolve_provider_key
+
+            key = resolve_provider_key("gemini")[0]
+        if not key:
+            raise RuntimeError(
+                "No Gemini API key configured. Add one under Admin → Embeddings."
+            )
         try:
-            from google import genai
+            async with genai.Client(api_key=key).aio as client:
+                names = [
+                    model.name
+                    async for model in await client.models.list()
+                    if model.name and "embedContent" in (model.supported_actions or [])
+                ]
+        except Exception as exc:
+            raise RuntimeError(f"Gemini model list unavailable: {exc}") from exc
+        # Gemini returns "models/<id>"; the bare id is what the admin
+        # recognises and what embed_content accepts too.
+        return sorted({name.removeprefix("models/") for name in names})
 
-            client = genai.Client(api_key=api_key or "")
-            return [getattr(m, "name", "") for m in client.models.list() if getattr(m, "name", "")]
-        except Exception:
-            return list(EMBEDDING_MODELS.get(provider, ()))
-
-    return list(EMBEDDING_MODELS.get(provider, ()))
+    raise ValueError(f"Unknown embedding provider: {provider}")
 
 
 
@@ -662,13 +699,15 @@ async def test_embedding_provider(
 
     async def _run(session) -> dict[str, Any]:
         if provider:
-            if provider not in EMBEDDING_MODELS:
+            if provider not in EMBEDDING_PROVIDERS:
                 raise ValueError(f"Unknown embedding provider: {provider}")
             config = await _read_one(session, provider)
             if config is None:
+                # No row yet: let _build_provider fail closed with the
+                # "pick a model" message instead of inventing one here.
                 config = {
                     "provider": provider,
-                    "model": EMBEDDING_MODELS[provider][0] if EMBEDDING_MODELS[provider] else "",
+                    "model": None,
                     "has_key": False,
                     "enabled": True,
                     "active": False,

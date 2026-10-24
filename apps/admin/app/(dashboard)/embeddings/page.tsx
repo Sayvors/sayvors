@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { adminFetch } from "@/lib/admin-api";
 
@@ -11,7 +11,6 @@ interface EmbeddingProvider {
   enabled: boolean;
   active: boolean;
   base_url: string | null;
-  supported_models: string[];
 }
 
 interface EmbeddingOverview {
@@ -83,25 +82,39 @@ export default function AdminEmbeddingsPage() {
   const [models, setModels] = useState<Record<string, string>>({});
   const [baseUrls, setBaseUrls] = useState<Record<string, string>>({});
   const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
-  const [modelSearch, setModelSearch] = useState<Record<string, string>>({});
-  const fetchModels = useCallback(async (provider: string, apiKey?: string, baseUrl?: string) => {
-    try {
-      const qs = new URLSearchParams({ provider });
-      if (apiKey) qs.set("api_key", apiKey);
-      if (baseUrl) qs.set("base_url", baseUrl);
-      const res = await adminFetch<{ provider: string; models: string[] }>(`/api/v1/admin/embeddings/models?${qs}`);
-      setAvailableModels((prev) => ({ ...prev, [provider]: res.models }));
-      // Auto-select first model if none chosen yet
-      setModels((prev) => {
-        if (prev[provider]) return prev;
-        const first = res.models[0];
-        if (!first) return prev;
-        return { ...prev, [provider]: first };
-      });
-    } catch {
-      // Fall back to supported_models from overview
-    }
-  }, []);
+  const [modelLoading, setModelLoading] = useState<Record<string, boolean>>({});
+  const [modelErrors, setModelErrors] = useState<Record<string, string | null>>({});
+  // One fetch per provider per page load. Without the guard the auto-fetch
+  // effect re-runs on every `data` object and hammers the provider API.
+  const fetchedRef = useRef<Set<string>>(new Set());
+
+  const fetchModels = useCallback(
+    async (provider: string, apiKey?: string, baseUrl?: string) => {
+      setModelLoading((prev) => ({ ...prev, [provider]: true }));
+      setModelErrors((prev) => ({ ...prev, [provider]: null }));
+      try {
+        const qs = new URLSearchParams({ provider });
+        if (apiKey) qs.set("api_key", apiKey);
+        if (baseUrl) qs.set("base_url", baseUrl);
+        const res = await adminFetch<{ provider: string; models: string[] }>(
+          `/api/v1/admin/embeddings/models?${qs}`
+        );
+        setAvailableModels((prev) => ({ ...prev, [provider]: res.models }));
+        return res.models;
+      } catch (e) {
+        // The backend answers 502 with the provider's reason; showing it is
+        // the difference between "no models" and "your key is wrong".
+        setModelErrors((prev) => ({
+          ...prev,
+          [provider]: e instanceof Error ? e.message : "Could not list models.",
+        }));
+        return [];
+      } finally {
+        setModelLoading((prev) => ({ ...prev, [provider]: false }));
+      }
+    },
+    []
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,7 +124,9 @@ export default function AdminEmbeddingsPage() {
       setModels((prev) => {
         const next = { ...prev };
         for (const p of overview.providers) {
-          if (!next[p.provider]) next[p.provider] = p.model ?? p.supported_models[0] ?? "";
+          // The saved model is the only value that may appear here; there is
+          // no built-in default to fall back to.
+          next[p.provider] = p.model ?? "";
         }
         return next;
       });
@@ -123,7 +138,6 @@ export default function AdminEmbeddingsPage() {
         return next;
       });
       setError(null);
-      // Don't auto-fetch models here — user clicks refresh per provider
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed.");
     } finally {
@@ -141,28 +155,50 @@ export default function AdminEmbeddingsPage() {
     };
   }, [load]);
 
+  // Populate each provider's model dropdown from its live API. The ref guard
+  // keeps this to one request per provider per page load: `data` is a fresh
+  // object after every save, and re-fetching on every save would loop.
+  // Providers with no stored key are skipped — their fetch would only paint
+  // an error on a card the admin has not configured yet.
+  useEffect(() => {
+    if (!data) return;
+    for (const p of data.providers) {
+      if (fetchedRef.current.has(p.provider)) continue;
+      if (!p.has_key) continue;
+      fetchedRef.current.add(p.provider);
+      void fetchModels(p.provider);
+    }
+  }, [data, fetchModels]);
+
   const flash = (text: string) => {
     setNotice(text);
     window.setTimeout(() => setNotice((n) => (n === text ? null : n)), 4000);
   };
 
+  const formBody = (provider: string, extra: Record<string, unknown> = {}) => {
+    const model = (models[provider] ?? "").trim();
+    if (!model) {
+      throw new Error("Pick a model (or type its name) before saving.");
+    }
+    const body: Record<string, unknown> = { model, ...extra };
+    // Only Ollama exposes a base URL; sending an empty string for the other
+    // providers would wipe a custom endpoint saved through the API.
+    if (provider === "ollama") body.base_url = baseUrls[provider] ?? "";
+    const key = (keys[provider] ?? "").trim();
+    if (key) body.api_key = key;
+    return body;
+  };
+
   const save = async (provider: string, extra: Record<string, unknown> = {}) => {
     setBusy(provider);
     try {
-      const key = (keys[provider] ?? "").trim();
-      // The model and base URL are part of the form, so they are saved with
-      // the key: a half-typed key must not be lost by clicking elsewhere.
-      const body: Record<string, unknown> = {
-        model: models[provider],
-        base_url: baseUrls[provider] ?? "",
-        ...extra,
-      };
-      if (key) body.api_key = key;
       await adminFetch(`/api/v1/admin/embeddings/${provider}`, {
         method: "PUT",
-        body: JSON.stringify(body),
+        body: JSON.stringify(formBody(provider, extra)),
       });
       setKeys((prev) => ({ ...prev, [provider]: "" }));
+      // Re-fetch this provider's list with the key that was just saved.
+      fetchedRef.current.delete(provider);
       await load();
       flash(`${provider} embedding provider saved.`);
     } catch (e) {
@@ -192,16 +228,9 @@ export default function AdminEmbeddingsPage() {
   const activate = async (provider: string) => {
     setBusy(provider);
     try {
-      const key = (keys[provider] ?? "").trim();
-      const body: Record<string, unknown> = {
-        model: models[provider],
-        base_url: baseUrls[provider] ?? "",
-        activate: true,
-      };
-      if (key) body.api_key = key;
       await adminFetch(`/api/v1/admin/embeddings/${provider}`, {
         method: "PUT",
-        body: JSON.stringify(body),
+        body: JSON.stringify(formBody(provider, { activate: true })),
       });
       setKeys((prev) => ({ ...prev, [provider]: "" }));
       await load();
@@ -273,9 +302,9 @@ export default function AdminEmbeddingsPage() {
 
       {data && data.source === "fallback" && (
         <div className="panel border-l-[3px] border-l-amber-400 px-4 py-3 text-[12px] leading-relaxed text-ink/70">
-          <strong className="text-ink/85">No embedding provider configured separately.</strong> The search is
-          still borrowing the text-generation keys, and no vectors are stored unless a provider answers.
-          Configure one below to decouple them.
+          <strong className="text-ink/85">No embedding provider configured.</strong> Search stays
+          keyword-only and new chunks are stored without vectors until you pick a provider, fetch its
+          model list and save a model below.
         </div>
       )}
 
@@ -325,70 +354,52 @@ export default function AdminEmbeddingsPage() {
                 <label className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-ink/40">
                   Model
                 </label>
-                {availableModels[p.provider] && availableModels[p.provider].length > 0 ? (
-                  <div className="mt-1 space-y-1.5">
-                    <input
-                      type="search"
-                      value={modelSearch[p.provider] ?? ""}
-                      onChange={(e) => setModelSearch((prev) => ({ ...prev, [p.provider]: e.target.value }))}
-                      placeholder="Filter models…"
-                      className="input-field text-[11px]"
-                    />
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={models[p.provider] ?? ""}
-                        disabled={isBusy}
-                        onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
-                        aria-label={`${p.provider} embedding model`}
-                        className="input-field flex-1 cursor-pointer"
-                        size={1}
-                      >
-                        {(availableModels[p.provider] ?? [])
-                          .filter((m) => !modelSearch[p.provider] || m.toLowerCase().includes(modelSearch[p.provider].toLowerCase()))
-                          .map((m) => (
-                            <option key={m} value={m}>
-                              {m}
-                            </option>
-                          ))}
-                      </select>
-                      <button
-                        onClick={() => fetchModels(p.provider, keys[p.provider], baseUrls[p.provider])}
-                        disabled={isBusy}
-                        title="Re-fetch available models from the provider's API"
-                        className={`shrink-0 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
-                      >
-                        ↻
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-ink/35">
-                      {(availableModels[p.provider] ?? []).filter((m) => !modelSearch[p.provider] || m.toLowerCase().includes((modelSearch[p.provider] ?? "").toLowerCase())).length} of {availableModels[p.provider].length} models
-                    </p>
-                  </div>
-                ) : (
-                  <div className="mt-1 space-y-1.5">
-                    <input
-                      type="text"
-                      value={models[p.provider] ?? ""}
-                      disabled={isBusy}
-                      onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
-                      placeholder="e.g. openai/text-embedding-3-small"
-                      className="input-field"
-                    />
-                    <button
-                      onClick={() => fetchModels(p.provider, keys[p.provider], baseUrls[p.provider])}
-                      disabled={isBusy}
-                      className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
-                    >
-                      ↻ Fetch models from API
-                    </button>
-                    <p className="text-[10px] text-ink/35">
-                      No models found via API. Type a model name manually, or click fetch to try again.
-                    </p>
-                  </div>
-                )}
-                {availableModels[p.provider] && availableModels[p.provider].length > 0 && (
-                  <p className="mt-1 text-[10px] text-ink/35">{availableModels[p.provider].length} models available</p>
-                )}
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type="text"
+                    list={`embedding-models-${p.provider}`}
+                    value={models[p.provider] ?? ""}
+                    disabled={isBusy}
+                    onChange={(e) => setModels((prev) => ({ ...prev, [p.provider]: e.target.value }))}
+                    placeholder={modelLoading[p.provider] ? "Loading models…" : "Pick a model or type its name"}
+                    aria-label={`${p.provider} embedding model`}
+                    autoComplete="off"
+                    className="input-field flex-1"
+                  />
+                  <datalist id={`embedding-models-${p.provider}`}>
+                    {(availableModels[p.provider] ?? []).map((m) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                  <button
+                    onClick={() =>
+                      void fetchModels(
+                        p.provider,
+                        keys[p.provider],
+                        p.provider === "ollama" ? baseUrls[p.provider] : undefined
+                      )
+                    }
+                    disabled={isBusy || modelLoading[p.provider]}
+                    title="Fetch the live model list from the provider's API"
+                    aria-label={`Fetch models from ${p.provider}`}
+                    className={`shrink-0 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2.5 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet disabled:opacity-50 ${FOCUS_RING}`}
+                  >
+                    {modelLoading[p.provider] ? "…" : "↻"}
+                  </button>
+                </div>
+                <p className="mt-1 text-[10px] leading-relaxed text-ink/35">
+                  {modelErrors[p.provider] ? (
+                    <span className="text-red-600">{modelErrors[p.provider]}</span>
+                  ) : modelLoading[p.provider] ? (
+                    "Fetching the live model list…"
+                  ) : (availableModels[p.provider]?.length ?? 0) > 0 ? (
+                    `${availableModels[p.provider].length} models fetched from the provider API`
+                  ) : fetchedRef.current.has(p.provider) ? (
+                    "The provider returned no models — type a model name manually."
+                  ) : (
+                    "No model list yet — click ↻ to fetch it from the provider."
+                  )}
+                </p>
 
                 {p.provider === "ollama" && (
                   <>
