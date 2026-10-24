@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import LocationDailyMetric, ReviewInsight, SearchKeywordStat
+from .models import ChannelDailyMetric, LocationDailyMetric, ReviewInsight, SearchKeywordStat
 
 logger = logging.getLogger(__name__)
 

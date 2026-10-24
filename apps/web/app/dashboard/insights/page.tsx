@@ -259,21 +259,28 @@ export default function InsightsPage() {
             );
           })()}
           {messaging && (messaging.totals.messages_out ?? 0) > 0 && (
-            <div className="mb-6 grid gap-3 sm:grid-cols-3">
+            <div className="mb-6 grid gap-3 sm:grid-cols-4">
               <div className="ui-card p-4">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">AI-handled replies</p>
                 <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messaging.totals.ai_handled_out}</p>
                 <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
-                  {Math.round((messaging.totals.ai_handled_out / messaging.totals.messages_out) * 100)}% of outbound
+                  {messaging.totals.messages_out > 0 ? Math.round((messaging.totals.ai_handled_out / messaging.totals.messages_out) * 100) : 0}% of outbound
                 </p>
               </div>
               <div className="ui-card p-4">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Human-handled replies</p>
+                <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messaging.totals.human_handled_out}</p>
+                <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                  {messaging.totals.messages_out > 0 ? Math.round((messaging.totals.human_handled_out / messaging.totals.messages_out) * 100) : 0}% of outbound
+                </p>
+              </div>
+              <div className="ui-card p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Unknown / legacy</p>
                 <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
-                  {Math.max(0, messaging.totals.messages_out - messaging.totals.ai_handled_out)}
+                  {Math.max(0, messaging.totals.messages_out - messaging.totals.ai_handled_out - messaging.totals.human_handled_out)}
                 </p>
                 <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
-                  {Math.round(((messaging.totals.messages_out - messaging.totals.ai_handled_out) / messaging.totals.messages_out) * 100)}% of outbound
+                  Pre-migration rows (not tracked)
                 </p>
               </div>
               <div className="ui-card p-4">

@@ -318,7 +318,7 @@ export default function MessagingSection({
           </div>
           <div>
             <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
-              {Math.max(0, (t.messages_out ?? 0) - (t.ai_handled_out ?? 0))}
+              {t.human_handled_out ?? 0}
             </p>
             <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
               human-handled
@@ -331,6 +331,10 @@ export default function MessagingSection({
             {t.ai_handled_out_prev !== null && (t.ai_handled_out_prev ?? 0) > 0
               ? ` (was ${Math.round(((t.ai_handled_out_prev ?? 0) / Math.max(1, t.messages_out_prev)) * 100)}% last period)`
               : ""}
+            {(() => {
+              const unknown = Math.max(0, t.messages_out - (t.ai_handled_out ?? 0) - (t.human_handled_out ?? 0));
+              return unknown > 0 ? ` · ${unknown} legacy (pre-tracking)` : "";
+            })()}
           </p>
         )}
       </div>

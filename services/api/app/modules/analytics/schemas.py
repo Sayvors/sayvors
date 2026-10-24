@@ -547,6 +547,7 @@ class MessagingChannelRow(BaseModel):
     messages_in: int
     messages_out: int
     ai_handled_out: int = 0
+    human_handled_out: int = 0
     messages_in_prev: int
     conversations: int
     conversations_prev: int

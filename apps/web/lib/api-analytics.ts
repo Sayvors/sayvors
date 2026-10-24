@@ -396,6 +396,7 @@ export interface MessagingChannelRow {
   messages_in: number;
   messages_out: number;
   ai_handled_out: number;
+  human_handled_out: number;
   messages_in_prev: number;
   conversations: number;
   conversations_prev: number;
@@ -411,6 +412,8 @@ export interface MessagingTotals {
   messages_out: number;
   ai_handled_out: number;
   ai_handled_out_prev: number;
+  human_handled_out: number;
+  human_handled_out_prev: number;
   messages_in_prev: number;
   messages_out_prev: number;
   conversations: number;

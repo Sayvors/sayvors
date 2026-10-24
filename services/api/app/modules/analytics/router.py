@@ -224,7 +224,7 @@ async def get_market_benchmarks(
     db: AsyncSession = Depends(get_db),
 ):
     """Stored market benchmarks (cross-tenant aggregates). Reads stored rows only."""
-    from ..models import MarketBenchmark
+    from .models import MarketBenchmark
     from sqlalchemy import select
 
     filters = []
