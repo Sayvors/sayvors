@@ -213,23 +213,25 @@ async def _handle_discovered(payload: dict) -> None:
         # than an empty review while the provider is down.
         insight.enrichment_status = "failed" if result.get("heuristic") else "done"
 
-        db.add(insight)
-        await db.commit()
-
         bucket_date = (insight.review_updated_at or insight.created_at).date()
 
-    await enqueue_event(
-        "review.enriched",
-        {
-            "user_id": insight.user_id,
-            "channel_id": channel_id,
-            "review_id": review_id,
-            "rating": insight.rating,
-            "sentiment": insight.sentiment,
-            "review_date": bucket_date.isoformat(),
-        },
-        topic=TOPIC,
-    )
+        from ..outbox.service import enqueue_event_in
+
+        await enqueue_event_in(
+            db,
+            "review.enriched",
+            {
+                "user_id": insight.user_id,
+                "channel_id": channel_id,
+                "review_id": review_id,
+                "rating": insight.rating,
+                "sentiment": insight.sentiment,
+                "review_date": bucket_date.isoformat(),
+            },
+            topic=TOPIC,
+        )
+        db.add(insight)
+        await db.commit()
 
 
 async def _handle_replied(payload: dict) -> None:

@@ -26,7 +26,7 @@ async def submit_job(
     payload: dict | None = None,
     lane: str | None = None,
     priority: int = 50,
-    max_attempts: int = 5,
+    max_attempts: int | None = None,
     idempotency_key: str | None = None,
     subject_type: str | None = None,
     subject_id: str | None = None,
@@ -54,6 +54,11 @@ async def submit_job(
     resolved_type = JobType(job_type)
     resolved_lane = lane or JobType.lane_for(resolved_type).value
     resolved_lane_key = lane_key or str(subject_id or uuid4())
+
+    from .types import MAX_ATTEMPTS_BY_LANE
+
+    if max_attempts is None:
+        max_attempts = MAX_ATTEMPTS_BY_LANE.get(JobLane(resolved_lane), 5)
 
     # Idempotency: if a job with this key already exists for this tenant, return it.
     if idempotency_key:
@@ -256,6 +261,25 @@ async def retry_job(
         job.error_code = "max_attempts_exhausted"
         job.lease_expires_at = None
         job.lease_owner = None
+        # Publish to dead-letter topic for operator replay
+        try:
+            from ..outbox.service import enqueue_event_in
+
+            await enqueue_event_in(
+                db,
+                "job.dead",
+                {
+                    "job_id": job.id,
+                    "job_type": job.job_type,
+                    "lane": job.lane,
+                    "tenant_id": job.tenant_id,
+                    "attempts": job.attempts,
+                    "last_error": (job.last_error or "")[:500],
+                },
+                topic=f"{job.lane}-dispatch-dlq",
+            )
+        except Exception:
+            pass  # DLQ publish is best-effort; the dead row is the truth
     else:
         job.status = JobStatus.retrying.value
         job.next_run_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
@@ -320,6 +344,25 @@ async def block_job(
     job.updated_at = datetime.now(timezone.utc)
     db.add(job)
 
+
+async def replay_job(db: AsyncSession, *, job_id: str, tenant_id: str) -> Job | None:
+    job = await get_job(db, job_id, tenant_id)
+    if job is None:
+        return None
+    if job.status not in (JobStatus.dead.value, JobStatus.failed.value):
+        return None
+    job.status = JobStatus.queued.value
+    job.attempts = 0
+    job.last_error = None
+    job.error_code = None
+    job.external_intent = None
+    job.external_result = None
+    job.lease_expires_at = None
+    job.lease_owner = None
+    job.next_run_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.now(timezone.utc)
+    db.add(job)
+    return job
 
 async def get_job(db: AsyncSession, job_id: str, tenant_id: str) -> Job | None:
     """Fetch a job by id, tenant-scoped. Returns None if not found or wrong tenant."""

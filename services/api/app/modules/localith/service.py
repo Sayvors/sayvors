@@ -1267,7 +1267,10 @@ async def _sync_single_connection(
             if same_content and _ins.enrichment_status == "done":
                 continue
         try:
-            await enqueue_event(
+            from ..outbox.service import enqueue_event_in
+
+            await enqueue_event_in(
+                db,
                 "review.discovered",
                 {
                     "user_id": user_id,
@@ -1281,6 +1284,7 @@ async def _sync_single_connection(
                 },
                 topic="review-events",
             )
+            await db.commit()
         except Exception as e:
             logger.warning("Localith discover-event enqueue failed review=%s: %s", review_id, e)
 

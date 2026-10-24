@@ -212,10 +212,11 @@ async def request_verification(
     record.contact_target = body.contact_target
     record.attempts += 1
     record.requested_at = now
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(db, "google.verification.requested", {"channel_id": channel.id, "method": body.method}, "google-business-events")
     await db.commit()
     await db.refresh(record)
-    from ..outbox.service import enqueue_event
-    await enqueue_event("google.verification.requested", {"channel_id": channel.id, "method": body.method}, "google-business-events")
     return _verification_response(record, channel_id)
 
 
@@ -258,10 +259,11 @@ async def create_service(
     await _google_channel(channel_id, ctx.user, db)
     service = BusinessService(channel_id=channel_id, **body.model_dump())
     db.add(service)
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(db, "google.service.created", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     await db.commit()
     await db.refresh(service)
-    from ..outbox.service import enqueue_event
-    await enqueue_event("google.service.created", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     return _service_response(service)
 
 
@@ -282,10 +284,11 @@ async def update_service(
         raise HTTPException(status_code=404, detail="Service not found")
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(service, key, value)
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(db, "google.service.updated", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     await db.commit()
     await db.refresh(service)
-    from ..outbox.service import enqueue_event
-    await enqueue_event("google.service.updated", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     return _service_response(service)
 
 
@@ -304,9 +307,10 @@ async def delete_service(
     if service is None:
         raise HTTPException(status_code=404, detail="Service not found")
     await db.delete(service)
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(db, "google.service.deleted", {"channel_id": channel_id, "service_id": service_id}, "google-business-events")
     await db.commit()
-    from ..outbox.service import enqueue_event
-    await enqueue_event("google.service.deleted", {"channel_id": channel_id, "service_id": service_id}, "google-business-events")
 
 
 @router.post("/{channel_id}/messages", response_model=ChannelMessageResponse, status_code=status.HTTP_201_CREATED)
@@ -1625,13 +1629,12 @@ async def approve_review_reply(
     for sibling in sibling_result.scalars().all():
         sibling.status = "rejected"
         sibling.error = None
-    await db.commit()
-
     # Keep analytics response-rate/response-time accurate
     try:
-        from ..outbox.service import enqueue_event
+        from ..outbox.service import enqueue_event_in
 
-        await enqueue_event(
+        await enqueue_event_in(
+            db,
             "review.replied",
             {
                 "user_id": ctx.user.id,
@@ -1642,6 +1645,7 @@ async def approve_review_reply(
             },
             topic="review-events",
         )
+        await db.commit()
     except Exception:
         logger.warning("review.replied enqueue failed for %s", reply.review_id)
 

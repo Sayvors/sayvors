@@ -415,7 +415,10 @@ async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review)
         )
         if same_content and existing.enrichment_status == "done":
             return
-    await enqueue_event(
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(
+        db,
         "review.discovered",
         {
             "user_id": channel.user_id,
@@ -434,9 +437,12 @@ async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review)
     )
 
 
-async def _enqueue_review_replied(channel: Channel, review, status: str) -> None:
+async def _enqueue_review_replied(db: AsyncSession, channel: Channel, review, status: str) -> None:
     """Emit review.replied so analytics tracks response rate/time."""
-    await enqueue_event(
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(
+        db,
         "review.replied",
         {
             "user_id": channel.user_id,
@@ -447,6 +453,7 @@ async def _enqueue_review_replied(channel: Channel, review, status: str) -> None
         },
         topic=REVIEW_EVENTS_TOPIC,
     )
+    await db.commit()
 
 
 async def _announce_new_issue(
@@ -605,7 +612,7 @@ async def _refresh_edited_review_reply(
     await db.commit()
     if status == "posted":
         try:
-            await _enqueue_review_replied(channel, review, "posted")
+            await _enqueue_review_replied(db, channel, review, "posted")
         except Exception as e:
             logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 
@@ -852,7 +859,7 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 )
                 await db.commit()
                 try:
-                    await _enqueue_review_replied(channel, review, "posted")
+                    await _enqueue_review_replied(db, channel, review, "posted")
                 except Exception as e:
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
             else:
@@ -865,7 +872,7 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 await db.commit()
                 stats["queued"] += 1
                 try:
-                    await _enqueue_review_replied(channel, review, "pending_approval")
+                    await _enqueue_review_replied(db, channel, review, "pending_approval")
                 except Exception as e:
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 

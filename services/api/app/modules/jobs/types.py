@@ -55,5 +55,14 @@ _LANE_MAP: dict[JobType, JobLane] = {
 }
 
 
+# Per-lane default max attempts. Bulk jobs get more retries (best-effort,
+# transient failures are common); realtime gets fewer (latency matters).
+MAX_ATTEMPTS_BY_LANE: dict[JobLane, int] = {
+    JobLane.realtime: 3,
+    JobLane.publishing: 5,
+    JobLane.media: 3,
+    JobLane.bulk: 10,
+}
+
 # JOB_TYPES is the closed registry validated server-side on submit.
 JOB_TYPES = [jt.value for jt in JobType]

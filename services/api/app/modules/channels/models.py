@@ -199,7 +199,7 @@ class ChannelComment(Base):
     channel_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("channels.id"), index=True
     )
-    platform_comment_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    platform_comment_id: Mapped[str | None] = mapped_column(String(200), nullable=True, unique=True)
     parent_platform_comment_id: Mapped[str | None] = mapped_column(
         String(200), nullable=True
     )

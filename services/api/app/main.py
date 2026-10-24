@@ -43,6 +43,7 @@ from .modules.review_engine.csv_router import router as csv_router
 from .modules.assistant.router import router as assistant_router
 from .modules.notifications.router import router as notifications_router
 from .modules.billing.router import router as billing_router
+from .modules.jobs.router import router as jobs_router, admin_router as jobs_admin_router
 from .modules.team.router import router as team_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
@@ -386,6 +387,8 @@ app.include_router(csv_router)
 app.include_router(assistant_router)
 app.include_router(notifications_router)
 app.include_router(billing_router)
+app.include_router(jobs_router)
+app.include_router(jobs_admin_router)
 app.include_router(team_router)
 
 # Public media files
