@@ -264,7 +264,7 @@ async def get_conversation_insights(
     Returns the latest insight row for the tenant, or an empty object when no
     insights have been computed yet (worker hasn't run or there's no data).
     """
-    from ..models import ConversationInsight
+    from .models import ConversationInsight
     from sqlalchemy import select
 
     uid = tenant_id_of(user)
