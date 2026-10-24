@@ -576,7 +576,7 @@
   <div class="phase">
     <div class="ph"><h3>Phase C — Scale architecture</h3><span class="when">weeks 4–10</span></div>
     <ul>
-      <li>⬜ <strong>Unified job system, Phase 0 → 4</strong> — Phase 0 shipped. Phase 1 shipped. Phase 2 shipped. Phase 3 partial: Prometheus metrics + stuck-lane GlitchTip alerting + job_id FK on 6 domain tables (stt, tts, scrape, ingest, posts, media) shipped. Remaining: admin job queue UI, migration of rag ingest to unified jobs, k6 load test (Phase 4).</li>
+      <li>⬜ <strong>Unified job system, Phase 0 → 4</strong> — Phase 0 shipped. Phase 1 shipped. Phase 2 shipped. Phase 3 shipped: Prometheus metrics + stuck-lane GlitchTip alerting + job_id FK on 6 domain tables + admin job queue UI (list/filter/replay/cancel). Remaining: migration of rag ingest to unified jobs, k6 load test (Phase 4).</li>
       <li>✅ Shared Redis pub/sub for WS fan-out (SCALE-6). <em>TanStack Query + virtualization + WS buffer cap in the frontend still open.</em></li>
       <li>⬜ Admin: named operator accounts + action audit log. <em>The in-web admin duplicate was removed; the separate <code>apps/admin</code> app is the single surface.</em></li>
       <li>✅ GDPR delete/export (SEC-M1); encrypt message content and phones (SEC-M2).</li>

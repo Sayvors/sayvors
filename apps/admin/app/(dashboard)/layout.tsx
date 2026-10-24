@@ -11,7 +11,7 @@ type NavItem = {
   href: string;
   label: string;
   desc: string;
-  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings" | "billing";
+  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings" | "billing" | "jobs";
 };
 
 const SECTIONS: { title: string; items: NavItem[] }[] = [
@@ -27,6 +27,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/usage", label: "Usage", desc: "Tokens & metering", icon: "usage" },
       { href: "/billing", label: "Billing", desc: "Wallets & ledger", icon: "billing" },
+      { href: "/jobs", label: "Jobs", desc: "Queue & workers", icon: "jobs" },
       { href: "/logs", label: "Logs", desc: "Services & failures", icon: "logs" },
     ],
   },
@@ -118,6 +119,17 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
           <path d="M3.5 10h17" stroke="currentColor" strokeWidth="1.6" />
           <circle cx="7.5" cy="14" r="1.2" fill="currentColor" />
           <path d="M11 14h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      );
+    case "jobs":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <rect x="3.5" y="4" width="17" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.6" />
+          <rect x="3.5" y="10" width="17" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.6" />
+          <rect x="3.5" y="16" width="17" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.6" />
+          <circle cx="7" cy="6" r="0.9" fill="currentColor" />
+          <circle cx="7" cy="12" r="0.9" fill="currentColor" />
+          <circle cx="7" cy="18" r="0.9" fill="currentColor" />
         </svg>
       );
     default:
