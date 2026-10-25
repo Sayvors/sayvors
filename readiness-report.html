@@ -183,6 +183,7 @@
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
+    <a href="#campaigns">Campaigns</a>
     <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
@@ -332,6 +333,7 @@
     <tr><td>Bulk location edit + scheduled posts calendar</td><td><span class="chip code">Code</span> <span class="chip ok">Fixed</span></td><td>✅ <strong>Bulk CSV:</strong> <code>GET /bulk-template</code> + <code>POST /bulk-upload</code> with per-row validation, tenant isolation, idempotent apply. <strong>In-browser spreadsheet:</strong> editable grid with Download/Upload/Save, confirmation dialog, past-date blocking. <strong>Scheduled posts calendar:</strong> Google Calendar-like month view on posts-media page with event chips, popover details, click-to-schedule flow. <strong>Mobile:</strong> hamburger moved to sticky header bar. <strong>Docs:</strong> <code>docs/features/bulk-location-edit.md</code>.</td><td class="num"><span class="chip ok">Done</span></td></tr>
     <tr><td>Admin consolidation</td><td><span class="chip code">Code</span> <span class="chip warn">In progress</span></td><td>Keep <code>apps/admin</code>, delete the in-web <code>/admin</code>, replace the shared password with named operator accounts + an audit log of admin actions. <strong>Backend done:</strong> <code>platform_operators</code> + <code>admin_audit_logs</code> tables (migration <code>b6c7d8e9f0a1</code>), username+password login, per-operator JWT, account lockout, audit middleware, operator CRUD + audit log endpoints, bootstrap from env/legacy password. <strong>Frontend done:</strong> login page with username field, operator management page (<code>/operators</code>), audit log viewer (<code>/audit-log</code>), nav links in sidebar. <strong>Remaining:</strong> bootstrap config docs, operator management tests.</td><td class="num">1 day remaining</td></tr>
     <tr><td>Frontend data layer</td><td><span class="chip code">Code</span></td><td>TanStack Query (kills the refetch storms), list virtualization, WS buffer cap, Sentry + web-vitals.</td><td class="num">1–2 wks</td></tr>
+    <tr><td>Channel onboarding pages</td><td><span class="chip code">Code</span> <span class="chip warn">In progress</span></td><td>Remove provider sub-tabs from connect page; each channel (WhatsApp, Facebook, Instagram) gets its own dedicated page with step-by-step onboarding. Breadcrumbs for navigation. Done: tabs removed from MetaConnections, dedicated pages exist at /channels/whatsapp, /channels/facebook, /channels/instagram. Remaining: step-by-step onboarding wizard per channel, breadcrumbs.</td><td class="num">2-3 days</td></tr>
     <tr><td colspan="4" style="padding:0 18px 14px 18px;background:var(--sunken,#f4f2f7);">
       <details open>
         <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--ink-2,#3B2D5E);padding:8px 0;">Sub-tasks (20) — click to collapse</summary>
@@ -824,6 +826,35 @@
     </ul>
   </div>
   <p class="note">Not verified by this pass (same limits as the original audit): the RDS console state (PITR, instance class, max_connections), real traffic numbers, Vercel plan limits, Meta rate-limit headroom. Load figures remain estimates until the k6 run.</p>
+</section>
+
+<section id="campaigns">
+  <div class="eyebrow">§§ 12 · feature workstream — new</div>
+  <h2>Create New Campaign</h2>
+  <p><span class="chip med">Planned — outline only</span>&nbsp; Campaign builder wizard, outlined 2026-10-25: seven steps from intent to delivery tuning. It composes infrastructure that already exists — channels, the tenant contact store, the durable <code>jobs</code> publishing lane for scheduling — so the genuinely new builds are the wizard itself, audience targeting, and the SMS fallback path.</p>
+
+  <div class="scroll"><table>
+    <tr><th>#</th><th>Step</th><th>Notes / open questions</th></tr>
+    <tr><td class="num">1</td><td><strong>How do you want to reach the customer</strong></td><td>The entry point: the outreach intent that opens the wizard.</td></tr>
+    <tr><td class="num">2</td><td><strong>Add campaign name</strong></td><td>Free-text identity; shows in campaign lists and reporting.</td></tr>
+    <tr><td class="num">3</td><td><strong>Select Your Channel</strong></td><td>The sending channel — WhatsApp, Instagram, Facebook (existing channel modules). SMS appears here as the fallback target of step 7.</td></tr>
+    <tr><td class="num">4</td><td><strong>Pick Campaign type</strong></td><td>Campaign taxonomy. Open question: the type list, and which types require Meta-approved WhatsApp templates (outbound to a contact outside the 24-hour service window always does).</td></tr>
+    <tr><td class="num">5</td><td><strong>Define Your Audience</strong></td><td>Segment the tenant’s contacts/leads. Reuses the tenant-isolated, encrypted contact store; needs saved segments and a size preview before send.</td></tr>
+    <tr><td class="num">6</td><td><strong>Send or Schedule</strong></td><td>Immediate blast or scheduled window. Scheduling should ride the existing durable <code>jobs</code> publishing lane, not a new timer — the calendar UI pattern from the scheduled-posts panel is reusable.</td></tr>
+    <tr><td class="num">7</td><td><strong>Improve Delivery Performance</strong></td><td>The optional tuning layer: (a) <strong>Fallback to SMS</strong> for failed WhatsApp deliveries; (b) <strong>Update Contact Attributes</strong> — write back tags/attributes on send or on interaction.</td></tr>
+  </table></div>
+
+  <div class="card">
+    <h3>Dependencies this outline implies</h3>
+    <ul>
+      <li><strong>SMS provider — a Buy decision.</strong> The fallback only works with a real SMS gateway (Twilio or a regional provider); <code>integrations/sms/</code> is an empty skeleton today. Same decision bucket as the payment processor.</li>
+      <li><strong>WhatsApp template approval lead time.</strong> Campaign messages outside the 24-hour service window require Meta-approved templates — approval has lead time, the same class of risk as the Google GBP approval. Start submissions early.</li>
+      <li><strong>Rate and budget gating.</strong> A campaign is a burst. Sends must pass the same budget gate and per-channel rate limits as every other outbound path, and respect per-tenant in-flight caps so one tenant’s 50k-message campaign cannot starve the realtime AI-reply lane.</li>
+      <li><strong>Audience is PII at scale.</strong> Segments and contact-attribute writes touch the encrypted contact store (SEC-M2); keep every export bounded and audited.</li>
+      <li><strong>Entitlements decide who can send what.</strong> Campaigns are a Pro/Growth selling feature — the plans workstream (§§6b) gates campaign volume per plan before this ships.</li>
+    </ul>
+  </div>
+  <p class="note">Status: outline captured 2026-10-25, no code started. Slot the build after (or alongside) plans/entitlements — campaign volume limits are plan entitlements, so the entitlements service lands first.</p>
 </section>
 
 <footer>
