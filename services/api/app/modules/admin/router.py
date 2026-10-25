@@ -68,6 +68,7 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
 class AdminLoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
     password: str = Field(..., min_length=1, max_length=256)
 
 
@@ -109,30 +110,94 @@ async def _admin_locked_out() -> bool:
         return False
 
 
+async def _has_any_operator() -> bool:
+    try:
+        from sqlalchemy import func, select
+
+        from ...database import async_session
+        from .models import PlatformOperator
+
+        async with async_session() as db:
+            count = (await db.execute(select(func.count()).select_from(PlatformOperator))).scalar() or 0
+            return count > 0
+    except Exception:
+        return False
+
+
 @router.post("/login", response_model=AdminLoginResponse)
 async def admin_login(body: AdminLoginRequest, request: Request, response: Response):
-    if not settings.ADMIN_PASSWORD_HASH:
-        raise HTTPException(status_code=503, detail="Admin access is not configured.")
-    from ..auth.rate_limit import rate_limit
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from ...database import async_session
+    from .models import PlatformOperator, AdminAuditLog
 
     ip = get_client_ip(request)
-    # Tests hit this endpoint constantly across runs and the Redis window
-    # outlives the process — same TESTING bypass admin_rate_limit uses.
+    # If no operators exist and no legacy password is configured, admin is
+    # not set up at all.
+    if not (await _has_any_operator()) and not settings.ADMIN_PASSWORD_HASH:
+        raise HTTPException(status_code=503, detail="Admin access is not configured.")
     if not settings.TESTING:
         if not await rate_limit(f"admin-login:{ip}", 5, 300):
             raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     if await _admin_locked_out():
         logger.error("Admin login globally locked out (repeated failures), ip=%s", ip)
-        raise HTTPException(
-            status_code=429,
-            detail="Admin access temporarily locked. Try again later.",
-        )
-    if not verify_password(body.password, settings.ADMIN_PASSWORD_HASH):
+        raise HTTPException(status_code=429, detail="Admin access temporarily locked. Try again later.")
+
+    async with async_session() as db:
+        row = (
+            await db.execute(
+                select(PlatformOperator).where(PlatformOperator.username == body.username)
+            )
+        ).scalar_one_or_none()
+
+    # Backward-compat bootstrap: if no operators exist yet, fall back to the
+    # legacy shared password (username "admin").
+    if row is None and not (await _has_any_operator()) and settings.ADMIN_PASSWORD_HASH and body.username == "admin":
+        if verify_password(body.password, settings.ADMIN_PASSWORD_HASH):
+            import uuid as _uuid
+
+            async with async_session() as db:
+                row = PlatformOperator(
+                    id=str(_uuid.uuid4()),
+                    username="admin",
+                    password_hash=settings.ADMIN_PASSWORD_HASH,
+                    role="superadmin",
+                    is_active=True,
+                )
+                db.add(row)
+                await db.commit()
+                await db.refresh(row)
+            logger.warning("Bootstrapped legacy 'admin' operator from ADMIN_PASSWORD_HASH.")
+
+    if row is None or not row.is_active:
         failures = await _register_admin_failure()
-        logger.warning(
-            "Failed admin login from %s (global failures=%d)", ip, failures
-        )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong password.")
+        logger.warning("Failed admin login (unknown/inactive operator) from %s (global failures=%d)", ip, failures)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong credentials.")
+    now = datetime.now(timezone.utc)
+    if row.locked_until is not None and row.locked_until > now:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account is locked. Try again later.")
+    if not verify_password(body.password, row.password_hash):
+        async with async_session() as db:
+            r = await db.get(PlatformOperator, row.id)
+            if r is not None:
+                r.failed_login_count = (r.failed_login_count or 0) + 1
+                if r.failed_login_count >= settings.ADMIN_MAX_CONSECUTIVE_FAILURES:
+                    r.locked_until = now + timedelta(minutes=15)
+                await db.commit()
+        failures = await _register_admin_failure()
+        logger.warning("Failed admin login for operator %s from %s (global failures=%d)", body.username, ip, failures)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong credentials.")
+
+    async with async_session() as db:
+        r = await db.get(PlatformOperator, row.id)
+        if r is not None:
+            r.failed_login_count = 0
+            r.locked_until = None
+            r.last_login_at = now
+            await db.commit()
+
     try:
         from ..redis.client import get_redis
 
@@ -140,7 +205,7 @@ async def admin_login(body: AdminLoginRequest, request: Request, response: Respo
         await redis.delete(_ADMIN_FAIL_KEY)
     except Exception:
         pass
-    token = create_admin_token()
+    token = create_admin_token(subject=row.id)
     secure = (
         request.url.scheme == "https"
         or request.headers.get("x-forwarded-proto", "") == "https"
@@ -154,6 +219,21 @@ async def admin_login(body: AdminLoginRequest, request: Request, response: Respo
         secure=secure,
         path="/api/v1/admin",
     )
+    try:
+        async with async_session() as db:
+            db.add(AdminAuditLog(
+                operator_id=row.id,
+                operator_username=row.username,
+                action="login",
+                method="POST",
+                path="/api/v1/admin/login",
+                status_code=200,
+                ip=ip,
+                user_agent=request.headers.get("user-agent"),
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.warning("Audit log write failed: %s", e)
     return AdminLoginResponse(expires_in_minutes=settings.ADMIN_SESSION_MINUTES)
 
 
@@ -1197,3 +1277,163 @@ router.include_router(
     tts_admin_router,
     dependencies=[Depends(require_admin), Depends(admin_rate_limit)],
 )
+
+
+# ---------------------------------------------------------------------------
+# Operator management + audit log
+# ---------------------------------------------------------------------------
+
+class OperatorOut(BaseModel):
+    id: str
+    username: str
+    role: str
+    is_active: bool
+    created_at: datetime
+    last_login_at: datetime | None = None
+
+
+class OperatorCreate(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=8, max_length=256)
+    role: str = Field(default="operator", pattern="^(operator|superadmin)$")
+
+
+class OperatorUpdate(BaseModel):
+    is_active: bool | None = None
+    role: str | None = Field(default=None, pattern="^(operator|superadmin)$")
+    password: str | None = Field(default=None, min_length=8, max_length=256)
+
+
+class AuditLogOut(BaseModel):
+    id: str
+    operator_id: str | None = None
+    operator_username: str | None = None
+    action: str
+    method: str
+    path: str
+    status_code: int
+    ip: str | None = None
+    created_at: datetime
+
+
+@router.get("/operators", response_model=list[OperatorOut])
+async def list_operators(_admin=Depends(require_admin)):
+    from sqlalchemy import select
+
+    from ...database import async_session
+    from .models import PlatformOperator
+
+    async with async_session() as db:
+        rows = (await db.execute(select(PlatformOperator).order_by(PlatformOperator.created_at))).scalars().all()
+        return [
+            OperatorOut(
+                id=r.id, username=r.username, role=r.role, is_active=r.is_active,
+                created_at=r.created_at, last_login_at=r.last_login_at,
+            )
+            for r in rows
+        ]
+
+
+@router.post("/operators", response_model=OperatorOut, status_code=status.HTTP_201_CREATED)
+async def create_operator(body: OperatorCreate, _admin=Depends(require_admin)):
+    from sqlalchemy import select
+
+    from ...database import async_session
+    from .models import AdminAuditLog, PlatformOperator
+
+    async with async_session() as db:
+        existing = (await db.execute(
+            select(PlatformOperator).where(PlatformOperator.username == body.username)
+        )).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="Username already exists.")
+        op_row = PlatformOperator(
+            username=body.username,
+            password_hash=hash_password(body.password),
+            role=body.role,
+            is_active=True,
+        )
+        db.add(op_row)
+        await db.commit()
+        await db.refresh(op_row)
+        try:
+            db.add(AdminAuditLog(
+                operator_id=_admin.get("operator_id"),
+                operator_username=_admin.get("username"),
+                action="operator.create",
+                method="POST",
+                path="/api/v1/admin/operators",
+                status_code=201,
+                detail=f"created operator {body.username} role={body.role}",
+            ))
+            await db.commit()
+        except Exception as e:
+            logger.warning("Audit log write failed: %s", e)
+        return OperatorOut(
+            id=op_row.id, username=op_row.username, role=op_row.role,
+            is_active=op_row.is_active, created_at=op_row.created_at,
+            last_login_at=op_row.last_login_at,
+        )
+
+
+@router.patch("/operators/{operator_id}", response_model=OperatorOut)
+async def update_operator(operator_id: str, body: OperatorUpdate, _admin=Depends(require_admin)):
+    from ...database import async_session
+    from .models import AdminAuditLog, PlatformOperator
+
+    async with async_session() as db:
+        row = await db.get(PlatformOperator, operator_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Operator not found.")
+        if body.is_active is not None:
+            row.is_active = body.is_active
+        if body.role is not None:
+            row.role = body.role
+        if body.password is not None:
+            row.password_hash = hash_password(body.password)
+        await db.commit()
+        await db.refresh(row)
+        try:
+            db.add(AdminAuditLog(
+                operator_id=_admin.get("operator_id"),
+                operator_username=_admin.get("username"),
+                action="operator.update",
+                method="PATCH",
+                path=f"/api/v1/admin/operators/{operator_id}",
+                status_code=200,
+                detail=f"updated operator {row.username}",
+            ))
+            await db.commit()
+        except Exception as e:
+            logger.warning("Audit log write failed: %s", e)
+        return OperatorOut(
+            id=row.id, username=row.username, role=row.role,
+            is_active=row.is_active, created_at=row.created_at,
+            last_login_at=row.last_login_at,
+        )
+
+
+@router.get("/audit-log", response_model=list[AuditLogOut])
+async def list_audit_log(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    _admin=Depends(require_admin),
+):
+    from sqlalchemy import select
+
+    from ...database import async_session
+    from .models import AdminAuditLog
+
+    async with async_session() as db:
+        rows = (await db.execute(
+            select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc())
+            .offset(offset).limit(limit)
+        )).scalars().all()
+        return [
+            AuditLogOut(
+                id=r.id, operator_id=r.operator_id, operator_username=r.operator_username,
+                action=r.action, method=r.method, path=r.path, status_code=r.status_code,
+                ip=r.ip, created_at=r.created_at,
+            )
+            for r in rows
+        ]

@@ -39,6 +39,13 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: "/voice", label: "Voice models", desc: "WhatsApp voice TTS", icon: "voice" },
     ],
   },
+  {
+    title: "Access",
+    items: [
+      { href: "/operators", label: "Operators", desc: "Admin accounts", icon: "tenants" },
+      { href: "/audit-log", label: "Audit log", desc: "Admin actions", icon: "logs" },
+    ],
+  },
 ];
 
 const SIDEBAR_KEY = "sayvors-admin-sidebar";
@@ -229,7 +236,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   );
 
   const header = (
-    <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3">
+    <header className="sticky top-0 z-20 hidden items-center justify-between border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 lg:flex">
       {/* Brand — mirrors the sidebar rail */}
       <div className="flex items-center gap-3">
         <Image
@@ -335,9 +342,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </button>
       </aside>
 
-      {/* Desktop header */}
-      {header}
-
       {/* Mobile scrim */}
       {navOpen && (
         <button
@@ -349,6 +353,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* Desktop header (hidden on mobile) */}
+        {header}
         {/* Mobile top bar */}
         <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 lg:hidden">
           <button

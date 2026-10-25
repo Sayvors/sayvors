@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 from uuid import uuid4
 import logging
-import json
+
+logger = logging.getLogger(__name__)
 import sys
 import time
 
@@ -35,7 +36,9 @@ from .modules.locations.router import router as locations_router
 from .modules.posts.router import router as posts_router
 from .modules.media.router import router as media_router
 from .modules.storage.router import router as storage_router
+from .modules.admin.models import AdminAuditLog
 from .modules.admin.router import router as admin_router
+from .modules.admin import models as _admin_models  # noqa: F401 (registers tables)
 from .modules.user_feedback.router import router as feedback_router
 from .modules.email.router import router as email_router
 from .modules.review_engine.router import router as review_engine_router
@@ -212,6 +215,63 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class AdminAuditMiddleware(BaseHTTPMiddleware):
+    """Best-effort audit log for every /api/v1/admin/* request (except login,
+    which is audited explicitly in the login handler)."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        path = request.url.path
+        if not path.startswith("/api/v1/admin/") or path == "/api/v1/admin/login":
+            return response
+        try:
+            from .database import async_session
+            from .modules.admin.models import AdminAuditLog, PlatformOperator
+            from .security import decode_token
+
+            token = request.cookies.get(settings.ADMIN_COOKIE_NAME, "")
+            if not token:
+                auth = request.headers.get("authorization", "")
+                if auth.lower().startswith("bearer "):
+                    token = auth[7:]
+            operator_id = None
+            operator_username = None
+            if token:
+                try:
+                    payload = decode_token(token)
+                    if payload.get("type") == "admin":
+                        operator_id = payload.get("sub")
+                        if operator_id == "admin":
+                            operator_username = "legacy-admin"
+                            operator_id = None
+                except Exception:
+                    pass
+            if operator_id:
+                try:
+                    async with async_session() as db:
+                        op_row = await db.get(PlatformOperator, operator_id)
+                        if op_row is not None:
+                            operator_username = op_row.username
+                except Exception:
+                    pass
+            ip = request.client.host if request.client else None
+            async with async_session() as db:
+                db.add(AdminAuditLog(
+                    operator_id=operator_id,
+                    operator_username=operator_username,
+                    action=f"{request.method} {path}",
+                    method=request.method,
+                    path=path[:256],
+                    status_code=response.status_code,
+                    ip=ip,
+                    user_agent=request.headers.get("user-agent"),
+                ))
+                await db.commit()
+        except Exception as e:
+            logger.debug("Admin audit write failed: %s", e)
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import logging
@@ -229,7 +289,47 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.error("Database pool warmup failed: %s", e)
 
-    # Load DB-backed LLM provider keys and model curation
+    # Bootstrap the first platform operator if none exist (replaces the
+    # shared admin password with named accounts on first boot).
+    try:
+        from .database import async_session
+        from .modules.admin.models import PlatformOperator
+        from .security import hash_password
+        from sqlalchemy import select, func
+
+        async with async_session() as db:
+            count = (await db.execute(select(func.count()).select_from(PlatformOperator))).scalar() or 0
+            if count == 0:
+                bootstrap_user = settings.ADMIN_BOOTSTRAP_USERNAME if hasattr(settings, "ADMIN_BOOTSTRAP_USERNAME") else None
+                bootstrap_pw = settings.ADMIN_BOOTSTRAP_PASSWORD if hasattr(settings, "ADMIN_BOOTSTRAP_PASSWORD") else None
+                # Fallback: migrate the legacy shared password into an "admin" operator.
+                if not bootstrap_user and settings.ADMIN_PASSWORD_HASH:
+                    # Can't reverse the hash; create a placeholder that must be
+                    # reset. Log a warning so the operator knows to set a real one.
+                    bootstrap_user = "admin"
+                    bootstrap_pw = None
+                if bootstrap_user:
+                    import uuid as _uuid
+                    import secrets as _secrets
+
+                    if bootstrap_pw:
+                        pw_hash = hash_password(bootstrap_pw)
+                    else:
+                        pw_hash = settings.ADMIN_PASSWORD_HASH or hash_password(secrets.token_urlsafe(32))
+                    db.add(PlatformOperator(
+                        id=str(_uuid.uuid4()),
+                        username=bootstrap_user,
+                        password_hash=pw_hash,
+                        role="superadmin",
+                        is_active=True,
+                    ))
+                    await db.commit()
+                    log.warning(
+                        "Bootstrapped platform operator '%s'. Set ADMIN_BOOTSTRAP_USERNAME/PASSWORD "
+                        "or rotate the password immediately.", bootstrap_user
+                    )
+    except Exception as e:
+        log.warning("Platform operator bootstrap failed: %s", e)
     try:
         from .modules.llm.providers.registry import refresh_provider_keys
         n = await refresh_provider_keys()
@@ -340,6 +440,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limit=100_000_000)
 
 # ── Middleware ──────────────────────────────────────────────────────────
+app.add_middleware(AdminAuditMiddleware)
+app.add_middleware(AdminAuditMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,

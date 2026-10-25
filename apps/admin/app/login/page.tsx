@@ -6,17 +6,18 @@ import { adminLogin } from "@/lib/admin-api";
 
 export default function AdminLoginPage() {
   const router = useRouter();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!password) return;
+    if (!username || !password) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await adminLogin(password);
+      const res = await adminLogin(username, password);
       if (!res || typeof res.expires_in_minutes !== "number") {
         throw new Error("Unexpected login response. Please try again.");
       }
@@ -39,13 +40,23 @@ export default function AdminLoginPage() {
           <p className="mt-0.5 text-[12px] text-ink/50">Platform overview. Operator access only.</p>
         </div>
         <div>
-          <label className="mb-1 block text-[12px] font-medium text-ink/60">Admin password</label>
+          <label className="mb-1 block text-[12px] font-medium text-ink/60">Username</label>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            autoFocus
+            className="input-field"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[12px] font-medium text-ink/60">Password</label>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
-            autoFocus
             className="input-field"
           />
         </div>
@@ -54,7 +65,7 @@ export default function AdminLoginPage() {
             {error}
           </p>
         )}
-        <button type="submit" disabled={busy || !password} className="btn-primary w-full justify-center disabled:opacity-50">
+        <button type="submit" disabled={busy || !username || !password} className="btn-primary w-full justify-center disabled:opacity-50">
           {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>

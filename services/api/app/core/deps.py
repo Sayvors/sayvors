@@ -105,8 +105,20 @@ async def require_admin(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing CSRF header")
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-        if payload.get("type") != "admin" or payload.get("sub") != "admin":
+        if payload.get("type") != "admin":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")
+        operator_id = payload.get("sub")
+        if operator_id and operator_id != "admin":
+            from ..database import async_session
+            from ..modules.admin.models import PlatformOperator
+
+            async with async_session() as db:
+                op_row = await db.get(PlatformOperator, operator_id)
+            if op_row is None or not op_row.is_active:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Operator account disabled or removed")
+            admin_ctx = {"admin": True, "operator_id": op_row.id, "username": op_row.username, "role": op_row.role}
+        else:
+            admin_ctx = {"admin": True, "operator_id": None, "username": "legacy-admin", "role": "superadmin"}
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session expired")
     except jwt.InvalidTokenError:
@@ -115,4 +127,4 @@ async def require_admin(
 
     if await is_token_blacklisted(payload.get("jti", "")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin token revoked")
-    return {"admin": True}
+    return admin_ctx

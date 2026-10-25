@@ -30,6 +30,7 @@ from app.modules.users.models import User
 from app.modules.channels.models import AutoReplyConfig, Channel
 from app.modules.analytics.models import LocationDailyMetric, ReviewInsight
 from app.modules.outbox.models import EventOutbox
+from app.modules.admin import models as admin_models  # noqa: F401
 
 # In-memory SQLite shared across sessions/threads (StaticPool) so the test
 # client and the fixtures read the same rows.

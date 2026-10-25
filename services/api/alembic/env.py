@@ -41,6 +41,7 @@ from app.modules.media import models as media_models  # noqa: F401
 from app.modules.locations import models as locations_models  # noqa: F401
 from app.modules.billing import models as billing_models  # noqa: F401
 from app.modules.user_feedback import models as user_feedback_models  # noqa: F401
+from app.modules.admin import models as admin_models  # noqa: F401
 
 target_metadata = Base.metadata
 

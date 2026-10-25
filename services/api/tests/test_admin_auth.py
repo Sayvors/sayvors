@@ -1,3 +1,4 @@
+import app.modules.admin.models  # noqa: F401 (registers tables)
 """Platform admin auth: separate password, token gate (no network, no DB writes)."""
 import sys
 from pathlib import Path
@@ -47,15 +48,23 @@ def _no_rate_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_admin_disabled_without_hash(client, monkeypatch):
+    from sqlalchemy import delete
+
+    from app.database import async_session
+    from app.modules.admin.models import PlatformOperator
+
+    async with async_session() as db:
+        await db.execute(delete(PlatformOperator))
+        await db.commit()
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", "")
-    r = client.post("/api/v1/admin/login", json={"password": "x"}, headers=_HOST)
+    r = client.post("/api/v1/admin/login", json={"username": "admin", "password": "x"}, headers=_HOST)
     assert r.status_code == 503
 
 
 @pytest.mark.asyncio
 async def test_admin_wrong_password(client, monkeypatch):
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
-    r = client.post("/api/v1/admin/login", json={"password": "nope"}, headers=_HOST)
+    r = client.post("/api/v1/admin/login", json={"username": "admin", "password": "nope"}, headers=_HOST)
     assert r.status_code == 401
 
 
@@ -65,7 +74,7 @@ async def test_admin_login_and_me(client, monkeypatch):
 
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
     r = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+        "/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"}, headers=_HOST
     )
     assert r.status_code == 200
     body = r.json()
@@ -75,7 +84,7 @@ async def test_admin_login_and_me(client, monkeypatch):
     assert cookie
     payload = decode_token(cookie)
     assert payload["type"] == "admin"
-    assert payload["sub"] == "admin"
+    assert payload["sub"]  # operator id (UUID) or "admin" for legacy
 
     # Cookie auth without the CSRF header is refused (admin paths are
     # exempt from the global CSRF middleware, so the header is the guard).
@@ -97,7 +106,7 @@ async def test_admin_logout_revokes_and_clears(client, monkeypatch):
 
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
     login = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+        "/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"}, headers=_HOST
     )
     assert login.status_code == 200
     csrf = {**_HOST, "X-Requested-With": "XMLHttpRequest"}
@@ -218,7 +227,7 @@ async def test_admin_token_rejected_on_tenant_routes(client, monkeypatch):
 
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
     login = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+        "/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"}, headers=_HOST
     )
     assert login.status_code == 200
     from app.security import create_admin_token
@@ -330,7 +339,7 @@ async def test_admin_health_http(client, monkeypatch):
 def _admin_headers(client, monkeypatch):
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
     login = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+        "/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"}, headers=_HOST
     )
     assert login.status_code == 200
     # Session is an httpOnly cookie; cookie-auth requests must carry the

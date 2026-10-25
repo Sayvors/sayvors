@@ -268,6 +268,8 @@ class Settings(BaseSettings):
     PLAN_MESSAGE_LIMITS: dict[str, int] = {"free": 1000, "pro": 25000}
 
     ADMIN_PASSWORD_HASH: str = ""
+    ADMIN_BOOTSTRAP_USERNAME: str = ""
+    ADMIN_BOOTSTRAP_PASSWORD: str = ""
     ADMIN_SESSION_MINUTES: int = 120
     # Global (IP-independent) consecutive-failure lockout for the admin login,
     # so per-IP rate limits are not the only brute-force control.

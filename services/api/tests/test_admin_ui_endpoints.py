@@ -1,3 +1,4 @@
+import app.modules.admin.models  # noqa: F401 (registers tables)
 """Regression: every admin endpoint the /admin UI calls must 200 with shape.
 
 Covers the tenants-tuple bug class (service return form vs router form
@@ -33,7 +34,7 @@ def _no_rate_limit(monkeypatch):
 def admin_headers(client, monkeypatch):
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
     r = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+        "/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"}, headers=_HOST
     )
     assert r.status_code == 200
     # Session is an httpOnly cookie; the jar replays it on /api/v1/admin/*.
