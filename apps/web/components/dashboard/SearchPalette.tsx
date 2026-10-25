@@ -25,7 +25,6 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
       { label: t.nav.dashboard, hint: "", keywords: "home overview main", href: "/dashboard", section: "pages" },
       { label: t.nav.analytics, hint: "", keywords: "stats reports insights growth benchmark sentiment charts performance", href: "/dashboard/analytics", section: "pages" },
       { label: t.nav.locations, hint: "", keywords: "business profile address hours working hours open closed", href: "/dashboard/locations", section: "pages" },
-      { label: t.nav.services, hint: "", keywords: "offerings menu services", href: "/dashboard/locations?tab=services", section: "pages" },
       { label: t.nav.postsMedia, hint: "", keywords: "posting publish post updates offers news photos videos pictures gallery media", href: "/dashboard/posts-media", section: "pages" },
       { label: t.nav.reviews, hint: "", keywords: "ratings replies comments stars feedback respond", href: "/dashboard/reviews", section: "pages" },
       { label: t.nav.verification, hint: "", keywords: "verify business verification badge", href: "/dashboard/verification", section: "pages" },

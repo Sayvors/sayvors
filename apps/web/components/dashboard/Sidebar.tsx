@@ -21,7 +21,6 @@ const MAIN_ITEMS: NavItem[] = [
   { key: "dashboard", icon: <DashboardIcon />, href: "/dashboard" },
   { key: "analytics", icon: <AnalyticsIcon />, href: "/dashboard/analytics" },
   { key: "locations", icon: <PinIcon />, href: "/dashboard/locations" },
-  { key: "services", icon: <BriefcaseIcon />, href: "/dashboard/locations?tab=services" },
   { key: "postsMedia", icon: <PhotoIcon />, href: "/dashboard/posts-media" },
   { key: "customers", icon: <UsersIcon />, href: "/dashboard/customers" },
   { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
@@ -611,15 +610,6 @@ function PinIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0116 0Z" />
       <circle cx="12" cy="10" r="2.5" />
-    </svg>
-  );
-}
-
-function BriefcaseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-      <rect x="2.5" y="7" width="19" height="13" rx="2" />
-      <path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2M2.5 12h19" />
     </svg>
   );
 }
