@@ -185,41 +185,69 @@ export default function ServicesPage({ embedded = false }: { embedded?: boolean 
   }
 
   return (
-    <div className={embedded ? "space-y-5" : "h-full overflow-y-auto bg-[#f4f1ff] p-4 sm:p-6 dark:bg-[#14101f]"}>
-      <div className="mx-auto max-w-4xl space-y-5">
-            <PageHeader connected={channels.length > 0} copy={copy} embedded={embedded} />
-            {loading ? (
-              <div className="flex justify-center rounded-[2px] border border-white bg-white py-24 dark:border-fog/[0.06] dark:bg-[#1d1636]"><LogoLoader size={34} /></div>
-            ) : (
-              <>
-                <LocationPicker
-                  selectedId={selectedId}
-                  channels={channels}
-                  onChange={onScopeChange}
-                  copy={copy}
-                  groups={groups}
-                  listingMap={listingMap}
-                />
-                <StatsRow services={services} copy={copy} />
-                <AddServiceForm
-                  name={name} category={category} description={description}
-                  onName={setName} onCategory={setCategory} onDescription={setDescription}
-                  isAll={isAll} channels={channels}
-                  selectedIds={isAll ? addLocIds : [selectedId].filter(Boolean)}
-                  onToggleLoc={toggleLoc} onSelectAll={selectAllLocs}
-                  onSelectGroup={selectGroupLocs} groups={pickerGroups} groupsLabel="Groups"
-                  saving={saving}
-                  canSave={!!name.trim() && (isAll ? addLocIds.length > 0 : !!selectedId)}
-                  onAdd={() => void addService()}
-                  copy={copy}
-                  multiSelectCopy={t.dashboard.multiSelect}
-                />
-                <ServiceGroup title={copy.googleGroup} source="google" services={services.filter((service) => service.source === "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
-                <ServiceGroup title={copy.customGroup} source="custom" services={services.filter((service) => service.source !== "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
-              </>
-            )}
-        {message && <div className="rounded-[2px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70 dark:border-violet-soft/20 dark:bg-[#1d1636] dark:text-fog/70">{message}</div>}
-      </div>
+    <div className={embedded ? "space-y-4" : "h-full overflow-y-auto bg-[#f4f1ff] p-4 sm:p-6 dark:bg-[#14101f]"}>
+      {embedded ? (
+        <>
+          {loading ? (
+            <div className="flex justify-center py-12"><LogoLoader size={34} /></div>
+          ) : (
+            <>
+              <StatsRow services={services} copy={copy} />
+              <AddServiceForm
+                name={name} category={category} description={description}
+                onName={setName} onCategory={setCategory} onDescription={setDescription}
+                isAll={isAll} channels={channels}
+                selectedIds={isAll ? addLocIds : [selectedId].filter(Boolean)}
+                onToggleLoc={toggleLoc} onSelectAll={selectAllLocs}
+                onSelectGroup={selectGroupLocs} groups={pickerGroups} groupsLabel="Groups"
+                saving={saving}
+                canSave={!!name.trim() && (isAll ? addLocIds.length > 0 : !!selectedId)}
+                onAdd={() => void addService()}
+                copy={copy}
+                multiSelectCopy={t.dashboard.multiSelect}
+              />
+              <ServiceGroup title={copy.googleGroup} source="google" services={services.filter((service) => service.source === "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <ServiceGroup title={copy.customGroup} source="custom" services={services.filter((service) => service.source !== "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+            </>
+          )}
+          {message && <div className="rounded-[2px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70 dark:border-violet-soft/20 dark:bg-[#1d1636] dark:text-fog/70">{message}</div>}
+        </>
+      ) : (
+        <div className="mx-auto max-w-4xl space-y-5">
+          <PageHeader connected={channels.length > 0} copy={copy} embedded={embedded} />
+          {loading ? (
+            <div className="flex justify-center rounded-[2px] border border-white bg-white py-24 dark:border-fog/[0.06] dark:bg-[#1d1636]"><LogoLoader size={34} /></div>
+          ) : (
+            <>
+              <LocationPicker
+                selectedId={selectedId}
+                channels={channels}
+                onChange={onScopeChange}
+                copy={copy}
+                groups={groups}
+                listingMap={listingMap}
+              />
+              <StatsRow services={services} copy={copy} />
+              <AddServiceForm
+                name={name} category={category} description={description}
+                onName={setName} onCategory={setCategory} onDescription={setDescription}
+                isAll={isAll} channels={channels}
+                selectedIds={isAll ? addLocIds : [selectedId].filter(Boolean)}
+                onToggleLoc={toggleLoc} onSelectAll={selectAllLocs}
+                onSelectGroup={selectGroupLocs} groups={pickerGroups} groupsLabel="Groups"
+                saving={saving}
+                canSave={!!name.trim() && (isAll ? addLocIds.length > 0 : !!selectedId)}
+                onAdd={() => void addService()}
+                copy={copy}
+                multiSelectCopy={t.dashboard.multiSelect}
+              />
+              <ServiceGroup title={copy.googleGroup} source="google" services={services.filter((service) => service.source === "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+              <ServiceGroup title={copy.customGroup} source="custom" services={services.filter((service) => service.source !== "google")} onToggle={toggleService} onDelete={removeService} branchNames={isAll ? branchNames : undefined} copy={copy} />
+            </>
+          )}
+          {message && <div className="rounded-[2px] border border-deep-violet/15 bg-white px-4 py-3 text-[12px] text-ink/70 dark:border-violet-soft/20 dark:bg-[#1d1636] dark:text-fog/70">{message}</div>}
+        </div>
+      )}
     </div>
   );
 }
