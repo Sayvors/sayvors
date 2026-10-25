@@ -11,6 +11,7 @@ import {
   type PublishJob,
 } from "@/lib/use-publish-jobs";
 import { useLocationPosts, type LocationPost } from "@/lib/location-posts";
+import ScheduledPostsCalendar, { type ScheduledEntry } from "@/components/dashboard/ScheduledPostsCalendar";
 import { METHOD_META, PLATFORM_META, type PlatformKey } from "@/components/dashboard/publish/types";
 
 /*
@@ -49,7 +50,7 @@ function statusChip(job: PublishJob): Chip {
   return { label: job.status, cls: "bg-ink/[0.05] text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45" };
 }
 
-export default function PublishedPosts({ onPublish }: { onPublish: () => void }) {
+export default function PublishedPosts({ onPublish }: { onPublish: (date?: string) => void }) {
   const { jobs, error, busy, refresh, displayName, removeJobs, cancelJob, deletableIds } = usePublishJobs();
   const { posts: legacyPosts, error: legacyError, refresh: refreshLegacy } = useLocationPosts();
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -57,6 +58,18 @@ export default function PublishedPosts({ onPublish }: { onPublish: () => void })
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const feedError = error ?? legacyError;
+
+  const scheduledEntries = useMemo<ScheduledEntry[]>(() => {
+    return (jobs ?? [])
+      .filter((j) => j.scheduled_at)
+      .map((j) => ({
+        id: j.job_id,
+        name: (j.caption ?? j.method ?? "post").toString().slice(0, 40),
+        scheduledAt: j.scheduled_at as string,
+        platform: j.platform ?? "Google Business Profile",
+        thumbnailUrl: (j.media_url as string) ?? undefined,
+      }));
+  }, [jobs]);
 
   const list = useMemo<FeedEntry[]>(() => {
     const entries: FeedEntry[] = [];
@@ -122,7 +135,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: () => void })
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={onPublish}
+              onClick={() => onPublish()}
               className="flex items-center gap-1.5 rounded-[2px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3.5 w-3.5">
@@ -168,7 +181,13 @@ export default function PublishedPosts({ onPublish }: { onPublish: () => void })
       )}
 
       {/* ── Feed ── */}
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="shrink-0 px-6 pt-4">
+    <div className="mx-auto max-w-6xl">
+      <ScheduledPostsCalendar items={scheduledEntries} onScheduleDate={onPublish} />
+    </div>
+  </div>
+
+  <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-6xl">
           {jobs === null && legacyPosts === null && !feedError && (
             <div className="flex h-44 items-center justify-center"><LogoLoader size={28} /></div>
@@ -186,7 +205,7 @@ export default function PublishedPosts({ onPublish }: { onPublish: () => void })
               </p>
               <button
                 type="button"
-                onClick={onPublish}
+                onClick={() => onPublish()}
                 className="mt-5 rounded-[2px] bg-deep-violet px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-deep-violet/90"
               >
                 Publish a post

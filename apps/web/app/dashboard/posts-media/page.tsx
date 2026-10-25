@@ -4,36 +4,27 @@ import { useState } from "react";
 import PublishedPosts from "@/components/dashboard/PublishedPosts";
 import PublishComposer from "@/components/dashboard/publish/PublishComposer";
 
-/*
- * Posts & Media — one page, no tabs.
- *
- * The feed lists every post on every connected network (Instagram,
- * Facebook, WhatsApp, Google Business Profile): publishing jobs from the
- * composer plus legacy Google location posts from the old per-branch flow.
- * "Publish" opens the unified composer, which pushes the same post to every
- * selected destination; the post lands back in the feed with its status.
- *
- * `/dashboard/channels/publish` redirects here.
- */
-
 type View = "feed" | "compose";
 
 export default function PostsMediaPage() {
   const [view, setView] = useState<View>("feed");
+  const [scheduleDate, setScheduleDate] = useState<string | null>(null);
 
   if (view === "compose") {
-    // `.team-ui` is required: the composer styles off the --ui-* variables
-    // that class defines (globals.css), exactly like the old publish page did.
     return (
       <div className="team-ui flex h-full flex-col">
-        <PublishComposer onPublished={() => setView("feed")} onCancel={() => setView("feed")} />
+        <PublishComposer
+          initialScheduleDate={scheduleDate}
+          onPublished={() => { setScheduleDate(null); setView("feed"); }}
+          onCancel={() => { setScheduleDate(null); setView("feed"); }}
+        />
       </div>
     );
   }
 
   return (
     <div className="h-full">
-      <PublishedPosts onPublish={() => setView("compose")} />
+      <PublishedPosts onPublish={(date) => { setScheduleDate(date ?? null); setView("compose"); }} />
     </div>
   );
 }
