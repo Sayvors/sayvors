@@ -645,25 +645,15 @@ const bulk: BulkScope | null = isBulk
   return (
     <div className="h-full space-y-5 overflow-y-auto p-4 sm:p-6">
       {/* Header */}
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-[22px] font-bold tracking-tight text-ink dark:text-fog">{copy.title}</h1>
-            <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">{copy.subtitle}</p>
-          </div>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
-            <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+            <h1 className="text-[20px] font-bold tracking-tight text-ink dark:text-fog">{copy.title}</h1>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
               {locations.length ? copy.googleConnected : copy.googleNotConnected}
             </span>
-            <button
-              onClick={() => setCreateOpen(true)}
-              title={copy.createLocationTitle}
-              data-tour="add-location"
-              className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
-            >
-              {copy.createLocation}
-            </button>
           </div>
+          <p className="text-[13px] text-ink/45 dark:text-fog/45">{copy.subtitle}</p>
         </div>
 
         {/* Toolbar row: location selector + actions */}
@@ -703,6 +693,14 @@ const bulk: BulkScope | null = isBulk
             </button>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCreateOpen(true)}
+              title={copy.createLocationTitle}
+              data-tour="add-location"
+              className="rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
+            >
+              {copy.createLocation}
+            </button>
             <button
               onClick={() => setBulkEditOpen(true)}
               title="Bulk edit locations via CSV"

@@ -31,13 +31,15 @@ function ticketNo(issue: ReviewIssue): string {
 
 export default function ReviewTicketsCard() {
   const [issues, setIssues] = useState<ReviewIssue[]>([]);
+  const [loading, setLoading] = useState(true);
   const [counts, setCounts] = useState({
     total: 0,
     unresolved: 0,
     waiting: 0,
     resolved: 0,
   });
-  const [loading, setLoading] = useState(true);
+  const [showAll, setShowAll] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // `silent` refreshes keep the card mounted: this sits on the dashboard
@@ -69,7 +71,7 @@ export default function ReviewTicketsCard() {
       const recent = STATUSES.filter((status) => UNRESOLVED.has(status))
         .flatMap((status) => byStatus[status].issues)
         .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-        .slice(0, 4);
+        .slice(0, expanded ? 100 : 5);
       setIssues(recent);
       setCounts({
         total: Object.values(byStatus).reduce((sum, value) => sum + value.total, 0),
@@ -217,6 +219,24 @@ export default function ReviewTicketsCard() {
                 );
               })}
             </ul>
+          )}
+
+          {issues.length > 0 && !expanded && counts.unresolved > 5 && (
+            <button
+              onClick={() => setExpanded(true)}
+              className="mt-2 text-[12px] font-semibold text-deep-violet hover:underline dark:text-violet-soft"
+            >
+              Show more ({counts.unresolved - 5} more)
+            </button>
+          )}
+
+          {issues.length > 0 && (
+            <Link
+              href="/dashboard/reviews/issues"
+              className="mt-2 inline-block text-[12px] font-semibold text-deep-violet hover:underline dark:text-violet-soft"
+            >
+              Show all tickets →
+            </Link>
           )}
 
           {counts.unresolved === 0 && (

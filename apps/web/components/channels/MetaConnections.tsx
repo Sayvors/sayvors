@@ -16,7 +16,7 @@ import {
   startMetaConnect,
   validateMeta,
 } from "@/lib/api-meta";
-import { getProfile, updateResponseStyle, updateVoiceReplies } from "@/lib/api-profile";
+// (removed: api-profile import no longer needed)
 
 declare global {
   interface Window {
@@ -176,66 +176,17 @@ export default function MetaConnections({
   const [confirmOff, setConfirmOff] = useState<MetaProvider | null>(null);
   // Tenant-level WhatsApp response style — a real account setting (the same
   // one the WhatsApp consumer reads per incoming message).
-  const [responseStyle, setResponseStyle] = useState<string>("concise");
-  const [styleStatus, setStyleStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  // Tenant-level WhatsApp voice replies tier (the engine behind each tier is
-  // admin-managed; the tenant only ever picks off / simple / advanced).
-  const [voiceReplies, setVoiceReplies] = useState<string>("off");
-  const [voiceStatus, setVoiceStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
   const params = useSearchParams();
   const urlProvider = (params?.get("provider") as MetaProvider | null) ?? null;
   const activeFilter = urlProvider;
 
   useEffect(() => {
     let cancelled = false;
-    getProfile()
-      .then((p) => {
-        if (!cancelled) {
-          setResponseStyle(p.response_style === "human" ? "human" : "concise");
-          setVoiceReplies(
-            p.voice_replies === "simple" || p.voice_replies === "advanced"
-              ? p.voice_replies
-              : "off"
-          );
-        }
-      })
-      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
-
-  async function chooseResponseStyle(style: string) {
-    if (style === responseStyle || styleStatus === "saving") return;
-    const previous = responseStyle;
-    setResponseStyle(style);
-    setStyleStatus("saving");
-    try {
-      await updateResponseStyle(style);
-      setStyleStatus("saved");
-      setTimeout(() => setStyleStatus("idle"), 2500);
-    } catch {
-      setResponseStyle(previous);
-      setStyleStatus("error");
-      setTimeout(() => setStyleStatus("idle"), 4000);
-    }
-  }
-
-  async function chooseVoiceReplies(tier: string) {
-    if (tier === voiceReplies || voiceStatus === "saving") return;
-    const previous = voiceReplies;
-    setVoiceReplies(tier);
-    setVoiceStatus("saving");
-    try {
-      await updateVoiceReplies(tier);
-      setVoiceStatus("saved");
-      setTimeout(() => setVoiceStatus("idle"), 2500);
-    } catch {
-      setVoiceReplies(previous);
-      setVoiceStatus("error");
-      setTimeout(() => setVoiceStatus("idle"), 4000);
-    }
-  }
 
   const refresh = useCallback(async () => {
     try {
@@ -957,111 +908,6 @@ export default function MetaConnections({
               </div>
             )}
 
-            {/* Response style — how the AI's replies are delivered on WhatsApp.
-                Saved per account; takes effect for messages sent after the save. */}
-            {p.key === "whatsapp" && conn && conn.status !== "revoked" && (
-              <div className="mt-2 rounded-xl border border-ink/[0.06] bg-white/70 p-3 dark:border-fog/[0.06] dark:bg-ink/60">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[12px] font-semibold text-ink dark:text-fog">Response style</p>
-                  {styleStatus === "saving" && (
-                    <span className="text-[11px] text-ink/40 dark:text-fog/40">Saving&hellip;</span>
-                  )}
-                  {styleStatus === "saved" && (
-                    <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                      Saved &mdash; applies to new messages
-                    </span>
-                  )}
-                  {styleStatus === "error" && (
-                    <span className="text-[11px] font-semibold text-red-600 dark:text-red-400">
-                      Couldn&rsquo;t save &mdash; try again
-                    </span>
-                  )}
-                </div>
-                <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
-                  How the AI&rsquo;s replies are delivered to customers on WhatsApp.
-                </p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {RESPONSE_STYLE_OPTIONS.map((opt) => {
-                    const selected = responseStyle === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        onClick={() => chooseResponseStyle(opt.value)}
-                        disabled={styleStatus === "saving"}
-                        aria-pressed={selected}
-                        className={`rounded-lg border px-3 py-2 text-left transition disabled:opacity-60 ${
-                          selected
-                            ? "border-deep-violet/40 bg-deep-violet/[0.06]"
-                            : "border-ink/[0.08] hover:border-deep-violet/25 dark:border-fog/[0.1]"
-                        }`}
-                      >
-                        <span className="block text-[12px] font-semibold text-ink dark:text-fog">{opt.label}</span>
-                        <span className="mt-0.5 block text-[11px] text-ink/45 dark:text-fog/45">{opt.desc}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {responseStyle === "human" && (
-                  <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:border-amber-500/20 dark:text-amber-300">
-                    ⚠️ Human-like responses may send multiple WhatsApp messages for a single response, which can increase WhatsApp messaging usage and costs.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Voice replies — when a customer seems confused, the AI follows
-                up with a short voice note in the customer's own language.
-                Tier is a tenant choice; the engine behind each tier is
-                managed by the admins. */}
-            {p.key === "whatsapp" && conn && conn.status !== "revoked" && (
-              <div className="mt-2 rounded-xl border border-ink/[0.06] bg-white/70 p-3 dark:border-fog/[0.06] dark:bg-ink/60">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[12px] font-semibold text-ink dark:text-fog">Voice replies</p>
-                  {voiceStatus === "saving" && (
-                    <span className="text-[11px] text-ink/40 dark:text-fog/40">Saving&hellip;</span>
-                  )}
-                  {voiceStatus === "saved" && (
-                    <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                      Saved &mdash; applies to new messages
-                    </span>
-                  )}
-                  {voiceStatus === "error" && (
-                    <span className="text-[11px] font-semibold text-red-600 dark:text-red-400">
-                      Couldn&rsquo;t save &mdash; try again
-                    </span>
-                  )}
-                </div>
-                <p className="mt-0.5 text-[11px] text-ink/40 dark:text-fog/40">
-                  When a customer seems confused, the AI can follow up with a short voice note in their own language.
-                </p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                  {VOICE_REPLY_OPTIONS.map((opt) => {
-                    const selected = voiceReplies === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        onClick={() => chooseVoiceReplies(opt.value)}
-                        disabled={voiceStatus === "saving"}
-                        aria-pressed={selected}
-                        className={`rounded-lg border px-3 py-2 text-left transition disabled:opacity-60 ${
-                          selected
-                            ? "border-deep-violet/40 bg-deep-violet/[0.06]"
-                            : "border-ink/[0.08] hover:border-deep-violet/25 dark:border-fog/[0.1]"
-                        }`}
-                      >
-                        <span className="block text-[12px] font-semibold text-ink dark:text-fog">{opt.label}</span>
-                        <span className="mt-0.5 block text-[11px] text-ink/45 dark:text-fog/45">{opt.desc}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {voiceReplies !== "off" && (
-                  <p className="mt-2 text-[11px] leading-relaxed text-ink/40 dark:text-fog/40">
-                    Voice notes are short (about 30&ndash;40 seconds) and sent at most once per reply. If a voice can&rsquo;t be produced, the customer gets the text reply instead.
-                  </p>
-                )}
-              </div>
-            )}
           </div>
         );
       })}

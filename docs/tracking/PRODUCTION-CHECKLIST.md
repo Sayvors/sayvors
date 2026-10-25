@@ -99,9 +99,22 @@ Your `next.config.ts` already sets COOP/COEP/CSP headers — verify they're prod
 | V-6 | **HTTP request is redirected to HTTPS** | `http://` → `https://` at the edge |
 | V-7 | **Rate limiting fails closed** | Stop Redis → login should be denied (not allowed) |
 
----
+## 7. Job system — Phase 4 (load / chaos / multi-replica)
 
-## Quick reference: env vars for production
+| # | Check | Notes |
+|---|-------|-------|
+| J-1 | **k6 load test at 10x current peak** | Run before and after lanes land. Scripted peak-hour profile. Free (open source). |
+| J-2 | **Chaos test** | Kill a worker mid-job; verify lease reclaim + no duplicate external calls. |
+| J-3 | **Multi-replica scaling test** | 2+ API replicas + 2+ workers; verify no double-processing. |
+| J-4 | **Single Kafka broker → HA** | 3-broker KRaft cluster or accept single-broker risk with documented RTO. |
+| J-5 | **Single box → managed container platform** | ECS/Fly/Render to retire hand-SSH deploys. |
+| J-6 | **SHA-pinned deploy images** | Pin to digest, not mutable `:staging` tags. |
+| J-7 | **Production host in Caddy** | Stand up prod host + secrets + startup validator (redirect URIs, CORS). |
+| J-8 | **Uptime monitor on /readyz** | External: UptimeRobot / Better Stack. |
+| J-9 | **Prometheus scrape /metrics** | Scrape config in `deploy/prometheus.yml` (already added). |
+| J-10 | **Redis memory alarm** | Alert on `used_memory > 100mb` (maxmemory 128mb + noeviction already set). |
+
+---
 
 ```
 # Security
