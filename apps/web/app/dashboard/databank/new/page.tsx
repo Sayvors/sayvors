@@ -83,7 +83,7 @@ export default function CreateDatabankPage() {
   };
 
   return (
-    <div className="min-h-full bg-[#f4f1ff]">
+    <div className="h-full overflow-y-auto bg-[#f4f1ff]">
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="mb-6 flex items-center justify-between gap-3">
           <div>

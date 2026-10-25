@@ -138,7 +138,7 @@ export default function ReviewTicketsPage() {
   const open = openId ? issues.find((i) => i.id === openId) ?? null : null;
 
   return (
-    <div className="team-ui min-h-full px-6 py-6">
+    <div className="team-ui h-full overflow-y-auto px-6 py-6 pb-24">
       <div className="mx-auto max-w-5xl">
         {/* ── header ─────────────────────────────────────────── */}
         <div className="flex flex-wrap items-start justify-between gap-3">
