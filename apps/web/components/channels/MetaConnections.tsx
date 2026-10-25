@@ -13,19 +13,24 @@ import {
   selectMetaAssets,
   validateMeta,
 } from "@/lib/api-meta";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import PlatformMark from "@/components/channels/PlatformMark";
 import LogoLoader from "@/components/LogoLoader";
 
 /*
  * Channel cards for the tenant's own Meta accounts.
  *
+ * Data layer: TanStack Query. Connections and assets are cached under the
+ * "meta" key namespace, so navigating away and back reuses the cache instead
+ * of re-downloading. Every mutation invalidates the namespace and triggers a
+ * background refetch — the same behaviour as the old refresh(), but without
+ * the per-navigation storm.
+ *
  * The card is a summary and a door: Connect sends the tenant to the guided
  * onboarding screen for that provider (/dashboard/channels/<provider>/connect)
  * where the Meta popup, pre-flight checks and asset pick live. Nothing here
  * opens a popup, so a card can never hang on a blocked window.
- *
- * Connected cards keep the day-two actions: choose assets, re-validate the
- * token, disconnect.
  */
 
 const PROVIDERS: {
@@ -34,24 +39,9 @@ const PROVIDERS: {
   blurb: string;
   tint: string;
 }[] = [
-  {
-    key: "whatsapp",
-    name: "WhatsApp",
-    blurb: "AI replies to customer chats",
-    tint: "bg-emerald-600/10",
-  },
-  {
-    key: "facebook",
-    name: "Facebook",
-    blurb: "Page comments and Messenger",
-    tint: "bg-blue-600/10",
-  },
-  {
-    key: "instagram",
-    name: "Instagram",
-    blurb: "Comments and DMs via your Page",
-    tint: "bg-pink-600/10",
-  },
+  { key: "whatsapp", name: "WhatsApp", blurb: "AI replies to customer chats", tint: "bg-emerald-600/10" },
+  { key: "facebook", name: "Facebook", blurb: "Page comments and Messenger", tint: "bg-blue-600/10" },
+  { key: "instagram", name: "Instagram", blurb: "Comments and DMs via your Page", tint: "bg-pink-600/10" },
 ];
 
 const CONNECT_HREF: Record<MetaProvider, string> = {
@@ -76,20 +66,26 @@ export default function MetaConnections({
 }: {
   onNotice: (kind: "ok" | "err", text: string) => void;
 }) {
-  const [connections, setConnections] = useState<Record<string, MetaConnection>>({});
-  const [assets, setAssets] = useState<Record<string, MetaAsset[]>>({});
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const [picking, setPicking] = useState<MetaProvider | null>(null);
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   const [confirmOff, setConfirmOff] = useState<MetaProvider | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
+  const connectionsQuery = useQuery({
+    queryKey: queryKeys.meta.connections(),
+    queryFn: async () => {
       const data = await fetchMetaConnections();
       const map: Record<string, MetaConnection> = {};
       for (const c of data.connections ?? []) map[c.provider] = c;
-      setConnections(map);
+      return map;
+    },
+    staleTime: 30 * 1000,
+  });
 
+  const assetsQuery = useQuery({
+    queryKey: queryKeys.meta.assets("all"),
+    queryFn: async () => {
       const amap: Record<string, MetaAsset[]> = {};
       await Promise.all(
         (["whatsapp", "facebook", "instagram"] as MetaProvider[]).map(async (p) => {
@@ -101,17 +97,17 @@ export default function MetaConnections({
           }
         })
       );
-      setAssets(amap);
       return amap;
-    } catch {
-      /* backend down — cards still render */
-      return {};
-    }
-  }, []);
+    },
+    staleTime: 30 * 1000,
+  });
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  const connections = connectionsQuery.data ?? {};
+  const assets = assetsQuery.data ?? {};
+
+  const invalidate = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["meta"] });
+  }, [queryClient]);
 
   const openPicker = (provider: MetaProvider) => {
     const current = (assets[provider] ?? []).filter((a) => a.active).map((a) => a.id);
@@ -119,79 +115,85 @@ export default function MetaConnections({
     setPicking(provider);
   };
 
-  const savePick = async (provider: MetaProvider) => {
-    const providerPicked = picked[provider] ?? [];
-    setBusy(`${provider}-save`);
-    try {
+  const savePickMutation = useMutation({
+    mutationFn: async (provider: MetaProvider) => {
+      const providerPicked = picked[provider] ?? [];
       await selectMetaAssets(provider, providerPicked);
-      onNotice(
-        "ok",
-        providerPicked.length > 0
-          ? `${provider} asset(s) activated.`
-          : `${provider} assets deselected — their data is hidden until you pick them again.`
-      );
+      return { provider, count: providerPicked.length };
+    },
+    onMutate: (provider) => { setBusy(`${provider}-save`); },
+    onSuccess: ({ provider, count }) => {
+      onNotice("ok", count > 0 ? `${provider} asset(s) activated.` : `${provider} assets deselected — their data is hidden until you pick them again.`);
       setPicking(null);
       setPicked((prev) => ({ ...prev, [provider]: [] }));
-      await refresh();
-    } catch {
-      onNotice(
-        "err",
-        providerPicked.length > 0
-          ? "Could not activate the selected assets."
-          : "Could not save the selection."
-      );
-    } finally {
-      setBusy(null);
-    }
-  };
+      invalidate();
+    },
+    onError: (_err, provider) => {
+      const count = (picked[provider] ?? []).length;
+      onNotice("err", count > 0 ? "Could not activate the selected assets." : "Could not save the selection.");
+    },
+    onSettled: () => { setBusy(null); },
+  });
 
-  const recheck = async (provider: MetaProvider) => {
-    setBusy(`${provider}-check`);
-    try {
+  const savePick = (provider: MetaProvider) => { savePickMutation.mutate(provider); };
+
+  const recheckMutation = useMutation({
+    mutationFn: async (provider: MetaProvider) => {
       const res = await validateMeta(provider);
-      onNotice(res.status === "active" ? "ok" : "err", `${provider}: ${res.detail ?? res.status}`);
-      await refresh();
-    } catch (e) {
-      onNotice(
-        "err",
-        `Could not validate ${provider}: ${e instanceof Error ? e.message : "request failed"}`
-      );
-    } finally {
-      setBusy(null);
-    }
-  };
+      return { provider, status: res.status, detail: res.detail };
+    },
+    onMutate: (provider) => { setBusy(`${provider}-check`); },
+    onSuccess: ({ provider, status, detail }) => {
+      onNotice(status === "active" ? "ok" : "err", `${provider}: ${detail ?? status}`);
+      invalidate();
+    },
+    onError: (e, provider) => {
+      onNotice("err", `Could not validate ${provider}: ${e instanceof Error ? e.message : "request failed"}`);
+    },
+    onSettled: () => { setBusy(null); },
+  });
 
-  const disconnect = async (provider: MetaProvider) => {
-    setBusy(`${provider}-off`);
-    try {
+  const recheck = (provider: MetaProvider) => { recheckMutation.mutate(provider); };
+
+  const disconnectMutation = useMutation({
+    mutationFn: async (provider: MetaProvider) => {
       await disconnectMeta(provider);
+      return provider;
+    },
+    onMutate: (provider) => { setBusy(`${provider}-off`); },
+    onSuccess: (provider) => {
       onNotice("ok", `${provider} disconnected. Your messages are kept.`);
       setConfirmOff(null);
-      await refresh();
-    } catch {
+      invalidate();
+    },
+    onError: (_e, provider) => {
       onNotice("err", `Could not disconnect ${provider}.`);
-    } finally {
-      setBusy(null);
-    }
-  };
+    },
+    onSettled: () => { setBusy(null); },
+  });
 
-  const discoverIg = async () => {
-    setBusy("instagram-discover");
-    try {
+  const disconnect = (provider: MetaProvider) => { disconnectMutation.mutate(provider); };
+
+  const discoverIgMutation = useMutation({
+    mutationFn: async () => {
       const res = await discoverInstagram();
-      onNotice("ok", `Found ${res.assets.length} Instagram account(s) — pick which to use.`);
-      const fresh = await refresh();
-      setPicked((prev) => ({
-        ...prev,
-        instagram: (fresh.instagram ?? []).filter((a) => a.active).map((a) => a.id),
-      }));
+      return res.assets.length;
+    },
+    onMutate: () => { setBusy("instagram-discover"); },
+    onSuccess: (count) => {
+      onNotice("ok", `Found ${count} Instagram account(s) — pick which to use.`);
+      invalidate();
+      const current = (assets.instagram ?? []).filter((a) => a.active).map((a) => a.id);
+      setPicked((prev) => ({ ...prev, instagram: current }));
       setPicking("instagram");
-    } catch (e) {
+    },
+    onError: (e) => {
       onNotice("err", e instanceof Error ? e.message : "Connect Facebook first, then discover Instagram.");
-    } finally {
-      setBusy(null);
-    }
-  };
+    },
+    onSettled: () => { setBusy(null); },
+  });
+
+  const discoverIg = () => { discoverIgMutation.mutate(); };
 
   const pickerAssets = picking
     ? picking === "whatsapp"
@@ -226,9 +228,7 @@ export default function MetaConnections({
             className="flex flex-col rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink"
           >
             <div className="flex items-start gap-3">
-              <span
-                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${p.tint}`}
-              >
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${p.tint}`}>
                 <PlatformMark platform={p.key} size={22} />
               </span>
               <div className="min-w-0 flex-1">
@@ -302,7 +302,7 @@ export default function MetaConnections({
         );
       })}
 
-      {/* ── Asset picker ─────────────────────────────────────────── */}
+      {/* ── Asset picker modal ─────────────────────────────────── */}
       {picking && (
         <div
           role="dialog"
@@ -380,7 +380,7 @@ export default function MetaConnections({
                       <span className="block truncate text-[12.5px] font-semibold text-ink dark:text-fog">
                         {assetLabel(a)}
                       </span>
-                      <span className="block truncate text-[10.5px] text-ink/40 dark:text-fog/40">
+                      <span className="block truncate text-[10.5px] text-ink/45 dark:text-fog/45">
                         {a.asset_type}
                         {a.status !== "connected" ? ` · ${a.status}` : ""}
                         {a.active ? " · active" : ""}
@@ -444,7 +444,7 @@ export default function MetaConnections({
               <button
                 onClick={() => setConfirmOff(null)}
                 disabled={busy === `${confirmOff}-off`}
-                className="min-h-9 rounded-lg px-3 text-[12px] font-semibold text-ink/55 transition hover:bg-ink/[0.04] disabled:opacity-50 dark:text-fog/55 dark:hover:bg-fog/[0.05]"
+                className="min-h-9 rounded-lg px-3 text-[12px] font-semibold text-ink/55 transition hover:bg-ink/[0.04] dark:text-fog/55 dark:hover:bg-fog/[0.05]"
               >
                 Cancel
               </button>
@@ -459,6 +459,7 @@ export default function MetaConnections({
           </div>
         </div>
       )}
+
     </>
   );
 }

@@ -2,19 +2,20 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchReviewIssues,
   type ReviewIssue,
 } from "@/lib/api-review-issues";
 import { useInboxRealtime } from "@/lib/use-inbox-realtime";
+import { queryKeys } from "@/lib/query-keys";
 
 /**
  * Review tickets — a compact information card, not a ticket list.
  *
- * The dashboard answers "how bad is it right now?"; the queue itself lives at
- * /dashboard/reviews/issues. So this card carries the numbers a merchant acts
- * on (unresolved, waiting, urgent, resolved), the status split, and the oldest
- * open ticket — never individual rows.
+ * Data layer: TanStack Query caches the per-status fetches under a single key
+ * so navigating away and back reuses the cache instead of re-downloading.
+ * Realtime invalidates the key, which triggers a background refetch.
  */
 
 const STATUSES = ["new", "open", "in_progress", "resolved", "closed"] as const;
@@ -49,12 +50,48 @@ function daysSince(iso: string): number {
   return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86_400_000)) : 0;
 }
 
+async function fetchTicketStats(): Promise<TicketStats> {
+  const responses = await Promise.all(
+    STATUSES.map((status) =>
+      fetchReviewIssues({ status, ticketed: true, limit: 200 })
+    )
+  );
+  const byStatus = Object.fromEntries(
+    STATUSES.map((status, index) => [status, responses[index]])
+  ) as Record<string, { issues: ReviewIssue[]; total: number }>;
+
+  const unresolvedIssues = STATUSES.filter((s) => UNRESOLVED.has(s)).flatMap(
+    (s) => byStatus[s].issues
+  );
+  const unresolved = STATUSES.filter((s) => UNRESOLVED.has(s))
+    .map((s) => byStatus[s].total)
+    .reduce((sum, value) => sum + value, 0);
+
+  const waiting = unresolvedIssues.filter((i) => i.needs_attention).length;
+  const urgent = unresolvedIssues.filter(
+    (i) => (i.priority === "urgent" || i.priority === "high")
+  ).length;
+  const oldest = unresolvedIssues.reduce<ReviewIssue | null>(
+    (acc, issue) => (!acc || issue.created_at < acc.created_at ? issue : acc),
+    null
+  );
+
+  return {
+    total: Object.values(byStatus).reduce((sum, value) => sum + value.total, 0),
+    unresolved,
+    waiting,
+    urgent,
+    resolved: (byStatus.resolved?.total ?? 0) + (byStatus.closed?.total ?? 0),
+    byStatus: STATUSES.map((key) => ({ key, count: byStatus[key].total })).filter(
+      (row) => row.count > 0
+    ),
+    oldestTicket: oldest?.ticket_number ?? null,
+    oldestDays: oldest ? daysSince(oldest.created_at) : null,
+  };
+}
+
 export default function ReviewTicketsCard() {
-  const [stats, setStats] = useState<TicketStats>(EMPTY_STATS);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  // A card the merchant checks every day; collapsing it keeps the dashboard
-  // scannable without losing the numbers (they stay in the collapsed header).
+  const queryClient = useQueryClient();
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return (
@@ -66,75 +103,21 @@ export default function ReviewTicketsCard() {
     }
   });
 
-  // `silent` refreshes keep the card mounted: this sits next to the rest of the
-  // day's numbers, and a ticket moving must not flash placeholders. The request
-  // id guards against a slow first load landing after a newer realtime refresh.
-  const requestId = useRef(0);
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    const id = ++requestId.current;
-    if (!opts?.silent) setLoading(true);
-    setError(null);
-    try {
-      const responses = await Promise.all(
-        STATUSES.map((status) =>
-          fetchReviewIssues({ status, ticketed: true, limit: 200 })
-        )
-      );
-      if (id !== requestId.current) return;
+  const { data: stats = EMPTY_STATS, isPending, isError, error } = useQuery({
+    queryKey: queryKeys.reviewIssues.all(),
+    queryFn: fetchTicketStats,
+    staleTime: 30 * 1000,
+  });
 
-      const byStatus = Object.fromEntries(
-        STATUSES.map((status, index) => [status, responses[index]])
-      ) as Record<string, { issues: ReviewIssue[]; total: number }>;
-
-      const unresolvedIssues = STATUSES.filter((s) => UNRESOLVED.has(s)).flatMap(
-        (s) => byStatus[s].issues
-      );
-      const unresolved = STATUSES.filter((s) => UNRESOLVED.has(s))
-        .map((s) => byStatus[s].total)
-        .reduce((sum, value) => sum + value, 0);
-
-      // The API caps a page at 200; counts above that still come from `total`,
-      // but per-ticket attributes (attention, urgent, age) use the page.
-      const waiting = unresolvedIssues.filter((i) => i.needs_attention).length;
-      const urgent = unresolvedIssues.filter(
-        (i) => (i.priority === "urgent" || i.priority === "high")
-      ).length;
-      const oldest = unresolvedIssues.reduce<ReviewIssue | null>(
-        (acc, issue) => (!acc || issue.created_at < acc.created_at ? issue : acc),
-        null
-      );
-
-      setStats({
-        total: Object.values(byStatus).reduce((sum, value) => sum + value.total, 0),
-        unresolved,
-        waiting,
-        urgent,
-        resolved: (byStatus.resolved?.total ?? 0) + (byStatus.closed?.total ?? 0),
-        byStatus: STATUSES.map((key) => ({ key, count: byStatus[key].total })).filter(
-          (row) => row.count > 0
-        ),
-        oldestTicket: oldest?.ticket_number ?? null,
-        oldestDays: oldest ? daysSince(oldest.created_at) : null,
-      });
-    } catch (e) {
-      if (id !== requestId.current) return;
-      setError(e instanceof Error ? e.message : "Could not load review tickets.");
-    } finally {
-      if (id === requestId.current && !opts?.silent) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  // Counts a merchant acts on, refreshed the moment a ticket appears or moves.
-  // Coalesced because one new ticket arrives as several events.
+  // Coalesced realtime invalidation: a new ticket arrives as several events,
+  // so debounce before refetching.
   const burst = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshQuietly = useCallback(() => {
     if (burst.current) clearTimeout(burst.current);
-    burst.current = setTimeout(() => void load({ silent: true }), 400);
-  }, [load]);
+    burst.current = setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.reviewIssues.all() });
+    }, 400);
+  }, [queryClient]);
 
   useEffect(() => () => {
     if (burst.current) clearTimeout(burst.current);
@@ -150,6 +133,9 @@ export default function ReviewTicketsCard() {
     { key: "urgent", label: "Urgent", value: stats.urgent, tone: stats.urgent > 0 ? "text-red-600" : "text-ink dark:text-fog" },
     { key: "resolved", label: "Resolved", value: stats.resolved, tone: "text-emerald-600" },
   ] as const;
+
+  const loading = isPending;
+  const errorMessage = isError ? (error instanceof Error ? error.message : "Could not load review tickets.") : null;
 
   return (
     <section
@@ -224,21 +210,20 @@ export default function ReviewTicketsCard() {
           </div>
         )}
 
-        {!loading && error && (
+        {!loading && errorMessage && (
           <p className="mt-3 text-[12px] font-medium text-coral">
-            Ticket queue unavailable: {error}
+            Ticket queue unavailable: {errorMessage}
           </p>
         )}
 
-        {!loading && !error && stats.total === 0 && (
+        {!loading && !errorMessage && stats.total === 0 && (
           <p className="mt-4 rounded-[2px] border border-dashed border-ink/10 bg-ink/[0.02] px-4 py-6 text-center text-[12px] text-ink/55 dark:border-fog/10 dark:bg-fog/[0.03] dark:text-fog/55">
             No review tickets yet. They appear after a review needs attention.
           </p>
         )}
 
-        {!loading && !error && stats.total > 0 && (
+        {!loading && !errorMessage && stats.total > 0 && (
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-stretch">
-            {/* Four fixed squares: the queue in one glance. */}
             <div className="grid shrink-0 grid-cols-2 gap-2">
               {tiles.map((tile) => (
                 <div
@@ -255,7 +240,6 @@ export default function ReviewTicketsCard() {
               ))}
             </div>
 
-            {/* Status split + the one age that matters, in the rest of the row. */}
             <div className="flex min-w-0 flex-1 flex-col justify-between rounded-[2px] border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.04]">
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -341,14 +325,14 @@ export default function ReviewTicketsCard() {
                   href="/dashboard/reviews/issues"
                   className="font-semibold text-deep-violet hover:underline dark:text-violet-soft"
                 >
-                  Open the queue →
+                  {stats.total} ticket{stats.total === 1 ? "" : "s"} in the queue →
                 </Link>
               </div>
             </div>
           </div>
         )}
 
-        {!loading && !error && stats.total > 0 && stats.unresolved === 0 && (
+        {!loading && !errorMessage && stats.total > 0 && stats.unresolved === 0 && (
           <p className="mt-2 text-[12px] font-medium text-emerald-700 dark:text-emerald-400">
             All review tickets are resolved.
           </p>
