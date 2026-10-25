@@ -141,6 +141,34 @@ erroring.
 
 ---
 
+## 9. Cloud portability (AWS staging → Google Cloud)
+
+The runtime is URL-configured and the image is plain Docker, so the move is a
+deployment project, not a rewrite. Two code items must land before the switch;
+everything else is config or docs.
+
+| # | Check | Type | Status |
+|---|-------|------|--------|
+| G-1 | **Backup scripts off S3-only** | Code | ⬜ Open — `scripts/db_backup.py` / `db_restore.py` import `boto3` and require `S3_DOCS_BUCKET`; on GCP the nightly backup silently stops. Add a GCS backend (`google-cloud-storage` is already a dependency) or a pluggable uploader. |
+| G-2 | **Remove the duplicate S3 adapter** | Code | ⬜ Open — `integrations/storage/s3.py` (repo root) and `services/api/integrations/storage/s3.py` both exist and differ by ~540 lines; the effective adapter depends on the launch directory. Keep the `services/api/` one. |
+| G-3 | **GCS storage config** | Config | ✅ Supported — `GCS_PUBLIC_BUCKET` / `GCS_PRIVATE_BUCKET` + `GOOGLE_APPLICATION_CREDENTIALS`; clear the `S3_*` vars so GCS wins. No code change. |
+| G-4 | **Cloud SQL for PostgreSQL** | Infra | ⬜ Open — enable `pgvector`, confirm the tier's `max_connections` before reusing `DB_POOL_SIZE`, point `DATABASE_URL` at the instance (Cloud SQL connector or TLS). |
+| G-5 | **Memorystore for Redis** | Infra | ⬜ Open — set `maxmemory-policy=noeviction`, size 1–2 GB, point `REDIS_URL` at it. No `CONFIG SET` at runtime. |
+| G-6 | **Kafka** | Infra | ⬜ Open — Cloud Run cannot host the compose sidecars; a lift-and-shift Compute Engine VM keeps the current topology, otherwise use a managed Kafka and set `KAFKA_BOOTSTRAP_SERVERS`. |
+| G-7 | **Compute target** | Infra | ⬜ Open — Compute Engine VM (day one, same compose file) or Cloud Run + managed Redis/Kafka. The web app's `standalone` build already runs as a container. |
+| G-8 | **Registry** | Infra | ⬜ Optional — GHCR still works; private pulls from Cloud Run need credentials. Artifact Registry removes that. |
+| G-9 | **Secrets + observability** | Infra | ⬜ Open — Secret Manager → env/file; Cloud Monitoring/Logging scrape `/metrics` (Prometheus config already exists); Cloud Audit Logs replace CloudTrail. |
+| G-10 | **Docs rewrite** | Docs | ⬜ Open — `docs/security/infrastructure.md` (Secrets Manager, External Secrets `aws-secretsmanager`, CloudTrail, CloudWatch, KMS), `data-protection.md`, `incident-response.md`, `docs/database/migration-safety.md` and the two 2026-10-10 design specs still name AWS. |
+
+**Smoke tests after the move**
+
+- Upload a media file and a databank doc → both land in the GCS buckets (public URL fetchable, private object not public).
+- Run `python scripts/db_backup.py` against the new bucket and restore it into a scratch DB.
+- `/readyz` green; `/metrics` shows `sayvors_redis_available 1`; login + refresh work (Redis-backed sessions).
+- `docker compose -f docker-compose.prod.yml up -d` is unchanged on a Compute Engine VM (only `.env.prod` differs).
+
+---
+
 ```
 # Security
 JWT_SECRET=<strong-random-64-chars>

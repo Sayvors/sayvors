@@ -481,6 +481,79 @@
   </ul>
 </section>
 
+<section id="gcp">
+  <div class="eyebrow">§§ 6c · platform portability</div>
+  <h2>Cloud portability — AWS staging → Google Cloud</h2>
+  <p><span class="chip code">Code mostly portable</span> <span class="chip warn">Docs + 2 scripts AWS-only</span>&nbsp; The staging box is EC2 + RDS + ElastiCache references, but the <em>image</em> is plain Docker and the <em>runtime</em> is URL-configured. Moving to Google Cloud is a deployment project, not a rewrite — except for the backup scripts (boto3/S3 only) and the AWS-specific prose in the security docs.</p>
+
+  <h3>Already portable — no change</h3>
+  <ul>
+    <li><strong>Object storage:</strong> GCS is a first-class backend. <code>app/core/storage.py</code> prefers S3 when <code>S3_*</code> is set, else <code>GCS_PUBLIC_BUCKET</code>/<code>GCS_PRIVATE_BUCKET</code> via <code>GOOGLE_APPLICATION_CREDENTIALS</code>, else local disk. Moving = clear the S3 vars, set the GCS ones.</li>
+    <li><strong>Container image:</strong> <code>services/api/Dockerfile</code> + GHCR; no AWS SDK in the build. The web app is <code>output: "standalone"</code>, so Cloud Run/GKE works unchanged.</li>
+    <li><strong>Postgres / Redis / Kafka:</strong> plain URLs (<code>DATABASE_URL</code>, <code>REDIS_URL</code>, <code>KAFKA_BOOTSTRAP_SERVERS</code>). Cloud SQL, Memorystore and Managed Kafka are drop-in.</li>
+    <li><strong>Metrics:</strong> Prometheus <code>/metrics</code>; Google Managed Prometheus scrapes the same endpoint.</li>
+    <li><strong>Email:</strong> Resend (provider-neutral), not SES.</li>
+    <li><strong>Secrets at rest:</strong> the app encrypts with <code>CHANNEL_ENCRYPTION_KEY</code> (Fernet), not AWS KMS. Cloud KMS is optional, not required.</li>
+    <li><strong>CI:</strong> GitHub Actions + GHCR; no <code>aws-actions/*</code> steps to swap.</li>
+  </ul>
+
+  <h3>Must change before the move</h3>
+  <div class="scroll"><table>
+    <tr><th>Item</th><th>Type</th><th>Why it breaks on GCP</th><th>Action</th></tr>
+    <tr>
+      <td><strong><code>scripts/db_backup.py</code> / <code>db_restore.py</code></strong></td>
+      <td><span class="chip code">Code</span></td>
+      <td>boto3 + <code>S3_DOCS_BUCKET</code> only. On GCP they fail at the first upload — the backup story (OPS-1) silently stops working.</td>
+      <td>Add a GCS backend using the already-installed <code>google-cloud-storage</code> (or make the uploader pluggable); keep S3 as the AWS path.</td>
+    </tr>
+    <tr>
+      <td><strong>Duplicate S3 adapter</strong></td>
+      <td><span class="chip code">Code</span></td>
+      <td>Both <code>integrations/storage/s3.py</code> (repo root) and <code>services/api/integrations/storage/s3.py</code> exist and differ by ~540 lines. Whichever is on <code>sys.path</code> first wins, so the storage behaviour depends on the launch directory.</td>
+      <td>Delete the stale copy and keep the one under <code>services/api/</code>; add an import test that pins it.</td>
+    </tr>
+    <tr>
+      <td><strong><code>deploy/env.prod.example</code></strong></td>
+      <td><span class="chip config">Config</span></td>
+      <td>RDS endpoint, EC2 instance-profile/IAM wording, real S3 bucket + <code>amazonaws.com</code> public base. GCS vars exist but are commented out.</td>
+      <td>Add a Cloud SQL + Memorystore + GCS example block and a <code>sslmode</code> note; keep the S3 block for AWS.</td>
+    </tr>
+    <tr>
+      <td><strong><code>app/database.py</code> pool comment</strong></td>
+      <td><span class="chip config">Config</span></td>
+      <td>Pool sizing is justified against “RDS t4g.micro ≈ 87 max connections”; Cloud SQL tiers have different <code>max_connections</code> and a connector.</td>
+      <td>Re-derive the pool budget for the Cloud SQL tier (or set the flag explicitly) before flipping the URL.</td>
+    </tr>
+    <tr>
+      <td><strong>Security docs</strong></td>
+      <td><span class="chip warn">Docs</span></td>
+      <td><code>docs/security/infrastructure.md</code> prescribes AWS Secrets Manager, External Secrets with <code>aws-secretsmanager</code>, CloudTrail, CloudWatch and KMS; <code>data-protection.md</code> and <code>incident-response.md</code> repeat the S3/CloudWatch assumptions.</td>
+      <td>Rewrite as provider-neutral with a GCP column (Secret Manager, Cloud Audit Logs, Cloud Monitoring/Logging, Cloud KMS).</td>
+    </tr>
+    <tr>
+      <td><strong>Readiness + tracking prose</strong></td>
+      <td><span class="chip warn">Docs</span></td>
+      <td>This report, <code>PRODUCTION-CHECKLIST.md</code>, <code>production-later.md</code> and two design specs name EC2 / t3.small / RDS / ElastiCache / ECS as the plan.</td>
+      <td>Keep the AWS row, add the GCP equivalent beside it (done for the checklist and this section).</td>
+    </tr>
+  </table></div>
+
+  <h3>AWS → GCP mapping (with the traps)</h3>
+  <div class="scroll"><table>
+    <tr><th>AWS today</th><th>GCP target</th><th>Trap</th></tr>
+    <tr><td>RDS PostgreSQL</td><td>Cloud SQL for PostgreSQL</td><td>Enable <code>pgvector</code> (Cloud SQL supports it on PG 15+); confirm the <code>max_connections</code> flag before reusing the pool numbers; use the Cloud SQL connector or standard TLS.</td></tr>
+    <tr><td>ElastiCache Redis</td><td>Memorystore for Redis</td><td><code>maxmemory-policy</code> is a config parameter; no <code>CONFIG SET</code> at runtime. Keep <code>noeviction</code>.</td></tr>
+    <tr><td>S3</td><td>Cloud Storage</td><td>Already coded; needs a service-account JSON and <code>GOOGLE_APPLICATION_CREDENTIALS</code>. Public media bucket must allow public read; private docs bucket must not.</td></tr>
+    <tr><td>EC2 t3.small + docker compose</td><td>Compute Engine VM (lift-and-shift) or Cloud Run + managed Redis/Kafka</td><td>Cloud Run has no local Kafka/Redis sidecars; the compose topology assumes a VM. Lift-and-shift is the cheap first move.</td></tr>
+    <tr><td>Vercel (web + admin)</td><td>Cloud Run / Firebase Hosting, or keep Vercel</td><td>Next.js <code>standalone</code> output already builds a container; keeping Vercel is allowed and is not an AWS dependency.</td></tr>
+    <tr><td>GHCR</td><td>Artifact Registry (or keep GHCR)</td><td>Private GHCR pulls from Cloud Run need credentials; Artifact Registry removes that step.</td></tr>
+    <tr><td>Secrets Manager</td><td>Secret Manager</td><td>App reads env vars today; mount Secret Manager values into the environment or a file.</td></tr>
+    <tr><td>CloudWatch / CloudTrail</td><td>Cloud Monitoring / Cloud Logging / Cloud Audit Logs</td><td>Prometheus scrape config already exists; the audit trail is app-level (<code>admin_audit_logs</code>) and survives the move.</td></tr>
+  </table></div>
+
+  <p class="note"><strong>Verdict:</strong> nothing in the build is AWS-only. The two real blockers are the <strong>backup scripts</strong> (code) and the <strong>duplicate S3 adapter</strong> (hygiene); the rest is config templates plus a docs pass. The move can be a lift-and-shift VM on day one and a managed-services migration later.</p>
+</section>
+
 <section id="billing">
   <div class="eyebrow">§§ 6b · new workstream</div>
   <h2>Billing, plans &amp; wallet</h2>
