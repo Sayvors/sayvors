@@ -21,7 +21,7 @@ type Service = { id: string; channel_id: string; name: string; category: string;
 
 type ServicesCopy = ReturnType<typeof useI18n>["t"]["dashboard"]["services"];
 
-export default function ServicesPage() {
+export default function ServicesPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n();
   const copy = t.dashboard.services;
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -185,9 +185,9 @@ export default function ServicesPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f4f1ff] p-4 sm:p-6 dark:bg-[#14101f]">
+    <div className={embedded ? "space-y-5" : "h-full overflow-y-auto bg-[#f4f1ff] p-4 sm:p-6 dark:bg-[#14101f]"}>
       <div className="mx-auto max-w-4xl space-y-5">
-            <PageHeader connected={channels.length > 0} copy={copy} />
+            <PageHeader connected={channels.length > 0} copy={copy} embedded={embedded} />
             {loading ? (
               <div className="flex justify-center rounded-[2px] border border-white bg-white py-24 dark:border-fog/[0.06] dark:bg-[#1d1636]"><LogoLoader size={34} /></div>
             ) : (
@@ -224,11 +224,15 @@ export default function ServicesPage() {
   );
 }
 
-function PageHeader({ connected, copy }: { connected: boolean; copy: ServicesCopy }) {
+function PageHeader({ connected, copy, embedded = false }: { connected: boolean; copy: ServicesCopy; embedded?: boolean }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 className="text-[22px] font-bold text-ink dark:text-fog">{copy.title}</h1>
+        {embedded ? (
+          <h2 className="text-[16px] font-bold text-ink dark:text-fog">{copy.title}</h2>
+        ) : (
+          <h1 className="text-[22px] font-bold text-ink dark:text-fog">{copy.title}</h1>
+        )}
         <p className="mt-1 text-[13px] text-ink/55 dark:text-fog/55">{copy.subtitle}</p>
       </div>
       <span className={`rounded-[2px] px-3 py-1.5 text-[11px] font-bold ${connected ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300"}`}>

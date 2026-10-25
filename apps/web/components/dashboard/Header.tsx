@@ -125,7 +125,7 @@ export default function Header() {
     ["/dashboard/posts-media", navLabels.postsMedia],
     ["/dashboard/analytics", navLabels.analytics],
     ["/dashboard/locations", navLabels.locations],
-    ["/dashboard/services", navLabels.services],
+    ["/dashboard/locations?tab=services", navLabels.services],
     ["/dashboard/customers", navLabels.customers],
     ["/dashboard/reviews", navLabels.reviews],
     ["/dashboard/databank", navLabels.databank],

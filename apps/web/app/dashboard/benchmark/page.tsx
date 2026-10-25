@@ -602,7 +602,7 @@ export default function BenchmarkPage() {
                   ))}
                 </div>
               )}
-              <Link href="/dashboard/services" className="mt-3 inline-block text-[11px] font-semibold text-[var(--ui-ink)] hover:underline">Manage services →</Link>
+              <Link href="/dashboard/locations?tab=services" className="mt-3 inline-block text-[11px] font-semibold text-[var(--ui-ink)] hover:underline">Manage services →</Link>
             </section>
           )}
 

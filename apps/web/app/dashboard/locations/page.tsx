@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import BulkEditSheet from "@/components/locations/BulkEditSheet";
+import ServicesPanel from "@/app/dashboard/services/page";
 
 /* ---------------------------------------------------------------------------------------*/
 
@@ -613,6 +614,7 @@ const bulk: BulkScope | null = isBulk
     { key: "service-area", label: copy.tabServiceArea },
     { key: "attributes", label: copy.tabAttributes },
     { key: "description", label: copy.tabDescription },
+    { key: "services", label: copy.tabServices },
     { key: "google-updates", label: copy.tabGoogleUpdates },
   ];
 
@@ -1040,6 +1042,7 @@ const bulk: BulkScope | null = isBulk
             {activeTab === "google-updates" && (
               <GoogleUpdatesTab copy={copy} />
             )}
+            {activeTab === "services" && <ServicesPanel embedded />}
           </div>
 
         </>

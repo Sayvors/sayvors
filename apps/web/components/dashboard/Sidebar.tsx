@@ -21,7 +21,7 @@ const MAIN_ITEMS: NavItem[] = [
   { key: "dashboard", icon: <DashboardIcon />, href: "/dashboard" },
   { key: "analytics", icon: <AnalyticsIcon />, href: "/dashboard/analytics" },
   { key: "locations", icon: <PinIcon />, href: "/dashboard/locations" },
-  { key: "services", icon: <BriefcaseIcon />, href: "/dashboard/services" },
+  { key: "services", icon: <BriefcaseIcon />, href: "/dashboard/locations?tab=services" },
   { key: "postsMedia", icon: <PhotoIcon />, href: "/dashboard/posts-media" },
   { key: "customers", icon: <UsersIcon />, href: "/dashboard/customers" },
   { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },

@@ -19,7 +19,7 @@ const checklistDefs = [
   { id: "auto-reply", labelKey: "stepAutoReply", href: "/dashboard/channels" },
   // Services + hours were dashboard tiles that read as metrics but were really
   // setup tasks. They belong in onboarding, not in the pulse row.
-  { id: "services", labelKey: "stepServices", href: "/dashboard/services" },
+  { id: "services", labelKey: "stepServices", href: "/dashboard/locations?tab=services" },
   { id: "hours", labelKey: "stepHours", href: "/dashboard/locations?tab=hours" },
 ] as const;
 
