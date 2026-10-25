@@ -184,6 +184,7 @@
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
     <a href="#campaigns">Campaigns</a>
+    <a href="#connection-guides">Guides</a>
     <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
@@ -855,6 +856,43 @@
     </ul>
   </div>
   <p class="note">Status: outline captured 2026-10-25, no code started. Slot the build after (or alongside) plans/entitlements — campaign volume limits are plan entitlements, so the entitlements service lands first.</p>
+</section>
+
+<section id="connection-guides">
+  <div class="eyebrow">§§ 13 · content workstream — planned</div>
+  <h2>Connection guides — a blog per integration</h2>
+  <p><span class="chip med">Planned</span>&nbsp; One standard, public guide per channel connection: how a merchant connects WhatsApp, Instagram, Facebook, Google Business Profile (and later SMS/email) to Sayvors — the same standard shape every time, so a merchant who has read one guide can follow any of them. Internal source docs already exist for the Meta channels; the blogs are public rewrites of them, not copies.</p>
+
+  <h3>What every guide covers — the standard skeleton</h3>
+  <ul>
+    <li><strong>Before you start</strong> — accounts, admin access, and business-verification state the merchant needs.</li>
+    <li><strong>Permissions requested and why</strong> — every scope the connect flow asks for, in plain language (this doubles as App Review evidence).</li>
+    <li><strong>Step-by-step connect</strong> — the exact clicks inside Sayvors, with screenshots from staging.</li>
+    <li><strong>What flows once connected</strong> — which webhook events arrive, how fast, and where they land in the inbox.</li>
+    <li><strong>Send a first test message</strong> — the 60-second confirmation the connection works end to end.</li>
+    <li><strong>Disconnect / reconnect / expired tokens</strong> — what happens when a token dies, how the expired-channel notice works, and how to reconnect without losing history.</li>
+    <li><strong>Troubleshooting table</strong> — the top failure modes and their fixes, per channel.</li>
+  </ul>
+
+  <div class="scroll"><table>
+    <tr><th>Guide</th><th>Source material in-repo</th><th>Channel specifics to cover</th><th>Status</th></tr>
+    <tr><td><strong>WhatsApp</strong></td><td class="path">docs/integrations/meta/whatsapp.md, oauth.md, webhooks.md</td><td>Embedded Signup v4 builder configs, phone-number id, the webhook per-object subscription gotcha, the 24-hour service window and template messages, coexistence config.</td><td><span class="chip med">To write</span></td></tr>
+    <tr><td><strong>Instagram</strong></td><td class="path">docs/integrations/meta/instagram.md</td><td>IG Professional account requirement, messaging permissions, the FB Page linkage (IG DMs route through the Page), asset selection during connect.</td><td><span class="chip med">To write</span></td></tr>
+    <tr><td><strong>Facebook Page</strong></td><td class="path">docs/integrations/meta/facebook.md</td><td>Page vs user tokens, the three Page permissions and the reconnect requirement (the hub was rebuilt 2026-10), what breaks when Page roles change.</td><td><span class="chip med">To write</span></td></tr>
+    <tr><td><strong>Google Business Profile</strong></td><td class="path">Native Google OAuth callback (channels/router.py) — no internal doc yet</td><td>Account/location discovery, review scopes, verified-locations only. Write the internal doc first, and target the guide at the <em>official GBP API</em> flow — Localith is the interim path and should not be the documented standard.</td><td><span class="chip med">Internal doc + guide</span></td></tr>
+    <tr><td><strong>SMS (future)</strong></td><td class="path">— blocked on the SMS provider decision (§§12)</td><td>Number provisioning, compliance/opt-in language per region.</td><td><span class="chip crit">Blocked</span></td></tr>
+  </table></div>
+
+  <div class="card">
+    <h3>Why this workstream pays</h3>
+    <ul>
+      <li><strong>Onboarding self-service.</strong> Failed connections are the top support ticket class for messaging platforms; a standard guide per channel deflects them before they happen.</li>
+      <li><strong>SEO surface.</strong> “How to connect WhatsApp Business to [platform]” terms are high-intent; one good guide per channel is a durable acquisition channel.</li>
+      <li><strong>App Review evidence.</strong> The permissions-explained section is the same material Meta and Google reviews ask for — write once, reuse in submissions.</li>
+      <li><strong>Forces the flows to be standard.</strong> Writing the guide is an audit of the connect flow; any step that cannot be documented cleanly is a UX bug to fix first.</li>
+    </ul>
+  </div>
+  <p class="note">Order: WhatsApp first (most-used channel), then Instagram + Facebook (hubs just rebuilt — freshest flows), then GBP after the official-API swap. Rule for every guide: rewrite from the internal doc, screenshot from staging, never ship internal architecture, dev tunnels, or config ids to the public blog.</p>
 </section>
 
 <footer>
