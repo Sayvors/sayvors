@@ -320,7 +320,7 @@
   <div class="scroll"><table>
     <tr><th>Need</th><th>Decision</th><th>What exactly</th><th>~Cost</th></tr>
     <tr><td>Database durability</td><td><span class="chip buy">Buy</span></td><td>RDS is already external — verify PITR is enabled, retention →≈≥ 7 days, alarms on connections/disk; rehearse one restore. Nothing to build.</td><td class="num">~$0 new (maybe instance bump)</td></tr>
-    <tr><td>Redis HA</td><td><span class="chip buy">Buy</span> <span class="chip code">+ code</span></td><td>ElastiCache replication group (multi-AZ) — it is load-bearing for <em>authentication</em> today. Until then: enable AOF, raise to 1–2 GB, add the memory alarm, ship the re-arm prober.</td><td class="num">$30–80/mo</td></tr>
+    <tr><td>Redis HA</td><td><span class="chip buy">Buy</span> <span class="chip code">+ code</span></td><td>ElastiCache replication group (multi-AZ) — it is load-bearing for <em>authentication</em> today. Code side is done (re-arm prober in the API, Redis memory on <code>/metrics</code>); infra still open: AOF, 1–2 GB, the 75% alarm rule.</td><td class="num">$30–80/mo</td></tr>
     <tr><td>Error tracking</td><td><span class="chip buy">Buy</span></td><td>Sentry for API + web + admin. This is the single highest-leverage purchase on the list.</td><td class="num">$0–26/mo</td></tr>
     <tr><td>Metrics / dashboards</td><td><span class="chip buy">Buy</span></td><td>Grafana Cloud free tier or CloudWatch: API p95s, queue lag, Redis memory, DB connections, WS count, Kafka lag.</td><td class="num">$0–40/mo</td></tr>
     <tr><td>Second box / AZ</td><td><span class="chip buy">Buy</span></td><td>One t3.small carries API, worker, Redis, Kafka, and TLS. One OOM kill takes auth, messaging, and ingestion down together. Either a second box behind Caddy/DNS or a managed container platform.</td><td class="num">$30–60/mo</td></tr>
@@ -428,10 +428,51 @@
 <section id="redis">
   <div class="eyebrow">§§ 6</div>
   <h2>Redis strategy</h2>
-  <p><span class="chip high">Today: load-bearing and fragile</span>&nbsp; Redis is not a cache in this system — it is authentication infrastructure. Rate limits, the JWT blacklist, sessions, and OTPs live there, and the auth path <strong>fails closed</strong>: Redis down = nobody logs in, and blacklisted-token checks treat every token as revoked. Yet the instance is a single 128 MB <code>noeviction</code> box with no AOF and no alarm, and a boot-time blip permanently disables it for the process (the re-arm function has zero callers).</p>
+  <p><span class="chip code">Code fixed</span> <span class="chip warn">Infra open</span>&nbsp; Redis is not a cache in this system — it is authentication infrastructure. Rate limits, the JWT blacklist, sessions, and OTPs live there, and the auth path <strong>fails closed</strong>: Redis down = nobody logs in, and blacklisted-token checks treat every token as revoked. The deployment is still a single 128 MB <code>noeviction</code> box with no AOF and no alarm, but the code-side gaps are closed: the API now runs the re-arm prober (it previously ran only in the worker; <code>get_redis()</code> also re-probes after a 5s cooldown), and <code>/metrics</code> exports Redis availability and memory. <em>Remaining is deployment work: AOF, 1–2 GB sizing, the 75% alarm rule, multi-AZ.</em></p>
+
+  <h3>Code vs infra</h3>
+  <div class="scroll"><table>
+    <tr><th>Item</th><th>Type</th><th>Status</th><th>Where</th></tr>
+    <tr>
+      <td><strong>Re-arm prober in the API process</strong></td>
+      <td><span class="chip code">Code</span></td>
+      <td><span class="chip ok">Fixed</span> — <code>run_redis_rearmer()</code> is started in the API lifespan and cancelled on shutdown (the worker already ran it). A boot blip no longer waits for the next request to un-latch.</td>
+      <td class="path">main.py lifespan; modules/redis/client.py</td>
+    </tr>
+    <tr>
+      <td><strong>Redis metrics for the memory alarm</strong></td>
+      <td><span class="chip code">Code</span></td>
+      <td><span class="chip ok">Fixed</span> — <code>/metrics</code> exports <code>sayvors_redis_available</code>, <code>sayvors_redis_used_memory_bytes</code>, <code>sayvors_redis_maxmemory_bytes</code> and <code>sayvors_redis_memory_utilization_ratio</code>. The scrape stays 200 with <code>available 0</code> when Redis is down.</td>
+      <td class="path">main.py /metrics; tests/test_metrics_redis.py</td>
+    </tr>
+    <tr>
+      <td><strong>AOF enabled</strong></td>
+      <td><span class="chip warn">Infra</span></td>
+      <td><span class="chip warn">Open</span> — <code>--appendonly yes</code> plus a persistent volume in compose; automatic on ElastiCache.</td>
+      <td class="path">docker-compose.prod.yml</td>
+    </tr>
+    <tr>
+      <td><strong>128 MB → 1–2 GB</strong></td>
+      <td><span class="chip warn">Infra</span></td>
+      <td><span class="chip warn">Open</span> — raise <code>--maxmemory</code> in compose / the ElastiCache parameter group. Keep <code>noeviction</code>.</td>
+      <td class="path">docker-compose.prod.yml:121</td>
+    </tr>
+    <tr>
+      <td><strong>75% memory alarm</strong></td>
+      <td><span class="chip warn">Infra</span></td>
+      <td><span class="chip warn">Open</span> — the metric exists; add a Prometheus/Grafana (or CloudWatch) rule on <code>sayvors_redis_memory_utilization_ratio &gt; 0.75</code>.</td>
+      <td class="path">deploy/prometheus.yml</td>
+    </tr>
+    <tr>
+      <td><strong>Multi-AZ / ElastiCache</strong></td>
+      <td><span class="chip warn">Infra</span></td>
+      <td><span class="chip warn">Open</span> — replication group with automatic failover when spend allows.</td>
+      <td class="path">AWS</td>
+    </tr>
+  </table></div>
   <h3>Target state</h3>
   <ul>
-    <li><strong>Reliability first:</strong> background prober calling <code>mark_redis_available()</code> (small fix, big effect); AOF enabled; 1–2 GB; memory alarm at 75%; then ElastiCache multi-AZ when spend allows. Keep <code>noeviction</code> — with real sizing and alarms, evicting OTP or blacklist keys is worse than erroring.</li>
+    <li><strong>Reliability first:</strong> <span class="chip ok">prober shipped</span> background prober calling <code>mark_redis_available()</code> now runs in the API; <span class="chip warn">infra open</span> AOF enabled; 1–2 GB; memory alarm at 75%; then ElastiCache multi-AZ when spend allows. Keep <code>noeviction</code> — with real sizing and alarms, evicting OTP or blacklist keys is worse than erroring.</li>
     <li><strong>Fail-closed only where it earns it:</strong> keep fail-closed for the token blacklist once HA exists (15-min tokens bound the exposure anyway — fail-open with alerting is defensible before that).</li>
     <li><strong>Cache the hot reads:</strong> provider keys and model curation are a per-process overlay loaded from Postgres on boot, reloaded by the admin endpoints, and refreshed on the generation path at most every 15s; provider instances are reused. Extend the existing <code>ig:</code> cache pattern to FB profiles/posts. Per-request tenant context/permissions cache (per-request memo at minimum).</li>
     <li><strong>Move aggregates to the write path:</strong> the inbox's full-history GROUP BY dies when <code>last_message_at</code>/<code>unread_count</code> become columns maintained on message insert — Redis counters as the write-through, DB columns as truth.</li>
@@ -805,7 +846,7 @@
     <tr><td class="num">Prod-host wk</td><td><strong>External uptime monitor on <code>/readyz</code></strong> (UptimeRobot / Better Stack).</td><td><span class="chip buy">Buy</span></td><td>$0 tier is fine. Until this exists, the box cannot tell anyone it is down.</td></tr>
     <tr><td class="num">Prod-host wk</td><td><strong>Prometheus scrape → Grafana Cloud (or CloudWatch) dashboards; Redis memory alarm</strong> at <code>used_memory &gt; 100 MB</code>.</td><td><span class="chip buy">Buy</span> <span class="chip med">Infra</span></td><td>$0–40/mo. <code>/metrics</code> and <code>deploy/prometheus.yml</code> exist; nothing consumes them yet. Apply INS-4 (loopback bind) in the same change.</td></tr>
     <tr><td class="num">Growth</td><td><strong>Second box behind Caddy/DNS — or ECS/Fly/Render</strong> to retire hand-SSH deploys for good.</td><td><span class="chip buy">Buy</span></td><td>$30–60/mo. Retires INS-5 (2.4 GB of mem_limits on a 2 GB box) and the one-OOM-kills-everything failure mode. Job claims are <code>FOR UPDATE SKIP LOCKED</code>, so replicas are already safe to fan out.</td></tr>
-    <tr><td class="num">Growth</td><td><strong>Redis: AOF on, 1–2 GB, memory alarm → ElastiCache multi-AZ</strong> when spend allows. Plus the <code>mark_redis_available()</code> background prober (still zero callers).</td><td><span class="chip med">Infra</span> → <span class="chip buy">Buy</span> <span class="chip code">+ Code</span></td><td>$30–80/mo. Redis is authentication infrastructure (rate limits, JWT blacklist, sessions, OTPs) and fails closed — a blip logs everyone out. All its keys already have TTLs (production-later.md table), so restarts are survivable today; HA removes the outage window.</td></tr>
+    <tr><td class="num">Growth</td><td><strong>Redis: AOF on, 1–2 GB, memory alarm → ElastiCache multi-AZ</strong> when spend allows. The <code>mark_redis_available()</code> prober ships in the API now; Redis memory is on <code>/metrics</code>. Remaining is deployment config + the alarm rule.</td><td><span class="chip med">Infra</span> → <span class="chip buy">Buy</span> <span class="chip code">+ Code</span></td><td>$30–80/mo. Redis is authentication infrastructure (rate limits, JWT blacklist, sessions, OTPs) and fails closed — a blip logs everyone out. All its keys already have TTLs (production-later.md table), so restarts are survivable today; HA removes the outage window.</td></tr>
     <tr><td class="num">Growth</td><td><strong>PgBouncer in front of RDS; add the read replica and set <code>DATABASE_READER_URL</code></strong> so analytics reads leave the primary.</td><td><span class="chip med">Infra</span></td><td>Writer/reader routing is already coded and env-gated (<code>get_db</code> / <code>get_db_read</code>); this is provisioning + an env flip. The binding constraint at 30–50k tenants is connections, not CPU.</td></tr>
     <tr><td class="num">Growth</td><td><strong>Billing ledger cutover</strong>: migration <code>i4j5k6l7m8n9</code> → <code>scripts/backfill_credit_ledger.py</code> dry-run → review every UNRELIABLE tenant → <code>--apply</code>, deploy the credit-hold reaper.</td><td><span class="chip code">Code</span></td><td>½ day. The durable ledger is built and tested; this switches the money path onto it. Runbook: <code>docs/operations/credit-ledger-runbook.md</code>.</td></tr>
     <tr><td class="num">Growth</td><td><strong>Phase 4 tests</strong>: k6 peak-hour profile at 10× current traffic; chaos test (kill a worker mid-job → lease reclaim, no duplicate external calls); multi-replica test (2+ API + 2+ workers, no double-processing).</td><td><span class="chip code">Code</span></td><td>k6 is free. Turns “1M-ready” from claim to measurement — every load number on this page is currently an estimate.</td></tr>

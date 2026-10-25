@@ -60,7 +60,7 @@ controls; breaking them reintroduces the vulnerabilities we just fixed.
 |---|-------|-------|
 | I-1 | **Kafka: 3-broker cluster** | Single broker = SPOF; KRaft quorum of 3 |
 | I-2 | **`KAFKA_AUTO_CREATE_TOPICS_ENABLE=false`** | Prevents 1-partition topics; provision explicitly (24/12/6/6 per lane) |
-| I-3 | **Redis: 6–8 GB, multi-AZ, AOF on** | Auth infrastructure — memory alarm at 75%, `noeviction` policy |
+| I-3 | **Redis: 1–2 GB, AOF on → multi-AZ** | Auth infrastructure — memory alarm at 75%, `noeviction` policy. Code side done; deployment steps tracked in §8 |
 | I-4 | **Postgres read replica** | Offload analytics queries; binding constraint is connection pool |
 | I-5 | **PgBouncer connection pooling** | `DATABASE_URL` → PgBouncer port 6432, `DB_POOL_MODE=transaction`, prevents connection exhaustion |
 | I-6 | **DB pool right-sized** | `DB_POOL_SIZE=5`, `MAX_OVERFLOW=5` per process; boot-time headroom check |
@@ -112,7 +112,32 @@ Your `next.config.ts` already sets COOP/COEP/CSP headers — verify they're prod
 | J-7 | **Production host in Caddy** | Stand up prod host + secrets + startup validator (redirect URIs, CORS). |
 | J-8 | **Uptime monitor on /readyz** | External: UptimeRobot / Better Stack. |
 | J-9 | **Prometheus scrape /metrics** | Scrape config in `deploy/prometheus.yml` (already added). |
-| J-10 | **Redis memory alarm** | Alert on `used_memory > 100mb` (maxmemory 128mb + noeviction already set). |
+| J-10 | **Redis memory alarm** | Alert on `sayvors_redis_memory_utilization_ratio > 0.75` (metric exported by `/metrics`); keep `noeviction`. See §8. |
+
+---
+
+## 8. Redis reliability (auth infrastructure)
+
+Redis holds rate limits, the JWT blacklist, sessions and OTPs, and the auth path
+fails closed — a Redis outage locks every tenant out. Keep `noeviction`:
+once sizing and alarms are real, evicting an OTP or blacklist key is worse than
+erroring.
+
+| # | Check | Type | Status |
+|---|-------|------|--------|
+| R-1 | **Re-arm prober runs in the API process** | Code | ✅ Done — `run_redis_rearmer()` is started in the API lifespan and cancelled on shutdown (the worker already ran it). `get_redis()` also re-probes after `REDIS_REPROBE_COOLDOWN_SECONDS = 5s`. |
+| R-2 | **Redis health + memory on `/metrics`** | Code | ✅ Done — `sayvors_redis_available`, `sayvors_redis_used_memory_bytes`, `sayvors_redis_maxmemory_bytes`, `sayvors_redis_memory_utilization_ratio`; the scrape stays 200 with `available 0` when Redis is down (`tests/test_metrics_redis.py`). |
+| R-3 | **AOF enabled** | Infra | ⬜ Open — `--appendonly yes` plus a persistent volume in `docker-compose.prod.yml`; automatic on ElastiCache. |
+| R-4 | **Raise `maxmemory` to 1–2 GB** | Infra | ⬜ Open — compose flag / ElastiCache parameter group. |
+| R-5 | **Alarm at 75% of `maxmemory`** | Infra | ⬜ Open — Prometheus/Grafana (or CloudWatch) rule on `sayvors_redis_memory_utilization_ratio > 0.75`. The metric already exists. |
+| R-6 | **Multi-AZ (ElastiCache replication group)** | Infra | ⬜ Open — automatic failover when spend allows. |
+| R-7 | **Blacklist fail-closed policy** | Code decision | ⏸ Hold — keep `AUTH_RATE_LIMIT_FAIL_CLOSED=true` once HA exists; fail-open with alerting is defensible before that. No change made. |
+
+**Smoke tests after each change**
+
+- Stop Redis → `/readyz` reports 503, `/metrics` shows `sayvors_redis_available 0`, login is denied (fail-closed), and the API recovers within one prober interval of Redis returning — without a restart.
+- `redis-cli config get appendonly` → `yes`; `redis-cli info memory` → `maxmemory` matches the plan and `maxmemory_policy:noeviction`.
+- Scrape the rule: `sayvors_redis_memory_utilization_ratio` crosses 0.75 in a staging load test and the alert fires once.
 
 ---
 

@@ -374,7 +374,15 @@ async def lifespan(app: FastAPI):
     # Schedule periodic retention cleanup
     import asyncio
     from .modules.auth.service import run_retention_loop
+    from .modules.redis.client import run_redis_rearmer
     retention_task = asyncio.create_task(run_retention_loop())
+
+    # Redis re-armer runs in the API process, not only the worker deployment.
+    # A boot-time Redis blip latches the client offline; get_redis() re-probes
+    # on demand after a cooldown, but with no traffic that recovery never
+    # happens and the first request after the outage pays a failed 2s connect.
+    # The prober unlatches it on a fixed interval regardless of traffic.
+    redis_rearmer_task = asyncio.create_task(run_redis_rearmer())
 
     # Queue/poll workers (AI replies, syncs, publishers, Kafka consumers)
     # belong OUTSIDE the HTTP process: in the worker deployment they run via
@@ -423,9 +431,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     retention_task.cancel()
+    redis_rearmer_task.cancel()
     for task in bg_tasks:
         task.cancel()
-    await asyncio.gather(retention_task, *bg_tasks, return_exceptions=True)
+    await asyncio.gather(retention_task, redis_rearmer_task, *bg_tasks, return_exceptions=True)
     if outbox_worker is not None:
         await outbox_worker.stop()
     try:
@@ -594,6 +603,36 @@ async def metrics():
         lines.append("")
     except Exception:
         pass
+
+    # Redis health/memory. Rate limits, the token blacklist, sessions and OTPs
+    # all live in Redis, so a scrape is also the honest liveness signal for the
+    # auth path. maxmemory is 128 MB in dev and 1-2 GB in the target topology;
+    # alert at 75% of it.
+    lines.append("# HELP sayvors_redis_available Redis reachable from this replica (1/0).")
+    lines.append("# TYPE sayvors_redis_available gauge")
+    try:
+        from .modules.redis.client import get_redis
+
+        redis = await get_redis()
+        info = await redis.info("memory")
+        used = int(info.get("used_memory") or 0)
+        maxmemory = int(info.get("maxmemory") or 0)
+        lines.append("sayvors_redis_available 1")
+        lines.append("# HELP sayvors_redis_used_memory_bytes Redis used_memory in bytes.")
+        lines.append("# TYPE sayvors_redis_used_memory_bytes gauge")
+        lines.append(f"sayvors_redis_used_memory_bytes {used}")
+        lines.append("# HELP sayvors_redis_maxmemory_bytes Redis maxmemory in bytes (0 = unlimited).")
+        lines.append("# TYPE sayvors_redis_maxmemory_bytes gauge")
+        lines.append(f"sayvors_redis_maxmemory_bytes {maxmemory}")
+        if maxmemory > 0:
+            lines.append("# HELP sayvors_redis_memory_utilization_ratio used_memory divided by maxmemory.")
+            lines.append("# TYPE sayvors_redis_memory_utilization_ratio gauge")
+            lines.append(f"sayvors_redis_memory_utilization_ratio {used / maxmemory:.4f}")
+    except Exception:
+        # Fail closed for the metric, not for the app: an unreachable Redis is
+        # already handled by the auth paths; the scrape must still succeed.
+        lines.append("sayvors_redis_available 0")
+    lines.append("")
 
     return Response(
         content="\n".join(lines),
