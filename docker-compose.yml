@@ -1,7 +1,6 @@
 services:
   redis:
     image: redis:7-alpine
-    container_name: sayvors-redis
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -14,7 +13,6 @@ services:
 
   kafka:
     image: apache/kafka:3.8.0
-    container_name: sayvors-kafka
     ports:
       - "127.0.0.1:9092:9092"
       - "127.0.0.1:29092:29092"
@@ -41,7 +39,6 @@ services:
 
   pgbouncer:
     image: bitnami/pgbouncer:latest
-    container_name: sayvors-pgbouncer
     ports:
       - "127.0.0.1:6432:6432"
     environment:
@@ -60,7 +57,6 @@ services:
   # GlitchTip — open-source Sentry alternative for error tracking
   glitchtip:
     image: glitchtip/glitchtip:latest
-    container_name: sayvors-glitchtip
     ports:
       - "127.0.0.1:8001:8000"
     env_file:
