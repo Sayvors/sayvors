@@ -265,6 +265,7 @@ const ar: Dict = {
       tabAttributes: "الخصائص",
       tabDescription: "الوصف",
       tabGoogleUpdates: "تحديثات Google",
+      tabServices: "الخدمات",
       dismiss: "إخفاء",
       completeness: "اكتمال الملف",
       essentialsDone: "{done} من {total} عناصر أساسية",

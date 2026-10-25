@@ -264,6 +264,7 @@ const en = {
       tabAttributes: "Attributes",
       tabDescription: "Description",
       tabGoogleUpdates: "Google Updates",
+      tabServices: "Services",
       dismiss: "dismiss",
       completeness: "Profile completeness",
       essentialsDone: "{done} of {total} essentials",
