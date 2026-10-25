@@ -1127,6 +1127,35 @@ export default function DashboardPage() {
   const { dir, t } = useI18n();
   const done = useSyncExternalStore(subscribeChecklist, readChecklist, getServerChecklist);
 
+  // Auto-complete the "connect a channel" step when a channel is already
+  // connected, so the launch checklist reflects reality instead of asking a
+  // tenant who has already connected to do it again. Hidden automatically once
+  // every step is done.
+  const [hasConnectedChannel, setHasConnectedChannel] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [ch, lc, mc] = await Promise.all([
+          apiFetch("/api/v1/channels?limit=1").catch(() => null),
+          apiFetch("/api/v1/integrations/localith/connections").catch(() => null),
+          apiFetch("/api/v1/meta/connections").catch(() => null),
+        ]);
+        if (cancelled) return;
+        const googleOk = Array.isArray(ch?.channels) ? ch.channels.length > 0 : false;
+        const localithOk = Array.isArray(lc) ? lc.length > 0 : false;
+        const metaOk = Array.isArray(mc?.connections) ? mc.connections.length > 0 : false;
+        if (googleOk || localithOk || metaOk) setHasConnectedChannel(true);
+      } catch {
+        /* leave the checklist as the user left it */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const effectiveDone = hasConnectedChannel ? { ...done, channel: true } : done;
+
   const checklistItems = checklistDefs.map((d) => ({
     ...d,
     label: t.dashboard.start[d.labelKey],
@@ -1137,11 +1166,11 @@ export default function DashboardPage() {
     writeChecklist({ ...current, [id]: !current[id] });
   }, []);
 
-  const completed = checklistItems.filter((i) => done[i.id]).length;
+  const completed = checklistItems.filter((i) => effectiveDone[i.id]).length;
   const total = checklistItems.length;
   const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
   const allDone = completed === total;
-  const nextItem = checklistItems.find((i) => !done[i.id]) ?? null;
+  const nextItem = checklistItems.find((i) => !effectiveDone[i.id]) ?? null;
   const [dismissed, setDismissed] = useState(() => {
     try {
       return typeof window !== "undefined" && window.localStorage.getItem("sayvors.onboarding.checklist.dismissed") === "1";
@@ -1238,7 +1267,7 @@ export default function DashboardPage() {
 
           <ol className="space-y-2">
             {checklistItems.map((item, index) => {
-              const isDone = !!done[item.id];
+              const isDone = !!effectiveDone[item.id];
               const isNext = nextItem?.id === item.id;
               return (
                 <li
