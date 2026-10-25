@@ -861,7 +861,7 @@
 <section id="connection-guides">
   <div class="eyebrow">§§ 13 · content workstream — planned</div>
   <h2>Connection guides — a blog per integration</h2>
-  <p><span class="chip med">Planned</span>&nbsp; One standard, public guide per channel connection: how a merchant connects WhatsApp, Instagram, Facebook, Google Business Profile (and later SMS/email) to Sayvors — the same standard shape every time, so a merchant who has read one guide can follow any of them. Internal source docs already exist for the Meta channels; the blogs are public rewrites of them, not copies.</p>
+  <p><span class="chip med">Planned</span>&nbsp; One standard, public guide per channel connection <em>and</em> per core workflow: how a merchant connects WhatsApp, Instagram, Facebook, Google Business Profile (and later SMS/email), and how they run automatic review replies, schedule posts, bulk-update business information, and manage their business on Google — the same standard shape every time, so a merchant who has read one guide can follow any of them. Internal source docs already exist for several of these; the blogs are public rewrites of them, not copies.</p>
 
   <h3>What every guide covers — the standard skeleton</h3>
   <ul>
@@ -882,6 +882,16 @@
     <tr><td><strong>Google Business Profile</strong></td><td class="path">Native Google OAuth callback (channels/router.py) — no internal doc yet</td><td>Account/location discovery, review scopes, verified-locations only. Write the internal doc first, and target the guide at the <em>official GBP API</em> flow — Localith is the interim path and should not be the documented standard.</td><td><span class="chip med">Internal doc + guide</span></td></tr>
     <tr><td><strong>SMS (future)</strong></td><td class="path">— blocked on the SMS provider decision (§§12)</td><td>Number provisioning, compliance/opt-in language per region.</td><td><span class="chip crit">Blocked</span></td></tr>
   </table></div>
+
+  <h3>Product how-to guides — the same standard shape</h3>
+  <div class="scroll"><table>
+    <tr><th>Guide</th><th>Source material in-repo</th><th>What it covers</th><th>Status</th></tr>
+    <tr><td><strong>Automatic review replies</strong></td><td class="path">app/modules/review_engine/; docs/security/multilingual-review-relevance.md (internal); 28 multilingual regression tests</td><td>Turning review automation on per location; reply modes (auto vs needs-approval) and when each fires; how answers are grounded in the business’s own profile and databank; multilingual replies (Arabic / English / Urdu incl. Roman Urdu) with language matching; the off-topic and sales-link guardrails; pausing and editing an auto-reply.</td><td><span class="chip med">To write</span></td></tr>
+    <tr><td><strong>Scheduling posts</strong></td><td class="path">Scheduled-posts calendar panel (20e6f3b); durable publishing lane (jobs); posts module</td><td>Composing a Google post; picking a date and time; the month-view calendar with event chips; editing or cancelling before publish; media posts; what happens on the due date and when a publish fails.</td><td><span class="chip med">To write</span></td></tr>
+    <tr><td><strong>Bulk update business information</strong></td><td class="path">docs/features/bulk-location-edit.md (already written!); GET /bulk-template + POST /bulk-upload; in-browser spreadsheet UI</td><td>Downloading the CSV template; editing in the browser spreadsheet or a desktop tool; per-row validation errors; the confirmation step; idempotent apply (upload twice = no duplicates); when bulk edit beats one-off editing.</td><td><span class="chip ok">Easy — source doc exists</span></td></tr>
+    <tr><td><strong>How to manage your business on Google</strong> (pillar page)</td><td class="path">locations + profile + posts + analytics modules; native Google OAuth flow</td><td>The umbrella guide: profile completeness, locations and hours, posts, media, reviews and replies, performance metrics — interlinking all the other guides. Targets the <em>official GBP API</em> flow (Localith is interim and undocumented by design).</td><td><span class="chip med">To write — after the GBP internal doc</span></td></tr>
+  </table></div>
+  <p class="note">Obvious siblings for the same backlog, same skeleton: “How AI inbox replies work”, “Reading your messaging analytics” (AI vs human, best-time heatmap, benchmarks), “Team roles and permissions”. Add rows here as each ships.</p>
 
   <div class="card">
     <h3>Why this workstream pays</h3>
