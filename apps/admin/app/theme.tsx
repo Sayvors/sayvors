@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useState } from "react";
 
 type Theme = "light" | "dark";
 
@@ -23,12 +23,12 @@ function savedTheme(): Theme {
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // The pre-hydration script in the root layout already set the class;
-  // this just syncs React state with it.
-  const [theme, setTheme] = useState<Theme>("light");
-
-  useEffect(() => {
-    setTheme(savedTheme());
-  }, []);
+  // this just syncs React state with it. Read once from the initializer so
+  // no setState runs synchronously inside an effect.
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "light";
+    return savedTheme();
+  });
 
   const toggle = useCallback(() => {
     setTheme((prev) => {

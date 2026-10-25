@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import { adminFetch } from "@/lib/admin-api";
 
 interface LlmStatus {
@@ -82,7 +83,7 @@ function ProviderLogo({ provider }: { provider: string }) {
       className={`flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-[2px] bg-gradient-to-br text-[18px] font-bold text-white ${brand.gradient}`}
     >
       {!failed && brand.icon ? (
-        <img
+        <Image
           src={`https://cdn.jsdelivr.net/npm/simple-icons@v15/icons/${brand.icon}.svg`}
           alt=""
           width={26}
@@ -90,6 +91,7 @@ function ProviderLogo({ provider }: { provider: string }) {
           loading="lazy"
           onError={() => setFailed(true)}
           className="h-[26px] w-[26px] brightness-0 invert"
+          unoptimized
         />
       ) : (
         brand.initial

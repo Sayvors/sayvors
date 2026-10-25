@@ -30,7 +30,6 @@ export default function AdminFeedbackPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     const q = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
     adminFetch<{ total: number; items: AdminFeedback[] }>(`/api/v1/admin/feedback?${q.toString()}`)
       .then((d) => {

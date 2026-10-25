@@ -298,7 +298,7 @@ export default function AdminVoicePage() {
     void loadVoices(1, true);
   };
 
-  const useVoice = async (voice: FishVoice) => {
+  const assignVoice = async (voice: FishVoice) => {
     if (!browse) return;
     if (browse.ctx === "add") {
       if (browseLang) {
@@ -407,7 +407,7 @@ export default function AdminVoicePage() {
               </p>
             </div>
             <button
-              onClick={() => void useVoice(v)}
+              onClick={() => void assignVoice(v)}
               className="btn-primary shrink-0 !px-2.5 !py-1 text-[10px]"
             >
               Use
