@@ -69,6 +69,12 @@ export default function Sidebar() {
     return () => mq.removeEventListener("change", apply);
   }, []);
 
+  // Listen for external open-drawer requests (e.g. from Header hamburger).
+  useEffect(() => {
+    const handler = () => setDrawerOpen(true);
+    window.addEventListener("open-nav-drawer", handler);
+    return () => window.removeEventListener("open-nav-drawer", handler);
+  }, []);
   // While the drawer is open it covers the page, so the page behind it must
   // not scroll away underneath.
   useEffect(() => {
@@ -131,23 +137,7 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Hamburger — mobile only, fixed so it does not shift page content.
-          Vertically centered inside the 56px header (top-2 + h-10 = 8+40+8). */}
-      <button
-        onClick={() => setDrawerOpen(true)}
-        aria-label={t.nav.openMenu}
-        aria-expanded={drawerOpen}
-        aria-controls="dashboard-sidebar"
-        className={`fixed ${dir === "rtl" ? "right-1" : "left-1"} top-2 z-40 flex h-10 w-10 items-center justify-center rounded-[12px] border border-ink/[0.08] bg-white text-ink shadow-lg transition hover:bg-fog focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-white/10 dark:bg-[#1d1636] dark:text-white dark:hover:bg-[#251b55] md:hidden ${
-          drawerOpen ? "pointer-events-none opacity-0" : "opacity-100"
-        }`}
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5">
-          <path d="M4 7h16M4 12h16M4 17h16" />
-        </svg>
-      </button>
-
-      {/* Scrim — tap anywhere to dismiss, as a drawer is expected to do. */}
+          {/* Scrim — tap anywhere to dismiss, as a drawer is expected to do. */}
       {drawerOpen && (
         <button
           onClick={() => setDrawerOpen(false)}

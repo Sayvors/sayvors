@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import BulkEditSheet from "@/components/locations/BulkEditSheet";
 
 /* ---------------------------------------------------------------------------------------*/
 
@@ -206,6 +207,7 @@ export default function LocationsPage() {
   const [fullProfile, setFullProfile] = useState<FullProfile | null>(null);
   const [bulkProfiles, setBulkProfiles] = useState<Record<string, FullProfile>>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [confirmBulk, setConfirmBulk] = useState<null | {
     title: string;
     lines: string[];
@@ -643,26 +645,37 @@ const bulk: BulkScope | null = isBulk
   return (
     <div className="h-full space-y-5 overflow-y-auto p-4 sm:p-6">
       {/* Header */}
-      {/* Stacks until xl. The sidebar eats ~220px, so at 1024 the content column
-          is only ~800px and a side-by-side header still wrapped the subtitle,
-          the status pill and "Create location" onto two lines each. */}
-      <div className="flex flex-col items-start gap-3 xl:flex-row xl:items-start xl:justify-between xl:gap-4">
-        <div className="min-w-0">
-          <h1 className="text-[20px] font-bold text-ink dark:text-fog">{copy.title}</h1>
-          <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
-            {copy.subtitle}
-          </p>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-[22px] font-bold tracking-tight text-ink dark:text-fog">{copy.title}</h1>
+            <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">{copy.subtitle}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+              {locations.length ? copy.googleConnected : copy.googleNotConnected}
+            </span>
+            <button
+              onClick={() => setCreateOpen(true)}
+              title={copy.createLocationTitle}
+              data-tour="add-location"
+              className="rounded-xl bg-deep-violet px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
+            >
+              {copy.createLocation}
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col items-stretch gap-3 xl:flex-row xl:items-center">
-          {/* Location selector dropdown — "All branches" enables bulk edit */}
-          <div className="relative w-full xl:w-auto xl:min-w-56">
+
+        {/* Toolbar row: location selector + actions */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
             <select
               value={selectedId ?? ""}
               onChange={(e) => {
                 setSelectedId(e.target.value);
                 setLastBulkFail(null);
               }}
-              className="w-full appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className="rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] text-ink dark:border-fog/[0.08] dark:bg-ink dark:text-fog"
             >
               {locations.length > 1 && (
                 <option value={ALL}>{copy.allBranches.replace("{count}", String(locations.length))}</option>
@@ -673,20 +686,13 @@ const bulk: BulkScope | null = isBulk
                 </option>
               ))}
               {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
+                <option key={loc.id} value={loc.id}>{loc.name}</option>
               ))}
               {locations.length === 0 && <option value="">{copy.noLocations}</option>}
             </select>
-            <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40 dark:text-fog/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </div>
-          <div className="flex w-full flex-wrap items-center gap-3 xl:w-auto xl:flex-nowrap">
             <button
               onClick={() => setGroupsOpen(true)}
-              className="min-h-9 rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 hover:bg-ink/[0.02] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className="rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-ink dark:text-fog/70"
             >
               {copy.manageGroups}
               {groups.length > 0 && (
@@ -695,16 +701,14 @@ const bulk: BulkScope | null = isBulk
                 </span>
               )}
             </button>
-            <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-              {locations.length ? copy.googleConnected : copy.googleNotConnected}
-            </span>
+          </div>
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setCreateOpen(true)}
-              title={copy.createLocationTitle}
-              data-tour="add-location"
-              className="min-h-9 rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:opacity-90"
+              onClick={() => setBulkEditOpen(true)}
+              title="Bulk edit locations via CSV"
+              className="rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-ink dark:text-fog/70"
             >
-              {copy.createLocation}
+              Bulk edit (CSV)
             </button>
           </div>
         </div>
@@ -823,7 +827,11 @@ const bulk: BulkScope | null = isBulk
       )}
 
       {/* Add-location wizard (Google create workflow, draft-only until Google connects) */}
-      {createOpen && (
+      {bulkEditOpen && (
+    <BulkEditSheet onClose={() => setBulkEditOpen(false)} />
+  )}
+
+  {createOpen && (
         <AddLocationModal
           onClose={() => setCreateOpen(false)}
           onSaved={(text) => {

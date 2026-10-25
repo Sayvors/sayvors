@@ -153,7 +153,18 @@ export default function Header() {
 
   return (
     <header className="mx-2 mt-2 flex h-14 shrink-0 items-center gap-2 rounded-[20px] border border-ink/[0.06] bg-white px-3 shadow-[0_18px_44px_-34px_rgba(26,18,48,0.45)] sm:px-5 dark:border-white/[0.08] dark:bg-[#1d1636] dark:shadow-none">
-      {/* Where am I. ps-11 clears the floating drawer trigger on phones. */}
+      {/* Mobile hamburger — fixed to the header so it stays visible on scroll. */}
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent("open-nav-drawer"))}
+        aria-label="Open menu"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-ink/[0.08] bg-white text-ink shadow-sm transition hover:bg-fog focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:border-fog/[0.08] dark:bg-ink dark:text-fog md:hidden"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5">
+          <path d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+      </button>
+      {/* Where am I. */}
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 ps-11 md:ps-0">
         {!atRoot && (
           <>
