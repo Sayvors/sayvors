@@ -204,15 +204,27 @@ async def list_connections(
 async def start_connect(
     provider: str,
     request: Request,
+    next_path: str | None = Query(None, alias="next", max_length=200),
     ctx: TenantContext = Depends(require_perm("channels.connect")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create an OAuth transaction; return the provider auth entry."""
+    """Create an OAuth transaction; return the provider auth entry.
+
+    `next` is the in-app path the browser returns to after the provider
+    redirects back. It lets a connect started on an onboarding screen
+    resume there instead of the generic channels page. Only same-app paths
+    are stored; the callback re-validates before using it.
+    """
     origin = _request_origin(request)
+    metadata: dict[str, str] = {}
+    if origin:
+        metadata["frontend_origin"] = origin
+    if next_path and _SAFE_NEXT.fullmatch(next_path):
+        metadata["next"] = next_path
     try:
         return await _service.start_connect(
-            db, tenant_id_of(user), provider, {"frontend_origin": origin} if origin else None
+            db, tenant_id_of(user), provider, metadata or None
         )
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown Meta provider")

@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
-EMBEDSOCIAL_BASE_URL = "https://embedsocial.com/app/api"
+EMBEDSOCIAL_BASE_URL = "https://app.localith.ai/app/api"
 
 
 class EmbedSocialError(RuntimeError):
@@ -56,7 +56,7 @@ def _base_url() -> str:
             from app.config import settings as _s
             url = _s.LOCALITH_BASE_URL
         except Exception:
-            url = "https://embedsocial.com/app/api"
+            url = "https://app.localith.ai/app/api"
     return url
 
 
@@ -78,7 +78,7 @@ def fetch_listings(api_key: str | None = None) -> list[dict]:
     base = _base_url()
     if not base.startswith(("http://", "https://")):
         raise ValueError("LOCALITH_BASE_URL must be http(s)")
-    resp = httpx.get(base, headers={"Authorization": f"Bearer {key}"}, timeout=30)
+    resp = httpx.get(base, headers={"Authorization": f"Bearer {key}"}, timeout=30, follow_redirects=True)
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, list):
@@ -95,7 +95,7 @@ def fetch_items(limit: int = 50, listing_id: str | None = None, api_key: str | N
     params = {"page": 1, "limit": limit}
     if listing_id is not None:
         params["listing_id"] = listing_id
-    resp = httpx.get(url, params=params, headers={"Authorization": f"Bearer {key}"}, timeout=30)
+    resp = httpx.get(url, params=params, headers={"Authorization": f"Bearer {key}"}, timeout=30, follow_redirects=True)
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, list):
@@ -108,7 +108,7 @@ def fetch_listing_detail(listing_id: str, api_key: str | None = None) -> dict:
     key = _api_key(api_key)
     base = _base_url()
     url = base.rstrip("/") + "/rest/v1/listings/" + str(listing_id)
-    resp = httpx.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=30)
+    resp = httpx.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=30, follow_redirects=True)
     resp.raise_for_status()
     return resp.json()
 

@@ -153,6 +153,106 @@ async def test_callback_returns_to_the_origin_that_started_connect(
     assert "callback.example" not in location
 
 
+async def test_connect_records_next_path_and_callback_returns_to_it(
+    client, engine, db, monkeypatch
+):
+    """A connect started from an onboarding screen resumes on that screen.
+
+    The channels page and the per-channel wizard are different routes; without
+    this the OAuth return always dropped the tenant on /dashboard/channels.
+    """
+    tenant = "test-user-0000-0000-0000-000000000001"
+    seen_states: list[str] = []
+
+    class _FakeAdapter:
+        def build_auth_entry(self, state):
+            seen_states.append(state)
+            return {"auth_url": f"https://facebook.com/dialog?state={state}"}
+
+        async def exchange_code(self, code, redirect_uri=None):
+            return {"access_token": "fake-fb-token", "token_type": "bearer"}
+
+        async def discover_assets(self, credentials):
+            return []
+
+    monkeypatch.setattr(_service, "get_adapter", lambda _p: _FakeAdapter())
+
+    resp = client.post(
+        "/api/v1/meta/facebook/connect",
+        params={"next": "/dashboard/channels/facebook/connect"},
+        headers={"host": "any.api.example", "origin": "https://app.example"},
+    )
+    assert resp.status_code == 200
+    row = (await db.execute(
+        select(MetaOAuthTransaction).where(
+            MetaOAuthTransaction.tenant_id == tenant,
+            MetaOAuthTransaction.provider == "facebook",
+        )
+    )).scalar_one()
+    assert row.transaction_metadata.get("next") == "/dashboard/channels/facebook/connect"
+
+    resp = client.get(
+        "/api/v1/meta/facebook/callback",
+        params={"code": "fake-code", "state": seen_states[0]},
+        headers={"host": "callback.example"},
+        follow_redirects=False,
+    )
+    assert resp.status_code in (302, 307)
+    location = resp.headers.get("location", "")
+    assert location.startswith(
+        "https://app.example/dashboard/channels/facebook/connect"
+    )
+    assert "meta_connected=facebook" in location
+
+
+async def test_connect_ignores_off_site_next(client, engine, db, monkeypatch):
+    """`next` must never become an open redirect.
+
+    Only same-app absolute paths are stored; a scheme or host is dropped and
+    the callback falls back to the channels page.
+    """
+    tenant = "test-user-0000-0000-0000-000000000001"
+    seen_states: list[str] = []
+
+    class _FakeAdapter:
+        def build_auth_entry(self, state):
+            seen_states.append(state)
+            return {"auth_url": f"https://facebook.com/dialog?state={state}"}
+
+        async def exchange_code(self, code, redirect_uri=None):
+            return {"access_token": "fake-fb-token", "token_type": "bearer"}
+
+        async def discover_assets(self, credentials):
+            return []
+
+    monkeypatch.setattr(_service, "get_adapter", lambda _p: _FakeAdapter())
+
+    resp = client.post(
+        "/api/v1/meta/facebook/connect",
+        params={"next": "https://evil.example/steal"},
+        headers={"host": "any.api.example", "origin": "https://app.example"},
+    )
+    assert resp.status_code == 200
+    row = (await db.execute(
+        select(MetaOAuthTransaction).where(
+            MetaOAuthTransaction.tenant_id == tenant,
+            MetaOAuthTransaction.provider == "facebook",
+        )
+    )).scalar_one()
+    assert "next" not in (row.transaction_metadata or {})
+
+    resp = client.get(
+        "/api/v1/meta/facebook/callback",
+        params={"code": "fake-code", "state": seen_states[0]},
+        headers={"host": "callback.example"},
+        follow_redirects=False,
+    )
+    assert resp.status_code in (302, 307)
+    location = resp.headers.get("location", "")
+    assert location.startswith("https://app.example/dashboard/channels?")
+    assert "evil.example" not in location
+
+
 async def test_sdk_proxy_serves_and_caches(client, engine, monkeypatch):
     """GET /api/v1/meta/connect-sdk proxies the Meta SDK once, then serves cache."""
     from app.modules.channels.meta import router as _router
