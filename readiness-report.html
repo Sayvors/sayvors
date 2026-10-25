@@ -185,6 +185,7 @@
     <a href="#pass-2026-10-25">Oct 25 pass</a>
     <a href="#campaigns">Campaigns</a>
     <a href="#connection-guides">Guides</a>
+    <a href="#speed">Speed</a>
     <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
@@ -1019,6 +1020,40 @@
     </ul>
   </div>
   <p class="note">Order: WhatsApp first (most-used channel), then Instagram + Facebook (hubs just rebuilt — freshest flows), then GBP after the official-API swap. Rule for every guide: rewrite from the internal doc, screenshot from staging, never ship internal architecture, dev tunnels, or config ids to the public blog.</p>
+</section>
+
+<section id="speed">
+  <div class="eyebrow">§§ 14 · diagnosis — 2026-10-25</div>
+  <h2>“The frontend is sooo heavy” — measured, not guessed</h2>
+  <div class="verdict" style="border-left-color: var(--ok);">
+    <p><strong>Verdict: it is not your system, and it is not the app’s weight. It is the access path.</strong> Three compounding causes, all fixed by habit/config, not by rewriting anything: you are browsing a <strong>dev server</strong> (<code>next dev</code> + Turbopack, HMR client loaded, on-demand compilation) through the <strong>cloudflared tunnel</strong>, and every dashboard API call <strong>rides that same tunnel</strong> — then the hand-rolled data layer refetches everything on every navigation. Measured on <code>/login</code>: <strong>0.10 s locally vs 4.5–6.1 s through the tunnel</strong> — a ~50× tax on first paint, before a single pixel.</p>
+  </div>
+
+  <h3>The measurements</h3>
+  <div class="scroll"><table>
+    <tr><th>What</th><th>Result</th><th>Meaning</th></tr>
+    <tr><td><code>http://localhost:3000/login</code></td><td class="num"><strong>0.10 s</strong>, 43 KB</td><td>The machine and the app are fast. The server is not the problem.</td></tr>
+    <tr><td><code>https://dev-web.sayvors.com/login</code> (tunnel)</td><td class="num"><strong>4.5–6.1 s</strong> — dns 0.50 s, TLS <strong>2.9 s</strong>, TTFB 4.7 s</td><td>~50× tax on every cold navigation, paid before any content. Second fetch still 4.5 s — nothing caches.</td></tr>
+    <tr><td>Served HTML assets</td><td class="path">turbopack…browser_dev_hmr-client…js</td><td>The :3000 process is <code>next dev</code> in dev mode — unminified chunks, HMR overhead, per-route on-demand compilation, no immutable caching. A production build from today (<code>BUILD_ID vdXqXK…</code>) sits unused on disk.</td></tr>
+    <tr><td>Client JS bundle</td><td class="num">2.5 MB across all routes; largest chunk 228 KB</td><td><strong>The bundle is genuinely small.</strong> App weight is not the issue.</td></tr>
+    <tr><td><code>NEXT_PUBLIC_API_URL</code></td><td class="path">apps/web/.env.local → https://dev-web.sayvors.com</td><td>Intentional (same-origin cookies for CSRF; next.config rewrites <code>/api/*</code> → <code>localhost:8000</code>) — but it means every dashboard data call also pays the tunnel tax, and the current data layer refetches on every navigation.</td></tr>
+    <tr><td>Dead weight</td><td class="path">public/aitools.png, agents.png, channels.png — 1.5–1.6 MB each, referenced nowhere</td><td>Irrelevant to speed today, but 4.6 MB of repo fat — delete or recompress.</td></tr>
+  </table></div>
+
+  <h3>The fix list — fastest first</h3>
+  <div class="scroll"><table>
+    <tr><th>Fix</th><th>Kind</th><th>Effect</th><th>Notes</th></tr>
+    <tr><td><strong>Browse <code>http://localhost:3000</code></strong> for daily use. Tunnels exist for Meta/Google webhooks and OAuth callbacks — not for human eyes.</td><td><span class="chip med">Infra</span> (habit)</td><td class="num"><strong>~50× first paint</strong></td><td>Free, today, zero code.</td></tr>
+    <tr><td><strong>Serve the production build when using the product</strong>: <code>npm run build &amp;&amp; npx next start -p 3002</code> and browse that. Dev mode is for writing code, not for sitting in the dashboard.</td><td><span class="chip med">Infra</span></td><td class="num">Minified chunks + immutable caching</td><td>The build already exists — one command.</td></tr>
+    <tr><td><strong>If a tunnel must be browsed, never point it at <code>next dev</code></strong> — tunnel ingress goes to <code>next start</code>, and keep-alive does the rest.</td><td><span class="chip med">Infra</span></td><td class="num">Removes HMR + compile stalls on the slow path</td><td>Rule for cloudflared config.</td></tr>
+    <tr><td><strong>Real demos and daily staging use → Vercel staging</strong> (already configured to deploy there). CDN-cached, zero tunnel tax.</td><td><span class="chip med">Infra</span></td><td class="num">Fast everywhere, not just on the laptop</td><td>The tunnel stays developer-only.</td></tr>
+    <tr><td><strong>TanStack Query migration</strong> — kills the refetch-on-every-navigation storm.</td><td><span class="chip code">Code</span></td><td class="num">High-latency path stops re-downloading data per click</td><td>Already §§4 row; the tunnel diagnosis is why it matters <em>now</em>. 1–2 wks.</td></tr>
+    <tr><td><strong>Gate the 45 s bell poll to the visible tab</strong> (or stop when <code>document.hidden</code>).</td><td><span class="chip code">Code</span></td><td class="num">N background tabs stop polling</td><td>One-line effect listener; part of the data-layer work.</td></tr>
+    <tr><td><strong><code>next/image</code> for the 18 raw <code>&lt;img&gt;</code> files; delete or recompress the three unused 1.5 MB PNGs.</strong></td><td><span class="chip code">Code</span></td><td class="num">Smaller transfer, no layout shift</td><td>Mechanical, half a day.</td></tr>
+    <tr><td><strong>List virtualization</strong> for inbox/leads/reviews lists; WS buffer cap.</td><td><span class="chip code">Code</span></td><td class="num">Runtime smoothness with thousands of rows</td><td>Already §§4; this is runtime feel, not load time.</td></tr>
+  </table></div>
+
+  <p class="note">Method: curl timing (<code>time_total</code>, <code>time_appconnect</code>, <code>time_starttransfer</code>) on localhost vs the tunnel, served-HTML asset inspection (dev HMR chunks vs on-disk <code>BUILD_ID</code>), <code>du</code> on <code>.next/static</code> and <code>public/</code>, <code>next.config.ts</code> rewrites, <code>.env.local</code> API URL. Not measured: your ISP’s RTT to the Cloudflare PoP (the 2.9 s TLS suggests a far edge) — if browsing via tunnel ever becomes unavoidable, that is what Argo Smart Routing would buy, but the honest answer is: don’t browse through tunnels.</p>
 </section>
 
 <footer>
