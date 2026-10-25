@@ -179,9 +179,10 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn">3 open · 21 resolved · billing new</span>
+  <span class="chip warn">3 open · 6 new · 21 resolved · billing new</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
+    <a href="#pass-2026-10-25">Oct 25 pass</a>
     <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
@@ -202,6 +203,7 @@
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), OPS-4 (prod host + SHA-pinned deploys)</div></div>
   <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix implemented, DB ledger + entitlements open (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1562+</div><div class="l">backend tests passing locally - CI gates every staging deploy on them</div></div>
+  <div class="stat"><div class="n amber">6</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings INS-1…INS-6: two code one-liners, the rest infra and housekeeping</div></div>
 </div>
 
 <section id="model">
@@ -725,8 +727,107 @@
 </section>
 
 
+<section id="pass-2026-10-25">
+  <div class="eyebrow">§§ 11 · inspection pass — 2026-10-25</div>
+  <h2>Oct 25 pass — re-verification and the INS ledger</h2>
+  <p>A full re-inspection (config, database, migrations, auth, CI, compose files, frontend deps, admin) to re-verify the ledger above and hunt for anything the four original audits missed. <strong>The ledger holds</strong> — every “Fixed” claim spot-checked is real in the working tree. Six new findings, none critical: two one-line code fixes, two small infra hardenings, one context item, one housekeeping pass.</p>
+
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Sev</th><th>Kind</th><th>Finding</th><th>Evidence</th><th>Fix</th><th>Effort</th></tr>
+    <tr>
+      <td class="num">INS-1</td><td><span class="chip med">Med</span></td><td><span class="chip code">Code</span></td>
+      <td><strong>Admin audit middleware is stacked twice — every admin action writes two identical <code>admin_audit_logs</code> rows.</strong> The audit trail shipped in 04ee433 has been double-counting since it landed; counts, filters and “who did what” views over it are wrong. The middleware writes its row unconditionally, so both copies insert.</td>
+      <td class="path">services/api/app/main.py:443-444</td>
+      <td>Delete one of the two <code>app.add_middleware(AdminAuditMiddleware)</code> lines. One line.</td>
+      <td class="num">2 min</td>
+    </tr>
+    <tr>
+      <td class="num">INS-2</td><td><span class="chip med">Med</span></td><td><span class="chip code">Code</span></td>
+      <td><strong>A failed audit write is invisible.</strong> The audit middleware is best-effort by design, but its failure branch logs at <code>debug</code> — at default log levels a silently dead audit trail is indistinguishable from a working one. Exactly the “no silent failure” class the repo rules forbid.</td>
+      <td class="path">services/api/app/main.py:270-271</td>
+      <td><code>logger.debug</code> → <code>logger.warning</code>, and include the request path (and operator, if resolved) in the message.</td>
+      <td class="num">5 min</td>
+    </tr>
+    <tr>
+      <td class="num">INS-3</td><td><span class="chip med">Med</span></td><td><span class="chip med">Infra</span></td>
+      <td><strong>The edge proxies everything — <code>/metrics</code> is publicly reachable and there is no HSTS header.</strong> Caddy forwards the whole origin to the API, so queue depths, dependency names and request counters are readable by anyone, and browsers are never told to enforce HTTPS on this origin.</td>
+      <td class="path">deploy/Caddyfile</td>
+      <td>Apply the drop-in Caddyfile below: 403 <code>/metrics</code> at the edge + HSTS. Keep <code>/readyz</code> reachable — the external uptime monitor (J-8) needs it, and it discloses only up/down.</td>
+      <td class="num">15 min</td>
+    </tr>
+    <tr>
+      <td class="num">INS-4</td><td><span class="chip med">Med</span></td><td><span class="chip med">Infra</span></td>
+      <td><strong>Prometheus UI is published on <code>0.0.0.0:9090</code> in the prod compose</strong> — a public, unauthenticated page that exposes targets, scrape health and build info. The dev compose already binds redis/kafka to loopback; prod prometheus did not get the same treatment.</td>
+      <td class="path">docker-compose.prod.yml:160-161</td>
+      <td><code>"9090:9090"</code> → <code>"127.0.0.1:9090:9090"</code>. If a hosted Grafana needs remote scrape, run a grafana-agent container in-compose instead of exposing the UI.</td>
+      <td class="num">2 min</td>
+    </tr>
+    <tr>
+      <td class="num">INS-5</td><td><span class="chip med">Ctx</span></td><td><span class="chip med">Infra</span></td>
+      <td><strong>The box is structurally overcommitted.</strong> Sum of <code>mem_limit</code> on the t3.small: caddy 128 + api 768 + worker 384 + redis 192 + kafka 640 + prometheus 256 ≈ <strong>2.4 GB on a 2 GB machine</strong>. It works because not every container hits its ceiling at once — but any spike or backup job can tip the OOM killer, and on this box one kill takes auth (Redis fail-closed), messaging and ingestion together.</td>
+      <td class="path">docker-compose.prod.yml (all mem_limit lines)</td>
+      <td>Nothing to patch in the file — this is the second-box decision in the fix queue below (row 9). Recorded so the t3.small’s random 3 a.m. restarts have a name.</td>
+      <td class="num">—</td>
+    </tr>
+    <tr>
+      <td class="num">INS-6</td><td><span class="chip med">Med</span></td><td><span class="chip code">Code</span></td>
+      <td><strong>Working-tree and docs hygiene.</strong> (a) 12 files of uncommitted WIP sit in the tree: the multilingual question→evidence fix in <code>review_engine/strategies.py</code>, admin/web UI tweaks, checklist edits. (b) Five superseded 2026-09-06 audit docs remain at the root (SECURITY-AUDIT.md, FIXES-NEEDED.md, DEEP-SCAN-REPORT.md, FIX-PLAN-SCALE.md, PENDING-QUEUE.md) and contradict this ledger. (c) Empty skeleton dirs (<code>gateway/</code>, <code>infrastructure/</code>, <code>packages/</code>, <code>apps/landing</code>, <code>apps/mobile</code>) and a marked spike (<code>integrations/channels/embedsocial.py</code>) invite re-work of dead items.</td>
+      <td class="path">git status; repo root</td>
+      <td>Review + commit the WIP; move the five stale docs into <code>docs/tracking/source-files/</code> (or delete); drop the skeleton dirs and the spike.</td>
+      <td class="num">30 min</td>
+    </tr>
+  </table></div>
+
+  <h3>INS-3 fix — hardened Caddyfile (drop-in)</h3>
+  <pre style="background:var(--sunken);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;font-size:12.5px;line-height:1.55;margin:6px 0 4px;">api.staging.sayvors.com {
+	@blocked path /metrics
+	respond @blocked 403
+	header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+	reverse_proxy api:8000
+}</pre>
+  <p class="note">Caddy already handles the HTTP→HTTPS redirect and TLS 1.2+; this adds the two things it does not do by itself. Repeat the <code>@blocked</code> + <code>header</code> lines on the production host block when it exists.</p>
+
+  <h3>The fix queue — code / infra / buy, in order</h3>
+  <p class="note">How to read the kind chips: <span class="chip buy">Buy</span> = spend money / provision a managed thing, <span class="chip med">Infra</span> = config or topology work (no product code), <span class="chip code">Code</span> = engineering. Total new spend for rows 1–11: roughly <strong>$70–210/month</strong>.</p>
+  <div class="scroll"><table>
+    <tr><th>When</th><th>Item</th><th>Kind</th><th>Why / notes</th></tr>
+    <tr><td class="num">Week 1</td><td><strong>Verify RDS PITR is on, retention ≥ 7 days, alarms on connections/disk — then rehearse one real restore into a scratch DB.</strong> The single scariest open item (OPS-1): everything else on this page is recoverable; an un-rehearsed backup is not a backup.</td><td><span class="chip buy">Buy</span></td><td>AWS console + one rehearsal. Two migration incidents already happened. ~1 day, ~$0.</td></tr>
+    <tr><td class="num">Week 1</td><td><strong>Set <code>S3_DOCS_BUCKET</code> + <code>S3_MEDIA_BUCKET</code></strong> — uploads leave the box’s local Docker volume.</td><td><span class="chip buy">Buy</span></td><td>~$5/mo. The storage backends are already coded; this is env + redeploy. Box loss today = customer document loss.</td></tr>
+    <tr><td class="num">Week 1</td><td><strong>INS-1 + INS-2</strong> — delete the duplicate audit middleware, raise the audit-failure log level.</td><td><span class="chip code">Code</span></td><td>15 minutes total; fixes the audit trail that shipped three commits ago.</td></tr>
+    <tr><td class="num">Week 1</td><td><strong>INS-6</strong> — review and commit the 12-file WIP; archive the five stale root docs; drop skeleton dirs and the embedsocial spike.</td><td><span class="chip code">Code</span></td><td>Stale ledgers make agents and humans re-do dead work. 30 minutes.</td></tr>
+    <tr><td class="num">Prod-host wk</td><td><strong>Stand up the production host</strong>: Caddy + secrets + startup validator (redirect URIs, FRONTEND_URL, CORS). Apply INS-3 hardening while there.</td><td><span class="chip med">Infra</span></td><td>OPS-4 remainder. There is no production deployment to harden until this exists. ~½–1 day.</td></tr>
+    <tr><td class="num">Prod-host wk</td><td><strong>Pin deploy images to commit-SHA/digest tags</strong>, not the mutable <code>:staging</code> tag.</td><td><span class="chip med">Infra</span></td><td>Rollback needs a known-good image; a mutable tag can be silently overwritten. ~½ day (CI + compose).</td></tr>
+    <tr><td class="num">Prod-host wk</td><td><strong>External uptime monitor on <code>/readyz</code></strong> (UptimeRobot / Better Stack).</td><td><span class="chip buy">Buy</span></td><td>$0 tier is fine. Until this exists, the box cannot tell anyone it is down.</td></tr>
+    <tr><td class="num">Prod-host wk</td><td><strong>Prometheus scrape → Grafana Cloud (or CloudWatch) dashboards; Redis memory alarm</strong> at <code>used_memory &gt; 100 MB</code>.</td><td><span class="chip buy">Buy</span> <span class="chip med">Infra</span></td><td>$0–40/mo. <code>/metrics</code> and <code>deploy/prometheus.yml</code> exist; nothing consumes them yet. Apply INS-4 (loopback bind) in the same change.</td></tr>
+    <tr><td class="num">Growth</td><td><strong>Second box behind Caddy/DNS — or ECS/Fly/Render</strong> to retire hand-SSH deploys for good.</td><td><span class="chip buy">Buy</span></td><td>$30–60/mo. Retires INS-5 (2.4 GB of mem_limits on a 2 GB box) and the one-OOM-kills-everything failure mode. Job claims are <code>FOR UPDATE SKIP LOCKED</code>, so replicas are already safe to fan out.</td></tr>
+    <tr><td class="num">Growth</td><td><strong>Redis: AOF on, 1–2 GB, memory alarm → ElastiCache multi-AZ</strong> when spend allows. Plus the <code>mark_redis_available()</code> background prober (still zero callers).</td><td><span class="chip med">Infra</span> → <span class="chip buy">Buy</span> <span class="chip code">+ Code</span></td><td>$30–80/mo. Redis is authentication infrastructure (rate limits, JWT blacklist, sessions, OTPs) and fails closed — a blip logs everyone out. All its keys already have TTLs (production-later.md table), so restarts are survivable today; HA removes the outage window.</td></tr>
+    <tr><td class="num">Growth</td><td><strong>PgBouncer in front of RDS; add the read replica and set <code>DATABASE_READER_URL</code></strong> so analytics reads leave the primary.</td><td><span class="chip med">Infra</span></td><td>Writer/reader routing is already coded and env-gated (<code>get_db</code> / <code>get_db_read</code>); this is provisioning + an env flip. The binding constraint at 30–50k tenants is connections, not CPU.</td></tr>
+    <tr><td class="num">Growth</td><td><strong>Billing ledger cutover</strong>: migration <code>i4j5k6l7m8n9</code> → <code>scripts/backfill_credit_ledger.py</code> dry-run → review every UNRELIABLE tenant → <code>--apply</code>, deploy the credit-hold reaper.</td><td><span class="chip code">Code</span></td><td>½ day. The durable ledger is built and tested; this switches the money path onto it. Runbook: <code>docs/operations/credit-ledger-runbook.md</code>.</td></tr>
+    <tr><td class="num">Growth</td><td><strong>Phase 4 tests</strong>: k6 peak-hour profile at 10× current traffic; chaos test (kill a worker mid-job → lease reclaim, no duplicate external calls); multi-replica test (2+ API + 2+ workers, no double-processing).</td><td><span class="chip code">Code</span></td><td>k6 is free. Turns “1M-ready” from claim to measurement — every load number on this page is currently an estimate.</td></tr>
+    <tr><td class="num">Growth</td><td><strong>pgvector extension on prod RDS + run the chunk backfill script.</strong></td><td><span class="chip med">Infra</span></td><td>Without it, staging/prod RAG silently degrades to keyword-only. The code path fails loudly at boot in production mode — do it before the prod host stands up.</td></tr>
+    <tr><td class="num">Parallel</td><td><strong>Plans / subscriptions / entitlements</strong>: plans-as-data tables, <code>activate_subscription</code>, entitlements service, limit enforcement (Google locations, social accounts), downgrade-read-only, customer + admin UI.</td><td><span class="chip code">Code</span></td><td>The durable ledger is done; this is the next build. Design fully specified in §§6b, acceptance criteria included.</td></tr>
+    <tr><td class="num">Parallel</td><td><strong>Payment processor decision</strong> (Stripe / PayTabs / Moyasar / Tap — country, mada, Apple Pay, fees), then the webhook adapter.</td><td><span class="chip buy">Buy</span> → <span class="chip code">Code</span></td><td>Only the adapter is provider-specific; the whole flow is already built against the dev stub in <code>billing/providers.py</code>.</td></tr>
+    <tr><td class="num">Parallel</td><td><strong>Start the official Google Business Profile API approval</strong> and plan the Localith exit.</td><td><span class="chip buy">Buy</span> <span class="chip code">+ Code</span></td><td>Localith is a confirmed temporary integration (2026-10-25). Google’s approval has lead time — start it before it blocks the roadmap. Keep the sync boundary swappable; limit enforcement already touches both <code>localith/router.py</code> and the native OAuth callback.</td></tr>
+    <tr><td class="num">Parallel</td><td><strong>Frontend data layer</strong>: TanStack Query migration, list virtualization, WS buffer cap, web-vitals; a frontend test harness; ESLint beyond 8 files.</td><td><span class="chip code">Code</span></td><td>The 45s-per-tab notification poll alone is ~22k QPS of pure baseline at 1M DAU, and no load test covers the browser. Sub-task list in §§4. 1–2 wks.</td></tr>
+  </table></div>
+
+  <div class="card good">
+    <h3>Verified this pass — the ledger claims are real</h3>
+    <ul>
+      <li><strong>Fail-fast config gate.</strong> Default JWT secret exits the process at import; production mode rejects localhost CORS/redirect URIs, wildcard hosts, missing admin hash, open email relay, and private-host RAG — <code>config.py:286-335</code>.</li>
+      <li><strong>Database layer.</strong> Pool 5+5 with pre-ping and recycle, 30s statement / 60s idle-in-tx / 5s lock timeouts on both engines, boot-time headroom check against <code>max_connections</code>, writer/reader engines ready for a replica — <code>database.py</code>.</li>
+      <li><strong>Migrations.</strong> <code>alembic heads</code> → single head <code>b6c7d8e9f0a1</code> across 115 revisions; the 2026-10-13 fork is properly merged; CI checks single-head and runs a migration guard on every PR.</li>
+      <li><strong>CI.</strong> pytest against a real pgvector Postgres + Redis (109 test files in tree), tsc for web and admin, eslint — and the deploy’s ci-gate refuses to build until they pass.</li>
+      <li><strong>Auth.</strong> <code>AUTH_RATE_LIMIT_FAIL_CLOSED</code> honored in the limiter; cookies default Secure/SameSite=None with shared-domain support; CSRF + TrustedHost middlewares wired; admin lockout + httpOnly cookie.</li>
+      <li><strong>Hygiene.</strong> <code>.env</code> / <code>.env.prod</code> gitignored (only <code>*.env.example</code> tracked); <code>@sentry/nextjs</code> present in apps/web.</li>
+      <li><strong>Confirmed open, exactly as the ledger says:</strong> no TanStack Query, no list virtualization, no frontend test runner in <code>apps/web</code>; ESLint covers 8 files; the admin app has no error tracking.</li>
+    </ul>
+  </div>
+  <p class="note">Not verified by this pass (same limits as the original audit): the RDS console state (PITR, instance class, max_connections), real traffic numbers, Vercel plan limits, Meta rate-limit headroom. Load figures remain estimates until the k6 run.</p>
+</section>
+
 <footer>
-  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. Security findings SEC-C1 through SEC-M10 and scale findings SCALE-1 through SCALE-6 are the actionable ledger; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-21; implementation details live in <code>docs/security/</code>.
+  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. Security findings SEC-C1 through SEC-M10 and scale findings SCALE-1 through SCALE-6 are the actionable ledger; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-21; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree.
 </footer>
 
 </div>
