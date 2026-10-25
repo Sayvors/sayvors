@@ -31,6 +31,7 @@ from .modules.rag.router import router as rag_router
 from .modules.analytics.router import router as analytics_router
 from .modules.analytics.abuse_router import router as analytics_abuse_router
 from .modules.profile.router import router as profile_router
+from .modules.onboarding.router import router as onboarding_router
 from .modules.localith.router import router as localith_router
 from .modules.locations.router import router as locations_router
 from .modules.posts.router import router as posts_router
@@ -482,6 +483,7 @@ app.include_router(redis_router)
 app.include_router(kafka_router)
 app.include_router(rag_router)
 app.include_router(profile_router)
+app.include_router(onboarding_router)
 app.include_router(localith_router)
 app.include_router(locations_router)
 app.include_router(posts_router)

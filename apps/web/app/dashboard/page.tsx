@@ -1122,16 +1122,36 @@ function writeChecklist(next: Record<string, boolean>) {
   checklistListeners.forEach((listener) => listener());
 }
 
+/**
+ * Persist the checklist to the account so "show / hide" and per-step progress
+ * survive a new device or a cleared browser. localStorage stays the fast local
+ * mirror; a failed write never blocks the UI.
+ */
+function persistOnboarding(patch: {
+  dismissed?: boolean;
+  open?: boolean;
+  steps?: Record<string, boolean>;
+}) {
+  void apiFetch("/api/v1/onboarding", {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  }).catch(() => {
+    /* offline / older backend — the local mirror still has the state */
+  });
+}
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const { dir, t } = useI18n();
   const done = useSyncExternalStore(subscribeChecklist, readChecklist, getServerChecklist);
 
-  // Auto-complete the "connect a channel" step when a channel is already
-  // connected, so the launch checklist reflects reality instead of asking a
-  // tenant who has already connected to do it again. Hidden automatically once
-  // every step is done.
+  // A tenant who already connected a channel has finished the launch step
+  // that this widget exists to drive — so the whole "Start here" block is
+  // hidden, not merely marked done. Any of the three connection sources counts:
+  // Google reviews channels, Localith listings, Meta (WhatsApp/FB/Instagram).
   const [hasConnectedChannel, setHasConnectedChannel] = useState(false);
+  // False until the probe answers; keeps the widget from flashing in and out.
+  const [connectionChecked, setConnectionChecked] = useState(false);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -1145,9 +1165,11 @@ export default function DashboardPage() {
         const googleOk = Array.isArray(ch?.channels) ? ch.channels.length > 0 : false;
         const localithOk = Array.isArray(lc) ? lc.length > 0 : false;
         const metaOk = Array.isArray(mc?.connections) ? mc.connections.length > 0 : false;
-        if (googleOk || localithOk || metaOk) setHasConnectedChannel(true);
+        setHasConnectedChannel(googleOk || localithOk || metaOk);
       } catch {
         /* leave the checklist as the user left it */
+      } finally {
+        if (!cancelled) setConnectionChecked(true);
       }
     })();
     return () => {
@@ -1163,7 +1185,9 @@ export default function DashboardPage() {
 
   const toggleItem = useCallback((id: string) => {
     const current = readChecklist();
-    writeChecklist({ ...current, [id]: !current[id] });
+    const next = { ...current, [id]: !current[id] };
+    writeChecklist(next);
+    persistOnboarding({ steps: { [id]: next[id] } });
   }, []);
 
   const completed = checklistItems.filter((i) => effectiveDone[i.id]).length;
@@ -1185,8 +1209,12 @@ export default function DashboardPage() {
       /* storage unavailable */
     }
     setDismissed(true);
+    persistOnboarding({ dismissed: true });
   }, []);
-  const showChecklist = !allDone || !dismissed;
+  // "Dismissed" is the DB-persisted show/hide switch; a tenant with any
+  // connected channel has already done the launch step, so the block is hidden
+  // for them too. Both checks run before the first paint of the widget.
+  const showChecklist = connectionChecked && !dismissed && !hasConnectedChannel;
   const [checklistOpen, setChecklistOpen] = useState(() => {
     try {
       return typeof window === "undefined" || window.localStorage.getItem("sayvors.onboarding.checklist.open") !== "0";
@@ -1202,7 +1230,49 @@ export default function DashboardPage() {
       /* storage unavailable */
     }
     setChecklistOpen(next);
+    persistOnboarding({ open: next });
   }, [checklistOpen]);
+
+  // DB is the source of truth for "show / hide" and step progress: hydrate the
+  // local mirror once on mount so a new device (or a cleared browser) shows the
+  // same checklist state the tenant already decided on.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const state = await apiFetch("/api/v1/onboarding");
+        if (cancelled || !state) return;
+        try {
+          if (typeof state.dismissed === "boolean") {
+            window.localStorage.setItem(
+              "sayvors.onboarding.checklist.dismissed",
+              state.dismissed ? "1" : "0",
+            );
+            setDismissed(state.dismissed);
+          }
+          if (typeof state.open === "boolean") {
+            window.localStorage.setItem(
+              "sayvors.onboarding.checklist.open",
+              state.open ? "1" : "0",
+            );
+            setChecklistOpen(state.open);
+          }
+          if (state.steps && typeof state.steps === "object") {
+            const merged = { ...readChecklist(), ...state.steps };
+            window.localStorage.setItem(CHECKLIST_KEY, JSON.stringify(merged));
+            checklistListeners.forEach((listener) => listener());
+          }
+        } catch {
+          /* storage unavailable — the server state still governs next load */
+        }
+      } catch {
+        /* offline / older backend — the local mirror remains authoritative */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-5 bg-[#f3f0ff] dark:bg-[#14101f]">
@@ -1245,14 +1315,13 @@ export default function DashboardPage() {
                 <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
-            {allDone && (
-              <button
-                onClick={dismissChecklist}
-                className="shrink-0 rounded-[2px] px-2 py-1 text-[12px] font-semibold text-ink/40 dark:text-fog/40 transition hover:bg-ink/[0.04] dark:hover:bg-fog/[0.04] hover:text-ink dark:hover:text-fog"
-              >
-                {t.dashboard.start.dismiss}
-              </button>
-            )}
+            <button
+              onClick={dismissChecklist}
+              title="Hide this checklist (saved to your account)"
+              className="shrink-0 rounded-[2px] px-2 py-1 text-[12px] font-semibold text-ink/40 dark:text-fog/40 transition hover:bg-ink/[0.04] dark:hover:bg-fog/[0.04] hover:text-ink dark:hover:text-fog"
+            >
+              {t.dashboard.start.dismiss}
+            </button>
           </div>
 
           {checklistOpen && (
@@ -1269,6 +1338,9 @@ export default function DashboardPage() {
             {checklistItems.map((item, index) => {
               const isDone = !!effectiveDone[item.id];
               const isNext = nextItem?.id === item.id;
+              // "Connect a channel" is derived from real data, not a manual
+              // toggle — a connected tenant must not be able to "reopen" it.
+              const isAutoDone = hasConnectedChannel && item.id === "channel";
               return (
                 <li
                   key={item.id}
@@ -1318,6 +1390,7 @@ export default function DashboardPage() {
                     </Link>
                   ) : (
                     <div className="flex shrink-0 items-center gap-1">
+                      {!isAutoDone && (
                       <button
                         onClick={() => toggleItem(item.id)}
                         aria-label={isDone ? t.dashboard.start.reopenStep.replace("{label}", item.label) : t.dashboard.start.markDone.replace("{label}", item.label)}
@@ -1328,6 +1401,7 @@ export default function DashboardPage() {
                       >
                         {isDone ? t.dashboard.start.reopen : t.dashboard.start.skip}
                       </button>
+                      )}
                       <Link
                         href={item.href}
                         aria-label={t.dashboard.start.openStep.replace("{label}", item.label)}

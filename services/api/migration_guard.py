@@ -266,9 +266,12 @@ _ALTER_TABLE = re.compile(
 
 # ``CREATE TABLE ... (...)`` in raw SQL (op.execute). Captures the table
 # name and the parenthesized column list so individual columns can be
-# extracted by ``_RAW_COLUMN``.
+# extracted by ``_RAW_COLUMN``. The body is non-greedy: one migration file
+# may hold several CREATE TABLE statements, and a greedy ``.*`` swallowed
+# every later table into the first one (so the later tables read as having
+# no migrated columns at all).
 _CREATE_TABLE_RAW = re.compile(
-    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?['\"]?(?P<table>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*\((?P<body>.*)\)\s*['\"]",
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?['\"]?(?P<table>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*\((?P<body>.*?)\)\s*['\"]",
     re.S | re.I,
 )
 

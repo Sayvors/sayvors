@@ -4,11 +4,13 @@ POST   /api/v1/admin/login   exchange the admin password for a short token
 GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
+from datetime import datetime
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ...core.deps import get_db, require_admin
@@ -110,33 +112,51 @@ async def _admin_locked_out() -> bool:
         return False
 
 
-async def _has_any_operator() -> bool:
+async def _has_any_operator(db: AsyncSession | None = None) -> bool:
+    """Whether any operator account exists.
+
+    Uses the request session when one is available, so the admin endpoints
+    honour the app's dependency injection (and the test overrides) instead of
+    opening a second, unrelated connection.
+    """
     try:
         from sqlalchemy import func, select
 
-        from ...database import async_session
         from .models import PlatformOperator
 
-        async with async_session() as db:
-            count = (await db.execute(select(func.count()).select_from(PlatformOperator))).scalar() or 0
-            return count > 0
+        if db is None:
+            from ...database import async_session
+
+            async with async_session() as session:
+                count = (
+                    await session.execute(select(func.count()).select_from(PlatformOperator))
+                ).scalar() or 0
+                return count > 0
+        count = (
+            await db.execute(select(func.count()).select_from(PlatformOperator))
+        ).scalar() or 0
+        return count > 0
     except Exception:
         return False
 
 
 @router.post("/login", response_model=AdminLoginResponse)
-async def admin_login(body: AdminLoginRequest, request: Request, response: Response):
+async def admin_login(
+    body: AdminLoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     from datetime import datetime, timedelta, timezone
 
     from sqlalchemy import select
 
-    from ...database import async_session
     from .models import PlatformOperator, AdminAuditLog
 
     ip = get_client_ip(request)
     # If no operators exist and no legacy password is configured, admin is
     # not set up at all.
-    if not (await _has_any_operator()) and not settings.ADMIN_PASSWORD_HASH:
+    if not (await _has_any_operator(db)) and not settings.ADMIN_PASSWORD_HASH:
         raise HTTPException(status_code=503, detail="Admin access is not configured.")
     if not settings.TESTING:
         if not await rate_limit(f"admin-login:{ip}", 5, 300):
@@ -145,30 +165,28 @@ async def admin_login(body: AdminLoginRequest, request: Request, response: Respo
         logger.error("Admin login globally locked out (repeated failures), ip=%s", ip)
         raise HTTPException(status_code=429, detail="Admin access temporarily locked. Try again later.")
 
-    async with async_session() as db:
-        row = (
-            await db.execute(
-                select(PlatformOperator).where(PlatformOperator.username == body.username)
-            )
-        ).scalar_one_or_none()
+    row = (
+        await db.execute(
+            select(PlatformOperator).where(PlatformOperator.username == body.username)
+        )
+    ).scalar_one_or_none()
 
     # Backward-compat bootstrap: if no operators exist yet, fall back to the
     # legacy shared password (username "admin").
-    if row is None and not (await _has_any_operator()) and settings.ADMIN_PASSWORD_HASH and body.username == "admin":
+    if row is None and not (await _has_any_operator(db)) and settings.ADMIN_PASSWORD_HASH and body.username == "admin":
         if verify_password(body.password, settings.ADMIN_PASSWORD_HASH):
             import uuid as _uuid
 
-            async with async_session() as db:
-                row = PlatformOperator(
-                    id=str(_uuid.uuid4()),
-                    username="admin",
-                    password_hash=settings.ADMIN_PASSWORD_HASH,
-                    role="superadmin",
-                    is_active=True,
-                )
-                db.add(row)
-                await db.commit()
-                await db.refresh(row)
+            row = PlatformOperator(
+                id=str(_uuid.uuid4()),
+                username="admin",
+                password_hash=settings.ADMIN_PASSWORD_HASH,
+                role="superadmin",
+                is_active=True,
+            )
+            db.add(row)
+            await db.commit()
+            await db.refresh(row)
             logger.warning("Bootstrapped legacy 'admin' operator from ADMIN_PASSWORD_HASH.")
 
     if row is None or not row.is_active:
@@ -179,24 +197,22 @@ async def admin_login(body: AdminLoginRequest, request: Request, response: Respo
     if row.locked_until is not None and row.locked_until > now:
         raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account is locked. Try again later.")
     if not verify_password(body.password, row.password_hash):
-        async with async_session() as db:
-            r = await db.get(PlatformOperator, row.id)
-            if r is not None:
-                r.failed_login_count = (r.failed_login_count or 0) + 1
-                if r.failed_login_count >= settings.ADMIN_MAX_CONSECUTIVE_FAILURES:
-                    r.locked_until = now + timedelta(minutes=15)
-                await db.commit()
+        r = await db.get(PlatformOperator, row.id)
+        if r is not None:
+            r.failed_login_count = (r.failed_login_count or 0) + 1
+            if r.failed_login_count >= settings.ADMIN_MAX_CONSECUTIVE_FAILURES:
+                r.locked_until = now + timedelta(minutes=15)
+            await db.commit()
         failures = await _register_admin_failure()
         logger.warning("Failed admin login for operator %s from %s (global failures=%d)", body.username, ip, failures)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong credentials.")
 
-    async with async_session() as db:
-        r = await db.get(PlatformOperator, row.id)
-        if r is not None:
-            r.failed_login_count = 0
-            r.locked_until = None
-            r.last_login_at = now
-            await db.commit()
+    r = await db.get(PlatformOperator, row.id)
+    if r is not None:
+        r.failed_login_count = 0
+        r.locked_until = None
+        r.last_login_at = now
+        await db.commit()
 
     try:
         from ..redis.client import get_redis
@@ -220,20 +236,20 @@ async def admin_login(body: AdminLoginRequest, request: Request, response: Respo
         path="/api/v1/admin",
     )
     try:
-        async with async_session() as db:
-            db.add(AdminAuditLog(
-                operator_id=row.id,
-                operator_username=row.username,
-                action="login",
-                method="POST",
-                path="/api/v1/admin/login",
-                status_code=200,
-                ip=ip,
-                user_agent=request.headers.get("user-agent"),
-            ))
-            await db.commit()
+        db.add(AdminAuditLog(
+            operator_id=row.id,
+            operator_username=row.username,
+            action="login",
+            method="POST",
+            path="/api/v1/admin/login",
+            status_code=200,
+            ip=ip,
+            user_agent=request.headers.get("user-agent"),
+        ))
+        await db.commit()
     except Exception as e:
         logger.warning("Audit log write failed: %s", e)
+        await db.rollback()
     return AdminLoginResponse(expires_in_minutes=settings.ADMIN_SESSION_MINUTES)
 
 

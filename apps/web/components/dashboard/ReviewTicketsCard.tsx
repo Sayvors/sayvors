@@ -38,8 +38,19 @@ export default function ReviewTicketsCard() {
     waiting: 0,
     resolved: 0,
   });
-  const [showAll, setShowAll] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // A card the merchant checks every day; collapsing it keeps the dashboard
+  // scannable without losing the queue counts (shown in the collapsed header).
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return (
+        typeof window !== "undefined" &&
+        window.localStorage.getItem("sayvors.dashboard.reviewTickets.collapsed") === "1"
+      );
+    } catch {
+      return false;
+    }
+  });
   const [error, setError] = useState<string | null>(null);
 
   // `silent` refreshes keep the card mounted: this sits on the dashboard
@@ -115,15 +126,51 @@ export default function ReviewTicketsCard() {
       className="rounded-[2px] border border-ink/[0.08] bg-white p-4 shadow-sm shadow-ink/[0.04] dark:border-fog/[0.08] dark:bg-[#1d1636] dark:shadow-none"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-[14px] font-bold tracking-wide text-ink dark:text-fog">
-            Review tickets
-          </h2>
-          <p className="mt-0.5 max-w-2xl text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">
-            Customer complaints classified from Google reviews that need action, with
-            WhatsApp handoff for the ones needing care. Praise and neutral reviews are not tickets.
-          </p>
-        </div>
+        <button
+          type="button"
+          onClick={() => setCollapsed((open) => {
+            const next = !open;
+            try {
+              window.localStorage.setItem(
+                "sayvors.dashboard.reviewTickets.collapsed",
+                next ? "1" : "0",
+              );
+            } catch {
+              /* storage unavailable — this session still toggles */
+            }
+            return next;
+          })}
+          aria-expanded={!collapsed}
+          aria-controls="review-tickets-body"
+          className="flex min-w-0 flex-1 items-start gap-2 rounded-[2px] text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 dark:focus-visible:ring-violet-soft/40"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="text-[14px] font-bold tracking-wide text-ink dark:text-fog">
+                Review tickets
+              </span>
+              {collapsed && (
+                <span className="rounded-[2px] bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold tabular-nums text-ink/50 dark:bg-fog/[0.08] dark:text-fog/50">
+                  {counts.unresolved} unresolved · {counts.waiting} waiting on you
+                </span>
+              )}
+            </span>
+            <span className="mt-0.5 block max-w-2xl text-[12px] leading-relaxed text-ink/55 dark:text-fog/55">
+              Customer complaints classified from Google reviews that need action, with
+              WhatsApp handoff for the ones needing care. Praise and neutral reviews are not tickets.
+            </span>
+          </span>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            aria-hidden
+            className={`mt-1 h-4 w-4 shrink-0 text-ink/30 transition-transform dark:text-fog/30 ${collapsed ? "" : "rotate-180"}`}
+          >
+            <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
         <Link
           href="/dashboard/reviews/issues"
           className="shrink-0 rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white shadow-sm shadow-deep-violet/20 outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 active:scale-[0.98] dark:focus-visible:ring-violet-soft/40"
@@ -132,6 +179,7 @@ export default function ReviewTicketsCard() {
         </Link>
       </div>
 
+      <div id="review-tickets-body" hidden={collapsed}>
       {loading && (
         <div className="mt-4 grid grid-cols-3 gap-2">
           {Array.from({ length: 3 }).map((_, index) => (
@@ -246,6 +294,7 @@ export default function ReviewTicketsCard() {
           )}
         </>
       )}
+      </div>
     </section>
   );
 }

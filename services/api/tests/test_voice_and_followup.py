@@ -1241,7 +1241,11 @@ def admin_headers(client, monkeypatch):
     from app.config import settings
 
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
-    r = client.post("/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST)
+    r = client.post(
+        "/api/v1/admin/login",
+        json={"username": "admin", "password": "test-admin-pass"},
+        headers=_HOST,
+    )
     assert r.status_code == 200
     return {**_HOST, "X-Requested-With": "XMLHttpRequest"}
 

@@ -85,6 +85,7 @@ async def get_current_user(
 async def require_admin(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_optional_bearer),
+    db: AsyncSession = Depends(get_db),
 ):
     """Platform admin gate: separate password, no user record.
 
@@ -109,11 +110,9 @@ async def require_admin(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")
         operator_id = payload.get("sub")
         if operator_id and operator_id != "admin":
-            from ..database import async_session
             from ..modules.admin.models import PlatformOperator
 
-            async with async_session() as db:
-                op_row = await db.get(PlatformOperator, operator_id)
+            op_row = await db.get(PlatformOperator, operator_id)
             if op_row is None or not op_row.is_active:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Operator account disabled or removed")
             admin_ctx = {"admin": True, "operator_id": op_row.id, "username": op_row.username, "role": op_row.role}

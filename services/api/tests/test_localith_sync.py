@@ -264,8 +264,14 @@ def test_adapter_get_uses_httpx_with_auth(monkeypatch):
         def json(self):
             return [{"id": "r1"}]
 
-    def _fake_get(url, params=None, headers=None, timeout=None):
-        seen.update(url=url, params=params, headers=headers, timeout=timeout)
+    def _fake_get(url, params=None, headers=None, timeout=None, follow_redirects=None):
+        seen.update(
+            url=url,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
+        )
         return _FakeResp()
 
     monkeypatch.setattr(embedsocial.httpx, "get", _fake_get)
@@ -275,6 +281,8 @@ def test_adapter_get_uses_httpx_with_auth(monkeypatch):
     assert seen["headers"]["Authorization"] == "Bearer k"
     assert seen["params"]["page"] == 1
     assert seen["raised"] is True
+    # The provider moved hosts with a 301; the client must follow it.
+    assert seen["follow_redirects"] is True
 
 
 def test_build_update_body_mapping():
