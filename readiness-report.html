@@ -203,7 +203,7 @@
 <div class="stats">
   <div class="stat"><div class="n calm">25</div><div class="l">audit findings <strong>resolved</strong> (SEC-C1, H1-H3, M1-M3, M5-M8, SCALE-1-6, OPS-2-3, OPS-5, ANL-1-12, ML-1, BULK-1)</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), OPS-4 (prod host + SHA-pinned deploys)</div></div>
-  <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix implemented, DB ledger + entitlements open (<a href="#billing">§6b</a>)</div></div>
+  <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix in <code>development</code> (not on <code>staging</code> yet), durable ledger shipped, entitlements open (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1562+</div><div class="l">backend tests passing locally - CI gates every staging deploy on them</div></div>
   <div class="stat"><div class="n amber">6</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings INS-1…INS-6: two code one-liners, the rest infra and housekeeping</div></div>
 </div>
@@ -456,10 +456,11 @@
   </div>
 
   <h3>Wallet — Redis hotfix (implemented)</h3>
+  <p class="note"><strong>Deploy status (2026-10-25):</strong> the fix is on <code>development</code> (<code>390ee95</code>, 2026-10-24) and is now pinned by <code>tests/test_budget_redis_ttl.py</code>. It is <strong>not</strong> on <code>staging</code> (<code>8e0e91a</code>, 2026-10-20), which still contains <code>BUDGET_TTL_SECONDS = 86_400</code>, <code>SETEX</code>, and the <code>EXPIRE</code> refresh inside <code>reserve()</code>/<code>settle()</code>. Any environment deployed from <code>staging</code> still loses an untouched wallet after 24h until <code>development</code> is merged forward — no code change is pending, only branch promotion.</p>
   <div class="scroll"><table>
     <tr><th>Change</th><th>Why</th><th>Where</th></tr>
     <tr>
-      <td><strong>No TTL on balance keys.</strong> <code>SET</code> without expiry; <code>PERSIST</code> clears legacy TTLs on read/reserve/settle.</td>
+      <td><strong>No TTL on balance keys.</strong> <code>SET</code> without expiry; <code>PERSIST</code> clears legacy TTLs on read/reserve/settle. <code>BUDGET_TTL_SECONDS</code> no longer exists in the tree. Pinned by <code>tests/test_budget_redis_ttl.py</code> (5 tests: no <code>SETEX</code>/<code>EXPIRE</code> on write, legacy TTL cleared on read, missing key reads <code>None</code>, never a fabricated <code>0</code>).</td>
       <td>Stops the disappearance for every active tenant, including keys created before the deploy.</td>
       <td class="path">billing/budget.py</td>
     </tr>
@@ -490,7 +491,7 @@
     </tr>
   </table></div>
   <p class="note"><strong>Historical hotfix note (superseded by the durable ledger):</strong> the old <code>resync-balance</code> recomputed the DB from grants minus usage and could write a balance. That is no longer safe once the ledger is authoritative. The endpoint now reconciles Redis to the DB, writes a zero-amount <code>balance_reconcile</code> audit row only on drift, and never accepts a balance from the caller. See the durable section below.</p>
-  <p class="note"><strong>Verified locally:</strong> 58 targeted billing/LLM tests pass (13 ledger, 22 budget, 23 LLM). The hotfix does <em>not</em> make Redis durable — see the Redis section for AOF/HA.</p>
+  <p class="note"><strong>Verified locally (2026-10-25):</strong> 40 billing/ledger tests pass (<code>test_budget.py</code>, <code>test_credit_ledger.py</code>, and the new <code>test_budget_redis_ttl.py</code>). The hotfix does <em>not</em> make Redis durable — see the Redis section for AOF/HA; the durable ledger is what makes a lost key harmless.</p>
 
   <h3>Wallet — durable credit ledger (implemented)</h3>
   <p>Postgres is now the source of truth. <code>users.ai_credit_cents</code> is the locked available balance; <code>billing_events</code> is the ledger; Redis is a best-effort mirror. Deleting the Redis key no longer changes the true balance.</p>
