@@ -29,15 +29,10 @@ const MAIN_ITEMS: NavItem[] = [
 
 const ADVANCED_ITEMS: NavItem[] = [
   { key: "outbox", icon: <OutboxIcon />, href: "/dashboard/outbox" },
-  { key: "notifications", icon: <BellIcon />, href: "/dashboard/notifications" },
-  { key: "insights", icon: <BulbIcon />, href: "/dashboard/insights" },
-  { key: "growth", icon: <TrendingIcon />, href: "/dashboard/growth" },
-  { key: "benchmark", icon: <TrophyIcon />, href: "/dashboard/benchmark" },
   { key: "issues", icon: <ChecklistIcon />, href: "/dashboard/issues" },
   { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
   { key: "usage", icon: <GaugeIcon />, href: "/dashboard/usage" },
   { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
-  { key: "settings", icon: <GearIcon />, href: "/dashboard/settings" },
 ];
 
 function isActive(pathname: string, item: NavItem) {
@@ -734,46 +729,9 @@ function CardIcon() {
   );
 }
 
-function BellIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-      <path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-      <path d="M13.7 21a2 2 0 01-3.4 0" />
-    </svg>
-  );
-}
 
-function BulbIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-      <path d="M9 18h6" />
-      <path d="M10 22h4" />
-      <path d="M12 2a7 7 0 00-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0012 2z" />
-    </svg>
-  );
-}
 
-function TrendingIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
-      <polyline points="17 6 23 6 23 12" />
-    </svg>
-  );
-}
 
-function TrophyIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-      <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-      <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-      <path d="M4 22h16" />
-      <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
-      <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
-      <path d="M18 2H6v7a6 6 0 0012 0V2z" />
-    </svg>
-  );
-}
 
 function GaugeIcon() {
   return (
@@ -794,11 +752,4 @@ function UserIcon() {
   );
 }
 
-function GearIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
-    </svg>
-  );
-}
+
