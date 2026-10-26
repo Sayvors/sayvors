@@ -19,7 +19,7 @@ export default function AuditLogPage() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [limit] = useState(100);
+  const [limit] = useState(50);
   const [offset, setOffset] = useState(0);
 
   const load = useCallback(async () => {

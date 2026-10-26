@@ -225,6 +225,12 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if not path.startswith("/api/v1/admin/") or path == "/api/v1/admin/login":
             return response
+        # Audit *actions*, not reads: GET/HEAD/OPTIONS never mutate state, so
+        # logging them only inflates admin_audit_logs (and its write load) with
+        # polling/page-load noise. Mutations (POST/PATCH/PUT/DELETE) are the
+        # security-relevant events worth retaining.
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return response
         # Resolved inside the try, but declared here so the failure log can
         # name the operator even when the exception happens during resolution.
         operator_id = None

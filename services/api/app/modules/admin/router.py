@@ -1431,7 +1431,7 @@ async def update_operator(operator_id: str, body: OperatorUpdate, _admin=Depends
 
 @router.get("/audit-log", response_model=list[AuditLogOut])
 async def list_audit_log(
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     _admin=Depends(require_admin),
 ):
