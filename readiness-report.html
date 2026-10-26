@@ -181,7 +181,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn">6 findings open (2 audit · 4 INS) · 2 server CVEs · 35 resolved · billing new</span> <span class="chip ok">deps: 55/55 closed</span>
+  <span class="chip warn">6 findings open (2 audit · 4 INS) · 2 server CVEs · 35 resolved · billing new · gcp new</span> <span class="chip ok">deps: 55/55 closed</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -190,6 +190,7 @@
     <a href="#speed">Speed</a>
     <a href="#dependencies">Deps</a>
     <a href="#sec-audit-2026-10-26">Sec audit</a>
+    <a href="#gcp-mvp">GCP</a>
     <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
@@ -1247,6 +1248,60 @@
   </div>
 
   <p class="note">Method: <code>npm audit --omit=dev</code> on both Next apps (advisory registry lookup, no installs); version-by-version advisory research for FastAPI/Starlette/python-multipart/cryptography/PyJWT/asyncpg and the Redis/Kafka server images; agent security review of commits 1467542, e4d3750, cb75e5b with an independent false-positive filter pass (candidate scored 3/10 — filtered). Sources: nextjs.org Oct 14 2026 security update, GHSA-86qp-5c8j-p5mr, redis.io security advisories (May 2026 batch + CVE-2026-81934), kafka.apache.org CVE list / EOL coverage. pip-audit results are in the <a href="#dependencies">dependency ledger</a>.</p>
+</section>
+
+<section id="gcp-mvp">
+  <div class="eyebrow">§§ 16 · infra plan — 2026-10-26</div>
+  <h2>GCP MVP checklist + what it supports</h2>
+  <p><strong>MVP scope decision (2026-10-26): Google + WhatsApp only.</strong> IG/FB stay built but out of MVP onboarding (Meta app-review lead time); they come back behind plan entitlements. GCP fits because the config already supports GCS natively (<code>GCS_PUBLIC_BUCKET</code>/<code>GCS_PRIVATE_BUCKET</code>) and Cloud Run’s scale-to-1 retires the t3.small OOM problem (INS-5).</p>
+
+  <h3>What this setup supports (honest numbers)</h3>
+  <div class="scroll"><table>
+    <tr><th>Dimension</th><th>MVP capacity</th><th>Binding constraint</th><th>When you outgrow it</th></tr>
+    <tr><td><strong>Business tenants</strong></td><td class="num"><strong>200–500</strong> (≈500–1,500 business users)</td><td>DB connections + worker realtime lane</td><td>PgBouncer + db-larger instance → 1–2k tenants</td></tr>
+    <tr><td><strong>End-customer contacts (WhatsApp)</strong></td><td class="num">~50k–100k rows across tenants</td><td>Storage only — trivial</td><td>Partitioning far later</td></tr>
+    <tr><td><strong>Inbound messages (AI replies)</strong></td><td class="num"><strong>~2–3 msg/s peak</strong> ≈ 150–250k/day</td><td>One worker replica = realtime lane cap 8 concurrent ÷ ~3 s/reply</td><td>Scale the worker (<code>JOB_LANES=realtime</code> dedicated replicas scale linearly by design)</td></tr>
+    <tr><td><strong>Webhook events</strong></td><td class="num">hundreds/s burst OK</td><td>DB write throughput on the small instance</td><td>Read replica (Phase D)</td></tr>
+    <tr><td><strong>Concurrent dashboards (WS)</strong></td><td class="num">~200–500</td><td>Cloud Run min-1 instances + shared pub/sub fan-out (SCALE-6 already built)</td><td>More API instances — linear</td></tr>
+  </table></div>
+  <p class="note">Rule of thumb: the MVP box comfortably serves the first few hundred paying tenants and roughly 1–2% of the 1M-user target load. Every ceiling above has a known linear-scale fix already in the architecture (§§1–5) — none require rewrites.</p>
+
+  <h3>Setup checklist — in order</h3>
+  <div class="scroll"><table>
+    <tr><th>#</th><th>Step</th><th>Notes</th></tr>
+    <tr><td class="num">0</td><td><strong>Project + APIs</strong>: create GCP project, enable Cloud Run, Cloud SQL, Memorystore, Compute Engine, Cloud Storage, Secret Manager, Artifact Registry, Cloud DNS. Install gcloud, pick region (me-central1 for KSA latency).</td><td>Budget alert at $50/mo.</td></tr>
+    <tr><td class="num">1</td><td><strong>Cloud SQL Postgres 16</strong>, db-g1-small (f1-micro only if desperate), private IP, <strong>PITR on, 7-day retention</strong> — closes OPS-1 the day it exists.</td><td>Note max_connections; set <code>DB_MAX_CONNECTIONS</code> env so the boot-time headroom check is accurate.</td></tr>
+    <tr><td class="num">2</td><td><strong>PgBouncer</strong> on the e2 VM (transaction mode), Cloud SQL behind it; <code>DB_POOL_MODE=transaction</code> env flip.</td><td>f1-micro/g1-small + PgBouncer = the only way the connection math works.</td></tr>
+    <tr><td class="num">3</td><td><strong>Redis</strong>: Memorystore Basic 1 GB (noeviction is the default there; memory alarm via Cloud Monitoring) — or, true-MVP cheap: run Redis on the e2 VM as today and skip Memorystore.</td><td>Use redis 8.x image if VM-hosted (CVE-3).</td></tr>
+    <tr><td class="num">4</td><td><strong>Cloud Run api</strong>: existing Dockerfile, min-instances 1, max 3, 1 vCPU / 1 GB, <code>UVICORN_WORKERS=1</code> per instance, <code>RUN_BACKGROUND_WORKERS=false</code>, secrets from Secret Manager, <code>ENVIRONMENT=production</code> (the fail-fast validator does the rest).</td><td>Cloud Run terminates TLS — delete Caddy concerns.</td></tr>
+    <tr><td class="num">5</td><td><strong>Cloud Run worker</strong>: same image, command <code>python -m app.workers</code>, min-instances 1, CPU always-allocated (instance billing), <code>JOB_LANES</code> env free for lane splitting.</td><td>Never scale to zero — the lanes are the product.</td></tr>
+    <tr><td class="num">6</td><td><strong>e2-small VM</strong>: Kafka (single broker, 8.x image per CVE-4 when available; else 3.8 accepted-risk) + GlitchTip + Prometheus + PgBouncer. Reuse the compose file.</td><td>This is the only stateful box; snapshot disk daily.</td></tr>
+    <tr><td class="num">7</td><td><strong>GCS buckets</strong>: public-media + private-docs, service account with least privilege; set <code>GCS_PUBLIC_BUCKET</code>/<code>GCS_PRIVATE_BUCKET</code>; run the existing upload-path tests.</td><td>Closes the “box loss = customer docs loss” item.</td></tr>
+    <tr><td class="num">8</td><td><strong>Secrets</strong> → Secret Manager: JWT_SECRET, CHANNEL_ENCRYPTION_KEY, ADMIN_PASSWORD_HASH, META_*, GOOGLE_*, RESEND_API_KEY.</td><td>Generate fresh for prod; never reuse staging values.</td></tr>
+    <tr><td class="num">9</td><td><strong>Domains</strong>: app.sayvors.com + api.sayvors.com → Cloud Run, managed certs. <strong>Same-origin now → set <code>COOKIE_SAMESITE=lax</code></strong>, keep <code>COOKIE_DOMAIN=.sayvors.com</code>.</td><td>Config change — lax is the safer posture when the SPA and API share a domain.</td></tr>
+    <tr><td class="num">10</td><td><strong>Webhooks/OAuth</strong>: point Meta webhook + Google redirect URIs at the new api domain; Embedded Signup config IDs unchanged.</td><td><code>validate_production_settings()</code> will refuse localhost — let it.</td></tr>
+    <tr><td class="num">11</td><td><strong>Observability</strong>: Cloud Monitoring uptime check on <code>/readyz</code>; alerts on SQL connections/disk, Redis memory, Cloud Run 5xx + instance count; GlitchTip DSN into both web apps.</td><td>OPS-2/§§11 infra items close here.</td></tr>
+    <tr><td class="num">12</td><td><strong>CI/CD</strong>: extend deploy-staging.yml → Artifact Registry + <code>gcloud run deploy</code>; SHA-pinned revisions (retires the mutable-tag item OPS-4b in the same change).</td><td>Hand-SSH deploys die with the t3.small.</td></tr>
+    <tr><td class="num">13</td><td><strong>Restore rehearsal</strong>: Cloud SQL export → restore into scratch → run the app against it once. Write the runbook.</td><td>OPS-1 is not “done” until this passes.</td></tr>
+    <tr><td class="num">14</td><td><strong>MVP scope cut</strong>: onboarding shows Google + WhatsApp only; IG/FB flagged off; Starter plan entitlement = 1 WhatsApp channel + 1 Google location.</td><td>Start the official GBP API approval in parallel (§§12/§13).</td></tr>
+  </table></div>
+
+  <p class="note">Cost recap: ~$60–110/mo comfortable (Memorystore included), ~$40–60/mo aggressive (Redis on the VM). The first three real outgrows, in order: DB instance class → worker replicas → Memorystore HA. All three are flips/scale-ups, not rewrites.</p>
+
+  <h3>Scale tier: what the same architecture looks like at 1M+ users</h3>
+  <p>Same services, bigger sizes — per the §1 load model (200–800 msg/s, 1–5k webhook events/s, 20–50k WS dashboards, 50–200 GB DB). Nothing below is a rewrite; each row is the MVP tier grown up. It closes I-1…I-12 of the production checklist as a side effect.</p>
+  <div class="scroll"><table>
+    <tr><th>Service</th><th>MVP tier (§§16 above)</th><th>1M-user tier</th><th>Est. $/mo</th></tr>
+    <tr><td>Cloud Run <strong>api</strong></td><td>min 1 / max 3, 1 vCPU</td><td>autoscale ~10–30 instances, 2 vCPU, concurrency ~80; Cloud Armor + LB in front</td><td>$150–400</td></tr>
+    <tr><td>Cloud Run <strong>worker</strong></td><td>min 1</td><td><code>JOB_LANES</code> split across dedicated services; realtime fans to ~30–150 replicas with load (linear by design, cap 8/replica ÷ ~3 s/reply)</td><td>$500–2,500 <span class="chip warn">dominant cost</span></td></tr>
+    <tr><td>Cloud SQL</td><td>db-g1-small, single</td><td>db-custom-8vCPU-32GB, <strong>HA</strong> + 1–2 read replicas (fills I-4; <code>get_db_read()</code> already coded), PgBouncer stays</td><td>$700–1,200</td></tr>
+    <tr><td>Memorystore</td><td>Basic 1 GB</td><td>Standard (HA, replica) 5 GB, noeviction (R-6 closes)</td><td>$180–250</td></tr>
+    <tr><td>Kafka</td><td>single broker on the e2 VM</td><td>3-broker KRaft: 3× n2-standard-4 VMs or Confluent Cloud basic (I-1/I-2 close)</td><td>$250–500</td></tr>
+    <tr><td>Storage (GCS)</td><td>2 buckets, ~few GB</td><td>200 GB–1 TB + egress; lifecycle rules to Nearline for old media</td><td>$20–80</td></tr>
+    <tr><td>Observability</td><td>GlitchTip + Prometheus on the VM</td><td>Managed Grafana/Cloud Monitoring + longer retention; alerting on §§11 rows</td><td>$50–200</td></tr>
+    <tr><td><strong>Total infra</strong></td><td><strong>~$60–110</strong></td><td><strong>~$1.8k–5k</strong></td><td>≈ $0.002–0.005/user/mo</td></tr>
+  </table></div>
+  <p class="note">Two honest caveats. (1) The worker line is AI-reply throughput — at 800 msg/s the <strong>LLM API bill dwarfs this entire table</strong>; negotiate model pricing before infra. (2) These are planning figures; §11 fix-queue row 13 (k6 load test) is what converts them from estimates to facts. Path from MVP to here is strictly: resize DB → split worker lanes → flip on replicas/HA — the order the outgrow-list already implies.</p>
 </section>
 
 <footer>
