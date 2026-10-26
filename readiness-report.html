@@ -210,7 +210,7 @@
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), OPS-4 (prod host + SHA-pinned deploys)</div></div>
   <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix in <code>development</code> (not on <code>staging</code> yet), durable ledger shipped, entitlements open (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1562+</div><div class="l">backend tests passing locally - CI gates every staging deploy on them</div></div>
-  <div class="stat"><div class="n calm">4</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3…INS-6 (INS-1/INS-2 fixed 2026-10-26)</div></div>
+  <div class="stat"><div class="n amber">4</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3, INS-4, INS-5, INS-7 (INS-1, INS-2, INS-6 fixed 2026-10-26)</div></div>
 </div>
 
 <section id="model">
@@ -856,7 +856,7 @@
 <section id="pass-2026-10-25">
   <div class="eyebrow">§§ 11 · inspection pass — 2026-10-25</div>
   <h2>Oct 25 pass — re-verification and the INS ledger</h2>
-  <p>A full re-inspection (config, database, migrations, auth, CI, compose files, frontend deps, admin) to re-verify the ledger above and hunt for anything the four original audits missed. <strong>The ledger holds</strong> — every “Fixed” claim spot-checked is real in the working tree. Six new findings, none critical: two one-line code fixes, two small infra hardenings, one context item, one housekeeping pass. The two code fixes (INS-1, INS-2) landed 2026-10-26; the rest remain.</p>
+  <p>A full re-inspection (config, database, migrations, auth, CI, compose files, frontend deps, admin) to re-verify the ledger above and hunt for anything the four original audits missed. <strong>The ledger holds</strong> — every “Fixed” claim spot-checked is real in the working tree. Six new findings in the original pass, none critical: two one-line code fixes, two small infra hardenings, one context item, one housekeeping pass. Three are closed (INS-1, INS-2, INS-6, all 2026-10-26). Checking INS-6 surfaced a seventh: the duplicated <code>embedsocial.py</code> (INS-7, High) — the housekeeping finding had wrongly called that module a dead spike. Four remain open: INS-3, INS-4, INS-5, INS-7.</p>
 
   <div class="scroll"><table>
     <tr><th>ID</th><th>Sev</th><th>Kind</th><th>Finding</th><th>Evidence</th><th>Fix</th><th>Effort</th></tr>
@@ -896,10 +896,17 @@
       <td class="num">—</td>
     </tr>
     <tr>
-      <td class="num">INS-6</td><td><span class="chip med">Med</span></td><td><span class="chip code">Code</span></td>
-      <td><strong>Working-tree and docs hygiene.</strong> (a) 12 files of uncommitted WIP sit in the tree: the multilingual question→evidence fix in <code>review_engine/strategies.py</code>, admin/web UI tweaks, checklist edits. (b) Five superseded 2026-09-06 audit docs remain at the root (SECURITY-AUDIT.md, FIXES-NEEDED.md, DEEP-SCAN-REPORT.md, FIX-PLAN-SCALE.md, PENDING-QUEUE.md) and contradict this ledger. (c) Empty skeleton dirs (<code>gateway/</code>, <code>infrastructure/</code>, <code>packages/</code>, <code>apps/landing</code>, <code>apps/mobile</code>) and a marked spike (<code>integrations/channels/embedsocial.py</code>) invite re-work of dead items.</td>
+      <td class="num">INS-6</td><td><span class="chip ok">Fixed</span></td><td><span class="chip code">Code</span></td>
+      <td><strong>Working-tree and docs hygiene.</strong> (a) 12 files of uncommitted WIP sat in the tree: the multilingual question→evidence fix in <code>review_engine/strategies.py</code>, admin/web UI tweaks, checklist edits. (b) Five superseded audit docs remained at the root (SECURITY-AUDIT.md, FIXES-NEEDED.md, DEEP-SCAN-REPORT.md, FIX-PLAN-SCALE.md, PENDING-QUEUE.md) and contradicted this ledger. (c) Empty skeleton dirs (<code>gateway/</code>, <code>infrastructure/</code>, <code>packages/</code>, <code>apps/landing</code>, <code>apps/mobile</code>) invited re-work of dead items. <em>The finding also named <code>integrations/channels/embedsocial.py</code> as a marked spike — that was wrong: six app modules import it and the Docker image copies it. It is live code and was kept.</em></td>
       <td class="path">git status; repo root</td>
-      <td>Review + commit the WIP; move the five stale docs into <code>docs/tracking/source-files/</code> (or delete); drop the skeleton dirs and the spike.</td>
+      <td><strong>Fixed 2026-10-26</strong> — the WIP was already committed (<code>e4d3750</code>, <code>cb75e5b</code>); the five root docs were byte-identical to their copies in <code>docs/tracking/source-files/</code>, so the duplicates were deleted; the five skeleton dirs and their <code>.gitkeep</code> files were removed, with README and <code>.agents/project-context.md</code> updated. The <code>embedsocial.py</code> docstring no longer calls itself a spike. Duplicate-copy divergence recorded as INS-7.</td>
+      <td class="num">30 min</td>
+    </tr>
+    <tr>
+      <td class="num">INS-7</td><td><span class="chip high">High</span></td><td><span class="chip code">Code</span></td>
+      <td><strong>Two divergent <code>embedsocial.py</code> copies — local dev and tests run a stale stub, production runs the real adapter.</strong> <code>integrations/channels/embedsocial.py</code> (741 lines) is the canonical module: recent commits, imported by analytics, admin, locations, posts and localith services, and copied into the Docker image. <code>services/api/integrations/channels/embedsocial.py</code> (615 lines) is an older stub whose last commits predate the root copy. Running from <code>services/api</code> puts the stub first on <code>sys.path</code>, so the local app and the test suite exercise the stub while the container runs the real code. Found while fixing INS-6, which had wrongly called the module a dead spike.</td>
+      <td class="path">integrations/channels/embedsocial.py:1 · services/api/integrations/channels/embedsocial.py:1 · services/api/Dockerfile:17</td>
+      <td>Delete <code>services/api/integrations/</code> so the root module is the only importable copy, then run the Localith, reviews, posts and growth-trends tests against it. Not done in this pass: it changes which module the tests load, so it needs its own verification run.</td>
       <td class="num">30 min</td>
     </tr>
   </table></div>
@@ -920,7 +927,8 @@
     <tr><td class="num">Week 1</td><td><strong>Verify RDS PITR is on, retention ≥ 7 days, alarms on connections/disk — then rehearse one real restore into a scratch DB.</strong> The single scariest open item (OPS-1): everything else on this page is recoverable; an un-rehearsed backup is not a backup.</td><td><span class="chip buy">Buy</span></td><td>AWS console + one rehearsal. Two migration incidents already happened. ~1 day, ~$0.</td></tr>
     <tr><td class="num">Week 1</td><td><strong>Set <code>S3_DOCS_BUCKET</code> + <code>S3_MEDIA_BUCKET</code></strong> — uploads leave the box’s local Docker volume.</td><td><span class="chip buy">Buy</span></td><td>~$5/mo. The storage backends are already coded; this is env + redeploy. Box loss today = customer document loss.</td></tr>
     <tr><td class="num">Week 1</td><td><strong>INS-1 + INS-2</strong> — delete the duplicate audit middleware, raise the audit-failure log level. <span class="chip ok">Done 2026-10-26</span></td><td><span class="chip code">Code</span></td><td>Done; regression tests in <code>tests/test_admin_audit_middleware.py</code> (3 pass).</td></tr>
-    <tr><td class="num">Week 1</td><td><strong>INS-6</strong> — review and commit the 12-file WIP; archive the five stale root docs; drop skeleton dirs and the embedsocial spike.</td><td><span class="chip code">Code</span></td><td>Stale ledgers make agents and humans re-do dead work. 30 minutes.</td></tr>
+    <tr><td class="num">Week 1</td><td><strong>INS-6</strong> — review and commit the 12-file WIP; archive the five stale root docs; drop skeleton dirs. <span class="chip ok">Done 2026-10-26</span></td><td><span class="chip code">Code</span></td><td>Done. The <code>embedsocial.py</code> “spike” was live code and was kept; checking it exposed <strong>INS-7</strong> — the stale duplicate that shadows it in local dev and tests.</td></tr>
+    <tr><td class="num">Week 1</td><td><strong>INS-7</strong> — delete the stale <code>services/api/integrations/</code> copy so local dev, tests and production all load the same <code>embedsocial.py</code>, then re-run the Localith/reviews/posts/growth tests.</td><td><span class="chip code">Code</span></td><td>Tests currently exercise a stub that production never runs. 30 minutes including verification.</td></tr>
     <tr><td class="num">Prod-host wk</td><td><strong>Stand up the production host</strong>: Caddy + secrets + startup validator (redirect URIs, FRONTEND_URL, CORS). Apply INS-3 hardening while there.</td><td><span class="chip med">Infra</span></td><td>OPS-4 remainder. There is no production deployment to harden until this exists. ~½–1 day.</td></tr>
     <tr><td class="num">Prod-host wk</td><td><strong>Pin deploy images to commit-SHA/digest tags</strong>, not the mutable <code>:staging</code> tag.</td><td><span class="chip med">Infra</span></td><td>Rollback needs a known-good image; a mutable tag can be silently overwritten. ~½ day (CI + compose).</td></tr>
     <tr><td class="num">Prod-host wk</td><td><strong>External uptime monitor on <code>/readyz</code></strong> (UptimeRobot / Better Stack).</td><td><span class="chip buy">Buy</span></td><td>$0 tier is fine. Until this exists, the box cannot tell anyone it is down.</td></tr>
