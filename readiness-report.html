@@ -180,13 +180,14 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn">3 open · 6 new · 21 resolved · billing new</span>
+  <span class="chip warn">3 open · 6 new · 21 resolved · billing new</span> <span class="chip crit">deps: 1 critical</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
     <a href="#campaigns">Campaigns</a>
     <a href="#connection-guides">Guides</a>
     <a href="#speed">Speed</a>
+    <a href="#sec-audit-2026-10-26">Sec audit</a>
     <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
@@ -1148,6 +1149,60 @@
     <p>Exact alert list: <code>GET /repos/Sayvors/sayvors/dependabot/alerts?state=open</code>
     (needs a token with <code>security_events</code>).</p>
   </div>
+</section>
+
+<section id="sec-audit-2026-10-26">
+  <div class="eyebrow">§§ 15 · security audit — 2026-10-26</div>
+  <h2>Security audit — dependency CVEs + code review</h2>
+  <p><strong>Two tracks:</strong> (1) a live CVE sweep of the exact deployed stack (npm audit on both Next apps + version-by-version advisory research for the Python line, Redis and Kafka), and (2) an agent-run security review of the newest branch changes (handoff codes, schema-parity, dashboard fixes). Code verdict: <strong>zero confirmed vulnerabilities</strong> — one candidate was filtered as accepted design (hardening note below). Dependencies: <strong>act this week</strong>. The per-package alert list (51 open Dependabot alerts, npm + pip cross-checked) lives in the <a href="#dependencies">dependency ledger</a>; this section holds the dated CVE verdicts for the server images (Redis, Kafka), the Next.js/sharp critical, and the code review.</p>
+
+  <h3>Dependency findings — fix this week</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Sev</th><th>Kind</th><th>Finding</th><th>Your version</th><th>Fixed in</th><th>Notes</th></tr>
+    <tr>
+      <td class="num">CVE-1</td><td><span class="chip crit">Crit</span></td><td><span class="chip code">Code</span></td>
+      <td><strong>Next.js below the Oct 14 2026 security patch</strong> — three fixes: unauthenticated RCE in Image Optimization when handling SVG (<code>CVE-2026-96889</code> via sharp/librsvg, glibc Linux — Vercel builds and your containers qualify), unauthenticated RCE in <code>use cache</code> typed-array returns (GHSA-673q-mjm6-r5xr), High DoS via Server Actions. <code>npm audit</code> on apps/web: 6 vulns (1 critical, 4 high, 1 moderate); admin: 3 (1 critical, 2 high).</td>
+      <td class="path">web 16.2.12 · admin 16.3.4</td>
+      <td class="num">next@16.4.3</td>
+      <td>One version bump each, plus sharp — see CVE-2. Do it before the next Vercel deploy.</td>
+    </tr>
+    <tr>
+      <td class="num">CVE-2</td><td><span class="chip high">High</span></td><td><span class="chip code">Code</span></td>
+      <td><strong>sharp &lt; 0.35.5</strong> — inherited libvips / libheif / librsvg CVEs, including the RCE above; pulled in by next/image.</td>
+      <td class="path">&lt;0.35.5 (both apps)</td><td class="num">sharp ≥ 0.35.5</td><td>Comes along with the Next bump; also <code>source-map-js</code> (event-loop DoS) — <code>npm audit fix</code> covers it.</td>
+    </tr>
+    <tr>
+      <td class="num">CVE-3</td><td><span class="chip high">High</span></td><td><span class="chip med">Infra</span></td>
+      <td><strong>Redis server 7.x is EOL for security fixes</strong> — the May 2026 batch landed in 7.4.6+, but the unauthenticated RCE <code>CVE-2026-81934</code> (TLS pending-data use-after-free) is fixed only in <strong>8.2.9+</strong>. Redis is Sayvors’ fail-closed auth infrastructure; it must not ride an EOL line.</td>
+      <td class="path">redis:7-alpine</td><td class="num">redis:8.x (8.2.9+)</td><td>Compose image bump; internal-network exposure limits reachability today, but upgrade with the next staging push.</td>
+    </tr>
+    <tr>
+      <td class="num">CVE-4</td><td><span class="chip med">Med</span></td><td><span class="chip med">Infra</span></td>
+      <td><strong>Kafka 3.8.0 is EOL</strong> — no security patches; Java kafka-clients had file-read/SSRF CVEs fixed only in 4.0 (you use Python aiokafka, so the client exposure is nil; the broker is the concern).</td>
+      <td class="path">apache/kafka:3.8.0</td><td class="num">Kafka 4.x</td><td>Fold into the planned 3-broker HA work (production-later.md) — one upgrade, both problems.</td>
+    </tr>
+  </table></div>
+
+  <h3>Confirmed safe (installed ≥ fix)</h3>
+  <div class="card good"><ul>
+    <li><strong>Starlette 1.3.1</strong> — exactly the fixed version for <code>CVE-2026-54283</code> (form resource-limits DoS); past the “BadHost” host-header auth bypass (<code>CVE-2026-48710</code>, fixed 1.0.1) and <code>CVE-2026-48817</code>.</li>
+    <li><strong>python-multipart 0.0.32</strong> ≥ 0.0.27 (<code>CVE-2026-42561</code> multipart CPU DoS; <code>CVE-2026-40347</code> preamble DoS).</li>
+    <li>cryptography 50, PyJWT 2.13, bcrypt 5, asyncpg 0.31, SQLAlchemy 2.1.5, uvicorn 0.52 — current lines.</li>
+  </ul></div>
+
+  <h3>Code review of the newest changes — clean</h3>
+  <div class="card good"><ul>
+    <li><strong>WhatsApp handoff codes (1467542):</strong> CSPRNG generation (<code>secrets.choice</code>), tenant-scoped resolution, 1-day expiry fail-closed with legacy backfill migration, single conditional-UPDATE rotation (no clobber race), <code>channels.edit</code> permission + tenant binding on mint/config endpoints, no timing oracle, no cross-tenant reach.</li>
+    <li><strong>Schema source-of-truth (e4d3750):</strong> catalog seed fully parameterized (no SQLi), seeds add reply-safety defaults, static DDL, guarded idempotent migration, exactly one alembic head, <code>team_members.user_id</code> UNIQUE is a tightening change.</li>
+    <li><strong>Dashboard fixes (cb75e5b):</strong> pure UI state handling — no injection surface.</li>
+  </ul></div>
+
+  <div class="card">
+    <h3>Hardening note (not a vulnerability)</h3>
+    <p>The public handoff code (<code>#CODE</code> in wa.me links) is documented as a non-credential routing handle, and the filter confirmed it grants nothing the public listing doesn’t already grant — an impostor can impersonate the anonymous reviewer with or without it, since Google exposes no reviewer phone. Optional hardening: bind the minted code to the first-claiming WhatsApp number or rotate on claim, and surface “matched via public code, identity unverified” in the handoff notification. Informational: <code>tickets.py:400-404</code> logs the quoted code on expiry fall-through — expired and already public, no action needed.</p>
+  </div>
+
+  <p class="note">Method: <code>npm audit --omit=dev</code> on both Next apps (advisory registry lookup, no installs); version-by-version advisory research for FastAPI/Starlette/python-multipart/cryptography/PyJWT/asyncpg and the Redis/Kafka server images; agent security review of commits 1467542, e4d3750, cb75e5b with an independent false-positive filter pass (candidate scored 3/10 — filtered). Sources: nextjs.org Oct 14 2026 security update, GHSA-86qp-5c8j-p5mr, redis.io security advisories (May 2026 batch + CVE-2026-81934), kafka.apache.org CVE list / EOL coverage. pip-audit results are in the <a href="#dependencies">dependency ledger</a>.</p>
 </section>
 
 <footer>
