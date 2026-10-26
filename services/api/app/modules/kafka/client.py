@@ -22,6 +22,40 @@ _consumer_marked_unavailable_at: dict[str, float] = {}
 KAFKA_REPROBE_COOLDOWN_SECONDS = 5.0
 
 
+def _kafka_security_kwargs() -> dict:
+    """Build the security/TLS kwargs for aiokafka clients.
+
+    Defaults reproduce the current self-hosted plaintext setup, so existing
+    deployments and local dev are unaffected. Flip the KAFKA_* env vars when
+    pointing at a managed cluster (MSK / Confluent Cloud / Google Managed).
+    """
+    from ...config import settings
+
+    kwargs: dict = {"security_protocol": getattr(settings, "KAFKA_SECURITY_PROTOCOL", "PLAINTEXT")}
+    protocol = kwargs["security_protocol"]
+    if protocol.startswith("SASL"):
+        mech = getattr(settings, "KAFKA_SASL_MECHANISM", "") or ""
+        if mech:
+            kwargs["sasl_mechanism"] = mech
+        user = getattr(settings, "KAFKA_SASL_USERNAME", "") or ""
+        pw = getattr(settings, "KAFKA_SASL_PASSWORD", "") or ""
+        if user:
+            kwargs["sasl_plain_username"] = user
+        if pw:
+            kwargs["sasl_plain_password"] = pw
+    if "SSL" in protocol:
+        ca = getattr(settings, "KAFKA_SSL_CA_CERTS", "") or ""
+        cert = getattr(settings, "KAFKA_SSL_CERTFILE", "") or ""
+        key = getattr(settings, "KAFKA_SSL_KEYFILE", "") or ""
+        if ca:
+            kwargs["ssl_cafile"] = ca
+        if cert:
+            kwargs["ssl_certfile"] = cert
+        if key:
+            kwargs["ssl_keyfile"] = key
+    return kwargs
+
+
 async def get_kafka_producer(*, retry: bool = False) -> AIOKafkaProducer:
     global _producer, _producer_available, _producer_marked_unavailable_at
     if _producer is not None and _producer_available:
@@ -44,6 +78,7 @@ async def get_kafka_producer(*, retry: bool = False) -> AIOKafkaProducer:
                 compression_type="gzip",
                 request_timeout_ms=30000,
                 metadata_max_age_ms=5000,
+                **_kafka_security_kwargs(),
             )
             try:
                 await asyncio.wait_for(_producer.start(), timeout=15.0)
@@ -103,13 +138,16 @@ async def create_consumer(
     group_id: str,
     topics: list[str],
     *,
-    max_poll_interval_ms: int = 900_000,
+    max_poll_interval_ms: int | None = None,
     session_timeout_ms: int = 30_000,
     max_poll_records: int = 1,
     enable_auto_commit: bool = False,
 ) -> AIOKafkaConsumer:
     """Create a Kafka consumer with manual offset commit."""
-    # Register this consumer group for availability tracking.
+    from ...config import settings
+
+    if max_poll_interval_ms is None:
+        max_poll_interval_ms = getattr(settings, "KAFKA_MAX_POLL_INTERVAL_MS", 900000)
     _consumer_available[group_id] = True
     _consumer_marked_unavailable_at.pop(group_id, None)
 
@@ -123,6 +161,8 @@ async def create_consumer(
         session_timeout_ms=session_timeout_ms,
         max_poll_records=max_poll_records,
         value_deserializer=lambda b: __import__("json").loads(b.decode()),
+        client_id=f"sayvors-{group_id}",
+        **_kafka_security_kwargs(),
     )
     await consumer.start()
     return consumer

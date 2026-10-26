@@ -44,7 +44,28 @@ class Settings(BaseSettings):
     # on a dedicated replica) without running every lane. Unknown names fail fast.
     JOB_LANES: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
+    # Optional TLS for managed Redis (Memorystore with in-transit encryption,
+    # ElastiCache with TLS). Only consulted when REDIS_URL uses the rediss://
+    # scheme; ignored for plain redis://. "required" verifies the server cert
+    # (needs REDIS_SSL_CA_CERTS for Memorystore's CA), "none" skips
+    # verification (convenient, less safe), "optional" verifies if presented.
+    REDIS_SSL_CERT_REQS: str = "required"
+    REDIS_SSL_CA_CERTS: str = ""  # path to CA bundle; empty = system default
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
+    # ── Managed Kafka (MSK / Confluent Cloud / Google Managed Kafka) ──
+    # Defaults reproduce the current self-hosted plaintext setup byte-for-byte,
+    # so local dev and existing deployments are unaffected. Flip these when
+    # pointing at a managed cluster.
+    KAFKA_SECURITY_PROTOCOL: str = "PLAINTEXT"  # PLAINTEXT | SASL_PLAINTEXT | SASL_SSL | SSL
+    KAFKA_SASL_MECHANISM: str = ""  # PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512 (empty = none)
+    KAFKA_SASL_USERNAME: str = ""
+    KAFKA_SASL_PASSWORD: str = ""
+    KAFKA_SSL_CA_CERTS: str = ""  # path to CA bundle
+    KAFKA_SSL_CERTFILE: str = ""  # client cert (mTLS)
+    KAFKA_SSL_KEYFILE: str = ""  # client key (mTLS)
+    KAFKA_REPLICATION_FACTOR: int = 1  # managed brokers usually require >= 2/3
+    KAFKA_PROVISION_TOPICS: bool = True  # auto-create topics; set false on managed brokers that block it
+    KAFKA_MAX_POLL_INTERVAL_MS: int = 900000
     # pgvector-backed semantic search. None = auto: on in production, off
     # everywhere else so a development database without the pgvector
     # extension still boots and can run the whole migration chain. Set it

@@ -26,13 +26,23 @@ REDIS_REPROBE_COOLDOWN_SECONDS = 5.0
 
 
 def _fresh_client() -> Redis:
-    return Redis.from_url(
-        settings.REDIS_URL,
+    url = settings.REDIS_URL
+    kwargs = dict(
         decode_responses=True,
         socket_connect_timeout=2,
-        socket_timeout=2,
+        socket_timeout=5,
         retry_on_timeout=False,
     )
+    # TLS for managed Redis (Memorystore/ Elasticache with in-transit
+    # encryption). Only consulted for the rediss:// scheme; plain redis://
+    # ignores these.
+    if url.startswith("rediss://"):
+        reqs = (settings.REDIS_SSL_CERT_REQS or "required").lower()
+        mapping = {"none": "none", "optional": "optional", "required": "required"}
+        kwargs["ssl_cert_reqs"] = mapping.get(reqs, "required")
+        if settings.REDIS_SSL_CA_CERTS:
+            kwargs["ssl_ca_certs"] = settings.REDIS_SSL_CA_CERTS
+    return Redis.from_url(url, **kwargs)
 
 
 async def get_redis() -> Redis:
@@ -122,6 +132,19 @@ async def run_redis_rearmer() -> None:
         mark_redis_available()
 
 
-@lru_cache
-def get_redis_url() -> str:
-    return settings.REDIS_URL
+def redis_connection_kwargs() -> dict:
+    """Shared Redis connection kwargs for callers that build their own client
+    (e.g. the realtime pub/sub subscriber). Mirrors ``_fresh_client``."""
+    url = settings.REDIS_URL
+    kwargs = dict(
+        decode_responses=True,
+        socket_connect_timeout=2,
+        socket_timeout=None,
+        retry_on_timeout=False,
+    )
+    if url.startswith("rediss://"):
+        reqs = (settings.REDIS_SSL_CERT_REQS or "required").lower()
+        kwargs["ssl_cert_reqs"] = {"none": "none", "optional": "optional", "required": "required"}.get(reqs, "required")
+        if settings.REDIS_SSL_CA_CERTS:
+            kwargs["ssl_ca_certs"] = settings.REDIS_SSL_CA_CERTS
+    return kwargs
