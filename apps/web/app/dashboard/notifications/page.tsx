@@ -82,6 +82,7 @@ type PrefKey = (typeof PREF_META)[number]["key"];
  */
 function NotificationPrefs() {
   const [prefs, setPrefs] = useState<Record<PrefKey, boolean> | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,9 +94,11 @@ function NotificationPrefs() {
           leads: !!r?.leads,
           tickets: !!r?.tickets,
         });
+        setLoading(false);
       },
       () => {
         if (!cancelled) setPrefs({ messages: true, leads: true, tickets: true });
+        setLoading(false);
       },
     );
     return () => {
@@ -121,20 +124,32 @@ function NotificationPrefs() {
         Live popups
       </p>
       <div className="mt-3 space-y-3.5">
-        {PREF_META.map((m) => (
-          <div key={m.key} className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{m.label}</p>
-              <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--ui-ink-2)]">{m.hint}</p>
+        {loading ? (
+          PREF_META.map((m) => (
+            <div key={m.key} className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{m.label}</p>
+                <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--ui-ink-2)]">{m.hint}</p>
+              </div>
+              <span className="h-6 w-10 rounded-full border border-[var(--ui-line-strong)] animate-pulse" />
             </div>
-            <Switch
-              checked={prefs ? prefs[m.key] : false}
-              disabled={!prefs}
-              onChange={(v) => void toggle(m.key, v)}
-              label=""
-            />
-          </div>
-        ))}
+          ))
+        ) : (
+          PREF_META.map((m) => (
+            <div key={m.key} className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold text-[var(--ui-ink)]">{m.label}</p>
+                <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--ui-ink-2)]">{m.hint}</p>
+              </div>
+              <Switch
+                checked={prefs![m.key]}
+                disabled={false}
+                onChange={(v) => void toggle(m.key, v)}
+                label=""
+              />
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

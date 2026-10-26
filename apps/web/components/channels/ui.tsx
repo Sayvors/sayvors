@@ -26,7 +26,7 @@ export function Switch({
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="flex items-center gap-3 disabled:opacity-50"
+      className="flex items-center gap-3 disabled:opacity-50 m-0 p-0 border-0 bg-transparent appearance-none"
     >
       <span
         className={`relative inline-block h-6 w-10 shrink-0 rounded-full ${

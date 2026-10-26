@@ -21,15 +21,12 @@ import { queryKeys } from "@/lib/query-keys";
 const STATUSES = ["new", "open", "in_progress", "resolved", "closed"] as const;
 const UNRESOLVED = new Set(["new", "open", "in_progress"]);
 
-const label = (value: string) => value.replace(/_/g, " ");
-
 interface TicketStats {
   total: number;
   unresolved: number;
   waiting: number;
   urgent: number;
   resolved: number;
-  byStatus: { key: string; count: number }[];
   oldestTicket: string | null;
   oldestDays: number | null;
 }
@@ -40,7 +37,6 @@ const EMPTY_STATS: TicketStats = {
   waiting: 0,
   urgent: 0,
   resolved: 0,
-  byStatus: [],
   oldestTicket: null,
   oldestDays: null,
 };
@@ -82,9 +78,6 @@ async function fetchTicketStats(): Promise<TicketStats> {
     waiting,
     urgent,
     resolved: (byStatus.resolved?.total ?? 0) + (byStatus.closed?.total ?? 0),
-    byStatus: STATUSES.map((key) => ({ key, count: byStatus[key].total })).filter(
-      (row) => row.count > 0
-    ),
     oldestTicket: oldest?.ticket_number ?? null,
     oldestDays: oldest ? daysSince(oldest.created_at) : null,
   };
@@ -126,13 +119,6 @@ export default function ReviewTicketsCard() {
   useInboxRealtime(useCallback((e) => {
     if (e.type === "review_issue") refreshQuietly();
   }, [refreshQuietly]));
-
-  const tiles = [
-    { key: "unresolved", label: "Unresolved", value: stats.unresolved, tone: "text-coral" },
-    { key: "waiting", label: "Waiting on you", value: stats.waiting, tone: "text-amber-600" },
-    { key: "urgent", label: "Urgent", value: stats.urgent, tone: stats.urgent > 0 ? "text-red-600" : "text-ink dark:text-fog" },
-    { key: "resolved", label: "Resolved", value: stats.resolved, tone: "text-emerald-600" },
-  ] as const;
 
   const loading = isPending;
   const errorMessage = isError ? (error instanceof Error ? error.message : "Could not load review tickets.") : null;
@@ -199,16 +185,7 @@ export default function ReviewTicketsCard() {
       </div>
 
       <div id="review-tickets-body" hidden={collapsed}>
-        {loading && (
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, index) => (
-              <div
-                key={index}
-                className="aspect-square rounded-[2px] bg-ink/[0.03] ring-1 ring-ink/[0.06] dark:bg-fog/[0.04] dark:ring-fog/[0.06]"
-              />
-            ))}
-          </div>
-        )}
+        {loading && <p className="mt-3 text-[12px] text-ink/55 dark:text-fog/55">Loading tickets…</p>}
 
         {!loading && errorMessage && (
           <p className="mt-3 text-[12px] font-medium text-coral">
@@ -217,125 +194,23 @@ export default function ReviewTicketsCard() {
         )}
 
         {!loading && !errorMessage && stats.total === 0 && (
-          <p className="mt-4 rounded-[2px] border border-dashed border-ink/10 bg-ink/[0.02] px-4 py-6 text-center text-[12px] text-ink/55 dark:border-fog/10 dark:bg-fog/[0.03] dark:text-fog/55">
+          <p className="mt-3 rounded-[2px] border border-dashed border-ink/10 bg-ink/[0.02] px-4 py-4 text-center text-[12px] text-ink/55 dark:border-fog/10 dark:bg-fog/[0.03] dark:text-fog/55">
             No review tickets yet. They appear after a review needs attention.
           </p>
         )}
 
         {!loading && !errorMessage && stats.total > 0 && (
-          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-stretch">
-            <div className="grid shrink-0 grid-cols-2 gap-2">
-              {tiles.map((tile) => (
-                <div
-                  key={tile.key}
-                  className="flex h-28 w-28 flex-col justify-between rounded-[2px] border border-ink/[0.06] bg-ink/[0.02] p-2.5 dark:border-fog/[0.06] dark:bg-fog/[0.04]"
-                >
-                  <span className="text-[10px] font-bold uppercase leading-tight tracking-wide text-ink/45 dark:text-fog/45">
-                    {tile.label}
-                  </span>
-                  <span className={`text-[26px] font-bold leading-none tabular-nums ${tile.tone}`}>
-                    {tile.value}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex min-w-0 flex-1 flex-col justify-between rounded-[2px] border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.06] dark:bg-fog/[0.04]">
-              <div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:text-fog/45">
-                    Status split
-                  </span>
-                  <span className="text-[10px] font-semibold tabular-nums text-ink/40 dark:text-fog/40">
-                    {stats.total} ticket{stats.total === 1 ? "" : "s"}
-                  </span>
-                </div>
-                <div
-                  className="mt-2 flex h-2 w-full overflow-hidden rounded-[2px] bg-ink/[0.06] dark:bg-fog/[0.08]"
-                  role="img"
-                  aria-label={`Status split: ${stats.byStatus.map((s) => `${label(s.key)} ${s.count}`).join(", ")}`}
-                >
-                  {stats.byStatus.map((row) => (
-                    <span
-                      key={row.key}
-                      className={
-                        row.key === "new"
-                          ? "bg-coral"
-                          : row.key === "open"
-                            ? "bg-amber-500"
-                            : row.key === "in_progress"
-                              ? "bg-deep-violet"
-                              : "bg-emerald-600"
-                      }
-                      style={{ width: `${(row.count / Math.max(1, stats.total)) * 100}%` }}
-                    />
-                  ))}
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink/50 dark:text-fog/50">
-                  {stats.byStatus.map((row) => (
-                    <span key={row.key} className="inline-flex items-center gap-1.5">
-                      <span
-                        aria-hidden
-                        className={`h-1.5 w-1.5 rounded-full ${
-                          row.key === "new"
-                            ? "bg-coral"
-                            : row.key === "open"
-                              ? "bg-amber-500"
-                              : row.key === "in_progress"
-                                ? "bg-deep-violet"
-                                : "bg-emerald-600"
-                        }`}
-                      />
-                      {label(row.key)}{" "}
-                      <strong className="tabular-nums text-ink/70 dark:text-fog/70">{row.count}</strong>
-                    </span>
-                  ))}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-ink/55 dark:text-fog/55">
-                  <span>
-                    <strong className="tabular-nums text-ink dark:text-fog">{stats.waiting}</strong> of{" "}
-                    <strong className="tabular-nums text-ink dark:text-fog">{stats.unresolved}</strong> open
-                    need attention
-                  </span>
-                  {stats.urgent > 0 && (
-                    <span className="rounded-[2px] bg-red-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-600 dark:text-red-400">
-                      {stats.urgent} urgent
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-ink/[0.05] pt-2.5 text-[11.5px] dark:border-fog/[0.06]">
-                <span className="text-ink/50 dark:text-fog/50">
-                  {stats.oldestTicket ? (
-                    <>
-                      Oldest open:{" "}
-                      <strong className="font-mono text-[11px] text-deep-violet dark:text-violet-soft">
-                        {stats.oldestTicket}
-                      </strong>
-                      {stats.oldestDays !== null && (
-                        <> · {stats.oldestDays === 0 ? "today" : `${stats.oldestDays}d old`}</>
-                      )}
-                    </>
-                  ) : (
-                    "No open ticket"
-                  )}
-                </span>
-                <Link
-                  href="/dashboard/reviews/issues"
-                  className="font-semibold text-deep-violet hover:underline dark:text-violet-soft"
-                >
-                  {stats.total} ticket{stats.total === 1 ? "" : "s"} in the queue →
-                </Link>
-              </div>
-            </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <span className="text-[22px] font-bold tabular-nums text-ink dark:text-fog">
+              {stats.total} ticket{stats.total === 1 ? "" : "s"}
+            </span>
+            {stats.oldestTicket && (
+              <span className="text-[11.5px] text-ink/50 dark:text-fog/50">
+                Oldest: <strong className="font-mono text-[11px] text-deep-violet dark:text-violet-soft">{stats.oldestTicket}</strong>
+                {stats.oldestDays !== null && (stats.oldestDays === 0 ? " · today" : ` · ${stats.oldestDays}d old`)}
+              </span>
+            )}
           </div>
-        )}
-
-        {!loading && !errorMessage && stats.total > 0 && stats.unresolved === 0 && (
-          <p className="mt-2 text-[12px] font-medium text-emerald-700 dark:text-emerald-400">
-            All review tickets are resolved.
-          </p>
         )}
       </div>
     </section>
