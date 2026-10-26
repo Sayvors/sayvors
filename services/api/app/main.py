@@ -225,6 +225,10 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if not path.startswith("/api/v1/admin/") or path == "/api/v1/admin/login":
             return response
+        # Resolved inside the try, but declared here so the failure log can
+        # name the operator even when the exception happens during resolution.
+        operator_id = None
+        operator_username = None
         try:
             from .database import async_session
             from .modules.admin.models import AdminAuditLog, PlatformOperator
@@ -235,8 +239,6 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
                 auth = request.headers.get("authorization", "")
                 if auth.lower().startswith("bearer "):
                     token = auth[7:]
-            operator_id = None
-            operator_username = None
             if token:
                 try:
                     payload = decode_token(token)
@@ -269,7 +271,16 @@ class AdminAuditMiddleware(BaseHTTPMiddleware):
                 ))
                 await db.commit()
         except Exception as e:
-            logger.debug("Admin audit write failed: %s", e)
+            # Best-effort by design, but a dead audit trail must not be silent:
+            # debug-level logging makes a broken trail look identical to a
+            # working one at default log levels.
+            logger.warning(
+                "Admin audit write failed: path=%s operator=%s error=%s",
+                path,
+                operator_username or operator_id or "unresolved",
+                e,
+                exc_info=True,
+            )
         return response
 
 
@@ -468,7 +479,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limit=100_000_000)
 
 # ── Middleware ──────────────────────────────────────────────────────────
-app.add_middleware(AdminAuditMiddleware)
 app.add_middleware(AdminAuditMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(

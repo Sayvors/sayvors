@@ -181,7 +181,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn">3 open · 6 new · 21 resolved · billing new</span> <span class="chip ok">deps: 55/55 closed</span>
+  <span class="chip warn">3 open · 4 new · 21 resolved · billing new</span> <span class="chip ok">deps: 55/55 closed</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -210,7 +210,7 @@
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), OPS-4 (prod host + SHA-pinned deploys)</div></div>
   <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix in <code>development</code> (not on <code>staging</code> yet), durable ledger shipped, entitlements open (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1562+</div><div class="l">backend tests passing locally - CI gates every staging deploy on them</div></div>
-  <div class="stat"><div class="n amber">6</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings INS-1…INS-6: two code one-liners, the rest infra and housekeeping</div></div>
+  <div class="stat"><div class="n calm">4</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3…INS-6 (INS-1/INS-2 fixed 2026-10-26)</div></div>
 </div>
 
 <section id="model">
@@ -856,22 +856,22 @@
 <section id="pass-2026-10-25">
   <div class="eyebrow">§§ 11 · inspection pass — 2026-10-25</div>
   <h2>Oct 25 pass — re-verification and the INS ledger</h2>
-  <p>A full re-inspection (config, database, migrations, auth, CI, compose files, frontend deps, admin) to re-verify the ledger above and hunt for anything the four original audits missed. <strong>The ledger holds</strong> — every “Fixed” claim spot-checked is real in the working tree. Six new findings, none critical: two one-line code fixes, two small infra hardenings, one context item, one housekeeping pass.</p>
+  <p>A full re-inspection (config, database, migrations, auth, CI, compose files, frontend deps, admin) to re-verify the ledger above and hunt for anything the four original audits missed. <strong>The ledger holds</strong> — every “Fixed” claim spot-checked is real in the working tree. Six new findings, none critical: two one-line code fixes, two small infra hardenings, one context item, one housekeeping pass. The two code fixes (INS-1, INS-2) landed 2026-10-26; the rest remain.</p>
 
   <div class="scroll"><table>
     <tr><th>ID</th><th>Sev</th><th>Kind</th><th>Finding</th><th>Evidence</th><th>Fix</th><th>Effort</th></tr>
     <tr>
-      <td class="num">INS-1</td><td><span class="chip med">Med</span></td><td><span class="chip code">Code</span></td>
+      <td class="num">INS-1</td><td><span class="chip ok">Fixed</span></td><td><span class="chip code">Code</span></td>
       <td><strong>Admin audit middleware is stacked twice — every admin action writes two identical <code>admin_audit_logs</code> rows.</strong> The audit trail shipped in 04ee433 has been double-counting since it landed; counts, filters and “who did what” views over it are wrong. The middleware writes its row unconditionally, so both copies insert.</td>
       <td class="path">services/api/app/main.py:443-444</td>
-      <td>Delete one of the two <code>app.add_middleware(AdminAuditMiddleware)</code> lines. One line.</td>
+      <td><strong>Fixed 2026-10-26</strong> — deleted the second <code>app.add_middleware(AdminAuditMiddleware)</code>. <code>tests/test_admin_audit_middleware.py</code> asserts exactly one registration, so the stack cannot silently double again.</td>
       <td class="num">2 min</td>
     </tr>
     <tr>
-      <td class="num">INS-2</td><td><span class="chip med">Med</span></td><td><span class="chip code">Code</span></td>
+      <td class="num">INS-2</td><td><span class="chip ok">Fixed</span></td><td><span class="chip code">Code</span></td>
       <td><strong>A failed audit write is invisible.</strong> The audit middleware is best-effort by design, but its failure branch logs at <code>debug</code> — at default log levels a silently dead audit trail is indistinguishable from a working one. Exactly the “no silent failure” class the repo rules forbid.</td>
       <td class="path">services/api/app/main.py:270-271</td>
-      <td><code>logger.debug</code> → <code>logger.warning</code>, and include the request path (and operator, if resolved) in the message.</td>
+      <td><strong>Fixed 2026-10-26</strong> — the failure branch now logs at <code>warning</code> with the request path, the resolved operator (or <code>unresolved</code>), the error and a traceback. Operator vars are initialised before the <code>try</code> so the log still names context when resolution itself fails.</td>
       <td class="num">5 min</td>
     </tr>
     <tr>
@@ -919,7 +919,7 @@
     <tr><th>When</th><th>Item</th><th>Kind</th><th>Why / notes</th></tr>
     <tr><td class="num">Week 1</td><td><strong>Verify RDS PITR is on, retention ≥ 7 days, alarms on connections/disk — then rehearse one real restore into a scratch DB.</strong> The single scariest open item (OPS-1): everything else on this page is recoverable; an un-rehearsed backup is not a backup.</td><td><span class="chip buy">Buy</span></td><td>AWS console + one rehearsal. Two migration incidents already happened. ~1 day, ~$0.</td></tr>
     <tr><td class="num">Week 1</td><td><strong>Set <code>S3_DOCS_BUCKET</code> + <code>S3_MEDIA_BUCKET</code></strong> — uploads leave the box’s local Docker volume.</td><td><span class="chip buy">Buy</span></td><td>~$5/mo. The storage backends are already coded; this is env + redeploy. Box loss today = customer document loss.</td></tr>
-    <tr><td class="num">Week 1</td><td><strong>INS-1 + INS-2</strong> — delete the duplicate audit middleware, raise the audit-failure log level.</td><td><span class="chip code">Code</span></td><td>15 minutes total; fixes the audit trail that shipped three commits ago.</td></tr>
+    <tr><td class="num">Week 1</td><td><strong>INS-1 + INS-2</strong> — delete the duplicate audit middleware, raise the audit-failure log level. <span class="chip ok">Done 2026-10-26</span></td><td><span class="chip code">Code</span></td><td>Done; regression tests in <code>tests/test_admin_audit_middleware.py</code> (3 pass).</td></tr>
     <tr><td class="num">Week 1</td><td><strong>INS-6</strong> — review and commit the 12-file WIP; archive the five stale root docs; drop skeleton dirs and the embedsocial spike.</td><td><span class="chip code">Code</span></td><td>Stale ledgers make agents and humans re-do dead work. 30 minutes.</td></tr>
     <tr><td class="num">Prod-host wk</td><td><strong>Stand up the production host</strong>: Caddy + secrets + startup validator (redirect URIs, FRONTEND_URL, CORS). Apply INS-3 hardening while there.</td><td><span class="chip med">Infra</span></td><td>OPS-4 remainder. There is no production deployment to harden until this exists. ~½–1 day.</td></tr>
     <tr><td class="num">Prod-host wk</td><td><strong>Pin deploy images to commit-SHA/digest tags</strong>, not the mutable <code>:staging</code> tag.</td><td><span class="chip med">Infra</span></td><td>Rollback needs a known-good image; a mutable tag can be silently overwritten. ~½ day (CI + compose).</td></tr>
