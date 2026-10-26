@@ -26,7 +26,7 @@ class EventOutbox(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
+        DateTime(timezone=True), nullable=True
     )
     topic: Mapped[str] = mapped_column(String(100), default="auth-events")
     created_at: Mapped[datetime] = mapped_column(
@@ -40,4 +40,6 @@ class EventOutbox(Base):
         # Cleanup deletes by status + age. Without it every hourly sweep
         # scans the full dispatch log.
         Index("ix_event_outbox_status_created", "status", "created_at"),
+        # Lease expiry reaper. Name matches the migration's raw CREATE INDEX.
+        Index("ix_event_outbox_lease_expires", "lease_expires_at"),
     )

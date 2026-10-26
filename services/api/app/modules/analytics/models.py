@@ -19,6 +19,7 @@ from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, Float, Fo
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
+from ...db_indexes import register_postgres_index_ddl
 from .subjects import SUBJECT_KEYS
 
 # A JSON list column with no server default is a trap: `default=list` only
@@ -101,7 +102,9 @@ class ReviewInsight(Base):
     # /media-files, because Google's thumbnailUrl is a short-lived FIFE link
     # that stops resolving within hours. `source_url` is kept only to detect
     # a changed photo on the next sync.
-    media: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+    media: Mapped[list | None] = mapped_column(
+        JSON, default=list, server_default=_EMPTY_JSON, nullable=True
+    )
     # Per-review meaning record — the layer the intelligence report reads
     # instead of re-interpreting raw text. See analytics/subjects.py for the
     # closed vocabulary and the evidence rule that stops the model inventing
@@ -139,7 +142,9 @@ class ReviewInsight(Base):
     # breaks Google's content policies; `abuse_verdict` is the human decision
     # (None = not yet reviewed). The AI never acts on its own.
     abuse_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    abuse_labels: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+    abuse_labels: Mapped[list | None] = mapped_column(
+        JSON, default=list, server_default=_EMPTY_JSON, nullable=True
+    )
     abuse_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     abuse_reviewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -182,6 +187,8 @@ class LocationIssue(Base):
         # One open item per subject per location. A resolved issue keeps its
         # row, so the unique index covers the pair without the status.
         UniqueConstraint("channel_id", "subject", name="uq_location_issue_channel_subject"),
+        # The list endpoint is always "my issues, worst first" within a scope.
+        Index("ix_location_issues_user_channel_status", "user_id", "channel_id", "status"),
         # The subject must be a real member of the closed vocabulary. Enforced
         # in the database as well as in code, because an invented category is
         # exactly the failure this whole layer exists to prevent.
@@ -396,8 +403,9 @@ class ReviewIntelligenceReport(Base):
     # Rolling-window length for preset intervals; 0 for an explicit date range.
     days: Mapped[int] = mapped_column(Integer, default=90)
     # Cache identity for the interval: "7"/"30"/"90"/"365"/"all" for presets,
-    # or "2026-09-01..2026-09-30" for a custom month range.
-    scope_key: Mapped[str] = mapped_column(String(40), default="90")
+    # or "2026-09-01..2026-09-30" for a custom month range. Nullable matches
+    # the migrated table; the default still fills every ORM insert.
+    scope_key: Mapped[str | None] = mapped_column(String(40), default="90", nullable=True)
 
     source: Mapped[str] = mapped_column(String(16), default="fallback")  # ai | fallback
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -408,9 +416,9 @@ class ReviewIntelligenceReport(Base):
     actions: Mapped[list] = mapped_column(JSON, default=list)
     stats: Mapped[dict] = mapped_column(JSON, default=dict)
     # Business Health Scorecard (standard dimensions + LLM-discovered extras).
-    dimensions: Mapped[list] = mapped_column(JSON, default=list)
+    dimensions: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True)
     # Where this business leads / trails the anonymised cohort.
-    competitive: Mapped[dict] = mapped_column(JSON, default=dict)
+    competitive: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     rag_used: Mapped[bool] = mapped_column(Boolean, default=False)
     rag_chunks: Mapped[int] = mapped_column(Integer, default=0)
     rag_bank: Mapped[str | None] = mapped_column(String(36), nullable=True)
@@ -467,7 +475,15 @@ class SearchKeywordStat(Base):
 class ConversationInsight(Base):
     __tablename__ = "conversation_insights"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "window_start", "window_end", name="uq_conversation_insights_tenant_window"),
+        # Unique index (not a UniqueConstraint) to match the migrated object
+        # name, so a models-only rebuild and the migration chain agree.
+        Index(
+            "ix_conversation_insights_tenant_window",
+            "tenant_id",
+            "window_start",
+            "window_end",
+            unique=True,
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -485,7 +501,15 @@ class ConversationInsight(Base):
 class MarketBenchmark(Base):
     __tablename__ = "market_benchmarks"
     __table_args__ = (
-        UniqueConstraint("date", "scope_market", "scope_network", "metric", name="uq_market_benchmarks_date_scope_metric"),
+        # Unique index name matches the migration; see ConversationInsight.
+        Index(
+            "ix_market_benchmarks_date_scope",
+            "date",
+            "scope_market",
+            "scope_network",
+            "metric",
+            unique=True,
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -501,3 +525,22 @@ class MarketBenchmark(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+# Expression + partial indexes over the JSON `meaning` column. PostgreSQL-only;
+# registered here so a models-only rebuild still gets them.
+register_postgres_index_ddl(
+    ReviewInsight.__table__,
+    [
+        "CREATE INDEX IF NOT EXISTS ix_review_insights_meaning_needs_human "
+        "ON review_insights (((meaning ->> 'needs_human')::boolean)) "
+        "WHERE meaning IS NOT NULL AND (meaning ->> 'needs_human') = 'true'",
+        "CREATE INDEX IF NOT EXISTS ix_review_insights_meaning_subject "
+        "ON review_insights ((meaning ->> 'subject')) "
+        "WHERE meaning IS NOT NULL",
+    ],
+    names=[
+        "ix_review_insights_meaning_needs_human",
+        "ix_review_insights_meaning_subject",
+    ],
+)

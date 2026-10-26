@@ -1,7 +1,7 @@
 import logging
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -145,6 +145,20 @@ event.listen(engine_read.sync_engine, "connect", _register_vector_on_connect)
 
 class Base(DeclarativeBase):
     pass
+
+
+@event.listens_for(Base.metadata, "before_create")
+def _ensure_pgvector_extension(target, connection, **kw):  # noqa: ANN001
+    """Make a models-only rebuild self-sufficient on PostgreSQL.
+
+    ``document_chunks.embedding_vector`` is a pgvector type when embeddings
+    are enabled, so ``create_all`` needs the extension before it can emit the
+    column DDL. The migration does the same thing; without this hook a
+    models-only rebuild would fail with "type vector does not exist" even on
+    a host where pgvector is installed but not yet enabled.
+    """
+    if connection.dialect.name == "postgresql" and settings.embeddings_enabled:
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

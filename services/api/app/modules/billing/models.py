@@ -17,7 +17,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -104,8 +104,16 @@ class BillingEvent(Base):
 
     __tablename__ = "billing_events"
     __table_args__ = (
-        UniqueConstraint(
-            "tenant_id", "idempotency_key", name="uq_billing_events_tenant_idempotency"
+        # Partial unique index: a NULL key means "never dedupe", so the index
+        # only covers rows that actually carry a key. Same object the
+        # migration creates; PostgreSQL-only WHERE is ignored on SQLite,
+        # where a full unique index has identical NULL semantics.
+        Index(
+            "uq_billing_events_tenant_idempotency",
+            "tenant_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
         Index("ix_billing_events_status_expires", "status", "expires_at"),
         Index("ix_billing_events_tenant_status", "tenant_id", "status"),

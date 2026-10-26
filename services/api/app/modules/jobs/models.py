@@ -80,7 +80,7 @@ class Job(Base):
     # order instead of bursting late; a job picked up after its deadline is
     # cancelled rather than run late.
     hard_deadline_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
+        DateTime(timezone=True), nullable=True
     )
 
     # Lease so a crashed worker's job is reclaimable.
@@ -119,6 +119,9 @@ class Job(Base):
         # indexes above are ordered by next_run_at, so they cannot serve the
         # sweep — it would scan the whole jobs table every hour.
         Index("ix_jobs_status_created", "status", "created_at"),
+        # The reaper finds overdue jobs by deadline. Name matches the
+        # migration so a models-only rebuild produces the same index.
+        Index("ix_jobs_hard_deadline", "hard_deadline_at"),
     )
 
 
@@ -137,6 +140,10 @@ class JobLaneHeartbeat(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
-        index=True,
     )
     jobs_claimed: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        # Name matches the migration's raw CREATE INDEX.
+        Index("ix_job_lane_heartbeats_last_seen", "last_seen_at"),
+    )

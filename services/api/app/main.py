@@ -290,6 +290,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.error("Database pool warmup failed: %s", e)
 
+    # Catalog rows are data, not schema: a models-only rebuild creates the
+    # tables but leaves them empty, and then every tone is invalid and no
+    # strategy matches. The seeder is idempotent and never overwrites an
+    # admin edit, so it is safe on every boot and from every worker.
+    try:
+        from .database import async_session
+        from .modules.review_engine.catalog_seed import seed_catalogs
+
+        async with async_session() as db:
+            seeded = await seed_catalogs(db)
+        log.info("Catalog seed inserted: %s", seeded)
+    except Exception as e:
+        log.error(
+            "Catalog seed failed — tones/dialects/strategies may stay empty "
+            "until the next start: %s",
+            e,
+        )
+
     # Bootstrap the first platform operator if none exist (replaces the
     # shared admin password with named accounts on first boot).
     try:

@@ -1,11 +1,71 @@
 from datetime import datetime, timezone
 
+from pgvector import Vector as VectorValue
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator, UserDefinedType
 
+from ...config import settings
 from ...database import Base
+from ...db_indexes import register_postgres_index_ddl
 from .embeddings import CANONICAL_DIMENSIONS
+
+
+class _EmbeddingText(UserDefinedType):
+    """Renders exactly ``TEXT`` on every dialect.
+
+    Generic ``Text()`` adapts to ``VARCHAR`` under the PostgreSQL dialect,
+    while the migration creates ``TEXT``. The two are equivalent in
+    PostgreSQL, but the models are the schema source of truth, so the
+    rebuild should emit the same DDL the migration does.
+    """
+
+    cache_ok = True
+
+    def get_col_spec(self, **kw) -> str:
+        return "TEXT"
+
+
+class EmbeddingVector(TypeDecorator):
+    """Physical type of ``document_chunks.embedding_vector``.
+
+    Mirrors the migration's two branches: ``VECTOR(1024)`` when embeddings are
+    enabled, a ``TEXT`` placeholder when they are off (development/test, or a
+    host without pgvector). Without this, a models-only rebuild would require
+    pgvector even in the supported embeddings-off configuration.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if self._native_vector(dialect):
+            return dialect.type_descriptor(Vector(CANONICAL_DIMENSIONS))
+        return _EmbeddingText()
+
+    @staticmethod
+    def _native_vector(dialect) -> bool:
+        return dialect.name == "postgresql" and settings.embeddings_enabled
+
+    def process_bind_param(self, value, dialect):
+        """Serialize a vector for the TEXT fallback.
+
+        The Vector impl does this itself, but a plain Text column would hand
+        the driver a Python list, which SQLite rejects. Writing the same text
+        form the vector type uses keeps the stored value readable if the
+        deployment later enables embeddings.
+        """
+        if value is None or self._native_vector(dialect):
+            return value
+        if isinstance(value, str):
+            return value
+        return VectorValue._to_db(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None or self._native_vector(dialect):
+            return value
+        return VectorValue._from_db(value)
 
 
 class Databank(Base):
@@ -76,7 +136,7 @@ class DocumentChunk(Base):
     # pgvector column. One dimension for every provider, so a chunk written
     # by one model is still comparable with a query built by another width.
     embedding_vector: Mapped[list[float] | None] = mapped_column(
-        Vector(CANONICAL_DIMENSIONS), nullable=True
+        EmbeddingVector(), nullable=True
     )
     # Tag of the model that produced the vector (provider + model name).
     # Chunks with a different tag are excluded from vector search.
@@ -215,3 +275,29 @@ class IngestJob(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+# The keyword index is PostgreSQL-only (expression GIN); the HNSW vector
+# index additionally requires pgvector, so it is only created when embeddings
+# are enabled. SQLite skips both.
+register_postgres_index_ddl(
+    DocumentChunk.__table__,
+    lambda: [
+        "CREATE INDEX IF NOT EXISTS ix_document_chunks_content_gin "
+        "ON document_chunks USING gin (to_tsvector('simple', content))",
+        *(
+            [
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_document_chunks_embedding_vector_hnsw "
+                "ON document_chunks USING hnsw "
+                "(embedding_vector vector_cosine_ops)"
+            ]
+            if settings.embeddings_enabled
+            else []
+        ),
+    ],
+    names=[
+        "ix_document_chunks_content_gin",
+        "ix_document_chunks_embedding_vector_hnsw",
+    ],
+)

@@ -13,10 +13,12 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...database import Base
+from ...db_indexes import register_postgres_index_ddl
 
 
 class Channel(Base):
@@ -88,13 +90,24 @@ class ChannelMessage(Base):
         # `WHERE channel_id = ? ORDER BY created_at DESC LIMIT n` without a
         # sort. Search uses exactly that shape, per channel, on every query.
         Index("ix_channel_messages_channel_created", "channel_id", "created_at"),
+        # Replay dedupe: a platform message id may be seen more than once, so
+        # it must be unique — but NULL is legitimate (locally created rows and
+        # pre-column rows), and multiple NULLs must be allowed. The migration
+        # encodes exactly this partial unique index; a column-level
+        # index=True would create a full, non-unique index instead.
+        Index(
+            "ix_channel_messages_platform_message_id",
+            "platform_message_id",
+            unique=True,
+            postgresql_where=text("platform_message_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     channel_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("channels.id"), index=True
     )
-    platform_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    platform_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     direction: Mapped[str] = mapped_column(Enum("inbound", "outbound", name="message_direction"))
     content: Mapped[str] = mapped_column(Text)
     content_type: Mapped[str] = mapped_column(String(50), default="text")
@@ -155,19 +168,27 @@ class ChannelThread(Base):
     """
     __tablename__ = "channel_threads"
     __table_args__ = (
-        UniqueConstraint(
-            "channel_id", "contact_phone_hash",
-            name="uq_channel_threads_channel_contact",
+        # Unique index (not a UniqueConstraint) because the migration creates
+        # it with CREATE UNIQUE INDEX; same object, and the inbox upsert's
+        # ON CONFLICT (channel_id, contact_phone_hash) needs it.
+        Index(
+            "uq_channel_threads_channel_contact",
+            "channel_id",
+            "contact_phone_hash",
+            unique=True,
         ),
         Index("ix_channel_threads_channel_last", "channel_id", "last_message_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Both columns are covered by the unique index above (channel_id is its
+    # leftmost column), so separate single-column indexes would only add
+    # write cost.
     channel_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True
+        String(36), ForeignKey("channels.id", ondelete="CASCADE")
     )
     contact_phone: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_direction: Mapped[str | None] = mapped_column(String(10), nullable=True)
@@ -207,6 +228,15 @@ class ChannelComment(Base):
         # Dedupe lookups by platform id, thread lookups (replies of a
         # comment) and per-media feeds all scan — give each a real index.
         Index("ix_channel_comments_platform_id", "platform_comment_id"),
+        # The migration enforces replay dedupe with a PARTIAL unique index
+        # (NULL platform ids are unsent drafts and may repeat). A column-level
+        # unique=True would create a full constraint with a different name.
+        Index(
+            "uq_channel_comments_platform_id",
+            "platform_comment_id",
+            unique=True,
+            postgresql_where=text("platform_comment_id IS NOT NULL"),
+        ),
         Index("ix_channel_comments_parent", "parent_platform_comment_id"),
         Index("ix_channel_comments_media", "channel_id", "media_id", "created_at"),
     )
@@ -215,7 +245,7 @@ class ChannelComment(Base):
     channel_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("channels.id"), index=True
     )
-    platform_comment_id: Mapped[str | None] = mapped_column(String(200), nullable=True, unique=True)
+    platform_comment_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     parent_platform_comment_id: Mapped[str | None] = mapped_column(
         String(200), nullable=True
     )
@@ -310,9 +340,10 @@ class Lead(Base):
         # Stored (not derived in SQL) so this stays an index scan rather than
         # a full sort of the lead table. See lead_escalation.py.
         Index("ix_leads_tenant_priority", "tenant_id", "priority", "updated_at"),
-        # NOTE: ix_leads_pending_reminder is deliberately NOT declared here.
-        # It is a partial index (WHERE priority='important'), which SQLite
-        # cannot express, so it lives only in the migration.
+        # ix_leads_pending_reminder is a partial index (WHERE
+        # priority='important') and cannot be expressed in __table_args__.
+        # It is registered as a PostgreSQL-only after_create hook below so a
+        # models-only rebuild still gets it; SQLite skips it.
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -531,7 +562,7 @@ class AutoReplyConfig(Base):
     # LLM model id (provider catalog id, e.g. "groq:openai/gpt-oss-120b").
     # NULL = tenant default, resolved from the admin-managed enabled
     # models at generation time. Never a hardcoded provider default.
-    model: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Arabic dialect code (review_engine.dialects catalog) or "auto".
     dialect: Mapped[str] = mapped_column(String(30), default="auto")
     # Reply language policy: match the review, or force en/ar.
@@ -675,6 +706,25 @@ class ReviewIssue(Base):
     """
 
     __tablename__ = "review_issues"
+    __table_args__ = (
+        # The public wa.me prefill carries no tenant id, so a handoff code
+        # must be globally unique. ensure_handoff_code() relies on this index
+        # to catch the rare random collision and retry; without it a duplicate
+        # can be written and resolve_inbound() would raise MultipleResultsFound.
+        Index("ix_review_issues_handoff_code", "handoff_code", unique=True),
+        # Ticket numbers are sequential per tenant. The advisory lock is the
+        # primary guard; this unique index is the database backstop.
+        Index(
+            "ix_review_issues_tenant_ticket",
+            "tenant_id",
+            "ticket_number",
+            unique=True,
+        ),
+        # Ticket queue scans: tenant + status / priority / review.
+        Index("ix_review_issues_tenant_status", "tenant_id", "status"),
+        Index("ix_review_issues_tenant_priority", "tenant_id", "priority"),
+        Index("ix_review_issues_tenant_review_id", "tenant_id", "review_id"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
     channel_id: Mapped[str] = mapped_column(String(36), ForeignKey("channels.id", ondelete="CASCADE"), index=True, nullable=False)
@@ -736,14 +786,22 @@ class WhatsAppThreadState(Base):
     __tablename__ = "whatsapp_thread_states"
     __table_args__ = (
         UniqueConstraint("channel_id", "contact_phone", name="uq_wa_thread_channel_phone"),
+        # Explicit names so a models-only rebuild matches the migrated
+        # database (its indexes were created as ix_wa_thread_states_*).
+        Index("ix_wa_thread_states_channel_id", "channel_id"),
+        Index("ix_wa_thread_states_contact_phone", "contact_phone"),
+        Index("ix_wa_thread_states_contact_phone_hash", "contact_phone_hash"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     channel_id: Mapped[str] = mapped_column(
-        ForeignKey("channels.id", ondelete="CASCADE"), index=True
+        ForeignKey("channels.id", ondelete="CASCADE")
     )
-    contact_phone: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # get_or_create_thread_state() returns None before constructing a row when
+    # the phone is missing, so every persisted row has one. The migrated
+    # column is NOT NULL; the model must say the same.
+    contact_phone: Mapped[str] = mapped_column(String(255), nullable=False)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Customer's language as detected from their own words ("en", "ar",
     # "ur", "ps", "hi", "bn", ...). Drives the voice-note language.
     language: Mapped[str] = mapped_column(String(16), default="en")
@@ -758,3 +816,16 @@ class WhatsAppThreadState(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+# The escalation sweep is the only cross-tenant query in the feature; without
+# this partial index it scans every lead row. Registered here (not in
+# __table_args__) because SQLite cannot express a partial index.
+register_postgres_index_ddl(
+    Lead.__table__,
+    [
+        "CREATE INDEX IF NOT EXISTS ix_leads_pending_reminder "
+        "ON leads (escalation_reminder_at) WHERE priority = 'important'"
+    ],
+    names=["ix_leads_pending_reminder"],
+)

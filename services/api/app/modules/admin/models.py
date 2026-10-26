@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -17,9 +17,15 @@ from ...database import Base
 
 class PlatformOperator(Base):
     __tablename__ = "platform_operators"
+    __table_args__ = (
+        # The migrated table has a UNIQUE constraint on username
+        # (platform_operators_username_key) plus this plain index. Declaring
+        # both keeps a models-only rebuild identical to the migration chain.
+        Index("ix_platform_operators_username", "username"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(32), default="operator", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)

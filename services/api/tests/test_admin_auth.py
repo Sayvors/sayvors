@@ -47,15 +47,15 @@ def _no_rate_limit(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_disabled_without_hash(client, monkeypatch):
+async def test_admin_disabled_without_hash(client, db, monkeypatch):
     from sqlalchemy import delete
 
-    from app.database import async_session
     from app.modules.admin.models import PlatformOperator
 
-    async with async_session() as db:
-        await db.execute(delete(PlatformOperator))
-        await db.commit()
+    # Use the test session, never app.database.async_session: the latter points
+    # at the dev Postgres database and would delete real operator accounts.
+    await db.execute(delete(PlatformOperator))
+    await db.commit()
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", "")
     r = client.post("/api/v1/admin/login", json={"username": "admin", "password": "x"}, headers=_HOST)
     assert r.status_code == 503

@@ -1188,9 +1188,14 @@ async def test_consumer_schedules_lead_followup_only_for_questions(db, user_id, 
 
     # A statement reply -> no new action; and the customer's inbound
     # ("ok chicken") already cancelled the armed one.
-    adapter2 = _VoiceAdapter()
+    #
+    # Reuse the adapter: the mock derives the provider message id from the
+    # number of sends on the instance. A fresh instance would restart at
+    # "wamp-1" and collide with the first reply under the partial unique
+    # index on channel_messages.platform_message_id (real provider ids are
+    # globally unique).
     _wire_voice_consumer(
-        monkeypatch, adapter2, reply="Great, your order is confirmed.",
+        monkeypatch, adapter, reply="Great, your order is confirmed.",
         confused=False, language="en", voice_result=None,
     )
     event2 = ({"external_asset_id": _PHONE_ID, "external_event_id": _WAMID + "2"},

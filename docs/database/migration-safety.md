@@ -113,6 +113,10 @@ means the type is never created twice.
 A column on an ORM model that no migration creates is the "column X does not
 exist" outage. Every model column must be traceable to a migration.
 
+The reverse direction — a migration object the model does not describe — is
+covered by §10: a database rebuilt from `Base.metadata` alone must match the
+migrated one.
+
 ---
 
 ## 3. The guards
@@ -422,3 +426,65 @@ python scripts/backfill_embeddings.py --apply     # writes the vectors
 
 The script is re-runnable and only touches chunks whose vector is still
 NULL (unless `--force` is passed).
+
+---
+
+## 10. Models are the schema source of truth
+
+The Alembic chain is the deployment mechanism; `Base.metadata` is the schema
+definition. A database rebuilt with `create_all` alone — no migration files —
+must be indistinguishable from one built by `alembic upgrade head`.
+
+### What the rebuild covers
+
+| Area | Mechanism |
+|---|---|
+| Tables | every module's models are imported by `alembic/env.py`; `review_engine/models.py` also imports `csv_models`, so `csv_uploads` / `csv_rows` are never missing |
+| Unique + composite indexes | declared in `__table_args__` with the migration's exact names (`ix_review_issues_handoff_code`, `ix_review_issues_tenant_ticket`, `uq_channel_threads_channel_contact`, ...) |
+| Partial unique indexes | `postgresql_where` on the `Index` (`uq_billing_events_tenant_idempotency`, `uq_channel_comments_platform_id`) |
+| GIN / HNSW / expression / partial DDL | `app/db_indexes.py` — `register_postgres_index_ddl()` attaches an `after_create` hook that runs only on PostgreSQL and is a no-op on SQLite. The hook registers the index names, and `alembic/env.py` filters them out of autogenerate, so a routine `alembic revision --autogenerate` never proposes dropping them |
+| pgvector | `EmbeddingVector` emits `VECTOR(1024)` when embeddings are enabled and `TEXT` otherwise, matching migration `c3d4e5f6a7b8`; `database.py` creates the extension in a `before_create` hook |
+| CSV payload | `csv_rows.data` is `JSONB` on PostgreSQL (`@>` and `jsonb_each_text()` need it) and JSON on SQLite |
+| Catalog data | `review_engine/catalog_seed.py` runs on startup: `INSERT ... ON CONFLICT DO NOTHING` for tones (4), dialects (23), response strategies (10), voice models (2). Admin edits survive; a deleted row is refilled on the next start |
+
+The PostgreSQL-only hooks are the reason the SQLite test suite still works:
+the dialect guard skips them there, while the fresh-rebuild probe (below)
+verifies they exist on PostgreSQL.
+
+### The one deliberate difference: server defaults
+
+The migrated database carries server defaults (`now()`, `0`, `false`, enum
+labels) on the order of 180 columns. The models do not repeat them, because
+every one of those columns already has a Python-side default (`default=` /
+`default_factory`): an ORM insert always supplies the value, and the server
+default only matters to raw SQL outside the ORM. Duplicating ~180 literals in
+the models would add no behavioural change.
+
+Two columns had a server default and no Python default.
+`user_feedback.emoji_rating` keeps it (`server_default="3"` on the model).
+`auto_reply_configs.model` carried the original `'openai:gpt-4o-mini'`
+default, which contradicted the documented design — NULL means "resolve the
+tenant default from the admin-managed enabled models". The parity migration
+drops that default instead of teaching the model to reproduce it, so a new
+row that omits the column really is NULL.
+
+### Verification
+
+```bash
+cd services/api
+python -m pytest tests/test_model_schema.py tests/test_catalog_seed.py
+python -m alembic check
+```
+
+`test_model_schema.py` pins the declarations that used to drift; it does not
+need a live PostgreSQL. `alembic check` compares the models against a migrated
+database and must report `No new upgrade operations detected.` — the five
+PostgreSQL-only hook indexes are filtered out of the comparison because they
+exist in the database but not in `Base.metadata`.
+
+The stronger check is a throwaway PostgreSQL database
+built with `Base.metadata.create_all` and compared against a migrated one:
+same 72 tables, same index names, same foreign keys and delete rules, same
+types, and the changed columns (`csv_rows.data`, `document_chunks.
+embedding_vector`, `whatsapp_thread_states.contact_phone`) carrying the same
+nullability.
