@@ -10,6 +10,7 @@ Dev mock mode (GOOGLE_REVIEWS_MOCK) returns canned policy-safe replies.
 """
 import logging
 import re
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -79,6 +80,11 @@ async def _append_handoff_link(
     issue without a code (praise, or classification not finished yet) simply
     gets no link; the next regeneration picks it up.
 
+    An expired code is treated as absent: the reply must not publish a link
+    that the inbound ladder will refuse, because the customer would tap it,
+    send the code, and be treated as a stranger. Rotation belongs to the mint
+    path, not here — this function stays read-only.
+
     Any failure degrades to the un-appended reply: a missing link must never
     cost the merchant their reply.
     """
@@ -91,11 +97,12 @@ async def _append_handoff_link(
     if config is not None and not getattr(config, "handoff_link_enabled", True):
         return text
     try:
-        from sqlalchemy import select
+        from sqlalchemy import or_, select
 
         from ..review_engine.handoff import tenant_whatsapp_number, wa_me_link
         from .models import ReviewIssue
 
+        now = datetime.now(timezone.utc)
         code = (await db.execute(
             select(ReviewIssue.handoff_code)
             .where(
@@ -103,6 +110,11 @@ async def _append_handoff_link(
                 ReviewIssue.review_id == review_id,
                 ReviewIssue.needs_attention.is_(True),
                 ReviewIssue.handoff_code.isnot(None),
+                # NULL = legacy code with no expiry (see the migration).
+                or_(
+                    ReviewIssue.handoff_code_expires_at.is_(None),
+                    ReviewIssue.handoff_code_expires_at > now,
+                ),
             )
             .order_by(ReviewIssue.created_at.desc())
             .limit(1)

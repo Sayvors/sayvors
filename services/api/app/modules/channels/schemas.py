@@ -174,6 +174,10 @@ class AutoReplyConfigUpdate(BaseModel):
     promo_only_relevant: bool | None = Field(None, description="Only promote when relevant to the review")
     promo_max_ctas: int | None = Field(None, ge=0, le=5, description="Maximum promotional CTAs per reply")
     handoff_link_enabled: bool | None = Field(None, description="Offer reviewers a WhatsApp link: a ticket-code handoff for problems, or a generic sales link for pricing/plan questions. Note: the link makes your WhatsApp number public on the listing")
+    handoff_code_ttl_days: int | None = Field(
+        None, ge=1, le=30,
+        description="Lifetime (days) of a handoff code before it expires. The wa.me link prefills this code, so the link expires with it. Default 1.",
+    )
 
 
 class AutoReplyConfigResponse(BaseModel):
@@ -193,6 +197,7 @@ class AutoReplyConfigResponse(BaseModel):
     promo_only_relevant: bool = True
     promo_max_ctas: int = 1
     handoff_link_enabled: bool = True
+    handoff_code_ttl_days: int = 1
 
 
 class ReviewReplyResponse(BaseModel):

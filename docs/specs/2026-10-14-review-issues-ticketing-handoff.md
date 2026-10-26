@@ -24,9 +24,11 @@ conversation they start afterwards.
 ## Non-goals
 
 - No LangGraph orchestration yet (planned separately, Phase D).
-- No automatic insertion of a handoff code into the **public** review reply. That
-  advertises the tenant's WhatsApp line on a public review; it is a product
-  decision, not a technical one. Codes are minted on demand instead.
+- ~~No automatic insertion of a handoff code into the **public** review reply.~~
+  Superseded: the link is inserted when the tenant's
+  `auto_reply_configs.handoff_link_enabled` is on (default on, opt-out because it
+  publishes the WhatsApp number on the listing). The link carries the code as
+  its prefilled `text`, so the customer taps once and sends once.
 - No dashboard UI for issues yet.
 
 ---
@@ -115,9 +117,31 @@ the code we gave them. The ladder (`tickets.resolve_inbound`) walks
 
 Codes are 6 characters from a 30-char alphabet with **no `0`/`O` or `1`/`I`** —
 a customer reads one off a screenshot and types it by hand. They are generated
-with `secrets`, not `random`, so they are not enumerable. Minting is idempotent:
-an issue keeps its code, because a code handed to a customer yesterday must not
-die overnight.
+with `secrets`, not `random`, so they are not enumerable. Minting is idempotent
+**while the code is valid**: re-composing a reply reuses it, and once the
+tenant's TTL runs out the next mint rotates it in place.
+
+### Expiring links and the `#` marker
+
+The public review reply is permanent, so the code it carries must not be. Every
+mint writes `review_issues.handoff_code_expires_at` from the channel's
+`auto_reply_configs.handoff_code_ttl_days` (1–30 days, default 1, managed in
+Settings → Google → WhatsApp recovery link). The migration backfills existing
+codes with a fresh window rather than retroactively killing codes already in a
+customer's hands. `resolve_inbound` treats an expired code as absent and falls
+through to the ticket-number rung.
+
+The `wa.me` link prefills **`#CODE`**, not the bare six characters. The marker is
+load-bearing: `THANKS` and `PLEASE` are six letters from the code alphabet, so a
+bare-code match would attach a customer to whichever ticket happened to own that
+word. `extract_handoff_codes` therefore requires the `#` and the whole message
+to be the token; callers that already know they hold a code (the dashboard,
+tests, future adapters) can pass it explicitly. The dashboard displays the
+marked form so a customer who types it by hand sends the right thing.
+
+The rotation is one conditional `UPDATE ... WHERE handoff_code IS NULL OR
+handoff_code_expires_at <= now`, so two workers that both decide to mint cannot
+overwrite each other's code: the loser re-reads the winner's value.
 
 **The first ticket the customer mentions wins, and an unresolvable one is not
 skipped in favour of a later one.** "TK-999999 or maybe TK-000042" quotes two

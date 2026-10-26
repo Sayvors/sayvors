@@ -24,6 +24,9 @@ class ReviewIssueOut(BaseModel):
     review_id: str
     ticket_number: str | None = None
     handoff_code: str | None = None
+    # When the code (and the wa.me link that prefills it) stops resolving.
+    # NULL = legacy code with no expiry.
+    handoff_code_expires_at: str | None = None
     rating: int
     primary_category: str
     subcategory: str
@@ -53,6 +56,11 @@ def _to_out(r) -> ReviewIssueOut:
         review_id=r.review_id,
         ticket_number=r.ticket_number,
         handoff_code=r.handoff_code,
+        handoff_code_expires_at=(
+            r.handoff_code_expires_at.isoformat()
+            if getattr(r, "handoff_code_expires_at", None)
+            else None
+        ),
         rating=r.rating,
         primary_category=r.primary_category,
         subcategory=r.subcategory,

@@ -32,6 +32,7 @@ so the model rarely needs the text at all.
 import logging
 import re
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +42,7 @@ from .tickets import (
     CODE_LENGTH,
     InboundMatch,
     _normalize_code,
+    handoff_code_expired,
     resolve_inbound,
 )
 
@@ -50,6 +52,14 @@ logger = logging.getLogger(__name__)
 # guards a pathological case, but a collision must never become a customer
 # being handed the wrong ticket, so we fail loudly instead of reusing.
 _MINT_ATTEMPTS = 8
+
+# Handoff-code lifetime. A public review reply is permanent, so the code it
+# carries must not be: one day is enough for a customer to tap the link, and
+# the tenant can extend it up to 30 days from Settings. The bounds are enforced
+# here as well as in the Pydantic schema because rows written before validation
+# existed (or by a direct DB edit) must not create a forever-code.
+DEFAULT_CODE_TTL_DAYS = 1
+MAX_CODE_TTL_DAYS = 30
 
 # Verbatim review text is attacker-controlled. Truncated hard and wrapped, per
 # the review engine's existing firewall (see review_engine/generator.py).
@@ -233,44 +243,123 @@ async def _notify_return(db: AsyncSession, *, tenant_id: str, issue) -> None:
         logger.debug("customer-returned notification skipped: %s", e)
 
 
+async def _code_ttl_days(
+    db: AsyncSession, *, channel_id: str | None
+) -> int:
+    """The tenant's configured code lifetime, clamped to a safe range.
+
+    A config read failure falls back to the shortest allowed lifetime rather
+    than no expiry: an unreadable setting must not leave a code that lives
+    forever on a public listing.
+
+    The read runs inside a SAVEPOINT so a failure rolls back only this lookup.
+    On Postgres a failed statement aborts the whole transaction, and the mint
+    UPDATE that follows would then fail with PendingRollbackError -- the
+    fallback would never take effect. A bare rollback() would expire the
+    caller's ORM objects (the MissingGreenlet hazard this module documents),
+    which is why it has to be a nested transaction rather than a session
+    rollback.
+    """
+    from sqlalchemy import select
+
+    from ..channels.models import AutoReplyConfig
+
+    if not channel_id:
+        return DEFAULT_CODE_TTL_DAYS
+    try:
+        async with db.begin_nested():
+            raw = (await db.execute(
+                select(AutoReplyConfig.handoff_code_ttl_days).where(
+                    AutoReplyConfig.channel_id == channel_id
+                )
+            )).scalar_one_or_none()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "handoff TTL lookup failed for channel %s: %s: %s",
+            channel_id, type(e).__name__, str(e)[:200],
+        )
+        return DEFAULT_CODE_TTL_DAYS
+    if raw is None:
+        return DEFAULT_CODE_TTL_DAYS
+    return max(1, min(MAX_CODE_TTL_DAYS, int(raw)))
+
+
 async def ensure_handoff_code(
     db: AsyncSession, *, tenant_id: str, issue
 ) -> str | None:
-    """Return this issue's handoff code, minting one on first use.
+    """Return this issue's handoff code, minting or rotating it as needed.
 
-    Idempotent: an issue that already has a code keeps it, so a customer who
-    saved yesterday's code is not left holding a dead one.
+    Idempotent while the code is valid: a customer who saved yesterday's code
+    keeps working until the tenant's TTL runs out. Once it expires the row is
+    rotated in place, so the old link stops resolving and the new one carries
+    a fresh lifetime.
+
+    Rotation is one conditional UPDATE rather than read-modify-write. Two
+    workers that both decide to mint cannot overwrite each other's code: the
+    loser's WHERE no longer matches (the winner's code is valid) and it
+    re-reads the winner's value. The global unique index remains the backstop
+    for the astronomically rare random collision.
 
     Returns None for an issue that needs no attention -- praise has nothing to
     hand off, and a code on it would be a handle to nothing.
     """
-    from sqlalchemy import select
+    from sqlalchemy import or_, select, update
 
     from ..channels.models import ReviewIssue
 
     if not issue.needs_attention:
         return None
-    if _normalize_code(issue.handoff_code):
+    now = datetime.now(timezone.utc)
+    if _normalize_code(issue.handoff_code) and not handoff_code_expired(
+        issue.handoff_code_expires_at, now=now
+    ):
         return issue.handoff_code
 
+    ttl_days = await _code_ttl_days(db, channel_id=getattr(issue, "channel_id", None))
     for attempt in range(_MINT_ATTEMPTS):
         code = _random_code()
+        expires_at = now + timedelta(days=ttl_days)
         try:
-            issue.handoff_code = code
-            db.add(issue)
-            await db.commit()
+            won = (await db.execute(
+                update(ReviewIssue)
+                .where(
+                    ReviewIssue.id == issue.id,
+                    ReviewIssue.tenant_id == tenant_id,
+                    or_(
+                        ReviewIssue.handoff_code.is_(None),
+                        ReviewIssue.handoff_code_expires_at <= now,
+                    ),
+                )
+                .values(handoff_code=code, handoff_code_expires_at=expires_at)
+                .returning(ReviewIssue.id)
+                .execution_options(synchronize_session=False)
+            )).scalar_one_or_none()
+            if won is not None:
+                await db.commit()
+                await db.refresh(issue)
+                # Post-commit on purpose: the queue must never show a code the
+                # database does not have. Realtime only — the ticket's own bell
+                # entry already told the merchant it exists.
+                await _announce(issue, tenant_id, "handoff_minted")
+                return code
+
+            # Another writer minted between our read and this UPDATE. Use their
+            # code instead of fighting over the row.
             await db.refresh(issue)
-            # Post-commit on purpose: the queue must never show a code the
-            # database does not have. Realtime only — the ticket's own bell
-            # entry already told the merchant it exists.
-            await _announce(issue, tenant_id, "handoff_minted")
-            return code
+            if _normalize_code(issue.handoff_code) and not handoff_code_expired(
+                issue.handoff_code_expires_at, now=now
+            ):
+                return issue.handoff_code
+            logger.info(
+                "handoff mint lost the race on attempt %d for tenant %s",
+                attempt + 1, tenant_id,
+            )
         except IntegrityError:
             # The unique index is the arbiter: a concurrent mint won this race.
             # rollback() expires every ORM object on the session, so the issue
             # row must be re-read before touching it again -- otherwise the next
-            # `issue.handoff_code =` triggers a lazy load that AsyncSession
-            # cannot await (MissingGreenlet). See scheduling.take_lock.
+            # access triggers a lazy load that AsyncSession cannot await
+            # (MissingGreenlet). See scheduling.take_lock.
             await db.rollback()
             fresh = (
                 await db.execute(
@@ -284,7 +373,9 @@ async def ensure_handoff_code(
                 raise RuntimeError(
                     f"issue {issue.id} vanished while minting a handoff code"
                 )
-            if _normalize_code(fresh.handoff_code):
+            if _normalize_code(fresh.handoff_code) and not handoff_code_expired(
+                fresh.handoff_code_expires_at, now=now
+            ):
                 return fresh.handoff_code  # the other writer already succeeded
             issue = fresh
             logger.info(
@@ -341,13 +432,17 @@ async def tenant_whatsapp_number(db: AsyncSession, *, tenant_id: str) -> str | N
 
 
 def wa_me_link(number: str, code: str) -> str:
-    """The deep link a customer taps: WhatsApp opens with the code prefilled.
+    """The deep link a customer taps: WhatsApp opens with ``#CODE`` prefilled.
 
-    The prefill is JUST the code. A sentence in the prefill reads as marketing
-    to the person tapping and risks Meta's template filters, while the bare
-    code is exactly what resolve_inbound matches — so the whole journey is one
-    tap plus one send. The handoff alphabet is URL-safe by construction, but
-    quote the value anyway so a future alphabet change cannot ship a broken
+    The prefill is JUST the marked code. A sentence in the prefill reads as
+    marketing to the person tapping and risks Meta's template filters, while
+    the bare token is exactly what resolve_inbound matches — so the whole
+    journey is one tap plus one send. The ``#`` is what distinguishes the
+    token from an ordinary six-letter word on the inbound side; see
+    tickets.extract_handoff_codes.
+
+    The handoff alphabet is URL-safe by construction, but quote the value
+    anyway so the ``#`` (and any future alphabet change) cannot ship a broken
     query string. Empty string for a number with no digits, so callers can
     skip falsy.
     """
@@ -356,7 +451,7 @@ def wa_me_link(number: str, code: str) -> str:
     digits = re.sub(r"\D", "", str(number or ""))
     if not digits:
         return ""
-    return f"https://wa.me/{digits}?text={quote(str(code))}"
+    return f"https://wa.me/{digits}?text={quote(f'#{code}')}"
 
 
 async def resolve_and_advance(

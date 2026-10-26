@@ -249,7 +249,7 @@ export default function ReviewTicketsPage() {
                 </p>
                 <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
                   {label(i.primary_category)} · {label(i.subcategory)}
-                  {i.handoff_code && <> · code <span className="font-semibold tabular-nums text-[var(--ui-ink)]">{i.handoff_code}</span></>}
+                  {i.handoff_code && <> · code <span className="font-semibold tabular-nums text-[var(--ui-ink)]">#{i.handoff_code}</span></>}
                 </p>
               </button>
             ))}
@@ -273,6 +273,23 @@ export default function ReviewTicketsPage() {
 
 /* ── detail drawer ──────────────────────────────────────────────────── */
 
+/**
+ * Human label for a code's remaining life. An absolute timestamp is noise in
+ * a drawer; "expires in 23h" is the decision the merchant is actually making
+ * (re-mint now, or leave it).
+ */
+function describeExpiry(iso: string | null): string | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return null;
+  if (ms <= 0) return "expired";
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `expires in ${minutes} min`;
+  const hours = Math.ceil(minutes / 60);
+  if (hours < 48) return `expires in ${hours}h`;
+  return `expires in ${Math.ceil(hours / 24)} days`;
+}
+
 function TicketDrawer({
   issue,
   waPhone,
@@ -287,9 +304,14 @@ function TicketDrawer({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(issue.handoff_code);
+  const [expiresAt, setExpiresAt] = useState<string | null>(
+    issue.handoff_code_expires_at,
+  );
   const [copied, setCopied] = useState(false);
 
   const link = code ? waMeLink(waPhone, code) : "";
+  const expired = !!expiresAt && new Date(expiresAt).getTime() <= Date.now();
+  const expiryLabel = describeExpiry(expiresAt);
 
   async function setStatus(status: string) {
     setBusy(status);
@@ -309,6 +331,7 @@ function TicketDrawer({
     try {
       const row = await mintHandoffCode(issue.id);
       setCode(row.handoff_code);
+      setExpiresAt(row.handoff_code_expires_at);
       onChanged(row);
     } catch (e) {
       // 422 = praise or neutral chatter: nothing to hand off. A fact about
@@ -418,15 +441,32 @@ function TicketDrawer({
           <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">WhatsApp handoff</div>
           <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
             {code
-              ? "The customer quotes this code on WhatsApp, and the assistant picks up the ticket with the full story already in context."
+              ? "The customer sends this code on WhatsApp, and the assistant picks up the ticket with the full story already in context. The # is part of the code — it is what tells the assistant this is a ticket, not an ordinary word."
               : "No code yet. Mint one to hand this ticket to the customer on WhatsApp — the assistant then knows the issue before they say a word."}
           </p>
           {code ? (
             <>
               <p className="mt-3 bg-[var(--ui-sunken)] px-4 py-3 text-center text-[18px] font-bold tabular-nums tracking-[0.2em] text-[var(--ui-ink)]">
-                {code}
+                #{code}
               </p>
-              {link ? (
+              <p className="mt-1 text-center text-[11px] text-[var(--ui-ink-2)]">
+                {expiryLabel ? `Code ${expiryLabel}` : "Legacy code — no expiry"}
+              </p>
+              {expired ? (
+                <div className="mt-2">
+                  <p className="text-[12px] text-[var(--ui-ink-2)]">
+                    This code has expired, so the link in the old review reply no longer attaches the ticket.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void mint()}
+                    className={`${BTN_PRIMARY} mt-2 disabled:opacity-40`}
+                  >
+                    {busy === "code" ? "Minting…" : "Mint a new code"}
+                  </button>
+                </div>
+              ) : link ? (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button type="button" onClick={() => void copyLink()} className={BTN_PRIMARY}>
                     {copied ? "Copied" : "Copy WhatsApp link"}

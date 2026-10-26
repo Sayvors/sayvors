@@ -550,6 +550,13 @@ class AutoReplyConfig(Base):
     handoff_link_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
+    # Lifetime of a handoff code (days). The wa.me link carries the code as
+    # its `text` payload, so expiring the code also expires the link: a stale
+    # review reply stops attaching a customer to a ticket months later.
+    # Clamped to [1, 30] in review_engine.handoff; default 1 day.
+    handoff_code_ttl_days: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1"
+    )
     # Polling lease (atomic claim across worker instances)
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     polling_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -695,7 +702,14 @@ class ReviewIssue(Base):
     # Unique per (tenant_id, ticket_number) -- NULLs do not collide in Postgres
     # or SQLite unique indexes, so unnumbered issues stack freely.
     ticket_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Six characters from CODE_ALPHABET. Globally unique (ix_review_issues_
+    # handoff_code) because the public wa.me prefill carries no tenant id.
     handoff_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # When the code (and therefore the wa.me link that prefills it) stops
+    # resolving. NULL = legacy row minted before TTLs existed: never expires.
+    handoff_code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
