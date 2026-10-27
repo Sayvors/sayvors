@@ -1033,7 +1033,7 @@ function PostThumb({ src }: { src: string }) {
   }
   return (
     <div className="overflow-hidden rounded-[2px] bg-ink/[0.03]">
-      {/* plain img: arbitrary remote hosts need no next.config allowlist */}
+      {/* eslint-disable-next-line @next/next/no-img-element -- arbitrary remote hosts */}
       <img
         src={src}
         alt=""

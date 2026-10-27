@@ -233,6 +233,7 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
               <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-[var(--wa-track)] text-2xl font-bold text-[var(--wa-text-2)]">
                 <span className="absolute inset-0 flex items-center justify-center">{businessName?.[0] ?? "B"}</span>
                 {(photoPreview || profile?.profile_picture_url) && (
+                  // eslint-disable-next-line @next/next/no-img-element -- remote/blob preview, DOM onError fallback
                   <img
                     src={photoPreview || profile?.profile_picture_url || ""}
                     alt="Profile"

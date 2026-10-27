@@ -17,7 +17,10 @@ export default function PhonePreview({ draft, photoPreview, businessName }: { dr
             <span className="text-[16px]">‹</span>
             <span className="relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-white/20 text-[12px] font-bold">
               <span className="absolute inset-0 flex items-center justify-center">{name[0] ?? "S"}</span>
-              {photoPreview && <img src={photoPreview} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} className="relative h-full w-full object-cover" />}
+              {photoPreview && (
+  // eslint-disable-next-line @next/next/no-img-element -- remote/blob preview, DOM onError fallback
+  <img src={photoPreview} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} className="relative h-full w-full object-cover" />
+)}
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] font-semibold leading-tight">{name}</span>
@@ -32,7 +35,10 @@ export default function PhonePreview({ draft, photoPreview, businessName }: { dr
               <div className="flex items-center gap-2.5">
                 <span className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--wa-accent)]/15 text-[14px] font-bold text-[var(--wa-accent-deep)]">
                   <span className="absolute inset-0 flex items-center justify-center">{name[0] ?? "S"}</span>
-                  {photoPreview && <img src={photoPreview} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} className="relative h-full w-full object-cover" />}
+                  {photoPreview && (
+  // eslint-disable-next-line @next/next/no-img-element -- remote/blob preview, DOM onError fallback
+  <img src={photoPreview} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} className="relative h-full w-full object-cover" />
+)}
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-[13px] font-bold text-[var(--wa-text)]">{name}</span>

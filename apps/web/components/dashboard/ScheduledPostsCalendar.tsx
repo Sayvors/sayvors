@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Image from "next/image";
 
 export interface ScheduledEntry {
   id: string;
@@ -245,7 +246,7 @@ export default function ScheduledPostsCalendar({ items, onScheduleDate }: Props)
                 {selectedItems.map((item) => (
                   <div key={item.id} className="flex gap-3">
                     {item.thumbnailUrl && (
-                      <img src={item.thumbnailUrl} alt="" className="h-12 w-12 rounded-lg object-cover shrink-0" />
+                      <Image src={item.thumbnailUrl} alt="" width={48} height={48} className="h-12 w-12 rounded-lg object-cover shrink-0" />
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="text-[13px] font-semibold text-ink dark:text-fog truncate">{item.name}</p>

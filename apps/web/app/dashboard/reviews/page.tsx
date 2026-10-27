@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
@@ -1375,7 +1376,7 @@ function ReviewsInner() {
                     <p className="mt-1 truncate text-[12px] leading-4 text-[#5F6368]">{active.locationName}</p>
                   </div>
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white ring-1 ring-[#DADCE0]">
-                    <img src="/google.svg" alt="Google" width={16} height={16} className="h-4 w-4" />
+                    <Image src="/google.svg" alt="Google" width={16} height={16} className="h-4 w-4" />
                   </span>
                 </div>
 
@@ -2016,9 +2017,11 @@ function ReviewMedia({ media }: { media: ReviewItem["media"] }) {
           <a key={i} href={src} target="_blank" rel="noreferrer" className="group relative block">
             {/* eslint-disable-next-line @next/next/no-img-element -- our own
                 already-validated raster copy; the optimizer would re-encode it */}
-            <img
+<Image
               src={src}
               alt={m.label || `Photo from the reviewer (${i + 1})`}
+              width={96}
+              height={96}
               loading="lazy"
               className="h-24 w-24 rounded-lg border border-[#E8EAED] object-cover transition group-hover:opacity-80"
             />

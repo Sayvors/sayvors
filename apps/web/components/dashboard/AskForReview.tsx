@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 
 type ReviewChannel = "whatsapp" | "contacts" | "email";
@@ -289,7 +290,7 @@ export default function AskForReview() {
               <span className={`flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg ${meta?.bg ?? "bg-ink/[0.06]"} ${meta?.color ?? "text-ink/50"}`}>
                 {contact.avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={contact.avatarUrl} alt="" className="h-7 w-7 object-cover" />
+                  <Image src={contact.avatarUrl} alt="" width={28} height={28} className="h-7 w-7 object-cover" />
                 ) : (
                   <span className="text-[10px] font-bold">
                     {contact.name[0]?.toUpperCase() ?? "?"}
