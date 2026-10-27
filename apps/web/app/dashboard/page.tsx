@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { apiFetch } from "@/lib/api-rag";
-import { approveReply, editReply, fetchInsights, fetchOverview, generateReply, regenerateReply, retryReply, type ReviewReplyDTO } from "@/lib/api-analytics";
+import { approveReply, editReply, fetchOverview, generateReply, regenerateReply, retryReply, type ReviewReplyDTO } from "@/lib/api-analytics";
 import { dedupeBusinesses } from "@/lib/channel-identity";
 import GlanceStrip from "@/components/dashboard/GlanceStrip";
 import GlanceCharts from "@/components/dashboard/GlanceCharts";
@@ -26,7 +27,6 @@ const checklistDefs = [
 const CHECKLIST_KEY = "sayvors.onboarding.checklist";
 
 type DashboardChannel = { id: string; platform: string; display_name: string | null; listing_id?: string | null; source?: string | null };
-type DashboardService = { is_offered: boolean };
 
 interface AttentionItem {
   severity: "high" | "medium";
@@ -129,9 +129,9 @@ function AttentionQueue() {
   const [scheduledTotal, setScheduledTotal] = useState(0);
   const [scheduledOpen, setScheduledOpen] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  useQuery({
+    queryKey: ["attention", "queue"],
+    queryFn: async () => {
       const found: AttentionItem[] = [];
       try {
         const [overview, connsData, channelData] = await Promise.all([
@@ -146,12 +146,12 @@ function AttentionQueue() {
           (c: { platform: string }) => c.platform === "google_reviews"
         );
         const googleChannels = dedupeBusinesses(rawChannels);
-        if (!cancelled) setChannelIds(googleChannels.map((c: { id: string }) => c.id));
+        setChannelIds(googleChannels.map((c: { id: string }) => c.id));
         const names: Record<string, string> = {};
         for (const ch of channelData?.channels ?? []) {
           if (ch?.id) names[ch.id] = ch.display_name ?? "Google location";
         }
-        if (!cancelled) setChannelNames(names);
+        setChannelNames(names);
         let pendingTotal = 0;
         const pendingLists: ReviewReplyDTO[][] = await Promise.all(
           googleChannels.map(async (c: { id: string }) => {
@@ -160,156 +160,138 @@ function AttentionQueue() {
               pendingTotal += r.pending ?? 0;
               return (r.replies ?? []) as ReviewReplyDTO[];
             } catch {
-              /* channel counted as zero when its queue can't load */
               return [];
             }
           })
         );
-        if (!cancelled && pendingTotal > 0) {
+        if (pendingTotal > 0) {
           setDraftTotal(pendingTotal);
           setDrafts(dedupeDraftsByReview(pendingLists.flat()).slice(0, 5));
         }
-        await Promise.all(
+        const failedLists = await Promise.all(
           googleChannels.map(async (c: { id: string }) => {
             try {
               const r = await apiFetch(`/api/v1/channels/${c.id}/reviews?status=failed&limit=100`);
               return (r.replies ?? []) as ReviewReplyDTO[];
             } catch {
-              /* channel counted as zero when its queue can't load */
               return [];
             }
           })
-         ).then((failedLists) => {
-           if (cancelled) return;
-           const uniqueFailed = dedupeDraftsByReview(failedLists.flat());
-           setFailedTotal(uniqueFailed.length);
-           setFailed(uniqueFailed.slice(0, 5));
-         });
-         try {
-           const data = await apiFetch("/api/v1/analytics/reviews/insights?status=skipped&limit=20");
-           if (!cancelled) {
-             const total = data.total ?? 0;
-             setFlaggedTotal(total);
-             setFlagged((data.items ?? []).map((it: { channel_id: string; review_id: string; rating: number; review_text: string | null; reviewer_name: string | null }) => ({
-               channel_id: it.channel_id,
-               review_id: it.review_id,
-               rating: it.rating,
-               review_text: it.review_text,
-               reviewer_name: it.reviewer_name,
-             })));
-           }
-         } catch {
-           /* flagged section hidden on error */
-         }
-         try {
-           const data = await apiFetch("/api/v1/analytics/reviews/insights?edited=true&limit=50");
-           if (!cancelled) {
-             // A backend older than the edit-detection feature ignores the
-             // edited param â€” filter locally so this card only ever lists
-             // genuinely-edited reviews.
-             const flagged = ((data.items ?? []) as { id: string; review_id: string; channel_id: string; rating: number; review_text: string | null; reviewer_name: string | null; previous_rating: number | null; edited?: boolean }[])
-               .filter((it) => it.edited === true);
-             const topEdited = flagged.slice(0, 5).map((it) => ({
-               id: it.id,
-               review_id: it.review_id,
-               channel_id: it.channel_id,
-               rating: it.rating,
-               review_text: it.review_text,
-               reviewer_name: it.reviewer_name,
-               previous_rating: it.previous_rating,
-             }));
-             setEditedTotal(flagged.length);
-             setEdited(topEdited);
-             // The AI pipeline queues a follow-up draft (pending_approval)
-             // for every edited review â€” pull it in so the merchant can
-             // approve & publish right from this card.
-             const channelSet = new Set(topEdited.map((it) => it.channel_id));
-             const editedReviewIds = new Set(topEdited.map((it) => it.review_id));
-             const draftMap: Record<string, ReviewReplyDTO> = {};
-             await Promise.all(
-               [...channelSet].map(async (chId) => {
-                 try {
-                   const r = await apiFetch(`/api/v1/channels/${chId}/reviews?status=pending_approval&limit=100`);
-                   for (const d of (r.replies ?? []) as ReviewReplyDTO[]) {
-                     if (!editedReviewIds.has(d.review_id)) continue;
-                     const prev = draftMap[d.review_id];
-                     if (!prev || (d.created_at ?? "") > (prev.created_at ?? "")) draftMap[d.review_id] = d;
-                   }
-                 } catch {
-                   /* queue unavailable â€” card falls back to the no-draft hint */
-                 }
-               })
-             );
-             if (!cancelled) setEditedDrafts(draftMap);
-           }
-          } catch {
-            /* edited section hidden on error */
-          }
-          try {
-            // Scheduled posts + photos across branches (nearest first).
-            // Any failure hides the row â€” never an error state.
-            const rawConns = (Array.isArray(connsData) ? connsData : []) as {
-              listing_id?: string; listing_name?: string;
-            }[];
-            const locs = rawConns.filter((c) => c.listing_id).slice(0, 10);
-            const locNames: Record<string, string> = {};
-            for (const c of rawConns) {
-              if (c.listing_id) locNames[c.listing_id] = c.listing_name ?? "Location";
-            }
-            const sched: ScheduledItem[] = [];
-            await Promise.all(locs.map(async (loc) => {
-              const lid = loc.listing_id!;
-              const [postRows, mediaRows] = await Promise.all([
-                (async () => {
-                  try {
-                    const d = await apiFetch(`/api/v1/posts?listing_id=${encodeURIComponent(lid)}`);
-                    return (Array.isArray(d) ? d : []) as Record<string, unknown>[];
-                  } catch {
-                    return [] as Record<string, unknown>[];
-                  }
-                })(),
-                (async () => {
-                  try {
-                    const d = await apiFetch(`/api/v1/media?listing_id=${encodeURIComponent(lid)}`);
-                    const arr = Array.isArray(d) ? d : (d as { media?: unknown }).media;
-                    return (Array.isArray(arr) ? arr : []) as Record<string, unknown>[];
-                  } catch {
-                    return [] as Record<string, unknown>[];
-                  }
-                })(),
-              ]);
-              for (const p of postRows) {
-                if (p.status === "scheduled" && typeof p.scheduled_on === "string") {
-                  sched.push({
-                    kind: "post", id: String(p.id ?? ""),
-                    title: String(p.title || "Untitled post"),
-                    location: locNames[lid] ?? "Location", at: p.scheduled_on,
-                  });
+        );
+        const uniqueFailed = dedupeDraftsByReview(failedLists.flat());
+        setFailedTotal(uniqueFailed.length);
+        setFailed(uniqueFailed.slice(0, 5));
+        try {
+          const data = await apiFetch("/api/v1/analytics/reviews/insights?status=skipped&limit=20");
+          const total = data.total ?? 0;
+          setFlaggedTotal(total);
+          setFlagged((data.items ?? []).map((it: { channel_id: string; review_id: string; rating: number; review_text: string | null; reviewer_name: string | null }) => ({
+            channel_id: it.channel_id,
+            review_id: it.review_id,
+            rating: it.rating,
+            review_text: it.review_text,
+            reviewer_name: it.reviewer_name,
+          })));
+        } catch {
+          /* flagged section hidden on error */
+        }
+        try {
+          const data = await apiFetch("/api/v1/analytics/reviews/insights?edited=true&limit=50");
+          const flagged = ((data.items ?? []) as { id: string; review_id: string; channel_id: string; rating: number; review_text: string | null; reviewer_name: string | null; previous_rating: number | null; edited?: boolean }[])
+            .filter((it) => it.edited === true);
+          const topEdited = flagged.slice(0, 5).map((it) => ({
+            id: it.id,
+            review_id: it.review_id,
+            channel_id: it.channel_id,
+            rating: it.rating,
+            review_text: it.review_text,
+            reviewer_name: it.reviewer_name,
+            previous_rating: it.previous_rating,
+          }));
+          setEditedTotal(flagged.length);
+          setEdited(topEdited);
+          const channelSet = new Set(topEdited.map((it) => it.channel_id));
+          const editedReviewIds = new Set(topEdited.map((it) => it.review_id));
+          const draftMap: Record<string, ReviewReplyDTO> = {};
+          await Promise.all(
+            [...channelSet].map(async (chId) => {
+              try {
+                const r = await apiFetch(`/api/v1/channels/${chId}/reviews?status=pending_approval&limit=100`);
+                for (const d of (r.replies ?? []) as ReviewReplyDTO[]) {
+                  if (!editedReviewIds.has(d.review_id)) continue;
+                  const prev = draftMap[d.review_id];
+                  if (!prev || (d.created_at ?? "") > (prev.created_at ?? "")) draftMap[d.review_id] = d;
                 }
+              } catch {
+                /* queue unavailable */
               }
-              for (const m of mediaRows) {
-                if (m.status === "scheduled" && typeof m.scheduled_on === "string") {
-                  const caption = typeof m.caption === "string" && m.caption.trim()
-                    ? m.caption.trim()
-                    : `Photo Â· ${String(m.category ?? "gallery").replace(/_/g, " ")}`;
-                  sched.push({
-                    kind: "photo", id: String(m.id ?? ""),
-                    title: caption, location: locNames[lid] ?? "Location",
-                    at: m.scheduled_on,
-                  });
-                }
-              }
-            }));
-            sched.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
-            if (!cancelled) {
-              setScheduledTotal(sched.length);
-              setScheduled(sched.slice(0, 5));
-            }
-
-          } catch {
-            /* scheduled row hidden on error */
+            })
+          );
+          const drafts = topEdited.map((it) => draftMap[it.review_id]).filter(Boolean) as ReviewReplyDTO[];
+          setEditedDrafts(Object.fromEntries(drafts.map((d) => [d.review_id, d])));
+        } catch {
+          /* edited section hidden on error */
+        }
+        try {
+          const rawConns = (Array.isArray(connsData) ? connsData : []) as {
+            listing_id?: string; listing_name?: string;
+          }[];
+          const locs = rawConns.filter((c) => c.listing_id).slice(0, 10);
+          const locNames: Record<string, string> = {};
+          for (const c of rawConns) {
+            if (c.listing_id) locNames[c.listing_id] = c.listing_name ?? "Location";
           }
-          const delta = overview?.period.rating_delta;
+          const sched: ScheduledItem[] = [];
+          await Promise.all(locs.map(async (loc) => {
+            const lid = loc.listing_id!;
+            const [postRows, mediaRows] = await Promise.all([
+              (async () => {
+                try {
+                  const d = await apiFetch(`/api/v1/posts?listing_id=${encodeURIComponent(lid)}`);
+                  return (Array.isArray(d) ? d : []) as Record<string, unknown>[];
+                } catch {
+                  return [] as Record<string, unknown>[];
+                }
+              })(),
+              (async () => {
+                try {
+                  const d = await apiFetch(`/api/v1/media?listing_id=${encodeURIComponent(lid)}`);
+                  const arr = Array.isArray(d) ? d : (d as { media?: unknown }).media;
+                  return (Array.isArray(arr) ? arr : []) as Record<string, unknown>[];
+                } catch {
+                  return [] as Record<string, unknown>[];
+                }
+              })(),
+            ]);
+            for (const p of postRows) {
+              if (p.status === "scheduled" && typeof p.scheduled_on === "string") {
+                sched.push({
+                  kind: "post", id: String(p.id ?? ""),
+                  title: String(p.title || "Untitled post"),
+                  location: locNames[lid] ?? "Location", at: p.scheduled_on,
+                });
+              }
+            }
+            for (const m of mediaRows) {
+              if (m.status === "scheduled" && typeof m.scheduled_on === "string") {
+                const caption = typeof m.caption === "string" && m.caption.trim()
+                  ? m.caption.trim()
+                  : `Photo · ${String(m.category ?? "gallery").replace(/_/g, " ")}`;
+                sched.push({
+                  kind: "photo", id: String(m.id ?? ""),
+                  title: caption, location: locNames[lid] ?? "Location",
+                  at: m.scheduled_on,
+                });
+              }
+            }
+          }));
+          sched.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+          setScheduledTotal(sched.length);
+          setScheduled(sched.slice(0, 5));
+        } catch {
+          /* scheduled row hidden on error */
+        }
+        const delta = overview?.period.rating_delta;
         if (typeof delta === "number" && delta < 0) {
           found.push({
             severity: "high",
@@ -341,14 +323,17 @@ function AttentionQueue() {
           });
         }
       } catch {
-        /* offline â€” card stays hidden */
+        /* offline — card stays hidden */
       }
-      if (!cancelled) setItems(found.slice(0, 3));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+      setItems(found.slice(0, 3));
+      return null;
+    },
+    staleTime: 60 * 1000,
+  });
+
+  // Sync: attentionQuery drives nothing extra — state is set inside queryFn.
+  // (Kept as side effects for incremental migration; ideal form derives state.)
+
 
   async function approveDraft(channelId: string, replyId: string) {    setApprovingId(replyId);
     setDraftError(null);
