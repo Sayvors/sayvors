@@ -10,6 +10,7 @@ import {
   fetchInboxThreads,
   fetchThreadMessages,
   archiveInboxThread,
+  deleteInboxThread,
   sendInboxMessage,
   UNKNOWN_THREAD_KEY,
   type InboxMessage,
@@ -200,6 +201,7 @@ export default function InboxView() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<InboxThread | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -263,6 +265,19 @@ export default function InboxView() {
     } catch {
       // keep stale; the next fetch will correct
     }
+  };
+
+  const handleDelete = async (thread: InboxThread) => {
+    const composite = `${thread.channel_id}:${thread.key}`;
+    try {
+      await deleteInboxThread(thread.channel_id, thread.contact_phone);
+      setThreads((prev) => prev.filter((t) => `${t.channel_id}:${t.key}` !== composite));
+      if (selectedKey === composite) setSelectedKey(null);
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+    } catch {
+      // keep stale; the next fetch will correct
+    }
+    setDeleteTarget(null);
   };
 
   // Debounce the search input so we don't refetch on every keystroke.
@@ -702,6 +717,14 @@ export default function InboxView() {
                         >
                           {t.archived ? "📥" : "📦"}
                         </button>
+                        <button
+                          onClick={() => setDeleteTarget(t)}
+                          aria-label="Delete thread"
+                          className="px-2 py-3 text-[13px] text-ink/20 hover:text-red-600"
+                          title="Delete conversation permanently"
+                        >
+                          🗑
+                        </button>
                       </div>
                     </div>
                   );
@@ -978,6 +1001,32 @@ export default function InboxView() {
         <p role="status" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-700">
           {error}
         </p>
+      )}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl dark:bg-ink">
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">Delete this conversation?</h2>
+            <p className="mt-2 text-[12px] text-ink/60 dark:text-fog/60">
+              This permanently deletes all messages in this thread. This cannot be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDelete(deleteTarget)}
+                className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

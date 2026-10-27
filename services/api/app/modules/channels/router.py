@@ -681,6 +681,42 @@ async def inbox_thread_archive(
     return {"channel_id": channel_id, "contact_phone": phone, "archived": archived}
 
 
+@_inbox_router.delete("/threads/{channel_id}/{contact_phone}", status_code=status.HTTP_204_NO_CONTENT)
+async def inbox_thread_delete(
+    channel_id: str,
+    contact_phone: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete a thread and all its messages.
+
+    Destructive: removes every channel_messages row for this (channel,
+    contact) and the channel_threads summary row. Cannot be undone.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    phone_hash = hash_contact_phone(phone) if phone else None
+    from sqlalchemy import delete
+
+    msg_conditions = [ChannelMessage.channel_id == channel_id]
+    if phone_hash is None:
+        msg_conditions.append(ChannelMessage.contact_phone_hash.is_(None))
+    else:
+        msg_conditions.append(ChannelMessage.contact_phone_hash == phone_hash)
+
+    await db.execute(delete(ChannelMessage).where(*msg_conditions))
+
+    thread_conditions = [ChannelThread.channel_id == channel_id]
+    if phone_hash is None:
+        thread_conditions.append(ChannelThread.contact_phone_hash.is_(None))
+    else:
+        thread_conditions.append(ChannelThread.contact_phone_hash == phone_hash)
+    await db.execute(delete(ChannelThread).where(*thread_conditions))
+    await db.commit()
+    return None
+
+
 @_inbox_router.post("/send", response_model=InboxSendResponse)
 async def inbox_send(
     body: InboxSendRequest,

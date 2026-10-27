@@ -76,6 +76,13 @@ export async function archiveInboxThread(channelId: string, contactPhone: string
     body: JSON.stringify({ archived }),
   });
 }
+
+export async function deleteInboxThread(channelId: string, contactPhone: string | null): Promise<void> {
+  const key = contactPhone ?? "unknown";
+  await apiFetch(`/api/v1/inbox/threads/${channelId}/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
+}
 export async function fetchThreadMessages(
   channelId: string,
   contactPhone: string | null,
