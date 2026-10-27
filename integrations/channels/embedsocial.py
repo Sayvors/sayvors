@@ -121,6 +121,7 @@ def _get(path: str, params: dict | None = None, timeout: int = 30, api_key: str 
         params=params or {},
         headers={**_HEADERS, "Authorization": f"Bearer {key}"},
         timeout=timeout,
+        follow_redirects=True,
     )
     resp.raise_for_status()
     return resp.json()
