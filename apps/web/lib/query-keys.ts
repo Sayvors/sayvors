@@ -66,4 +66,9 @@ export const queryKeys = {
     list: (platform: string | undefined, priorityFirst: boolean) =>
       ["leads", "list", platform ?? "all", priorityFirst] as const,
   },
+  billing: {
+    plans: () => ["billing", "plans"] as const,
+    entitlements: () => ["billing", "entitlements"] as const,
+    budget: () => ["billing", "budget"] as const,
+  },
 };

@@ -33,6 +33,7 @@ const ADVANCED_ITEMS: NavItem[] = [
   { key: "verification", icon: <ShieldCheckIcon />, href: "/dashboard/verification" },
   { key: "usage", icon: <GaugeIcon />, href: "/dashboard/usage" },
   { key: "billing", icon: <CardIcon />, href: "/dashboard/billing" },
+  { key: "plans", icon: <CardIcon />, href: "/dashboard/plans" },
 ];
 
 function isActive(pathname: string, item: NavItem) {

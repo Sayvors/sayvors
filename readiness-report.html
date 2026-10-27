@@ -209,7 +209,7 @@
 <div class="stats">
   <div class="stat"><div class="n calm">32</div><div class="l">of 34 original audit findings <strong>resolved</strong> — SEC 11 · SCALE 6 · OPS 3 · ANL 12; ML-1/BULK-1 are §4 work items, not ledger rows</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), OPS-4 (prod host + SHA-pinned deploys)</div></div>
-  <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM in <code>development</code> (not on <code>staging</code> yet); plan selection UI open (<a href="#billing">§6b</a>)</div></div>
+  <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM in <code>development</code> (not on <code>staging</code> yet); plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,619</div><div class="l">backend tests passing locally (4 skipped) — CI gates every staging deploy on them</div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3, INS-4, INS-5 (INS-1, INS-2, INS-6, INS-7 fixed)</div></div>
 </div>
@@ -573,7 +573,7 @@
 <section id="billing">
   <div class="eyebrow">§§ 6b · new workstream</div>
   <h2>Billing, plans &amp; wallet</h2>
-  <p><span class="chip ok">Durable credit ledger + plans + entitlements service in tree · enforcement at channel-connect + message-send + LLM feature gate · admin plan management page (feature checkboxes) added · tenant plan selection UI open</span>&nbsp; This is a product workstream, separate from the 32/2 audit ledger. The target is simple to state and hard to get wrong: a tenant can buy a plan without an admin, the backend activates it and grants the included AI credit, every metered AI call spends from a durable balance, and plan limits are enforced at every write path.</p>
+  <p><span class="chip ok">Durable credit ledger + plans + entitlements service in tree · enforcement at channel-connect + message-send + LLM feature gate · admin plan management page (feature checkboxes) · tenant plan comparison + request-upgrade UI done</span>&nbsp; This is a product workstream, separate from the 32/2 audit ledger. The target is simple to state and hard to get wrong: a tenant can buy a plan without an admin, the backend activates it and grants the included AI credit, every metered AI call spends from a durable balance, and plan limits are enforced at every write path.</p>
 
   <div class="card">
     <h3>What broke</h3>
