@@ -232,7 +232,7 @@ export default function BulkEditSheet({ onClose }: { onClose: () => void }) {
                 <div className="mb-2 text-[24px]">📊</div>
                 <p className="text-[14px] font-bold text-ink dark:text-fog">Open spreadsheet here</p>
                 <p className="mt-1 text-[12px] text-ink/50 dark:text-fog/50">
-                  Edit all listings in an Excel-like grid right in your browser. Changes are saved when you click "Save changes".
+                  Edit all listings in an Excel-like grid right in your browser. Changes are saved when you click &quot;Save changes&quot;.
                 </p>
               </button>
               <button

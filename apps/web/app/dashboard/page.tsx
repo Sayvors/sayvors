@@ -9,7 +9,7 @@ import { dedupeBusinesses } from "@/lib/channel-identity";
 import GlanceStrip from "@/components/dashboard/GlanceStrip";
 import GlanceCharts from "@/components/dashboard/GlanceCharts";
 import ReviewTicketsCard from "@/components/dashboard/ReviewTicketsCard";
-import ReviewPipelineTester from "@/components/dashboard/ReviewPipelineTester";
+// import ReviewPipelineTester from "@/components/dashboard/ReviewPipelineTester";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import Greeting from "@/components/dashboard/Greeting";
 
@@ -720,7 +720,7 @@ function AttentionQueue() {
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3" aria-hidden>
                                   <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" strokeLinecap="round" strokeLinejoin="round" />
                                 </svg>
-                                Didn't like it? Rewrite
+                                Didn&apos;t like it? Rewrite
                               </>
                             )}
                           </button>
@@ -1041,7 +1041,7 @@ function AttentionQueue() {
                            <span className="rounded-[2px] bg-ink/[0.06] dark:bg-fog/[0.06] px-2 py-0.5 text-[10px] font-medium text-ink/50 dark:text-fog/50">{locName}</span>
                          </div>
                          {d.review_text && (
-                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">"{d.review_text}"</p>
+                           <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-ink/60 dark:text-fog/60">&quot;{d.review_text}&quot;</p>
                          )}
                          <div className="mt-2 flex items-center justify-between">
                            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-600/60">Unavailable on Google</span>
@@ -1435,7 +1435,7 @@ export default function DashboardPage() {
 
       <ReviewTicketsCard />
 
-      <ReviewPipelineTester />
+      {/* <ReviewPipelineTester /> */}
 
       <GlanceStrip />
 

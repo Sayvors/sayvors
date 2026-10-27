@@ -146,7 +146,7 @@ export default function AnalyticsTab({ channelSlug, channelName }: AnalyticsTabP
               </div>
             </div>
             <p className="mt-3 text-[10px] text-ink/40">
-              Meta "Very responsive" gate: 90% answered, median under 15 min.
+              Meta &quot;Very responsive&quot; gate: 90% answered, median under 15 min.
             </p>
           </div>
         </>

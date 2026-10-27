@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   fetchMetaAssets,
@@ -211,9 +212,9 @@ export default function FacebookConnectFlow() {
           {alreadyConnected && (
             <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] leading-relaxed text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300">
               A Facebook Page is already connected. You can reconnect below, or open the{" "}
-              <a href="/dashboard/channels/facebook" className="font-semibold underline underline-offset-2">
+              <Link href="/dashboard/channels/facebook" className="font-semibold underline underline-offset-2">
                 Facebook page
-              </a>{" "}
+              </Link>{" "}
               to manage it.
             </p>
           )}

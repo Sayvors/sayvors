@@ -216,7 +216,7 @@ function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
                 <rect x="3" y="5" width="18" height="14" rx="2" />
                 <path d="M10 9l5 3-5 3V9z" fill="currentColor" stroke="none" />
               </svg>
-              <span className="text-[12px] font-medium">Click "Create video" to generate</span>
+              <span className="text-[12px] font-medium">Click &quot;Create video&quot; to generate</span>
             </div>
           )}
         </div>
