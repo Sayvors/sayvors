@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 import { dedupeBusinesses } from "@/lib/channel-identity";
 import {
   fetchOverview,
   fetchTimeseries,
-  type Overview,
-  type TimeseriesPoint,
-  type ChannelOption,
 } from "@/lib/api-analytics";
 import { StatCard } from "@/components/analytics/StatCard";
 import MessagingSection from "@/components/analytics/MessagingSection";
@@ -44,122 +43,97 @@ function fmtDuration(seconds: number | null, locale: string, labels: { minutes: 
 export default function OverviewPanel() {
   const { t, locale } = useI18n();
   const copy = t.analytics.kpis;
+  const queryClient = useQueryClient();
   const [days, setDays] = useState<number>(30);
-  const [channels, setChannels] = useState<ChannelOption[]>([]);
   const [channelId, setChannelId] = useState<string | null>(null);
-  const [channelListingIds, setChannelListingIds] = useState<Record<string, string>>({});
-  const [channelLabels, setChannelLabels] = useState<Record<string, string>>({});
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [points, setPoints] = useState<TimeseriesPoint[]>([]);
-  const [presence, setPresence] = useState<PresenceData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
   // Messaging section reports back once its fetch settles, so the empty
   // state below waits for it — a WhatsApp-only tenant has no reviews but
   // plenty to show. null = still unknown.
   const [messagingHasData, setMessagingHasData] = useState<boolean | null>(null);
-  const hasLoadedOnce = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      fetchOverview(days, channelId),
-      fetchTimeseries(days, channelId),
-    ])
-      .then(([o, t]) => {
-        if (cancelled) return;
-        setOverview(o);
-        setPoints(t);
-        setError(false);
-        hasLoadedOnce.current = true;
-      })
-      .catch(() => {
-        if (!cancelled && !hasLoadedOnce.current) setError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [days, channelId, refreshToken]);
+  // Channels (Google) + derived label/listing maps.
+  const channelsQuery = useQuery({
+    queryKey: queryKeys.analytics.channels(),
+    queryFn: async () => {
+      const data = await apiFetch("/api/v1/channels");
+      const google = dedupeBusinesses(
+        (data.channels ?? []).filter(
+          (c: { platform: string }) => c.platform === "google_reviews"
+        )
+      );
+      const channels = google.map((c: { id: string; display_name: string | null }) => ({
+        id: c.id,
+        label: c.display_name ?? "Google Business",
+      }));
+      const labelMap: Record<string, string> = {};
+      for (const c of google as { id: string; display_name: string | null }[]) {
+        if (c.id) labelMap[c.id] = c.display_name ?? "Google Business";
+      }
+      const idMap: Record<string, string> = {};
+      for (const c of google as { id: string; listing_id?: string | null }[]) {
+        if (c.id && c.listing_id) idMap[c.id] = c.listing_id;
+      }
+      return { channels, labelMap, idMap };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const channels = channelsQuery.data?.channels ?? [];
+  const channelLabels = channelsQuery.data?.labelMap ?? {};
+  const channelListingIds = channelsQuery.data?.idMap ?? {};
 
-  // Google presence follows the business selector — each channel maps to its
-  // Localith listing_id, so the snapshot refetches per branch. "All locations"
-  // shows cumulative totals across every branch (additive metrics summed,
-  // rates review-weighted by the backend).
-  useEffect(() => {
-    let cancelled = false;
-    if (channelId) {
-      const listingId = channelListingIds[channelId] ?? null;
-      // Native Google channel with no Localith listing — no snapshot to show
-      // (presenceFromProfile(null) is null, clearing the previous one).
-      (listingId
-        ? apiFetch(`/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(listingId)}`)
-        : Promise.resolve(null))
-        .catch(() => null)
-        .then((prof) => {
-          if (!cancelled) setPresence(presenceFromProfile(prof));
-        });
-    } else {
-      apiFetch("/api/v1/integrations/localith/profiles/aggregate")
-        .catch(() => null)
-        .then((agg: Record<string, unknown> | null) => {
-          if (cancelled) return;
-          if (!agg) {
-            setPresence(null);
-            return;
-          }
-          const n = (k: string) => {
-            const v = agg[k];
-            const f = typeof v === "number" ? v : parseFloat(String(v ?? ""));
-            return Number.isFinite(f) ? f : 0;
-          };
-          setPresence({
-            listingName: typeof agg.listing_name === "string" ? agg.listing_name : "",
-            windowLabel: typeof agg.window_label === "string" ? agg.window_label : null,
-            searchViews: n("search_views"),
-            mapViews: n("map_views"),
-            websiteClicks: n("website_clicks"),
-            directionRequests: n("direction_requests"),
-            phoneCalls: n("phone_calls"),
-            totalReviews: n("total_reviews"),
-            averageRating: n("average_rating"),
-          });
-        });
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [channelId, channelListingIds]);
+  // Overview + timeseries (refetch on days/channel/refresh).
+  const overviewQuery = useQuery({
+    queryKey: queryKeys.analytics.overview(days, channelId ?? "all"),
+    queryFn: async () => {
+      const [o, pts] = await Promise.all([
+        fetchOverview(days, channelId),
+        fetchTimeseries(days, channelId),
+      ]);
+      return { overview: o, points: pts };
+    },
+    staleTime: 30 * 1000,
+  });
+  const overview = overviewQuery.data?.overview ?? null;
+  const points = overviewQuery.data?.points ?? [];
+  const loading = channelsQuery.isPending || overviewQuery.isPending;
+  const error = overviewQuery.isError && !overviewQuery.data;
 
-  useEffect(() => {
-    apiFetch("/api/v1/channels")
-      .then((data) => {
-        const google = dedupeBusinesses(
-          (data.channels ?? []).filter(
-            (c: { platform: string }) => c.platform === "google_reviews"
-          )
-        );
-        setChannels(google.map((c: { id: string; display_name: string | null }) => ({
-          id: c.id,
-          label: c.display_name ?? "Google Business",
-        })));
-        // Branch names for the chart's "By branch" comparison lines.
-        const labelMap: Record<string, string> = {};
-        for (const c of google as { id: string; display_name: string | null }[]) {
-          if (c.id) labelMap[c.id] = c.display_name ?? "Google Business";
-        }
-        setChannelLabels(labelMap);
-        const idMap: Record<string, string> = {};
-        for (const c of google as { id: string; listing_id?: string | null }[]) {
-          if (c.id && c.listing_id) idMap[c.id] = c.listing_id;
-        }
-        setChannelListingIds(idMap);
-      })
-      .catch(() => setChannels([]));
-  }, []);
+  // Google presence snapshot (per branch or aggregate).
+  const presenceQuery = useQuery({
+    queryKey: queryKeys.analytics.presence(channelId),
+    queryFn: async () => {
+      if (channelId) {
+        const listingId = channelListingIds[channelId] ?? null;
+        if (!listingId) return null;
+        const prof = await apiFetch(
+          `/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(listingId)}`
+        ).catch(() => null);
+        return presenceFromProfile(prof);
+      }
+      const agg = await apiFetch("/api/v1/integrations/localith/profiles/aggregate").catch(() => null);
+      if (!agg) return null;
+      const n = (k: string) => {
+        const v = agg[k];
+        const f = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+        return Number.isFinite(f) ? f : 0;
+      };
+      return {
+        listingName: typeof agg.listing_name === "string" ? agg.listing_name : "",
+        windowLabel: typeof agg.window_label === "string" ? agg.window_label : null,
+        searchViews: n("search_views"),
+        mapViews: n("map_views"),
+        websiteClicks: n("website_clicks"),
+        directionRequests: n("direction_requests"),
+        phoneCalls: n("phone_calls"),
+        totalReviews: n("total_reviews"),
+        averageRating: n("average_rating"),
+      } as PresenceData;
+    },
+    enabled: !channelsQuery.isPending,
+    staleTime: 60 * 1000,
+  });
+  const presence = presenceQuery.data ?? null;
 
   const hasData = !!overview && overview.total_reviews > 0;
   const hasPresence = !!presence;
@@ -179,7 +153,6 @@ export default function OverviewPanel() {
               value={channelId ?? ""}
               onChange={(e) => {
                 setChannelId(e.target.value || null);
-                setLoading(true);
               }}
               aria-label="Filter by location"
               className="h-8 w-full rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:w-auto"
@@ -196,7 +169,6 @@ export default function OverviewPanel() {
                 key={r}
                 onClick={() => {
                   setDays(r);
-                  setLoading(true);
                 }}
                 aria-pressed={days === r}
                 className={rangeBtn(days === r)}
@@ -219,8 +191,7 @@ export default function OverviewPanel() {
           <p className="text-[11px] text-[var(--ui-ink-2)]">Check that the API is running, then try again.</p>
           <button
             onClick={() => {
-              setError(false);
-              setLoading(true);
+              void queryClient.invalidateQueries({ queryKey: ["analytics"] });
               setRefreshToken((t) => t + 1);
             }}
             className="ui-btn bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"

@@ -40,4 +40,10 @@ export const queryKeys = {
     channels: () => ["verification", "channels"] as const,
     detail: (channelId: string) => ["verification", "detail", channelId] as const,
   },
+  analytics: {
+    channels: () => ["analytics", "channels"] as const,
+    overview: (days: number, channelId: string | null) =>
+      ["analytics", "overview", days, channelId ?? "all"] as const,
+    presence: (channelId: string | null) => ["analytics", "presence", channelId ?? "all"] as const,
+  },
 };
