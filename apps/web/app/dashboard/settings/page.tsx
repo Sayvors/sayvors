@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
@@ -221,6 +222,7 @@ function VariesBadge() {
 }
 
 export default function SettingsPage() {
+  const queryClient = useQueryClient();
   const [channels, setChannels] = useState<GoogleChannel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [configs, setConfigs] = useState<Record<string, ChannelCfg>>({});
@@ -279,79 +281,82 @@ export default function SettingsPage() {
   const [dangerTarget, setDangerTarget] = useState<MetaConnection | null>(null);
   const [dangerPhrase, setDangerPhrase] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [chData, diaData, toneData, prof] = await Promise.all([
-          apiFetch("/api/v1/channels?limit=100"),
-          apiFetch("/api/v1/review-engine/dialects").catch(() => ({})),
-          apiFetch("/api/v1/review-engine/tones").catch(() => []),
-          getProfile().catch(() => null),
-        ]);
-        if (cancelled) return;
-        const google: GoogleChannel[] = (chData.channels ?? []).filter(
-          (c: { platform: string }) => c.platform === "google_reviews"
-        );
-        setChannels(google);
-        if (google.length > 0) setSelectedId((prev) => prev ?? (google.length > 1 ? ALL : google[0].id));
-        setDialects(diaData?.dialects ?? diaData ?? []);
-        if (Array.isArray(toneData) && toneData.length > 0) setTones(toneData);
-        if (prof) {
-          setCountry(prof.country ?? "");
-          setSavedCountry(prof.country ?? null);
-          const pType = prof.business_type ?? "";
-          if (pType && !BUSINESS_TYPES.includes(pType)) {
-            setBizType("Other");
-            setBizCustom(pType);
-          } else {
-            setBizType(pType);
-            setBizCustom("");
+  const settingsQuery = useQuery({
+    queryKey: ["settings", "all"],
+    queryFn: async () => {
+      const [chData, diaData, toneData, prof] = await Promise.all([
+        apiFetch("/api/v1/channels?limit=100"),
+        apiFetch("/api/v1/review-engine/dialects").catch(() => ({})),
+        apiFetch("/api/v1/review-engine/tones").catch(() => []),
+        getProfile().catch(() => null),
+      ]);
+      const google: GoogleChannel[] = (chData.channels ?? []).filter(
+        (c: { platform: string }) => c.platform === "google_reviews"
+      );
+      const cfgs: Record<string, ChannelCfg> = {};
+      await Promise.all(
+        google.map(async (c) => {
+          try {
+            cfgs[c.id] = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
+          } catch {
+            /* default config is created server-side on first GET */
           }
-          setBizSells(prof.business_sells ?? "");
-          setBizNoSell(prof.business_doesnt_sell ?? "");
-          setBizDesc(prof.business_description ?? "");
-          setSavedBiz({
-            type: pType,
-            sells: prof.business_sells ?? "",
-            noSell: prof.business_doesnt_sell ?? "",
-            desc: prof.business_description ?? "",
-          });
-        }
-        const cfgs: Record<string, ChannelCfg> = {};
-        await Promise.all(
-          google.map(async (c) => {
-            try {
-              cfgs[c.id] = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
-            } catch {
-              /* default config is created server-side on first GET */
-            }
-          })
-        );
-        if (!cancelled) setConfigs(cfgs);
-      } catch {
-        /* backend down — empty state renders */
-      }
-      if (!cancelled) setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+        })
+      );
+      return { channels: google, dialects: diaData?.dialects ?? diaData ?? [], tones: Array.isArray(toneData) && toneData.length > 0 ? toneData : null, profile: prof, configs: cfgs };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
 
   useEffect(() => {
-    let cancelled = false;
-    fetchMetaConnections()
-      .then((d) => {
-        if (!cancelled) setMetaConnections(d.connections ?? []);
-      })
-      .catch(() => {
-        /* backend down — empty danger zone renders */
+    const d = settingsQuery.data;
+    if (!d) return;
+    setChannels(d.channels);
+    if (d.channels.length > 0) setSelectedId((prev) => prev ?? (d.channels.length > 1 ? ALL : d.channels[0].id));
+    setDialects(d.dialects);
+    if (d.tones) setTones(d.tones);
+    if (d.profile) {
+      const prof = d.profile;
+      setCountry(prof.country ?? "");
+      setSavedCountry(prof.country ?? null);
+      const pType = prof.business_type ?? "";
+      if (pType && !BUSINESS_TYPES.includes(pType)) {
+        setBizType("Other");
+        setBizCustom(pType);
+      } else {
+        setBizType(pType);
+        setBizCustom("");
+      }
+      setBizSells(prof.business_sells ?? "");
+      setBizNoSell(prof.business_doesnt_sell ?? "");
+      setBizDesc(prof.business_description ?? "");
+      setSavedBiz({
+        type: pType,
+        sells: prof.business_sells ?? "",
+        noSell: prof.business_doesnt_sell ?? "",
+        desc: prof.business_description ?? "",
       });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    }
+    setConfigs(d.configs);
+    setLoading(false);
+  }, [settingsQuery.data]);
+
+  useEffect(() => {
+    if (settingsQuery.isError) setLoading(false);
+  }, [settingsQuery.isError]);
+
+  const metaConnectionsQuery = useQuery({
+    queryKey: ["settings", "meta-connections"],
+    queryFn: async () => {
+      const d = await fetchMetaConnections();
+      return d.connections ?? [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  useEffect(() => {
+    const d = metaConnectionsQuery.data;
+    if (d) setMetaConnections(d);
+  }, [metaConnectionsQuery.data]);
 
   const deleteMetaConnection = async (c: MetaConnection) => {
     setDangerBusy(c.id);
