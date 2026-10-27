@@ -36,7 +36,8 @@ export const queryKeys = {
   onboarding: {
     state: () => ["onboarding", "state"] as const,
   },
-  insights: {
-    overview: (days: number) => ["insights", "overview", days] as const,
+  verification: {
+    channels: () => ["verification", "channels"] as const,
+    detail: (channelId: string) => ["verification", "detail", channelId] as const,
   },
 };
