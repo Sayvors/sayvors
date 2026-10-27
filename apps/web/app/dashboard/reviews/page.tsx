@@ -1,7 +1,8 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useApproveReply, useEditReply } from "@/lib/mutation-hooks";
 import { queryKeys } from "@/lib/query-keys";
 import { useSearchParams } from "next/navigation";
 import Image from "next/image";
@@ -100,6 +101,8 @@ function ReviewsInner() {
   const { groups } = useLocationGroups();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const approveReplyHook = useApproveReply();
+  const editReplyHook = useEditReply();
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -606,8 +609,8 @@ function ReviewsInner() {
   async function approveDraft(d: ReviewReplyDTO) {
     setApprovingId(d.id);
     try {
-      if (isDraftEdited(d)) await editReply(d.channel_id, d.id, getDraftText(d));
-      await approveReply(d.channel_id, d.id);
+      if (isDraftEdited(d)) await editReplyHook.mutateAsync({ channelId: d.channel_id, replyId: d.id, replyText: getDraftText(d) });
+      await approveReplyHook.mutateAsync({ channelId: d.channel_id, replyId: d.id });
       setPendingReplies((prev) => prev.filter((x) => x.id !== d.id));
       setBanner({ kind: "ok", text: "Reply approved and published to Google." });
       setTimeout(() => setBanner(null), 3000);

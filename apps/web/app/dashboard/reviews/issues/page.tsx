@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
+import { useUpdateReviewIssue } from "@/lib/mutation-hooks";
 import LogoLoader from "@/components/LogoLoader";
 import { fetchMetaAssets } from "@/lib/api-meta";
 import {
@@ -322,6 +323,7 @@ function TicketDrawer({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const updateIssue = useUpdateReviewIssue();
   const [code, setCode] = useState<string | null>(issue.handoff_code);
   const [expiresAt, setExpiresAt] = useState<string | null>(
     issue.handoff_code_expires_at,
@@ -336,7 +338,8 @@ function TicketDrawer({
     setBusy(status);
     setError(null);
     try {
-      onChanged(await updateReviewIssue(issue.id, { status }));
+      const row = await updateIssue.mutateAsync({ id: issue.id, patch: { status } });
+      onChanged(row);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not update the ticket.");
     } finally {
