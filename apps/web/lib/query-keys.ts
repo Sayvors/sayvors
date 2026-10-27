@@ -56,6 +56,11 @@ export const queryKeys = {
   growth: {
     all: (days: number, channelId: string | null) => ["growth", days, channelId ?? "all"] as const,
   },
+  customers: {
+    list: (search: string, platform: string, category: string, priority: string, important: boolean) =>
+      ["customers", "list", search, platform, category, priority, important] as const,
+    profile: (channelId: string, key: string) => ["customers", "profile", channelId, key] as const,
+  },
   leads: {
     all: () => ["leads"] as const,
     list: (platform: string | undefined, priorityFirst: boolean) =>

@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
+import PlatformMark from "@/components/channels/PlatformMark";
 import {
   fetchCustomers,
-  updateCustomerCategory,
   type Customer,
-  type CustomerProfile,
 } from "@/lib/api-customers";
 import { fetchCustomerProfile } from "@/lib/api-customers";
 import CustomerProfileComponent from "./CustomerProfile";
+
+const EMPTY_CUSTOMERS: Customer[] = [];
 
 /*
  * Customers — every person we have ever had contact with, in one table.
@@ -19,9 +20,6 @@ import CustomerProfileComponent from "./CustomerProfile";
  * the inbox's grouping and augments it with lead + Google review data.
  * Clicking a row opens a side panel with the complete profile.
  */
-const INK = "text-[var(--ui-ink)]";
-const INK2 = "text-[var(--ui-ink-2)]";
-
 const PRIORITY_CHIP: Record<string, string> = {
   urgent: "bg-[#FF4F6E]/10 text-[#C4304B]",
   high: "bg-amber-500/10 text-amber-700",
@@ -30,10 +28,7 @@ const PRIORITY_CHIP: Record<string, string> = {
 };
 
 export default function CustomersTable() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [platform, setPlatform] = useState("all");
   const [category, setCategory] = useState("all");
@@ -41,13 +36,10 @@ export default function CustomersTable() {
   const [importantOnly, setImportantOnly] = useState(false);
   const [sort, setSort] = useState<"recent" | "important" | "messages">("important");
   const [selected, setSelected] = useState<Customer | null>(null);
-  const [profile, setProfile] = useState<CustomerProfile | null>(null);
-  const [profileLoading, setProfileLoading] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
+  const customersQuery = useQuery({
+    queryKey: queryKeys.customers.list(search.trim(), platform, category, priority, importantOnly),
+    queryFn: async () => {
       const data = await fetchCustomers({
         search: search.trim() || undefined,
         platform,
@@ -56,31 +48,27 @@ export default function CustomersTable() {
         important: importantOnly,
         limit: 200,
       });
-      setCustomers(data.customers);
-      setTotal(data.total);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load customers.");
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data;
+    },
+    staleTime: 30 * 1000,
+  });
+  const customers = customersQuery.data?.customers ?? EMPTY_CUSTOMERS;
+  const total = customersQuery.data?.total ?? 0;
+  const loading = customersQuery.isPending;
+  const error = customersQuery.isError
+    ? customersQuery.error instanceof Error
+      ? customersQuery.error.message
+      : "Could not load customers."
+    : null;
 
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, platform, category, priority, importantOnly]);
-
-  useEffect(() => {
-    if (!selected) {
-      setProfile(null);
-      return;
-    }
-    setProfileLoading(true);
-    void fetchCustomerProfile(selected.channel_id, selected.key)
-      .then(setProfile)
-      .catch(() => setProfile(null))
-      .finally(() => setProfileLoading(false));
-  }, [selected]);
+  const profileQuery = useQuery({
+    queryKey: queryKeys.customers.profile(selected?.channel_id ?? "", selected?.key ?? ""),
+    queryFn: () => fetchCustomerProfile(selected!.channel_id, selected!.key),
+    enabled: !!selected,
+    staleTime: 60 * 1000,
+  });
+  const profile = selected ? (profileQuery.data ?? null) : null;
+  const profileLoading = selected ? profileQuery.isPending : false;
 
   const visible = useMemo(() => {
     const rows = [...customers];
@@ -292,7 +280,7 @@ export default function CustomersTable() {
             {profileLoading && !profile ? (
               <p className="text-[12px] text-ink/40">Loading…</p>
             ) : profile ? (
-              <CustomerProfileComponent profile={profile} selected={selected} onCategoryChanged={() => void load()} />
+              <CustomerProfileComponent profile={profile} selected={selected} onCategoryChanged={() => void queryClient.invalidateQueries({ queryKey: ["customers"] })} />
             ) : (
               <p className="text-[12px] text-ink/40">Could not load profile.</p>
             )}
