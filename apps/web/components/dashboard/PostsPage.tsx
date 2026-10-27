@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
@@ -88,6 +89,7 @@ export default function PostsPage(props: PostsPageProps) {
 
 function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPageProps) {
   const { groups } = useLocationGroups();
+  const queryClient = useQueryClient();
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -175,51 +177,43 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
     }
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    // Feed selection wins when the branch is reachable; else first connected.
-    const preferredId = (locs: LocationOption[]) =>
-      initialLocationId && locs.some((l) => l.id === initialLocationId)
-        ? initialLocationId
-        : locs[0]?.id ?? null;
-    (async () => {
+  const locationsQuery = useQuery({
+    queryKey: ["posts", "locations", initialLocationId],
+    queryFn: async () => {
+      // Feed selection wins when the branch is reachable; else first connected.
+      const preferredId = (locs: LocationOption[]) =>
+        initialLocationId && locs.some((l) => l.id === initialLocationId)
+          ? initialLocationId
+          : locs[0]?.id ?? null;
+      // Real locations: every Localith-connected branch.
       try {
-        // Real locations: every Localith-connected branch.
-        try {
-          const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as { listing_id: string; listing_name: string }[];
-          if (!cancelled && Array.isArray(conns) && conns.length > 0) {
-            const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
-            if (!cancelled) {
-              setLocations(locs);
-              setSelectedId(preferredId(locs));
-              return;
-            }
-          }
-        } catch {
-          /* fall through to channels */
-        }
-        const data = await apiFetch("/api/v1/channels?limit=100");
-        const googleChannels = (data.channels ?? [])
-          .filter((channel: { platform: string }) => channel.platform === "google_reviews")
-          .map((channel: { id: string; display_name: string | null }) => ({
-            id: channel.id,
-            name: channel.display_name ?? "Google location",
-          }));
-        if (!cancelled) {
-          setLocations(googleChannels);
-          setSelectedId(preferredId(googleChannels));
+        const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as { listing_id: string; listing_name: string }[];
+        if (Array.isArray(conns) && conns.length > 0) {
+          const locs = conns.map((c) => ({ id: c.listing_id, name: c.listing_name }));
+          return { locations: locs, selectedId: preferredId(locs) };
         }
       } catch {
-        if (!cancelled) {
-          setLocations([]);
-          setSelectedId(null);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+        /* fall through to channels */
       }
-    })();
-    return () => { cancelled = true; };
-  }, [initialLocationId]);
+      const data = await apiFetch("/api/v1/channels?limit=100");
+      const googleChannels = (data.channels ?? [])
+        .filter((channel: { platform: string }) => channel.platform === "google_reviews")
+        .map((channel: { id: string; display_name: string | null }) => ({
+          id: channel.id,
+          name: channel.display_name ?? "Google location",
+        }));
+      return { locations: googleChannels, selectedId: preferredId(googleChannels) };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    const d = locationsQuery.data;
+    if (!d) return;
+    setLocations(d.locations);
+    if (selectedId === null) setSelectedId(d.selectedId);
+    setLoading(false);
+  }, [locationsQuery.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadPosts = async (overlay?: Record<string, string | null>) => {
     const q = selectedId ? `?listing_id=${encodeURIComponent(selectedId)}` : "";
@@ -227,19 +221,22 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
     return normalizePosts(data, overlay ?? deleteOverlay);
   };
 
+  const postsQuery = useQuery({
+    queryKey: ["posts", "list", selectedId],
+    queryFn: async () => {
+      const items = await loadPosts();
+      return items;
+    },
+    enabled: !!selectedId,
+    staleTime: 30 * 1000,
+  });
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const items = await loadPosts();
-        if (!cancelled) setPosts(items);
-      } catch {
-        if (!cancelled) setPosts([]);
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+    const items = postsQuery.data;
+    if (items) setPosts(items);
+  }, [postsQuery.data]);
+
+
 
   // Fresh Google numbers for live posts (throttled in syncPostMetricsThrottled).
   useEffect(() => {
@@ -248,7 +245,11 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
     let cancelled = false;
     (async () => {
       const fresh = await syncPostMetricsThrottled(selectedId);
-      if (!cancelled && fresh) setPosts((prev) => mergePostMetrics(prev, fresh));
+      if (!cancelled && fresh) {
+        queryClient.setQueryData(["posts", "list", selectedId], (prev: PostItem[] | undefined) =>
+          prev ? mergePostMetrics(prev, fresh) : prev,
+        );
+      }
     })();
     return () => { cancelled = true; };
   }, [view.kind, selectedId, posts]);
@@ -450,11 +451,7 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
   };
 
   const refreshPosts = async (overlay?: Record<string, string | null>) => {
-    try {
-      setPosts(await loadPosts(overlay));
-    } catch {
-      /* keep current list on failure */
-    }
+    await queryClient.invalidateQueries({ queryKey: ["posts", "list", selectedId] });
   };
 
   const handleCreate = async () => {
@@ -589,13 +586,13 @@ function PostsInner({ initialLocationId, autoCreate, focusId, onExit }: PostsPag
     if (!confirm("Delete this post permanently? Published copies on Google stay.")) return;
     try {
       await apiFetch(`/api/v1/posts/${id}`, { method: "DELETE" });
-      setPosts((prev) => prev.filter((p) => p.id !== id));
       setDeleteOverlay((prev) => {
         if (!(id in prev)) return prev;
         const next = { ...prev };
         delete next[id];
         return next;
       });
+      void queryClient.invalidateQueries({ queryKey: ["posts", "list", selectedId] });
       showBannerTimed("ok", "Post deleted.");
     } catch {
       showBannerTimed("err", "Could not delete post.");
