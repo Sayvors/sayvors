@@ -37,6 +37,8 @@ export interface InboxThread {
   can_reply?: boolean;
   /** Soft-archived: hidden from the default inbox view. */
   archived?: boolean;
+  /** Soft-pinned: sorts to the top of the inbox list. */
+  pinned?: boolean;
 }
 
 export interface InboxMessage {
@@ -74,6 +76,14 @@ export async function archiveInboxThread(channelId: string, contactPhone: string
   await apiFetch(`/api/v1/inbox/threads/${channelId}/${encodeURIComponent(key)}/archive`, {
     method: "PATCH",
     body: JSON.stringify({ archived }),
+  });
+}
+
+export async function pinInboxThread(channelId: string, contactPhone: string | null, pinned: boolean): Promise<void> {
+  const key = contactPhone ?? "unknown";
+  await apiFetch(`/api/v1/inbox/threads/${channelId}/${encodeURIComponent(key)}/pin`, {
+    method: "PATCH",
+    body: JSON.stringify({ pinned }),
   });
 }
 

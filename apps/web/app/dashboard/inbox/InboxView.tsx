@@ -11,6 +11,7 @@ import {
   fetchThreadMessages,
   archiveInboxThread,
   deleteInboxThread,
+  pinInboxThread,
   sendInboxMessage,
   UNKNOWN_THREAD_KEY,
   type InboxMessage,
@@ -205,15 +206,6 @@ export default function InboxView() {
   const [filter, setFilter] = useState<Filter>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [pinned, setPinned] = useState<Set<string>>(() => {
-    try {
-      const raw = typeof window !== "undefined" ? localStorage.getItem("sayvors.inbox.pinned") : null;
-      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
-
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -239,16 +231,20 @@ export default function InboxView() {
     if (ch && key) deepLinkRef.current = { channel: ch, key };
   }, [searchParams]);
 
-  const togglePin = (compositeKey: string) => {
-    setPinned((prev) => {
-      const next = new Set(prev);
-      if (next.has(compositeKey)) next.delete(compositeKey);
-      else next.add(compositeKey);
-      try {
-        localStorage.setItem("sayvors.inbox.pinned", JSON.stringify([...next]));
-      } catch {}
-      return next;
-    });
+  const togglePin = async (thread: InboxThread) => {
+    const composite = `${thread.channel_id}:${thread.key}`;
+    const next = !thread.pinned;
+    try {
+      await pinInboxThread(thread.channel_id, thread.contact_phone, next);
+      setThreads((prev) =>
+        prev.map((t) =>
+          `${t.channel_id}:${t.key}` === composite ? { ...t, pinned: next } : t,
+        ),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+    } catch {
+      /* keep stale */
+    }
   };
 
   const handleArchive = async (thread: InboxThread, archived: boolean) => {
@@ -480,11 +476,11 @@ export default function InboxView() {
     if (filter === "unknown") rows = rows.filter((t) => t.is_unknown);
     if (platformFilter !== "all") rows = rows.filter((t) => t.platform === platformFilter);
     return [...rows].sort((a, b) => {
-      const ap = pinned.has(`${a.channel_id}:${a.key}`) ? 0 : 1;
-      const bp = pinned.has(`${b.channel_id}:${b.key}`) ? 0 : 1;
+      const ap = a.pinned ? 0 : 1;
+      const bp = b.pinned ? 0 : 1;
       return ap - bp;
     });
-  }, [threads, filter, platformFilter, pinned, showArchived]);
+  }, [threads, filter, platformFilter, showArchived]);
 
   // Virtualize the thread list so a tenant with thousands of conversations
   // doesn't render thousands of DOM nodes. The scroll container is the
@@ -653,7 +649,7 @@ export default function InboxView() {
                   const t = visible[vi.index];
                   const composite = `${t.channel_id}:${t.key}`;
                   const active = composite === targetKey;
-                  const isPinned = pinned.has(composite);
+                  const isPinned = !!t.pinned;
                   return (
                     <div key={composite} data-index={vi.index} ref={threadVirtualizer.measureElement} style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}>
                       <div className={`flex items-start border-b border-ink/[0.04] dark:border-fog/[0.04] ${active ? "bg-deep-violet/[0.06]" : "hover:bg-ink/[0.02] dark:hover:bg-fog/[0.03]"}`}>
@@ -703,7 +699,7 @@ export default function InboxView() {
                           </span>
                         </button>
                         <button
-                          onClick={() => togglePin(composite)}
+                          onClick={() => togglePin(t)}
                           aria-label={isPinned ? "Unpin thread" : "Pin thread"}
                           className={`px-2 py-3 text-[13px] ${isPinned ? "text-deep-violet" : "text-ink/20 hover:text-ink/50"}`}
                         >

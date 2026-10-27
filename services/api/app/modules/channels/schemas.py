@@ -137,6 +137,8 @@ class InboxThread(BaseModel):
     unread: int = 0
     # Soft-archive flag (server-persisted). False/absent = active thread.
     archived: bool = False
+    # Soft-pin flag (server-persisted). False/absent = not pinned.
+    pinned: bool = False
     is_unknown: bool = False
 
 

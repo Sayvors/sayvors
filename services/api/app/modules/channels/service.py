@@ -652,6 +652,8 @@ def _thread_payloads(
                 "important": is_important(priority, category),
                 "can_reply": ch.platform != "google_reviews" and phone is not None,
                 "archived": t.archived_at is not None,
+                "pinned": t.pinned_at is not None,
+                "pinned": t.pinned_at is not None,
             }
         )
     return out
@@ -943,7 +945,7 @@ async def list_inbox_threads(
     t_stmt = (
         select(ChannelThread)
         .where(ChannelThread.channel_id.in_(channel_ids))
-        .order_by(ChannelThread.last_message_at.desc())
+        .order_by(ChannelThread.pinned_at.desc().nullslast(), ChannelThread.last_message_at.desc())
     )
     if not include_archived:
         t_stmt = t_stmt.where(ChannelThread.archived_at.is_(None))

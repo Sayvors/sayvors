@@ -212,6 +212,12 @@ class ChannelThread(Base):
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None, index=True
     )
+    # Soft-pin: NULL = not pinned. Pinned threads sort to the top of the
+    # inbox list (client already does this; server-persisting lets the pin
+    # follow the tenant across devices/browsers).
+    pinned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None, index=True
+    )
     channel = relationship("Channel", back_populates="threads")
 
 

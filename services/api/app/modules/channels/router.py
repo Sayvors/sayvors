@@ -717,6 +717,37 @@ async def inbox_thread_delete(
     return None
 
 
+@_inbox_router.patch("/threads/{channel_id}/{contact_phone}/pin", response_model=dict)
+async def inbox_thread_pin(
+    channel_id: str,
+    contact_phone: str,
+    body: dict,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pin or unpin a thread. Body: {"pinned": true|false}."""
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    phone_hash = hash_contact_phone(phone) if phone else None
+    from sqlalchemy import update
+
+    conditions = [ChannelThread.channel_id == channel_id]
+    if phone_hash is None:
+        conditions.append(ChannelThread.contact_phone_hash.is_(None))
+    else:
+        conditions.append(ChannelThread.contact_phone_hash == phone_hash)
+
+    pinned = bool(body.get("pinned", True))
+    await db.execute(
+        update(ChannelThread)
+        .where(*conditions)
+        .values(pinned_at=datetime.now(timezone.utc) if pinned else None)
+    )
+    await db.commit()
+    return {"channel_id": channel_id, "contact_phone": phone, "pinned": pinned}
+
+
 @_inbox_router.post("/send", response_model=InboxSendResponse)
 async def inbox_send(
     body: InboxSendRequest,
