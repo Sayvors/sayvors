@@ -1456,8 +1456,16 @@ async def list_audit_log(
 # -- Plan management (billing) --
 from sqlalchemy import select as _select
 
+from ..billing.features import sanitize_features
 from ..billing.models import Plan, TenantSubscription
 from ..billing.schemas import PlanOut, PlanCreate, PlanUpdate, SubscriptionOut, GrantPlanIn
+
+
+@router.get("/plan-features")
+async def list_plan_features(_admin=Depends(require_admin)):
+    from ..billing.features import feature_catalog_as_dicts
+
+    return feature_catalog_as_dicts()
 
 
 @router.get("/plans", response_model=list[PlanOut])
@@ -1493,7 +1501,7 @@ async def create_plan(body: PlanCreate, _admin=Depends(require_admin)):
             slug=body.slug, name=body.name, description=body.description,
             price_cents=body.price_cents, included_credit_cents=body.included_credit_cents,
             max_channels=body.max_channels, max_messages_per_month=body.max_messages_per_month,
-            features=body.features, is_active=body.is_active, sort_order=body.sort_order,
+            features=sanitize_features(body.features), is_active=body.is_active, sort_order=body.sort_order,
         )
         db.add(plan)
         await db.commit()
@@ -1522,12 +1530,12 @@ async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_adm
             plan.price_cents = body.price_cents
         if body.included_credit_cents is not None:
             plan.included_credit_cents = body.included_credit_cents
-        if body.max_channels is not None:
+        if "max_channels" in body.model_fields_set:
             plan.max_channels = body.max_channels
-        if body.max_messages_per_month is not None:
+        if "max_messages_per_month" in body.model_fields_set:
             plan.max_messages_per_month = body.max_messages_per_month
         if body.features is not None:
-            plan.features = body.features
+            plan.features = sanitize_features(body.features)
         if body.is_active is not None:
             plan.is_active = body.is_active
         if body.sort_order is not None:
@@ -1602,3 +1610,24 @@ async def grant_plan(tenant_id: str, body: GrantPlanIn, _admin=Depends(require_a
             period_start=sub.period_start, period_end=sub.period_end,
             granted_by=sub.granted_by, granted_until=sub.granted_until,
         )
+
+
+@router.get("/tenants/{tenant_id}/entitlements")
+async def get_tenant_entitlements(tenant_id: str, _admin=Depends(require_admin)):
+    from ...billing.entitlements import get_entitlements
+    from ...database import async_session
+
+    async with async_session() as db:
+        ent = await get_entitlements(tenant_id, db)
+        return {
+            "plan_slug": ent.plan_slug,
+            "plan_name": ent.plan_name,
+            "status": ent.status,
+            "max_channels": ent.max_channels,
+            "max_messages_per_month": ent.max_messages_per_month,
+            "included_credit_cents": ent.included_credit_cents,
+            "features": ent.features,
+            "promo_active": ent.promo_active,
+            "granted_by": ent.granted_by,
+            "granted_until": ent.granted_until.isoformat() if ent.granted_until else None,
+        }

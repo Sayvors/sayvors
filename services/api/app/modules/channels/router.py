@@ -105,6 +105,22 @@ async def connect_channel(
     ctx: TenantContext = Depends(require_perm("channels.connect")),
     db: AsyncSession = Depends(get_db),
 ):
+    from ...billing.entitlements import get_entitlements
+    from ...core.deps import tenant_id_of
+
+    tid = tenant_id_of(ctx.user)
+    ent = await get_entitlements(tid, db)
+    from ...channels.service import list_channels
+
+    existing, _ = await list_channels(ctx.user, db, limit=100, offset=0)
+    if not ent.channel_quota_ok(len(existing)):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Channel limit reached for plan '{ent.plan_slug}' (max {ent.max_channels}). Upgrade to add more.",
+        )
+    if not ent.has_feature("channels"):
+        raise HTTPException(status_code=403, detail="Channels are not included in your plan.")
+
     try:
         channel = await create_channel(body, ctx.user, db)
     except ValueError as e:
@@ -762,6 +778,17 @@ async def inbox_send(
     """
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
+    # Plan entitlements: feature gate + monthly message cap (fail closed).
+    from ...billing.entitlements import get_entitlements
+    from ...core.deps import tenant_id_of
+
+    tid = tenant_id_of(ctx.user)
+    ent = await get_entitlements(tid, db)
+    if not ent.has_feature("messaging"):
+        raise HTTPException(status_code=403, detail="Messaging is not included in your plan.")
+    used = await count_messages_this_month(tid, db)
+    if not ent.message_quota_ok(used):
+        raise HTTPException(status_code=429, detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.")
     try:
         msg = await send_message(
             body.channel_id,

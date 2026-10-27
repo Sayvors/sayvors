@@ -500,7 +500,16 @@ app.add_middleware(CSRFMiddleware)
 if settings.ALLOWED_HOSTS:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 
-# ── register modules ──────────────────────────────────────────────────
+# ── Domain exception handlers ────────────────────────────────────────
+# EntitlementDenied -> 403 so callers see a clear "plan limit" error
+# instead of a 500. Fail-closed: a denied feature never silently passes.
+from .modules.billing.entitlements import EntitlementDenied
+
+@app.exception_handler(EntitlementDenied)
+async def _entitlement_denied_handler(request, exc):
+    from fastapi import HTTPException
+
+    raise HTTPException(status_code=403, detail=str(exc))
 # Routers are imported at the top of this module; only registration happens
 # here. Re-importing them lower down shadowed nothing but left two copies of
 # every import to keep in sync.

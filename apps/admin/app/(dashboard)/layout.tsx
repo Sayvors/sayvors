@@ -27,6 +27,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/usage", label: "Usage", desc: "Tokens & metering", icon: "usage" },
       { href: "/billing", label: "Billing", desc: "Wallets & ledger", icon: "billing" },
+      { href: "/plans", label: "Plans", desc: "Plans & entitlements", icon: "billing" },
       { href: "/jobs", label: "Jobs", desc: "Queue & workers", icon: "jobs" },
       { href: "/logs", label: "Logs", desc: "Services & failures", icon: "logs" },
     ],

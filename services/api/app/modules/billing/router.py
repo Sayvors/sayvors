@@ -171,3 +171,49 @@ async def read_plan(user=Depends(get_current_user), db: AsyncSession = Depends(g
         status=sub.status, period_start=sub.period_start, period_end=sub.period_end,
         granted_by=sub.granted_by, granted_until=sub.granted_until,
     )
+
+
+@router.get("/plans")
+async def list_public_plans(db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select
+
+    from ..billing.models import Plan
+
+    rows = (await db.execute(select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.sort_order, Plan.name))).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "slug": r.slug,
+            "name": r.name,
+            "description": r.description,
+            "price_cents": r.price_cents,
+            "included_credit_cents": r.included_credit_cents,
+            "max_channels": r.max_channels,
+            "max_messages_per_month": r.max_messages_per_month,
+            "features": r.features or {},
+            "sort_order": r.sort_order,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/entitlements")
+async def read_entitlements(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """The tenant's effective plan + entitlements (base plan + promo overrides)."""
+    from ...core.deps import tenant_id_of
+    from .entitlements import get_entitlements
+
+    tid = tenant_id_of(user)
+    ent = await get_entitlements(tid, db)
+    return {
+        "plan_slug": ent.plan_slug,
+        "plan_name": ent.plan_name,
+        "status": ent.status,
+        "max_channels": ent.max_channels,
+        "max_messages_per_month": ent.max_messages_per_month,
+        "included_credit_cents": ent.included_credit_cents,
+        "features": ent.features,
+        "promo_active": ent.promo_active,
+        "granted_by": ent.granted_by,
+        "granted_until": ent.granted_until.isoformat() if ent.granted_until else None,
+    }

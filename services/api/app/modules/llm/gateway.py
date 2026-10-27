@@ -160,6 +160,10 @@ async def complete(
     nobody budgeted for, so every caller must name its use.
     """
     await registry.ensure_provider_keys_fresh()
+    # Plan entitlement: AI replies must be enabled for this tenant.
+    if tenant_id:
+        from ..billing.entitlements import check_feature
+        await check_feature(tenant_id, "ai_replies")
     resolved = resolve_model(model)
     provider = registry.get_provider_for_model(model)
     req = _build_request(
@@ -198,6 +202,10 @@ async def stream(
     charges for what was delivered.
     """
     await registry.ensure_provider_keys_fresh()
+    # Plan entitlement: AI replies must be enabled for this tenant.
+    if tenant_id:
+        from ..billing.entitlements import check_feature
+        await check_feature(tenant_id, "ai_replies")
     resolved = resolve_model(model)
     provider = registry.get_provider_for_model(model)
     req = _build_request(
