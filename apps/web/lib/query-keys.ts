@@ -33,8 +33,9 @@ export const queryKeys = {
   databank: {
     all: () => ["databank"] as const,
   },
-  onboarding: {
-    state: () => ["onboarding", "state"] as const,
+  services: {
+    channels: () => ["services", "channels"] as const,
+    list: (scope: string) => ["services", "list", scope] as const,
   },
   usage: {
     summary: (days: number) => ["usage", "summary", days] as const,

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import { apiFetch } from "@/lib/api-rag";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import LogoLoader from "@/components/LogoLoader";
@@ -24,10 +26,19 @@ type ServicesCopy = ReturnType<typeof useI18n>["t"]["dashboard"]["services"];
 export default function ServicesPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n();
   const copy = t.dashboard.services;
-  const [channels, setChannels] = useState<Channel[]>([]);
+  const queryClient = useQueryClient();
+  const channelsQuery = useQuery({
+    queryKey: queryKeys.services.channels(),
+    queryFn: async () => {
+      const data = await apiFetch("/api/v1/channels?limit=100");
+      return (data.channels ?? []).filter(
+        (channel: Channel & { platform: string }) => channel.platform === "google_reviews",
+      ) as Channel[];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const channels = channelsQuery.data ?? [];
   const [selectedId, setSelectedId] = useState("");
-  const [services, setServices] = useState<Service[]>([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -74,48 +85,35 @@ export default function ServicesPage({ embedded = false }: { embedded?: boolean 
   };
 
   useEffect(() => {
-    async function load() {
-      try {
-        const data = await apiFetch("/api/v1/channels?limit=100");
-        const google = (data.channels ?? []).filter((channel: Channel & { platform: string }) => channel.platform === "google_reviews");
-        setChannels(google);
-        setSelectedId(google.length ? ALL_BRANCHES : "");
-        setAddLocIds(google.map((c: Channel) => c.id));
-      } catch (error) { setMessage(error instanceof Error ? error.message : copy.errLoadChannels); }
-      finally { setLoading(false); }
+    if (channels.length > 0 && !selectedId) {
+      setSelectedId(ALL_BRANCHES);
+      setAddLocIds(channels.map((c) => c.id));
     }
-    void load();
-    // Runs once on mount; `copy` is only read for the error fallback.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [channels, selectedId]);
 
-  async function loadServices(scopeId: string, list: Channel[], groupIds?: string[]) {
-    const targets =
-      scopeId === ALL_BRANCHES
-        ? list
-        : groupIds
-          ? list.filter((c) => groupIds.includes(c.id))
-          : list.filter((c) => c.id === scopeId);
-    if (targets.length === 0) { setServices([]); return; }
-    try {
+  const groupChannelKey = groupChannelIds.join(",");
+
+  const servicesQuery = useQuery({
+    queryKey: ["services", "list", selectedId, groupChannelKey],
+    queryFn: async () => {
+      const targets =
+        selectedId === ALL_BRANCHES
+          ? channels
+          : selectedGroup
+            ? channels.filter((c) => groupChannelIds.includes(c.id))
+            : channels.filter((c) => c.id === selectedId);
+      if (targets.length === 0) return [] as Service[];
       const lists = await Promise.all(targets.map(async (c) => {
         try { const data = await apiFetch(`/api/v1/channels/${c.id}/services`); return (data.services ?? []) as Service[]; }
         catch { return [] as Service[]; }
       }));
-      setServices(lists.flat());
-    }
-    catch (error) { setMessage(error instanceof Error ? error.message : copy.errLoadServices); }
-  }
-
-  // `copy` is a fresh object each render, so it is deliberately not a dependency;
-  // it is only read for the error fallback above.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  // Joined into a string so the effect keys on the group's resolved members
-  // (which arrive after mount) rather than on a fresh array each render.
-  const groupChannelKey = groupChannelIds.join(",");
-  useEffect(() => {
-    void loadServices(selectedId, channels, selectedGroup ? groupChannelKey.split(",").filter(Boolean) : undefined);
-  }, [selectedId, channels, selectedGroup, groupChannelKey]);
+      return lists.flat();
+    },
+    enabled: channels.length > 0,
+    staleTime: 30 * 1000,
+  });
+  const services = servicesQuery.data ?? [];
+  const loading = channelsQuery.isPending || servicesQuery.isPending;
 
   async function addService() {
     const targets = (isAll ? addLocIds : [selectedId]).filter(Boolean);
@@ -149,7 +147,7 @@ export default function ServicesPage({ embedded = false }: { embedded?: boolean 
         if (!firstErr) firstErr = error instanceof Error ? error.message.slice(0, 140) : copy.errRequest;
       }
     }
-    await loadServices(selectedId, channels, selectedGroup ? groupChannelIds : undefined);
+    await queryClient.invalidateQueries({ queryKey: ["services", "list"] });
     setName("");
     setDescription("");
     const n = targets.length;
@@ -175,13 +173,21 @@ export default function ServicesPage({ embedded = false }: { embedded?: boolean 
   }
 
   async function toggleService(service: Service) {
-    try { const updated = await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, { method: "PUT", body: JSON.stringify({ is_offered: !service.is_offered }) }); setServices((current) => current.map((item) => item.id === updated.id ? updated : item)); }
-    catch (error) { setMessage(error instanceof Error ? error.message : copy.errUpdate); }
+    try {
+      const updated = await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, { method: "PUT", body: JSON.stringify({ is_offered: !service.is_offered }) });
+      queryClient.setQueryData(["services", "list", selectedId, groupChannelKey], (old: Service[] | undefined) =>
+        (old ?? []).map((item) => (item.id === updated.id ? updated : item)),
+      );
+    } catch (error) { setMessage(error instanceof Error ? error.message : copy.errUpdate); }
   }
 
   async function removeService(service: Service) {
-    try { await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, { method: "DELETE" }); setServices((current) => current.filter((item) => item.id !== service.id)); }
-    catch (error) { setMessage(error instanceof Error ? error.message : copy.errDelete); }
+    try {
+      await apiFetch(`/api/v1/channels/${service.channel_id}/services/${service.id}`, { method: "DELETE" });
+      queryClient.setQueryData(["services", "list", selectedId, groupChannelKey], (old: Service[] | undefined) =>
+        (old ?? []).filter((item) => item.id !== service.id),
+      );
+    } catch (error) { setMessage(error instanceof Error ? error.message : copy.errDelete); }
   }
 
   return (
