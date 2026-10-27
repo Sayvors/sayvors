@@ -559,6 +559,8 @@
     <tr><td>ElastiCache Redis</td><td>Memorystore for Redis</td><td><code>maxmemory-policy</code> is a config parameter; no <code>CONFIG SET</code> at runtime. Keep <code>noeviction</code>.</td></tr>
     <tr><td>S3</td><td>Cloud Storage</td><td>Already coded; needs a service-account JSON and <code>GOOGLE_APPLICATION_CREDENTIALS</code>. Public media bucket must allow public read; private docs bucket must not.</td></tr>
     <tr><td>EC2 t3.small + docker compose</td><td>Compute Engine VM (lift-and-shift) or Cloud Run + managed Redis/Kafka</td><td>Cloud Run has no local Kafka/Redis sidecars; the compose topology assumes a VM. Lift-and-shift is the cheap first move.</td></tr>
+    <tr><td>Caddy (reverse proxy + TLS)</td><td>Cloud Load Balancer (HTTPS) or Cloud Run built-in TLS</td><td>INS-3 (Caddy /metrics 403 + HSTS) becomes load-balancer config, not Caddyfile edits. Skip INS-3 if migrating to GCP.</td></tr>
+    <tr><td>Prometheus (on-box)</td><td>Cloud Monitoring / GMP (managed Prometheus)</td><td>INS-4 (loopback bind) becomes moot — Prometheus is not on the box. Skip INS-4 if migrating to GCP.</td></tr>
     <tr><td>Vercel (web + admin)</td><td>Cloud Run / Firebase Hosting, or keep Vercel</td><td>Next.js <code>standalone</code> output already builds a container; keeping Vercel is allowed and is not an AWS dependency.</td></tr>
     <tr><td>GHCR</td><td>Artifact Registry (or keep GHCR)</td><td>Private GHCR pulls from Cloud Run need credentials; Artifact Registry removes that step.</td></tr>
     <tr><td>Secrets Manager</td><td>Secret Manager</td><td>App reads env vars today; mount Secret Manager values into the environment or a file.</td></tr>
@@ -883,14 +885,14 @@
     </tr>
     <tr>
       <td class="num">INS-3</td><td><span class="chip med">Med</span></td><td><span class="chip med">Infra</span></td>
-      <td><strong>The edge proxies everything — <code>/metrics</code> is publicly reachable and there is no HSTS header.</strong> Caddy forwards the whole origin to the API, so queue depths, dependency names and request counters are readable by anyone, and browsers are never told to enforce HTTPS on this origin.</td>
+      <td><strong>The edge proxies everything — <code>/metrics</code> is publicly reachable and there is no HSTS header.</strong> Caddy forwards the whole origin to the API, so queue depths, dependency names and request counters are readable by anyone, and browsers are never told to enforce HTTPS on this origin. <em>Tied to the self-hosted Caddy staging setup; on Google Cloud (Cloud Run / Cloud Load Balancer) TLS termination and metrics exposure are configured in the load balancer, not the Caddyfile — skip if migrating to GCP.</em></td>
       <td class="path">deploy/Caddyfile</td>
       <td>Apply the drop-in Caddyfile below: 403 <code>/metrics</code> at the edge + HSTS. Keep <code>/readyz</code> reachable — the external uptime monitor (J-8) needs it, and it discloses only up/down.</td>
       <td class="num">15 min</td>
     </tr>
     <tr>
       <td class="num">INS-4</td><td><span class="chip med">Med</span></td><td><span class="chip med">Infra</span></td>
-      <td><strong>Prometheus UI is published on <code>0.0.0.0:9090</code> in the prod compose</strong> — a public, unauthenticated page that exposes targets, scrape health and build info. The dev compose already binds redis/kafka to loopback; prod prometheus did not get the same treatment.</td>
+      <td><strong>Prometheus UI is published on <code>0.0.0.0:9090</code> in the prod compose</strong> — a public, unauthenticated page that exposes targets, scrape health and build info. The dev compose already binds redis/kafka to loopback; prod prometheus did not get the same treatment. <em>Tied to the self-hosted single-box setup; on Google Cloud use Cloud Monitoring / GMP instead — skip if migrating to GCP.</em></td>
       <td class="path">docker-compose.prod.yml:160-161</td>
       <td><code>"9090:9090"</code> → <code>"127.0.0.1:9090:9090"</code>. If a hosted Grafana needs remote scrape, run a grafana-agent container in-compose instead of exposing the UI.</td>
       <td class="num">2 min</td>
