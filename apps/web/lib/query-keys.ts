@@ -49,4 +49,7 @@ export const queryKeys = {
       ["analytics", "overview", days, channelId ?? "all"] as const,
     presence: (channelId: string | null) => ["analytics", "presence", channelId ?? "all"] as const,
   },
+  growth: {
+    all: (days: number, channelId: string | null) => ["growth", days, channelId ?? "all"] as const,
+  },
 };

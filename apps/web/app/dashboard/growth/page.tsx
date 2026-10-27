@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import {
   fetchAcquisition,
   fetchKeywords,
@@ -9,13 +11,7 @@ import {
   fetchOverview,
   fetchTimeseries,
   fetchVisibility,
-  type AcquisitionResponse,
-  type KeywordsResponse,
-  type MessagingGrowthResponse,
-  type OpportunitiesResponse,
-  type Overview,
   type TimeseriesPoint,
-  type VisibilityResponse,
 } from "@/lib/api-analytics";
 import { apiFetch } from "@/lib/api-rag";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
@@ -182,56 +178,46 @@ export default function GrowthPage() {
   const [days, setDays] = useState<number>(30);
   const [channelId, setChannelId] = useState<string | null>(null);
   const channels = useGoogleChannels();
-  const [visibility, setVisibility] = useState<VisibilityResponse | null>(null);
-  const [acquisition, setAcquisition] = useState<AcquisitionResponse | null>(null);
-  const [opportunities, setOpportunities] = useState<OpportunitiesResponse | null>(null);
-  const [keywords, setKeywords] = useState<KeywordsResponse | null>(null);
-  const [messagingGrowth, setMessagingGrowth] = useState<MessagingGrowthResponse | null>(null);
   const [granularity, setGranularity] = useState<"day" | "month">("day");
   const [trendMetric, setTrendMetric] = useState<"impressions" | "website" | "calls" | "directions">("impressions");
-  const [points, setPoints] = useState<TimeseriesPoint[]>([]);
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [presence, setPresence] = useState<PresencePerf | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [refreshToken, setRefreshToken] = useState(0);
-  const hasLoaded = useRef(false);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      fetchVisibility(days, channelId),
-      fetchAcquisition(days, channelId),
-      fetchOpportunities(days, channelId),
-      fetchTimeseries(days, channelId),
-      fetchKeywords(days, channelId).catch(() => null),
-      fetchOverview(days, channelId).catch(() => null),
-      fetchMessagingGrowth(days, channelId).catch(() => null),
-      apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
-    ])
-      .then(([v, a, o, t, k, ov, mg, prof]) => {
-        if (cancelled) return;
-        setVisibility(v);
-        setAcquisition(a);
-        setOpportunities(o);
-        setPoints(t);
-        setKeywords(k);
-        setOverview(ov);
-        setMessagingGrowth(mg);
-        setPresence(presencePerf(prof));
-        setError(false);
-        hasLoaded.current = true;
-      })
-      .catch(() => {
-        if (!cancelled && !hasLoaded.current) setError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [days, channelId, refreshToken]);
+  const growthQuery = useQuery({
+    queryKey: queryKeys.growth.all(days, channelId),
+    queryFn: async () => {
+      const [v, a, o, t, k, ov, mg, prof] = await Promise.all([
+        fetchVisibility(days, channelId),
+        fetchAcquisition(days, channelId),
+        fetchOpportunities(days, channelId),
+        fetchTimeseries(days, channelId),
+        fetchKeywords(days, channelId).catch(() => null),
+        fetchOverview(days, channelId).catch(() => null),
+        fetchMessagingGrowth(days, channelId).catch(() => null),
+        apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
+      ]);
+      return {
+        visibility: v,
+        acquisition: a,
+        opportunities: o,
+        points: t,
+        keywords: k,
+        overview: ov,
+        messagingGrowth: mg,
+        presence: presencePerf(prof),
+      };
+    },
+    staleTime: 30 * 1000,
+  });
+  const visibility = growthQuery.data?.visibility ?? null;
+  const acquisition = growthQuery.data?.acquisition ?? null;
+  const opportunities = growthQuery.data?.opportunities ?? null;
+  const points = growthQuery.data?.points ?? [];
+  const keywords = growthQuery.data?.keywords ?? null;
+  const overview = growthQuery.data?.overview ?? null;
+  const messagingGrowth = growthQuery.data?.messagingGrowth ?? null;
+  const presence = growthQuery.data?.presence ?? null;
+  const loading = growthQuery.isPending;
+  const error = growthQuery.isError && !growthQuery.data;
 
   const fmt = (n: number) => new Intl.NumberFormat("en").format(n);
   const nativePerf = !!visibility && visibility.impressions_maps > 0;
@@ -273,12 +259,10 @@ export default function GrowthPage() {
           days={days}
           setDays={(d) => {
             setDays(d);
-            setLoading(true);
           }}
           channelId={channelId}
           setChannelId={(c) => {
             setChannelId(c);
-            setLoading(true);
           }}
           channels={channels}
         />
@@ -289,9 +273,7 @@ export default function GrowthPage() {
           <p className="text-[13px] font-semibold text-[var(--ui-ink-2)]">Couldn&apos;t load growth data.</p>
           <button
             onClick={() => {
-              setError(false);
-              setLoading(true);
-              setRefreshToken((t) => t + 1);
+              void queryClient.invalidateQueries({ queryKey: ["growth"] });
             }}
             className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
