@@ -1,6 +1,8 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import { useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
@@ -97,6 +99,7 @@ export default function ReviewsPage() {
 function ReviewsInner() {
   const { groups } = useLocationGroups();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -307,23 +310,24 @@ function ReviewsInner() {
     }
   };
 
+  const reviewsQuery = useQuery({
+    queryKey: ["reviews", "list", selectedId, selectedGroup?.id ?? null, groupChannels.join(",")],
+    queryFn: async () => {
+      const loc = locations.find((l) => l.id === selectedId);
+      const items = await loadInsights(selectedGroup ? groupChannels : loc?.channelId ? [loc.channelId] : undefined);
+      await loadPendingReplies();
+      return items;
+    },
+    enabled: true,
+    staleTime: 30 * 1000,
+  });
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const loc = locations.find((l) => l.id === selectedId);
-        const items = await loadInsights(selectedGroup ? groupChannels : loc?.channelId ? [loc.channelId] : undefined);
-        if (!cancelled) setReviews(items);
-        await loadPendingReplies();
-      } catch {
-        if (!cancelled) setReviews([]);
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    // Also re-runs when the group's members or their channels resolve, which
-    // land after mount — keying on the joined IDs covers that.
-  }, [selectedId, selectedGroup?.id, groupChannels.join(",")]);
+    const items = reviewsQuery.data;
+    if (items) setReviews(items);
+  }, [reviewsQuery.data]);
+  useEffect(() => {
+    if (reviewsQuery.isError) setReviews([]);
+  }, [reviewsQuery.isError]);
 
   // `reviews` holds live AND removed rows; every count below is over the live
   // set only, so a review Google dropped never inflates a number the merchant
@@ -2015,9 +2019,7 @@ function ReviewMedia({ media }: { media: ReviewItem["media"] }) {
         const src = String(m.url).startsWith("http") ? String(m.url) : `${API_ORIGIN}${m.url}`;
         return (
           <a key={i} href={src} target="_blank" rel="noreferrer" className="group relative block">
-            {/* eslint-disable-next-line @next/next/no-img-element -- our own
-                already-validated raster copy; the optimizer would re-encode it */}
-<Image
+            <Image
               src={src}
               alt={m.label || `Photo from the reviewer (${i + 1})`}
               width={96}
