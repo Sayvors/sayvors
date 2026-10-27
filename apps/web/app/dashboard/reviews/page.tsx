@@ -629,8 +629,8 @@ function ReviewsInner() {
     let ok = 0;
     for (const d of pendingReplies) {
       try {
-        if (isDraftEdited(d)) await editReply(d.channel_id, d.id, getDraftText(d));
-        await approveReply(d.channel_id, d.id);
+        if (isDraftEdited(d)) await editReplyHook.mutateAsync({ channelId: d.channel_id, replyId: d.id, replyText: getDraftText(d) });
+        await approveReplyHook.mutateAsync({ channelId: d.channel_id, replyId: d.id });
         ok += 1;
       } catch {}
     }
