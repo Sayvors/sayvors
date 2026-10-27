@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
@@ -357,6 +358,29 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
     return c;
   }, [leads, age, now]);
 
+  // Virtualization hooks must run unconditionally (before any early return).
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [cols, setCols] = useState(3);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const update = () => {
+      const w = el.clientWidth;
+      setCols(w >= 1024 ? 3 : w >= 640 ? 2 : 1);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const rowCount = Math.ceil(base.length / cols);
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => gridRef.current,
+    estimateSize: () => 260,
+    overscan: 2,
+  });
+
   if (error) {
     return (
       <div role="alert" className={`mt-4 rounded-[8px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-4 text-[13px] font-bold ${INK}`}>
@@ -391,6 +415,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
     return rank(a) - rank(b) || +new Date(b.updated_at) - +new Date(a.updated_at);
   });
   const visible = rows;
+
 
   return (
     <>
@@ -517,11 +542,30 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
             : "No leads in this view."}
         </p>
       ) : (
-        <ul className="mt-3 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-          {visible.map((lead) => (
-            <LeadCard key={lead.id} lead={lead} busy={busyId === lead.id} onMove={move} />
-          ))}
-        </ul>
+        <div
+          ref={gridRef}
+          className="mt-3 max-h-[70vh] overflow-y-auto"
+        >
+          <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+            {rowVirtualizer.getVirtualItems().map((vi) => {
+              const start = vi.index * cols;
+              const rowItems = visible.slice(start, start + cols);
+              return (
+                <div
+                  key={vi.index}
+                  data-index={vi.index}
+                  ref={rowVirtualizer.measureElement}
+                  style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+                  className={`grid gap-3 ${cols === 3 ? "lg:grid-cols-3" : cols === 2 ? "lg:grid-cols-2" : "grid-cols-1"}`}
+                >
+                  {rowItems.map((lead) => (
+                    <LeadCard key={lead.id} lead={lead} busy={busyId === lead.id} onMove={move} />
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </>
   );
