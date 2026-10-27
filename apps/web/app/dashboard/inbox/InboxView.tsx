@@ -170,6 +170,28 @@ function StatusTick({ message }: { message: InboxMessage }) {
   );
 }
 
+const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Meta's free-form messaging window: 24h from the customer's last inbound
+ *  message. Returns the expiry timestamp, or null for platforms without a
+ *  hard window (e.g. Google reviews, which are answered elsewhere). */
+function replyWindowExpiresAt(thread: InboxThread | null): Date | null {
+  if (!thread) return null;
+  const platform = (thread.platform ?? "").toLowerCase();
+  if (platform === "google_reviews" || platform === "google") return null;
+  if (!thread.last_message_at) return null;
+  // If the last message was outbound, the customer's last inbound was
+  // earlier — use last_message_at as a conservative (slightly generous)
+  // reference so we never block a reply that might still be allowed.
+  return new Date(new Date(thread.last_message_at).getTime() + REPLY_WINDOW_MS);
+}
+
+function replyWindowOpen(thread: InboxThread | null): boolean {
+  const expires = replyWindowExpiresAt(thread);
+  if (!expires) return true; // no window constraint
+  return Date.now() < expires.getTime();
+}
+
 export default function InboxView() {
   const queryClient = useQueryClient();
   const [threads, setThreads] = useState<InboxThread[]>([]);
@@ -507,7 +529,7 @@ export default function InboxView() {
   // `can_reply === false` (not `!can_reply`) so a thread from an older
   // API — which does not send the field — can still be replied to.
   const canSend =
-    !!target && !target.is_unknown && target.can_reply !== false && !!draft.trim() && !sending;
+    !!target && !target.is_unknown && target.can_reply !== false && replyWindowOpen(target) && !!draft.trim() && !sending;
   const openThread = !!target;
 
   return (
@@ -815,29 +837,39 @@ export default function InboxView() {
                     answered from the Reviews page, not from here.
                   </p>
                 ) : (
-                  <div className="flex items-end gap-2">
-                    <textarea
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          void send();
-                        }
-                      }}
-                      rows={2}
-                      placeholder="Write a reply…"
-                      aria-label="Write a reply"
-                      className="input-field flex-1 resize-none"
-                    />
-                    <button onClick={() => void send()} disabled={!canSend} className="btn-primary disabled:opacity-40">
-                      {sending ? "Sending…" : "Send"}
-                    </button>
-                  </div>
+                  <>
+                    {!replyWindowOpen(target) && (
+                      <p className="mb-2 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                        Reply window closed — Meta only allows free-form replies within 24 hours of the customer&apos;s last message. Use a template message instead.
+                      </p>
+                    )}
+                    <div className="flex items-end gap-2">
+                      <textarea
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            void send();
+                          }
+                        }}
+                        rows={2}
+                        placeholder={replyWindowOpen(target) ? "Write a reply…" : "Reply window closed"}
+                        aria-label="Write a reply"
+                        disabled={!replyWindowOpen(target)}
+                        className="input-field flex-1 resize-none disabled:opacity-50"
+                      />
+                      <button onClick={() => void send()} disabled={!canSend} className="btn-primary disabled:opacity-40">
+                        {sending ? "Sending…" : "Send"}
+                      </button>
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-ink/35 dark:text-fog/35">
+                      {replyWindowOpen(target)
+                        ? `Reply window open — closes ${replyWindowExpiresAt(target)?.toLocaleString() ?? ""}.`
+                        : "WhatsApp/Instagram only allow replies within 24 hours of the customer’s last message."}
+                    </p>
+                  </>
                 )}
-                <p className="mt-1.5 text-[11px] text-ink/35 dark:text-fog/35">
-                  WhatsApp only allows replies within 24 hours of a customer&apos;s message. Outside that window the send is rejected and shown here as failed.
-                </p>
               </div>
             </>
           )}
