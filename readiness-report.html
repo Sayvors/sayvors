@@ -364,7 +364,12 @@
               <li>Migrate Channels / leads / customers</li>
               <li>Migrate Locations / profile / posts</li>
               <li>Migrate Settings / config pages</li>
-              <li>Add mutation hooks with cache invalidation (approve reply, edit issue, update config, delete channel)</li>
+              <li><strong>Mutation hooks with cache invalidation</strong> <span class="chip warn">In progress</span>
+            <ul style="margin:2px 0 6px 16px;list-style:disc;">
+              <li>Reusable hooks in <code>lib/mutation-hooks.ts</code>: <code>useApproveReply</code>, <code>useEditReply</code>, <code>useUpdateReviewIssue</code>, <code>useUpdateChannelConfig</code>, <code>useDeleteChannel</code> — each invalidates the relevant query keys (and updates the cache on success where applicable).</li>
+              <li>Adoption into the pages (reviews approve, issues edit, channels config/delete) is incremental — pages still call the APIs directly; hooks are ready to drop in.</li>
+            </ul>
+          </li>
             </ul>
           </li>
           <li><strong>List virtualization</strong> <span class="chip warn">In progress</span>
