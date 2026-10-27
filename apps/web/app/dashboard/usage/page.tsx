@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { formatMs, formatTokens, getUsageSummary, type UsageSummary } from "@/lib/api-usage";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
+import { formatMs, formatTokens, getUsageSummary } from "@/lib/api-usage";
 
 const DAY_OPTIONS = [
   { days: 1, label: "1d" },
@@ -88,26 +90,19 @@ function SplitDonut({ a, b, labelA, labelB }: { a: number; b: number; labelA: st
 
 export default function UsagePage() {
   const [days, setDays] = useState(30);
-  const [data, setData] = useState<UsageSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (d: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setData(await getUsageSummary(d));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load usage");
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load(days);
-  }, [days, load]);
+  const summaryQuery = useQuery({
+    queryKey: queryKeys.usage.summary(days),
+    queryFn: () => getUsageSummary(days),
+    staleTime: 30 * 1000,
+  });
+  const data = summaryQuery.data ?? null;
+  const loading = summaryQuery.isPending;
+  const error = summaryQuery.isError
+    ? summaryQuery.error instanceof Error
+      ? summaryQuery.error.message
+      : "Failed to load usage"
+    : null;
 
   const maxPurpose = Math.max(1, ...((data?.by_purpose ?? []).map((p) => p.total_tokens)));
   // Defensive defaults: older backends may omit keys.
@@ -153,7 +148,7 @@ export default function UsagePage() {
             <p className="text-[13px] font-medium text-ink/60 dark:text-fog/60">{error}</p>
             <button
               type="button"
-              onClick={() => void load(days)}
+              onClick={() => void summaryQuery.refetch()}
               className="mt-3 rounded-xl bg-deep-violet px-5 py-2 text-[12px] font-bold text-white"
             >
               Retry
