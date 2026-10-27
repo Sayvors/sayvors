@@ -375,7 +375,7 @@
           <li><strong>List virtualization</strong> <span class="chip warn">In progress</span>
             <ul style="margin:2px 0 6px 16px;list-style:disc;">
               <li>Install @tanstack/react-virtual — <span class="chip ok">done</span></li>
-              <li>Virtualize inbox thread list — <span class="chip ok">done</span> (variable row height via measureElement, 6-row overscan)</li>
+              <li>Virtualize inbox thread list — <span class="chip ok">done</span> (variable row height via measureElement, 6-row overscan); virtualize reviews/issues list — <span class="chip ok">done</span> (issues page)</li>
               <li>Virtualize reviews + issues + leads lists — <span class="chip warn">open</span> (those panels are not scroll containers yet; needs fixed-height scroll wrappers)</li>
             </ul>
           </li>
@@ -960,7 +960,7 @@
       <li><strong>CI.</strong> pytest against a real pgvector Postgres + Redis (116 test files in tree), tsc for web and admin, eslint — and the deploy’s ci-gate refuses to build until they pass.</li>
       <li><strong>Auth.</strong> <code>AUTH_RATE_LIMIT_FAIL_CLOSED</code> honored in the limiter; cookies default Secure/SameSite=None with shared-domain support; CSRF + TrustedHost middlewares wired; admin lockout + httpOnly cookie.</li>
       <li><strong>Hygiene.</strong> <code>.env</code> / <code>.env.prod</code> gitignored (only <code>*.env.example</code> tracked); <code>@sentry/nextjs</code> present in apps/web.</li>
-      <li><strong>Confirmed open, exactly as the ledger says:</strong> TanStack Query is installed but only 2 of 178 <code>.tsx</code> files use it; no list virtualization for reviews/issues/leads, frontend test harness now in place (vitest, 13 tests) but coverage thin; ESLint now covers the whole app (0 errors, 119 warnings tracked); the admin app now has <code>@sentry/nextjs</code> wired (client/server/edge + error boundaries) but no DSN/host purchased yet.</li>
+      <li><strong>Confirmed open, exactly as the ledger says:</strong> TanStack Query is installed but only 2 of 178 <code>.tsx</code> files use it; inbox + issues lists now virtualized, reviews/leads lists still pending; frontend test harness now in place (vitest, 13 tests) but coverage thin; ESLint now covers the whole app (0 errors, 119 warnings tracked); the admin app now has <code>@sentry/nextjs</code> wired (client/server/edge + error boundaries) but no DSN/host purchased yet.</li>
     </ul>
   </div>
   <p class="note">Not verified by this pass (same limits as the original audit): the RDS console state (PITR, instance class, max_connections), real traffic numbers, Vercel plan limits, Meta rate-limit headroom. Load figures remain estimates until the k6 run.</p>

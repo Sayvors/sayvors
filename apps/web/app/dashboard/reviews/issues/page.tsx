@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import LogoLoader from "@/components/LogoLoader";
@@ -132,6 +133,14 @@ export default function ReviewTicketsPage() {
       .sort((a, b) => (priorityRank[a.priority] ?? 2) - (priorityRank[b.priority] ?? 2));
   }, [issues, statusFilter, q]);
 
+  const listRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 88,
+    overscan: 6,
+  });
+
   const open = openId ? issues.find((i) => i.id === openId) ?? null : null;
 
   return (
@@ -221,35 +230,46 @@ export default function ReviewTicketsPage() {
             </p>
           </div>
         ) : (
-          <div className="ui-panel mt-4 divide-y divide-[var(--ui-line)]">
-            {filtered.map((i) => (
-              <button
-                key={i.id}
-                type="button"
-                onClick={() => setOpenId(i.id)}
-                className={`block w-full px-4 py-3.5 text-left transition hover:bg-[var(--ui-sunken)] ${
-                  i.priority === "urgent"
-                    ? "border-l-4 border-red-500 bg-red-50"
-                    : i.priority === "high"
-                      ? "border-l-4 border-amber-500 bg-amber-50"
-                      : ""
-                }`}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{i.ticket_number ?? "Unticketed"}</span>
-                  <Chip strong={i.priority === "urgent" || i.priority === "high"}>{label(i.priority)}</Chip>
-                  <Chip strong={UNRESOLVED.has(i.status)}>{label(i.status)}</Chip>
-                  <span className="ml-auto text-[12px] text-[var(--ui-ink-2)]">{new Date(i.created_at).toLocaleDateString()}</span>
-                </div>
-                <p className="mt-1.5 truncate text-[13px] text-[var(--ui-ink)]">
-                  {i.summary || i.review_text || label(i.primary_category)}
-                </p>
-                <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
-                  {label(i.primary_category)} · {label(i.subcategory)}
-                  {i.handoff_code && <> · code <span className="font-semibold tabular-nums text-[var(--ui-ink)]">#{i.handoff_code}</span></>}
-                </p>
-              </button>
-            ))}
+          <div
+            ref={listRef}
+            className="ui-panel mt-4 max-h-[70vh] overflow-y-auto divide-y divide-[var(--ui-line)]"
+          >
+            <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+              {rowVirtualizer.getVirtualItems().map((vi) => {
+                const i = filtered[vi.index];
+                return (
+                  <button
+                    key={i.id}
+                    type="button"
+                    onClick={() => setOpenId(i.id)}
+                    data-index={vi.index}
+                    ref={rowVirtualizer.measureElement}
+                    className={`block w-full px-4 py-3.5 text-left transition hover:bg-[var(--ui-sunken)] ${
+                      i.priority === "urgent"
+                        ? "border-l-4 border-red-500 bg-red-50"
+                        : i.priority === "high"
+                          ? "border-l-4 border-amber-500 bg-amber-50"
+                          : ""
+                    }`}
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{i.ticket_number ?? "Unticketed"}</span>
+                      <Chip strong={i.priority === "urgent" || i.priority === "high"}>{label(i.priority)}</Chip>
+                      <Chip strong={UNRESOLVED.has(i.status)}>{label(i.status)}</Chip>
+                      <span className="ml-auto text-[12px] text-[var(--ui-ink-2)]">{new Date(i.created_at).toLocaleDateString()}</span>
+                    </div>
+                    <p className="mt-1.5 truncate text-[13px] text-[var(--ui-ink)]">
+                      {i.summary || i.review_text || label(i.primary_category)}
+                    </p>
+                    <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
+                      {label(i.primary_category)} · {label(i.subcategory)}
+                      {i.handoff_code && <> · code <span className="font-semibold tabular-nums text-[var(--ui-ink)]">#{i.handoff_code}</span></>}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
