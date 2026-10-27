@@ -99,7 +99,7 @@ def test_purpose_is_required_and_keyword_only(entrypoint):
 
 
 @pytest.mark.asyncio
-async def test_complete_builds_metering_context(monkeypatch):
+async def test_complete_builds_metering_context(monkeypatch, engine):
     captured = {}
 
     class _Provider:

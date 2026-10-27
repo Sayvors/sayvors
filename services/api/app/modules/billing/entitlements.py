@@ -25,6 +25,17 @@ from .models import Plan, TenantSubscription
 
 logger = logging.getLogger(__name__)
 
+# Overridable in tests (defaults to the production session factory).
+_session_factory = None
+
+
+def _get_session_factory():
+    if _session_factory is not None:
+        return _session_factory
+    from ...database import async_session
+
+    return async_session
+
 
 class EntitlementDenied(Exception):
     """Raised when a tenant's effective plan lacks a required feature or quota."""
@@ -151,9 +162,8 @@ async def check_feature(tenant_id: str, feature: str) -> None:
     to thread one through. Fail-closed: a DB error denies rather than
     allowing free usage.
     """
-    from ...database import async_session
-
-    async with async_session() as db:
+    factory = _get_session_factory()
+    async with factory() as db:
         ent = await get_entitlements(tenant_id, db)
         if not ent.has_feature(feature):
             raise EntitlementDenied(
