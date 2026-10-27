@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import { useI18n } from "@/lib/i18n/I18nProvider";
@@ -196,6 +197,7 @@ function statusLabel(status: string | null | undefined, copy: LocationsCopy): st
 /* ── Page ───────────────────────────────────────── */
 
 export default function LocationsPage() {
+  const queryClient = useQueryClient();
   const { t } = useI18n();
   const copy = t.analytics.locations;
   const [loading, setLoading] = useState(true);
@@ -437,57 +439,60 @@ export default function LocationsPage() {
     });
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  const locationsQuery = useQuery({
+    queryKey: ["locations", "list"],
+    queryFn: async () => {
+      // Localith snapshots first — they carry the real address/phone/website.
+      // Every connected branch is listed; nothing is hidden or overwritten.
       try {
-        // Localith snapshots first — they carry the real address/phone/website.
-        // Every connected branch is listed; nothing is hidden or overwritten.
-        try {
-          const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as LocalithConn[];
-          if (!cancelled && Array.isArray(conns) && conns.length > 0) {
-            const byId: Record<string, LocalithConn> = {};
-            const opts = conns.map((c) => {
-              byId[c.listing_id] = c;
-              return {
-                id: c.listing_id,
-                name: c.listing_name,
-                address: c.address ?? "",
-                status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
-              };
-            });
-            setLocalithConns(byId);
-            setLocalith(byId[opts[0].id] ?? null);
-            setLocations(opts);
-            setSelectedId(opts[0].id);
-            return;
-          }
-        } catch {
-          /* no Localith connections — fall through to channels */
+        const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as LocalithConn[];
+        if (Array.isArray(conns) && conns.length > 0) {
+          const byId: Record<string, LocalithConn> = {};
+          const opts = conns.map((c) => {
+            byId[c.listing_id] = c;
+            return {
+              id: c.listing_id,
+              name: c.listing_name,
+              address: c.address ?? "",
+              status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
+            };
+          });
+          return { localithConns: byId, localith: byId[opts[0].id] ?? null, locations: opts, selectedId: opts[0].id };
         }
-        try {
-          const data = await apiFetch("/api/v1/channels?limit=100");
-          const googleChannels = (data.channels ?? [])
-            .filter((channel: { platform: string }) => channel.platform === "google_reviews")
-            .map((channel: { id: string; display_name: string | null; status: string }) => ({
-              id: channel.id,
-              name: channel.display_name ?? "",
-              address: "",
-              status: channel.status,
-            }));
-          if (!cancelled) {
-            setLocations(googleChannels);
-            if (googleChannels.length) setSelectedId(googleChannels[0].id);
-          }
-        } catch {
-          setLocations([]);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+      } catch {
+        /* no Localith connections — fall through to channels */
       }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+      try {
+        const data = await apiFetch("/api/v1/channels?limit=100");
+        const googleChannels = (data.channels ?? [])
+          .filter((channel: { platform: string }) => channel.platform === "google_reviews")
+          .map((channel: { id: string; display_name: string | null; status: string }) => ({
+            id: channel.id,
+            name: channel.display_name ?? "",
+            address: "",
+            status: channel.status,
+          }));
+        return { localithConns: {}, localith: null, locations: googleChannels, selectedId: googleChannels.length ? googleChannels[0].id : null };
+      } catch {
+        return { localithConns: {}, localith: null, locations: [], selectedId: null };
+      }
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    const d = locationsQuery.data;
+    if (!d) return;
+    setLocalithConns(d.localithConns);
+    setLocalith(d.localith);
+    setLocations(d.locations);
+    if (d.selectedId) setSelectedId((prev) => prev ?? d.selectedId);
+    setLoading(false);
+  }, [locationsQuery.data]);
+
+  useEffect(() => {
+    if (locationsQuery.isError) setLoading(false);
+  }, [locationsQuery.isError]);
 
    const selectedLocation = isBulk ? null : (locations.find((l) => l.id === selectedId) ?? locations[0] ?? null);
 
