@@ -368,7 +368,7 @@
               <li><strong>Mutation hooks with cache invalidation</strong> <span class="chip warn">In progress</span>
             <ul style="margin:2px 0 6px 16px;list-style:disc;">
               <li>Reusable hooks in <code>lib/mutation-hooks.ts</code>: <code>useApproveReply</code>, <code>useEditReply</code>, <code>useUpdateReviewIssue</code>, <code>useUpdateChannelConfig</code>, <code>useDeleteChannel</code> — each invalidates the relevant query keys (and updates the cache on success where applicable).</li>
-              <li>Adopted: <code>useUpdateChannelConfig</code> in the channels page (toggle + save config); <code>useUpdateReviewIssue</code> in the issues page (setStatus); <code>useApproveReply</code> + <code>useEditReply</code> in the reviews page (approveDraft + approveAllDrafts). <code>useDeleteChannel</code> has no UI yet (no channel-delete flow exists); hook is ready for when the feature ships. Remaining: none — all adoptable mutation sites converted.</li>
+              <li>Adopted: <code>useUpdateChannelConfig</code> in the channels page (toggle + save config); <code>useUpdateReviewIssue</code> in the issues page (setStatus); <code>useApproveReply</code> + <code>useEditReply</code> in the reviews page (approveDraft + approveAllDrafts + saveResponse). <code>useDeleteChannel</code> has no UI yet (no channel-delete flow exists); hook is ready for when the feature ships. All adoptable mutation sites converted.</li>
             </ul>
           </li>
             </ul>

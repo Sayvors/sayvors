@@ -578,7 +578,7 @@ function ReviewsInner() {
     setSavingResponse(true);
     try {
       const wasPosted = item.status === "posted";
-      const saved = await editReply(item.locationId, item.replyId, responseText.trim());
+      const saved = await editReplyHook.mutateAsync({ channelId: item.locationId, replyId: item.replyId, replyText: responseText.trim() });
       setReviews((prev) => prev.map((r) => r.id === item.id ? { ...r, reply_text: saved.reply_text, status: saved.status } : r));
       setEditingResponse(null);
       await loadPendingReplies();
