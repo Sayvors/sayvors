@@ -37,6 +37,9 @@ export const queryKeys = {
     channels: () => ["services", "channels"] as const,
     list: (scope: string) => ["services", "list", scope] as const,
   },
+  insights: {
+    all: (days: number, channelId: string | null) => ["insights", days, channelId ?? "all"] as const,
+  },
   usage: {
     summary: (days: number) => ["usage", "summary", days] as const,
   },

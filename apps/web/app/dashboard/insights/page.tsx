@@ -1,17 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import {
   fetchProblems,
   fetchProducts,
   fetchTopics,
   fetchMessagingOverview,
   fetchConversationInsights,
-  type ProblemsResponse,
-  type ProductsResponse,
-  type TopicsResponse,
-  type MessagingOverview,
 } from "@/lib/api-analytics";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import { useI18n } from "@/lib/i18n/I18nProvider";
@@ -138,45 +136,29 @@ export default function InsightsPage() {
   const [days, setDays] = useState<number>(30);
   const [channelId, setChannelId] = useState<string | null>(null);
   const channels = useGoogleChannels();
-  const [topics, setTopics] = useState<TopicsResponse | null>(null);
-  const [problems, setProblems] = useState<ProblemsResponse | null>(null);
-  const [products, setProducts] = useState<ProductsResponse | null>(null);
-  const [messaging, setMessaging] = useState<MessagingOverview | null>(null);
-  const [conversationInsights, setConversationInsights] = useState<{ insights: Record<string, unknown>; message_count: number; computed_at: string | null } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [refreshToken, setRefreshToken] = useState(0);
-  const hasLoaded = useRef(false);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      fetchTopics(days, channelId),
-      fetchProblems(days, channelId),
-      fetchProducts(days, channelId),
-      fetchMessagingOverview(days, channelId),
-      fetchConversationInsights(),
-    ])
-      .then(([t, p, pr, m, ci]) => {
-        if (cancelled) return;
-        setTopics(t);
-        setProblems(p);
-        setProducts(pr);
-        setMessaging(m);
-        setConversationInsights(ci);
-        setError(false);
-        hasLoaded.current = true;
-      })
-      .catch(() => {
-        if (!cancelled && !hasLoaded.current) setError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [days, channelId, refreshToken]);
+  const insightsQuery = useQuery({
+    queryKey: queryKeys.insights.all(days, channelId),
+    queryFn: async () => {
+      const [t, p, pr, m, ci] = await Promise.all([
+        fetchTopics(days, channelId),
+        fetchProblems(days, channelId),
+        fetchProducts(days, channelId),
+        fetchMessagingOverview(days, channelId),
+        fetchConversationInsights(),
+      ]);
+      return { topics: t, problems: p, products: pr, messaging: m, conversationInsights: ci };
+    },
+    staleTime: 30 * 1000,
+  });
+  const topics = insightsQuery.data?.topics ?? null;
+  const problems = insightsQuery.data?.problems ?? null;
+  const products = insightsQuery.data?.products ?? null;
+  const messaging = insightsQuery.data?.messaging ?? null;
+  const conversationInsights = insightsQuery.data?.conversationInsights ?? null;
+  const loading = insightsQuery.isPending;
+  const error = insightsQuery.isError && !insightsQuery.data;
 
   const hasData = !!topics && topics.topics.length > 0;
 
@@ -191,12 +173,10 @@ export default function InsightsPage() {
           days={days}
           setDays={(d) => {
             setDays(d);
-            setLoading(true);
           }}
           channelId={channelId}
           setChannelId={(c) => {
             setChannelId(c);
-            setLoading(true);
           }}
           channels={channels}
         />
@@ -207,9 +187,7 @@ export default function InsightsPage() {
           <p className="text-[13px] font-semibold text-[var(--ui-ink-2)]">{copy.loadError}</p>
           <button
             onClick={() => {
-              setError(false);
-              setLoading(true);
-              setRefreshToken((t) => t + 1);
+              void queryClient.invalidateQueries({ queryKey: ["insights"] });
             }}
             className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
