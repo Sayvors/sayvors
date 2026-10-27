@@ -348,22 +348,22 @@
       <details open>
         <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--ink-2,#3B2D5E);padding:8px 0;">Sub-tasks (20) — click to collapse</summary>
         <ol style="margin:6px 0 0 18px;font-size:12px;color:var(--ink,#14101F);line-height:1.7;">
-          <li><strong>TanStack Query foundation</strong>
+          <li><strong>TanStack Query foundation</strong> <span class="chip ok">Done</span>
             <ul style="margin:2px 0 6px 16px;list-style:disc;">
-              <li>Install @tanstack/react-query + devtools</li>
-              <li>Create QueryClient with sensible defaults (staleTime 60s, gcTime 5min, retry 2)</li>
-              <li>Wrap app root in QueryClientProvider</li>
-              <li>Create centralized query-key factory (lib/query-keys.ts)</li>
+              <li>Install @tanstack/react-query + devtools — <span class="chip ok">done</span></li>
+              <li>Create QueryClient with sensible defaults (staleTime 60s, gcTime 5min, retry 2) — <span class="chip ok">done</span> (staleTime 30s, gcTime 5min, retry 1)</li>
+              <li>Wrap app root in QueryClientProvider — <span class="chip ok">done</span></li>
+              <li>Create centralized query-key factory (lib/query-keys.ts) — <span class="chip ok">done</span></li>
             </ul>
           </li>
           <li><strong>TanStack Query migration (pages)</strong>
             <ul style="margin:2px 0 6px 16px;list-style:disc;">
               <li>Migrate Overview / analytics pages (fetchOverview, fetchTimeseries, fetchMessagingOverview) - <span class="chip ok">done</span> (OverviewPanel: channels + overview/timeseries + presence as useQuery)</li>
-              <li>Migrate Inbox / threads (channel messages, thread list, unread counts)</li>
-              <li>Migrate Reviews + Insights (review list, insights, issues, topics, problems, products)</li>
-              <li>Migrate Channels / leads / customers</li>
-              <li>Migrate Locations / profile / posts</li>
-              <li>Migrate Settings / config pages</li>
+              <li>Migrate Inbox / threads (channel messages, thread list, unread counts) — <span class="chip ok">done</span></li>
+              <li>Migrate Reviews + Insights (review list, insights, issues, topics, problems, products) — <span class="chip ok">done</span></li>
+              <li>Migrate Channels / leads / customers — <span class="chip ok">done</span></li>
+              <li>Migrate Locations / profile / posts — <span class="chip ok">done</span></li>
+              <li>Migrate Settings / config pages — <span class="chip ok">done</span></li>
               <li><strong>Mutation hooks with cache invalidation</strong> <span class="chip warn">In progress</span>
             <ul style="margin:2px 0 6px 16px;list-style:disc;">
               <li>Reusable hooks in <code>lib/mutation-hooks.ts</code>: <code>useApproveReply</code>, <code>useEditReply</code>, <code>useUpdateReviewIssue</code>, <code>useUpdateChannelConfig</code>, <code>useDeleteChannel</code> — each invalidates the relevant query keys (and updates the cache on success where applicable).</li>
@@ -376,7 +376,7 @@
             <ul style="margin:2px 0 6px 16px;list-style:disc;">
               <li>Install @tanstack/react-virtual — <span class="chip ok">done</span></li>
               <li>Virtualize inbox thread list — <span class="chip ok">done</span> (variable row height via measureElement, 6-row overscan); virtualize reviews/issues list — <span class="chip ok">done</span> (issues page); leads list — <span class="chip ok">done</span> (2D virtualization via ResizeObserver column count + measureElement row heights); reviews list — <span class="chip ok">N/A</span> (already paginated/bounded to page size)</li>
-              <li>Virtualize reviews + issues + leads lists — <span class="chip warn">open</span> (those panels are not scroll containers yet; needs fixed-height scroll wrappers)</li>
+              <li>Virtualize reviews + issues + leads lists — <span class="chip ok">done</span> (inbox + issues virtualized; leads 2D virtualized; reviews list N/A — already paginated)</li>
             </ul>
           </li>
           <li><strong>WebSocket buffer cap</strong> <span class="chip ok">Fixed</span>
