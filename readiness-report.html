@@ -739,6 +739,51 @@
     <li><strong>Real checkout</strong> — provider adapter, webhook, idempotency, invoices/portal. This is the only step blocked on the provider decision.</li>
   </ol>
   <p class="note"><strong>Acceptance:</strong> deleting the Redis key does not change the tenant's true balance; a re-run of resync is idempotent; a top-up never re-grants spent credit; demo Pro cannot activate in production; a second Google location or second social account is rejected atomically on Starter; a downgrade preserves data; and a paid webhook activates the plan and grants credit without an admin.</p>
+
+  <h3>Limitable features per plan (recommended catalog)</h3>
+  <p>Managed through the admin Plans page (feature checkboxes + numeric caps). Below is the full recommended set of limitable Sayvors features and suggested tier values. Numeric caps are nullable = unlimited. Feature flags are booleans. Values are starting points; tune in admin without a deploy.</p>
+  <div class="scroll"><table>
+    <tr><th>Feature (limit key)</th><th>Trial</th><th>Starter</th><th>Pro</th><th>Growth</th><th>Enterprise</th><th>Notes</th></tr>
+    <tr><td><strong>AI credit (cents/mo)</strong> <code>included_credit_cents</code></td><td>5,000</td><td>4,000</td><td>10,000</td><td>50,000</td><td>100,000+</td><td>Granted on activation/renewal</td></tr>
+    <tr><td><strong>Channel connections</strong> <code>max_channels</code></td><td>unlimited (demo)</td><td>1</td><td>5</td><td>25</td><td>unlimited</td><td>Enforced at connect</td></tr>
+    <tr><td><strong>Messages / month</strong> <code>max_messages_per_month</code></td><td>1,000</td><td>5,000</td><td>25,000</td><td>100,000</td><td>unlimited</td><td>Enforced at inbox send</td></tr>
+    <tr><td><strong>Locations</strong> <code>max_locations</code></td><td>1</td><td>1</td><td>5</td><td>25</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Location connections (Localith)</strong> <code>max_location_connections</code></td><td>1</td><td>1</td><td>5</td><td>25</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Scheduled posts</strong> <code>max_scheduled_posts</code></td><td>10</td><td>50</td><td>500</td><td>5,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Databank documents</strong> <code>max_databank_docs</code></td><td>5</td><td>25</td><td>200</td><td>2,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Databank storage (MB)</strong> <code>max_databank_mb</code></td><td>5</td><td>25</td><td>250</td><td>2,500</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Media uploads (MB)</strong> <code>max_media_mb</code></td><td>50</td><td>250</td><td>1,000</td><td>10,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Reviews auto-replied / month</strong> <code>max_auto_replies_month</code></td><td>50</td><td>500</td><td>5,000</td><td>50,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Regenerate responses / day</strong> <code>max_regenerations_day</code></td><td>5</td><td>25</td><td>100</td><td>500</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>ASK Sayvors queries</strong> <code>max_ask_sayvors</code></td><td>5</td><td>25</td><td>100</td><td>500</td><td>unlimited</td><td>User suggested 5 free / 50 paid</td></tr>
+    <tr><td><strong>Team members</strong> <code>max_team_members</code></td><td>1</td><td>3</td><td>10</td><td>50</td><td>unlimited</td><td>User suggested PRO+ unlimited</td></tr>
+    <tr><td><strong>Tickets assigned</strong> <code>max_tickets</code></td><td>10</td><td>50</td><td>500</td><td>5,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Leads</strong> <code>max_leads</code></td><td>25</td><td>100</td><td>1,000</td><td>10,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Customers</strong> <code>max_customers</code></td><td>50</td><td>250</td><td>2,500</td><td>25,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Issues tracked</strong> <code>max_issues</code></td><td>10</td><td>50</td><td>500</td><td>5,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Automations</strong> <code>max_automations</code></td><td>1</td><td>5</td><td>25</td><td>100</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Benchmark runs / month</strong> <code>max_benchmarks_month</code></td><td>1</td><td>5</td><td>25</td><td>100</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Verifications / month</strong> <code>max_verifications_month</code></td><td>5</td><td>25</td><td>100</td><td>500</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Voice minutes / month</strong> <code>max_voice_minutes</code></td><td>0 (beta)</td><td>10</td><td>60</td><td>300</td><td>unlimited</td><td>Beta-gated by DB status</td></tr>
+    <tr><td><strong>TTS characters / month</strong> <code>max_tts_chars</code></td><td>0</td><td>10,000</td><td>100,000</td><td>1,000,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>STT minutes / month</strong> <code>max_stt_minutes</code></td><td>0</td><td>10</td><td>60</td><td>300</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Email sends / month</strong> <code>max_emails_month</code></td><td>10</td><td>100</td><td>1,000</td><td>10,000</td><td>unlimited</td><td>New cap to add</td></tr>
+    <tr><td><strong>Social response style</strong> <code>feature: social_response_style</code></td><td>false</td><td>true</td><td>true</td><td>true</td><td>true</td><td>Feature flag</td></tr>
+    <tr><td><strong>Bulk edit CSV</strong> <code>feature: bulk_edit_csv</code></td><td>false</td><td>false</td><td>true</td><td>true</td><td>true</td><td>Feature flag</td></tr>
+    <tr><td><strong>Analytics</strong> <code>feature: analytics</code></td><td>false</td><td>false</td><td>true</td><td>true</td><td>true</td><td>Already in seed</td></tr>
+    <tr><td><strong>Automation</strong> <code>feature: automation</code></td><td>false</td><td>false</td><td>true</td><td>true</td><td>true</td><td>Already in seed</td></tr>
+    <tr><td><strong>Benchmarking</strong> <code>feature: benchmarking</code></td><td>false</td><td>false</td><td>true</td><td>true</td><td>true</td><td>New flag</td></tr>
+    <tr><td><strong>Verifications</strong> <code>feature: verifications</code></td><td>false</td><td>true</td><td>true</td><td>true</td><td>true</td><td>New flag</td></tr>
+    <tr><td><strong>Posts scheduling</strong> <code>feature: scheduling</code></td><td>false</td><td>true</td><td>true</td><td>true</td><td>true</td><td>Already in catalog</td></tr>
+    <tr><td><strong>Assistant chat</strong> <code>feature: assistant</code></td><td>false</td><td>false</td><td>true</td><td>true</td><td>true</td><td>Already in catalog</td></tr>
+    <tr><td><strong>Growth insights</strong> <code>feature: growth</code></td><td>false</td><td>false</td><td>true</td><td>true</td><td>true</td><td>New flag</td></tr>
+    <tr><td><strong>Priority support</strong> <code>feature: priority_support</code></td><td>false</td><td>false</td><td>false</td><td>true</td><td>true</td><td>Already in seed</td></tr>
+    <tr><td><strong>SLA</strong> <code>feature: sla</code></td><td>false</td><td>false</td><td>false</td><td>false</td><td>true</td><td>Already in seed</td></tr>
+    <tr><td><strong>Assigning tickets</strong> <code>feature: ticket_assignment</code></td><td>false</td><td>false</td><td>true</td><td>true</td><td>true</td><td>New flag</td></tr>
+    <tr><td><strong>Voice replies (beta)</strong> <code>feature: voice_replies</code></td><td>false</td><td>false</td><td>false</td><td>true</td><td>true</td><td>Beta-gated by DB status</td></tr>
+    <tr><td><strong>ASK Sayvors (premium tier)</strong> <code>feature: ask_sayvors_premium</code></td><td>false</td><td>false</td><td>true</td><td>true</td><td>true</td><td>New flag</td></tr>
+  </table></div>
+  <p class="note"><strong>Implementation note:</strong> numeric caps live in <code>plans</code> columns (add nullable integer columns per cap) or in the <code>features</code> JSONB for simpler rollout. Feature flags already live in <code>features</code> JSONB and are enforced via <code>entitlements.has_feature()</code>. New caps need (1) a migration adding the column, (2) enforcement at the relevant write path, (3) a row in the admin Plans form. Recommended order: AI credit, channels, messages, locations, team members first (highest abuse risk), then content caps.</p>
 </section>
 
 <section id="kafka">
