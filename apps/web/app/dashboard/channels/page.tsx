@@ -1,6 +1,8 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
@@ -485,6 +487,7 @@ function LocalithListingRow({
 
 function ConnectHub() {
   const params = useSearchParams();
+  const queryClient = useQueryClient();
   const [channels, setChannels] = useState<ApiChannel[]>([]);
   const [autoreply, setAutoreply] = useState<Record<string, AutoReply>>({});
   const [pending, setPending] = useState<Record<string, number>>({});
@@ -572,55 +575,63 @@ function ConnectHub() {
     }
   }, []);
 
-  // ── Fetch existing Localith connections on mount (all branches) ──
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  // ── Localith connections + profiles + listings (TanStack Query) ──
+  const localithQuery = useQuery({
+    queryKey: ["localith", "all"],
+    queryFn: async () => {
+      let conns: LocalithConnection[] = [];
+      const profs: Record<string, LocalithProfile> = {};
       try {
         const data = await apiFetch("/api/v1/integrations/localith/connections");
-        if (cancelled) return;
-        const conns = (data ?? []) as LocalithConnection[];
-        setLocalithConns(conns);
-        const profs: Record<string, LocalithProfile> = {};
+        conns = (data ?? []) as LocalithConnection[];
         await Promise.all(
-          conns.map(async (c) => {
+          conns.map(async (c: LocalithConnection) => {
             try {
               const prof = await apiFetch(
-                `/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(c.listing_id)}`
+                `/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(c.listing_id)}`,
               );
               if (prof) profs[c.listing_id] = prof as LocalithProfile;
             } catch {
               /* snapshot missing for this branch — fine */
             }
-          })
+          }),
         );
-        if (!cancelled) setLocalithProfiles(profs);
       } catch {
         /* not connected — fine */
       }
+      let listings: LocalithListing[] = [];
+      let listingsUnavailable: string | null = null;
       try {
         const data = await apiFetch("/api/v1/integrations/localith/listings");
-        if (!cancelled) {
-          setLocalithListings(data.listings ?? []);
-          setLocalithListingsUnavailable(data.unavailable ?? null);
-        }
+        listings = (data.listings ?? []) as LocalithListing[];
+        listingsUnavailable = (data.unavailable ?? null) as string | null;
       } catch {
         /* rows fall back to connected branches only */
       }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+      return { conns, profs, listings, listingsUnavailable };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  useEffect(() => {
+    const d = localithQuery.data;
+    if (!d) return;
+    setLocalithConns(d.conns);
+    setLocalithProfiles(d.profs);
+    setLocalithListings(d.listings);
+    setLocalithListingsUnavailable(d.listingsUnavailable);
+  }, [localithQuery.data]);
 
   const refreshLocalithConns = useCallback(async () => {
     try {
       const data = await apiFetch("/api/v1/integrations/localith/connections");
       const conns = (data ?? []) as LocalithConnection[];
       setLocalithConns(conns);
+      void queryClient.invalidateQueries({ queryKey: ["localith", "all"] });
       return conns;
     } catch {
       return null; // keep stale list
     }
-  }, []);
+  }, [queryClient]);
 
   const refreshLocalithProfile = useCallback(async (listingId: string) => {
     try {
@@ -633,45 +644,43 @@ function ConnectHub() {
     }
   }, []);
 
+  const channelsQuery = useQuery({
+    queryKey: queryKeys.channels.list(100),
+    queryFn: async () => {
+      const data = await apiFetch("/api/v1/channels?limit=100");
+      const chs = (data.channels ?? []) as ApiChannel[];
+      const configs: Record<string, AutoReply> = {};
+      const pend: Record<string, number> = {};
+      await Promise.all(
+        chs
+          .filter((c: ApiChannel) => c.platform === "google_reviews")
+          .map(async (c: ApiChannel) => {
+            try {
+              const cfg = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
+              configs[c.id] = cfg;
+            } catch {
+              /* config endpoint creates default on first GET; ignore errors */
+            }
+            try {
+              const r = await apiFetch(`/api/v1/channels/${c.id}/reviews?status=pending_approval&limit=1`);
+              pend[c.id] = r.pending ?? 0;
+            } catch {
+              pend[c.id] = 0;
+            }
+          }),
+      );
+      return { channels: chs, configs, pend };
+    },
+    staleTime: 30 * 1000,
+  });
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiFetch("/api/v1/channels?limit=100");
-        if (cancelled) return;
-        setChannels(data.channels ?? []);
-        const configs: Record<string, AutoReply> = {};
-        const pend: Record<string, number> = {};
-        await Promise.all(
-          (data.channels ?? [])
-            .filter((c: ApiChannel) => c.platform === "google_reviews")
-            .map(async (c: ApiChannel) => {
-              try {
-                const cfg = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
-                configs[c.id] = cfg;
-              } catch {
-                /* config endpoint creates default on first GET; ignore errors */
-              }
-              try {
-                const r = await apiFetch(`/api/v1/channels/${c.id}/reviews?status=pending_approval&limit=1`);
-                pend[c.id] = r.pending ?? 0;
-              } catch {
-                pend[c.id] = 0;
-              }
-            })
-        );
-        if (!cancelled) setAutoreply(configs);
-        if (!cancelled) setPending(pend);
-      } catch {
-        /* not logged in yet or backend down — cards still render */
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const d = channelsQuery.data;
+    if (!d) return;
+    setChannels(d.channels);
+    setAutoreply(d.configs);
+    setPending(d.pend);
+    setLoading(false);
+  }, [channelsQuery.data]);
 
   const toggleAutoReply = async (channelId: string, enable: boolean) => {
     setBusy(channelId);
@@ -681,8 +690,7 @@ function ConnectHub() {
         body: JSON.stringify({ enabled: enable }),
       });
       setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
-    } catch (e) {
-      setBanner({ kind: "err", text: errDetail(e, "Could not save the auto-reply setting.") });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channels.list(100) });
     } finally {
       setBusy(null);
     }
@@ -704,6 +712,7 @@ function ConnectHub() {
         body: JSON.stringify({ approval_mode: approvalDraft, custom_instructions: voiceDraft, tone: toneDraft }),
       });
       setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channels.list(100) });
       setBanner({ kind: "ok", text: "Response engine settings saved." });
     } catch (e) {
       setBanner({ kind: "err", text: errDetail(e, "Could not save the response engine settings.") });
