@@ -32,6 +32,12 @@ const QUICK_REPLIES = [
   "All set — anything else I can do for you?",
 ];
 
+/** Cap on the in-memory thread message buffer. Older entries are dropped on
+ *  overflow; the server stays the source of truth and the thread is
+ *  re-fetched on reopen. Keeps a long-lived inbox session (or a realtime
+ *  flood) from growing the array without bound. */
+const INBOX_MESSAGE_BUFFER_CAP = 500;
+
 /** "+966500000001" / "966500000001" -> "+966 50 000 0001" for scannability. */
 function formatPhone(phone: string | null): string {
   if (!phone) return "Unknown sender";
@@ -304,7 +310,13 @@ export default function InboxView() {
       created_at: e.created_at ?? new Date().toISOString(),
     };
     if (open) {
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        const next = [...prev, msg];
+        return next.length > INBOX_MESSAGE_BUFFER_CAP
+          ? next.slice(next.length - INBOX_MESSAGE_BUFFER_CAP)
+          : next;
+      });
     }
     setThreads((prev) => {
       const idx = prev.findIndex((t) => `${t.channel_id}:${t.key}` === composite);
