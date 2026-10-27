@@ -139,12 +139,42 @@ export default function NotificationsBell() {
   }, [remember]);
 
   useEffect(() => {
-    void refreshCount();
-    const id = window.setInterval(refreshCount, POLL_MS);
-    const onFocus = () => void refreshCount();
+    let id: number | null = null;
+
+    const startPolling = () => {
+      if (id !== null) return;
+      if (document.hidden) return;
+      id = window.setInterval(refreshCount, POLL_MS);
+    };
+    const stopPolling = () => {
+      if (id !== null) {
+        window.clearInterval(id);
+        id = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        // Catch up immediately on return, then resume the cadence.
+        void refreshCount();
+        startPolling();
+      }
+    };
+
+    // Initial fetch + cadence only while the tab is visible.
+    if (!document.hidden) {
+      void refreshCount();
+      startPolling();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    const onFocus = () => {
+      if (!document.hidden) void refreshCount();
+    };
     window.addEventListener("focus", onFocus);
     return () => {
-      window.clearInterval(id);
+      stopPolling();
+      document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
     };
   }, [refreshCount]);
