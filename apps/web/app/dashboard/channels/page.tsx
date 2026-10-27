@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
+import { useUpdateChannelConfig } from "@/lib/mutation-hooks";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
@@ -488,6 +489,7 @@ function LocalithListingRow({
 function ConnectHub() {
   const params = useSearchParams();
   const queryClient = useQueryClient();
+  const updateConfig = useUpdateChannelConfig();
   const [channels, setChannels] = useState<ApiChannel[]>([]);
   const [autoreply, setAutoreply] = useState<Record<string, AutoReply>>({});
   const [pending, setPending] = useState<Record<string, number>>({});
@@ -685,12 +687,11 @@ function ConnectHub() {
   const toggleAutoReply = async (channelId: string, enable: boolean) => {
     setBusy(channelId);
     try {
-      const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
-        method: "PUT",
-        body: JSON.stringify({ enabled: enable }),
-      });
-      setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
+      const cfg = await updateConfig.mutateAsync({ channelId, body: { enabled: enable } });
+      setAutoreply((prev) => ({ ...prev, [channelId]: cfg as AutoReply }));
       void queryClient.invalidateQueries({ queryKey: queryKeys.channels.list(100) });
+    } catch (e) {
+      setBanner({ kind: "err", text: errDetail(e, "Could not save the auto-reply setting.") });
     } finally {
       setBusy(null);
     }
@@ -707,11 +708,11 @@ function ConnectHub() {
   const saveConfig = async (channelId: string) => {
     setSavingConfig(true);
     try {
-      const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
-        method: "PUT",
-        body: JSON.stringify({ approval_mode: approvalDraft, custom_instructions: voiceDraft, tone: toneDraft }),
+      const cfg = await updateConfig.mutateAsync({
+        channelId,
+        body: { approval_mode: approvalDraft, custom_instructions: voiceDraft, tone: toneDraft },
       });
-      setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
+      setAutoreply((prev) => ({ ...prev, [channelId]: cfg as AutoReply }));
       void queryClient.invalidateQueries({ queryKey: queryKeys.channels.list(100) });
       setBanner({ kind: "ok", text: "Response engine settings saved." });
     } catch (e) {
