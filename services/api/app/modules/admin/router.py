@@ -1453,3 +1453,152 @@ async def list_audit_log(
             )
             for r in rows
         ]
+# -- Plan management (billing) --
+from sqlalchemy import select as _select
+
+from ..billing.models import Plan, TenantSubscription
+from ..billing.schemas import PlanOut, PlanCreate, PlanUpdate, SubscriptionOut, GrantPlanIn
+
+
+@router.get("/plans", response_model=list[PlanOut])
+async def list_plans(_admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        rows = (
+            await db.execute(_select(Plan).order_by(Plan.sort_order, Plan.name))
+        ).scalars().all()
+        return [
+            PlanOut(
+                id=r.id, slug=r.slug, name=r.name, description=r.description,
+                price_cents=r.price_cents, included_credit_cents=r.included_credit_cents,
+                max_channels=r.max_channels, max_messages_per_month=r.max_messages_per_month,
+                features=r.features or {}, is_active=r.is_active, sort_order=r.sort_order,
+            )
+            for r in rows
+        ]
+
+
+@router.post("/plans", response_model=PlanOut, status_code=status.HTTP_201_CREATED)
+async def create_plan(body: PlanCreate, _admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        existing = (
+            await db.execute(_select(Plan).where(Plan.slug == body.slug))
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="Plan slug already exists.")
+        plan = Plan(
+            slug=body.slug, name=body.name, description=body.description,
+            price_cents=body.price_cents, included_credit_cents=body.included_credit_cents,
+            max_channels=body.max_channels, max_messages_per_month=body.max_messages_per_month,
+            features=body.features, is_active=body.is_active, sort_order=body.sort_order,
+        )
+        db.add(plan)
+        await db.commit()
+        await db.refresh(plan)
+        return PlanOut(
+            id=plan.id, slug=plan.slug, name=plan.name, description=plan.description,
+            price_cents=plan.price_cents, included_credit_cents=plan.included_credit_cents,
+            max_channels=plan.max_channels, max_messages_per_month=plan.max_messages_per_month,
+            features=plan.features or {}, is_active=plan.is_active, sort_order=plan.sort_order,
+        )
+
+
+@router.patch("/plans/{plan_id}", response_model=PlanOut)
+async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        plan = await db.get(Plan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plan not found.")
+        if body.name is not None:
+            plan.name = body.name
+        if body.description is not None:
+            plan.description = body.description
+        if body.price_cents is not None:
+            plan.price_cents = body.price_cents
+        if body.included_credit_cents is not None:
+            plan.included_credit_cents = body.included_credit_cents
+        if body.max_channels is not None:
+            plan.max_channels = body.max_channels
+        if body.max_messages_per_month is not None:
+            plan.max_messages_per_month = body.max_messages_per_month
+        if body.features is not None:
+            plan.features = body.features
+        if body.is_active is not None:
+            plan.is_active = body.is_active
+        if body.sort_order is not None:
+            plan.sort_order = body.sort_order
+        await db.commit()
+        await db.refresh(plan)
+        return PlanOut(
+            id=plan.id, slug=plan.slug, name=plan.name, description=plan.description,
+            price_cents=plan.price_cents, included_credit_cents=plan.included_credit_cents,
+            max_channels=plan.max_channels, max_messages_per_month=plan.max_messages_per_month,
+            features=plan.features or {}, is_active=plan.is_active, sort_order=plan.sort_order,
+        )
+
+
+@router.get("/tenants/{tenant_id}/subscription", response_model=SubscriptionOut)
+async def get_tenant_subscription(tenant_id: str, _admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        sub = (
+            await db.execute(
+                _select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id)
+            )
+        ).scalar_one_or_none()
+        if sub is None:
+            raise HTTPException(status_code=404, detail="No subscription for this tenant.")
+        plan = await db.get(Plan, sub.plan_id)
+        return SubscriptionOut(
+            id=sub.id, tenant_id=sub.tenant_id, plan_id=sub.plan_id,
+            plan_slug=plan.slug if plan else None,
+            plan_name=plan.name if plan else None,
+            status=sub.status, period_start=sub.period_start, period_end=sub.period_end,
+            granted_by=sub.granted_by, granted_until=sub.granted_until,
+        )
+
+
+@router.post("/tenants/{tenant_id}/grant-plan", response_model=SubscriptionOut)
+async def grant_plan(tenant_id: str, body: GrantPlanIn, _admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        plan = (
+            await db.execute(_select(Plan).where(Plan.slug == body.plan_slug))
+        ).scalar_one_or_none()
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plan not found.")
+        existing = (
+            await db.execute(
+                _select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            sub = TenantSubscription(
+                tenant_id=tenant_id,
+                plan_id=plan.id,
+                status="active",
+                granted_by=_admin.get("username") or "admin",
+                granted_until=body.granted_until,
+            )
+            db.add(sub)
+        else:
+            existing.plan_id = plan.id
+            existing.status = "active"
+            existing.granted_by = _admin.get("username") or "admin"
+            existing.granted_until = body.granted_until
+            sub = existing
+        await db.commit()
+        await db.refresh(sub)
+        return SubscriptionOut(
+            id=sub.id, tenant_id=sub.tenant_id, plan_id=sub.plan_id,
+            plan_slug=plan.slug, plan_name=plan.name, status=sub.status,
+            period_start=sub.period_start, period_end=sub.period_end,
+            granted_by=sub.granted_by, granted_until=sub.granted_until,
+        )

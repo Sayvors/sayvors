@@ -209,7 +209,7 @@
 <div class="stats">
   <div class="stat"><div class="n calm">32</div><div class="l">of 34 original audit findings <strong>resolved</strong> — SEC 11 · SCALE 6 · OPS 3 · ANL 12; ML-1/BULK-1 are §4 work items, not ledger rows</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), OPS-4 (prod host + SHA-pinned deploys)</div></div>
-  <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix in <code>development</code> (not on <code>staging</code> yet), durable ledger shipped, entitlements open (<a href="#billing">§6b</a>)</div></div>
+  <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix + durable ledger + 5 plans (free-trial/starter/pro/growth/enterprise) + admin plan CRUD + tenant grant-plan in <code>development</code> (not on <code>staging</code> yet); plan entitlements enforcement still open (<a href="#billing">§6b</a>)</div></div>
   <div class="stat"><div class="n calm">1,619</div><div class="l">backend tests passing locally (4 skipped) — CI gates every staging deploy on them</div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3, INS-4, INS-5 (INS-1, INS-2, INS-6, INS-7 fixed)</div></div>
 </div>
@@ -573,7 +573,7 @@
 <section id="billing">
   <div class="eyebrow">§§ 6b · new workstream</div>
   <h2>Billing, plans &amp; wallet</h2>
-  <p><span class="chip ok">Durable credit ledger in tree · plans not built</span>&nbsp; This is a product workstream, separate from the 32/2 audit ledger. The target is simple to state and hard to get wrong: a tenant can buy a plan without an admin, the backend activates it and grants the included AI credit, every metered AI call spends from a durable balance, and plan limits are enforced at every write path.</p>
+  <p><span class="chip ok">Durable credit ledger + plans in tree · entitlements open</span>&nbsp; This is a product workstream, separate from the 32/2 audit ledger. The target is simple to state and hard to get wrong: a tenant can buy a plan without an admin, the backend activates it and grants the included AI credit, every metered AI call spends from a durable balance, and plan limits are enforced at every write path.</p>
 
   <div class="card">
     <h3>What broke</h3>
@@ -668,14 +668,21 @@
   <h3>Plans as data, not <code>if plan ==</code></h3>
   <div class="scroll"><table>
     <tr><th>Table</th><th>Purpose</th><th>Key fields</th></tr>
-    <tr><td><code>plans</code></td><td>Catalog the sellable plans.</td><td><code>id</code>, <code>slug</code>, <code>name</code>, <code>price_cents</code>, <code>currency</code>, <code>billing_interval</code>, <code>trial_days</code>, <code>included_credit_cents</code>, <code>is_active</code>, <code>sort_order</code></td></tr>
-    <tr><td><code>plan_limits</code></td><td>Numeric limits per plan; <code>−1</code> means unlimited.</td><td><code>plan_id</code>, <code>limit_key</code>, <code>limit_value</code>, <code>unit</code>; unique <code>(plan_id, limit_key)</code></td></tr>
-    <tr><td><code>plan_features</code></td><td>Boolean entitlements (voice, analytics, API, …).</td><td><code>plan_id</code>, <code>feature_key</code>, <code>enabled</code>; unique <code>(plan_id, feature_key)</code></td></tr>
-    <tr><td><code>subscriptions</code></td><td>One active subscription per tenant; history retained.</td><td><code>tenant_id</code>, <code>plan_id</code>, <code>status</code>, <code>source</code>, <code>provider</code>, <code>provider_subscription_id</code>, <code>current_period_start/end</code>, <code>trial_end</code>, <code>cancel_at_period_end</code></td></tr>
-    <tr><td><code>subscription_events</code></td><td>Audit for activation, renewal, cancellation, refund, demo/admin override.</td><td><code>subscription_id</code>, <code>kind</code>, <code>source</code>, <code>provider_event_id</code>, payload summary, <code>created_by</code></td></tr>
-    <tr><td><code>plan_promotions</code></td><td>Account-level trial and first-paid bonus, independent of the recurring plan credit.</td><td><code>promotion_key</code>, <code>credit_cents</code>, <code>applies_to</code> (<code>trial</code> | <code>first_paid</code>), <code>eligible_plan_id</code> (NULL = all plans), <code>one_time_per_tenant</code>, <code>starts_at</code>, <code>ends_at</code>, <code>is_active</code></td></tr>
+    <tr><td><code>plans</code></td><td>Catalog the sellable plans (admin-managed).</td><td><code>id</code>, <code>slug</code> (unique), <code>name</code>, <code>price_cents</code>, <code>included_credit_cents</code>, <code>max_channels</code> (nullable = unlimited), <code>max_messages_per_month</code> (nullable), <code>features</code> (JSONB), <code>is_active</code>, <code>sort_order</code></td></tr>
+    <tr><td><code>tenant_subscriptions</code></td><td>One active subscription per tenant; history retained via status.</td><td><code>tenant_id</code> (unique), <code>plan_id</code> (FK), <code>status</code> (active/trialing/canceled/expired), <code>period_start</code>, <code>period_end</code>, <code>granted_by</code>, <code>granted_until</code> (promo override expiry)</td></tr>
   </table></div>
-  <p>The request path must never branch on a plan string. A single <strong>entitlements service</strong> resolves the active subscription to a plan, then exposes <code>get_entitlements(tenant_id)</code>, <code>has_feature(key)</code>, and <code>check_limit(key, delta)</code>. Adding a plan becomes a data insert, not a deploy.</p>
+  <p>The request path must never branch on a plan string. A single <strong>entitlements service</strong> resolves the active subscription to a plan, then exposes <code>get_entitlements(tenant_id) -&gt; Entitlements</code>. <em>Entitlements enforcement at the write paths (AI reply, channel connect, message send) is the next build step.</em></p>
+
+  <h3>Plans (implemented, 2026-10-27)</h3>
+  <div class="scroll"><table>
+    <tr><th>Slug</th><th>Name</th><th>Price (cents)</th><th>Included credit (cents)</th><th>Max channels</th><th>Max msgs/mo</th></tr>
+    <tr><td><code>free-trial</code></td><td>Free Trial</td><td>0</td><td>5,000</td><td>unlimited</td><td>1,000</td></tr>
+    <tr><td><code>starter</code></td><td>Starter</td><td>4,000</td><td>4,000</td><td>1</td><td>5,000</td></tr>
+    <tr><td><code>pro</code></td><td>Pro</td><td>10,000</td><td>10,000</td><td>5</td><td>25,000</td></tr>
+    <tr><td><code>growth</code></td><td>Growth</td><td>50,000</td><td>50,000</td><td>25</td><td>100,000</td></tr>
+    <tr><td><code>enterprise</code></td><td>Enterprise</td><td>100,000</td><td>100,000</td><td>unlimited</td><td>unlimited</td></tr>
+  </table></div>
+  <p class="note"><strong>Admin endpoints (shipped):</strong> <code>GET/POST/PATCH /api/v1/admin/plans</code> (CRUD), <code>GET /api/v1/admin/tenants/{id}/subscription</code>, <code>POST /api/v1/admin/tenants/{id}/grant-plan</code> (with optional <code>granted_until</code> promo expiry). <strong>Tenant endpoint:</strong> <code>GET /api/v1/billing/plan</code>. <strong>Backfill:</strong> <code>scripts/backfill_plans.py</code> (idempotent — 22 tenants backfilled to free-trial). Features per plan are placeholders pending product decision; admin can edit via PATCH.</p>
 
   <h3>Activation — one function, three sources</h3>
   <div class="card">

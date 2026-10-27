@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -137,6 +138,73 @@ class BillingEvent(Base):
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class Plan(Base):
+    """A sellable plan. Admin-managed; tenants pick one.
+
+    Features and limits live in the JSONB features column so new
+    entitlements can be added without a migration. Numeric caps
+    (max_channels, max_messages_per_month) are nullable = unlimited.
+    """
+
+    __tablename__ = "plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    slug: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Monthly price in cents (0 = free).
+    price_cents: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # AI credit granted on activation / renewal, in cents.
+    included_credit_cents: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    max_channels: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_messages_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Feature flags / arbitrary limits.
+    features: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class TenantSubscription(Base):
+    """A tenant's current plan + status. One active row per tenant."""
+
+    __tablename__ = "tenant_subscriptions"
+    __table_args__ = (
+        Index("ix_tenant_subscriptions_tenant_status", "tenant_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    plan_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("plans.id", ondelete="RESTRICT"), index=True
+    )
+    # active | trialing | canceled | expired
+    status: Mapped[str] = mapped_column(String(16), default="active", server_default="active")
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # admin_id or 'signup' / 'promo' / 'backfill'
+    granted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Promo override expiry.
+    granted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

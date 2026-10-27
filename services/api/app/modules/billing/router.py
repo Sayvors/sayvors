@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
@@ -14,6 +15,7 @@ from .schemas import (
     GatewayTokenizeOut,
     PaymentMethodIn,
     PaymentMethodOut,
+    SubscriptionOut,
 )
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
@@ -144,3 +146,28 @@ async def read_ledger(user=Depends(get_current_user), db: AsyncSession = Depends
     if result is None:
         raise HTTPException(status_code=404, detail="Tenant not found.")
     return result
+
+
+@router.get("/plan", response_model=SubscriptionOut)
+async def read_plan(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """The tenant's current plan + status. Employees read the owner's."""
+    from ...billing.models import TenantSubscription, Plan
+    from ...billing.schemas import SubscriptionOut
+    from ...core.deps import tenant_id_of
+
+    tid = tenant_id_of(user)
+    sub = (
+        await db.execute(
+            select(TenantSubscription).where(TenantSubscription.tenant_id == tid)
+        )
+    ).scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=404, detail="No subscription for this tenant.")
+    plan = await db.get(Plan, sub.plan_id)
+    return SubscriptionOut(
+        id=sub.id, tenant_id=sub.tenant_id, plan_id=sub.plan_id,
+        plan_slug=plan.slug if plan else None,
+        plan_name=plan.name if plan else None,
+        status=sub.status, period_start=sub.period_start, period_end=sub.period_end,
+        granted_by=sub.granted_by, granted_until=sub.granted_until,
+    )
