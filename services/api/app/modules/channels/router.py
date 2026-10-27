@@ -544,13 +544,14 @@ async def inbox_threads(
     category: str | None = Query(None, max_length=32),
     priority: str | None = Query(None, max_length=16),
     important: bool | None = Query(None),
+    include_archived: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """List inbox threads, optionally filtered by category, priority or
     the derived `important` flag."""
-    threads = await list_inbox_threads(ctx.user, db, search=search, limit=limit)
+    threads = await list_inbox_threads(ctx.user, db, search=search, limit=limit, include_archived=include_archived)
     if category:
         threads = [t for t in threads if t.get("category") == category]
     if priority:
@@ -643,6 +644,41 @@ async def inbox_thread_update_category(
     )
     await db.commit()
     return {"channel_id": channel_id, "contact_phone": phone, "category": body.category, "priority": body.priority}
+
+
+@_inbox_router.patch("/threads/{channel_id}/{contact_phone}/archive", response_model=dict)
+async def inbox_thread_archive(
+    channel_id: str,
+    contact_phone: str,
+    body: dict,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Archive or unarchive a thread. Body: {\"archived\": true|false}.
+
+    Soft delete: sets archived_at on the ChannelThread row. The thread and
+    its messages are preserved and reappear when unarchived.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    from sqlalchemy import update
+
+    phone_hash = hash_contact_phone(phone) if phone else None
+    conditions = [ChannelThread.channel_id == channel_id]
+    if phone_hash is None:
+        conditions.append(ChannelThread.contact_phone_hash.is_(None))
+    else:
+        conditions.append(ChannelThread.contact_phone_hash == phone_hash)
+
+    archived = bool(body.get("archived", True))
+    await db.execute(
+        update(ChannelThread)
+        .where(*conditions)
+        .values(archived_at=datetime.now(timezone.utc) if archived else None)
+    )
+    await db.commit()
+    return {"channel_id": channel_id, "contact_phone": phone, "archived": archived}
 
 
 @_inbox_router.post("/send", response_model=InboxSendResponse)

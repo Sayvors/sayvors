@@ -651,6 +651,7 @@ def _thread_payloads(
                 "priority": priority,
                 "important": is_important(priority, category),
                 "can_reply": ch.platform != "google_reviews" and phone is not None,
+                "archived": t.archived_at is not None,
             }
         )
     return out
@@ -738,6 +739,7 @@ async def list_inbox_threads(
     search: str | None = None,
     limit: int = 100,
     cursor: str | None = None,
+    include_archived: bool = False,
 ) -> list[dict]:
     """Threads across every channel the user owns, newest activity first.
 
@@ -943,6 +945,8 @@ async def list_inbox_threads(
         .where(ChannelThread.channel_id.in_(channel_ids))
         .order_by(ChannelThread.last_message_at.desc())
     )
+    if not include_archived:
+        t_stmt = t_stmt.where(ChannelThread.archived_at.is_(None))
     if cursor:
         try:
             cursor_dt = datetime.fromisoformat(cursor)

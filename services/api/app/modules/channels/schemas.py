@@ -135,6 +135,8 @@ class InboxThread(BaseModel):
     # Inbound messages with no outbound reply after them. Computed per thread so
     # the badge matches the conversation the user is about to open.
     unread: int = 0
+    # Soft-archive flag (server-persisted). False/absent = active thread.
+    archived: bool = False
     is_unknown: bool = False
 
 

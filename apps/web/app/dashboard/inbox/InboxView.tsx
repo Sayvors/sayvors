@@ -9,6 +9,7 @@ import LogoLoader from "@/components/LogoLoader";
 import {
   fetchInboxThreads,
   fetchThreadMessages,
+  archiveInboxThread,
   sendInboxMessage,
   UNKNOWN_THREAD_KEY,
   type InboxMessage,
@@ -198,6 +199,7 @@ export default function InboxView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -247,6 +249,22 @@ export default function InboxView() {
     });
   };
 
+  const handleArchive = async (thread: InboxThread, archived: boolean) => {
+    const composite = `${thread.channel_id}:${thread.key}`;
+    try {
+      await archiveInboxThread(thread.channel_id, thread.contact_phone, archived);
+      // Optimistic local update + cache invalidation.
+      setThreads((prev) =>
+        prev.map((t) =>
+          `${t.channel_id}:${t.key}` === composite ? { ...t, archived } : t,
+        ),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+    } catch {
+      // keep stale; the next fetch will correct
+    }
+  };
+
   // Debounce the search input so we don't refetch on every keystroke.
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   useEffect(() => {
@@ -255,9 +273,9 @@ export default function InboxView() {
   }, [search]);
 
   const threadsQuery = useQuery({
-    queryKey: ["inbox", "threads", debouncedSearch],
+    queryKey: ["inbox", "threads", debouncedSearch, showArchived],
     queryFn: async () => {
-      const list = await fetchInboxThreads(debouncedSearch);
+      const list = await fetchInboxThreads(debouncedSearch, showArchived);
       // Deep-link handling: if a thread was requested via URL, select it.
       const deep = deepLinkRef.current;
       if (deep.channel && deep.key) {
@@ -441,6 +459,7 @@ export default function InboxView() {
 
   const visible = useMemo(() => {
     let rows = threads;
+    if (!showArchived) rows = rows.filter((t) => !t.archived);
     if (filter === "unread") rows = rows.filter((t) => t.unread > 0);
     if (filter === "important") rows = rows.filter((t) => t.important);
     if (filter === "unknown") rows = rows.filter((t) => t.is_unknown);
@@ -450,7 +469,7 @@ export default function InboxView() {
       const bp = pinned.has(`${b.channel_id}:${b.key}`) ? 0 : 1;
       return ap - bp;
     });
-  }, [threads, filter, platformFilter, pinned]);
+  }, [threads, filter, platformFilter, pinned, showArchived]);
 
   // Virtualize the thread list so a tenant with thousands of conversations
   // doesn't render thousands of DOM nodes. The scroll container is the
@@ -578,6 +597,18 @@ export default function InboxView() {
                   {f.label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setShowArchived((v) => !v)}
+                aria-pressed={showArchived}
+                className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+                  showArchived
+                    ? "border-deep-violet bg-deep-violet/10 text-deep-violet"
+                    : "border-ink/[0.08] bg-white text-ink/60 hover:text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
+                }`}
+              >
+                {showArchived ? "Hide archived" : "Show archived"}
+              </button>
               <select
                 value={platformFilter}
                 onChange={(e) => setPlatformFilter(e.target.value)}
@@ -662,6 +693,14 @@ export default function InboxView() {
                           className={`px-2 py-3 text-[13px] ${isPinned ? "text-deep-violet" : "text-ink/20 hover:text-ink/50"}`}
                         >
                           📌
+                        </button>
+                        <button
+                          onClick={() => void handleArchive(t, !t.archived)}
+                          aria-label={t.archived ? "Unarchive thread" : "Archive thread"}
+                          className={`px-2 py-3 text-[13px] ${t.archived ? "text-amber-600" : "text-ink/20 hover:text-ink/50"}`}
+                          title={t.archived ? "Unarchive" : "Archive"}
+                        >
+                          {t.archived ? "📥" : "📦"}
                         </button>
                       </div>
                     </div>

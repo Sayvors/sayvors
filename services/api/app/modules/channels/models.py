@@ -205,6 +205,13 @@ class ChannelThread(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    # Soft-archive: NULL = active inbox thread. Set to a timestamp to hide
+    # the thread from the default inbox view; the row (and its messages) are
+    # preserved and reappear when unarchived. Distinct from deletion, which
+    # removes everything.
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None, index=True
+    )
     channel = relationship("Channel", back_populates="threads")
 
 
