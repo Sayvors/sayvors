@@ -2,7 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 import { fetchLeads, updateLead, type Lead, type LeadStage } from "@/lib/api-leads";
 
@@ -277,44 +279,46 @@ function LeadCard({
 }
 
 export default function LeadsBoard({ platform }: { platform?: string }) {
-  const [leads, setLeads] = useState<Lead[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const [priorityFirst, setPriorityFirst] = useState(true);
   const [stageFilter, setStageFilter] = useState<"all" | LeadStage>("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "important">("all");
-  const [priorityFirst, setPriorityFirst] = useState(true);
   const [channelFilter, setChannelFilter] = useState<string>("all");
   const [age, setAge] = useState<AgeKey>("any");
   const [busyId, setBusyId] = useState<string | null>(null);
-  // Bumping this re-runs the fetch — the honest reset after a failed patch.
-  const [reload, setReload] = useState(0);
   // Captured per fetch (Date.now is impure — hooks must not call it during
   // render), so age filters and countdowns share one consistent clock read.
-  const [now, setNow] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchLeads({ platform, limit: 200, priorityFirst }).then(
-      (data) => {
-        if (!cancelled) {
-          setLeads(data.leads ?? []);
-          setNow(Date.now());
-          setError(null);
-        }
-      },
-      (e: unknown) => {
-        if (!cancelled) {
-          setLeads([]);
-          setError(e instanceof Error ? e.message : "Could not load leads.");
-        }
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [platform, reload, priorityFirst]);
+  const leadsQuery = useQuery({
+    queryKey: queryKeys.leads.list(platform, priorityFirst),
+    queryFn: async () => {
+      const data = await fetchLeads({ platform, limit: 200, priorityFirst });
+      return { leads: data.leads ?? [], now: Date.now() };
+    },
+    staleTime: 30 * 1000,
+  });
+  const leads = leadsQuery.data?.leads ?? null;
+  const now = leadsQuery.data?.now ?? 0;
+  const error = leadsQuery.isError
+    ? leadsQuery.error instanceof Error
+      ? leadsQuery.error.message
+      : "Could not load leads."
+    : null;
 
-  // Channel + age narrow the base set; stage chips count against it, so
-  // the numbers always describe what the filters can actually show.
+  const move = async (lead: Lead, stage: LeadStage) => {
+    if (stage === lead.stage || busyId) return;
+    setBusyId(lead.id);
+    try {
+      const updated = await updateLead(lead.id, { stage });
+      queryClient.setQueryData(queryKeys.leads.list(platform, priorityFirst), (old: { leads: Lead[]; now: number } | undefined) =>
+        old ? { ...old, leads: (old.leads ?? []).map((r) => (r.id === updated.id ? updated : r)) } : old,
+      );
+    } catch {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.leads.all() });
+    } finally {
+      setBusyId(null);
+    }
+  };
   const base = useMemo(() => {
     let rows = leads ?? [];
     if (!platform && channelFilter !== "all") {
@@ -353,20 +357,6 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
     return c;
   }, [leads, age, now]);
 
-  const move = async (lead: Lead, stage: LeadStage) => {
-    if (stage === lead.stage || busyId) return;
-    setBusyId(lead.id);
-    try {
-      const updated = await updateLead(lead.id, { stage });
-      setLeads((rows) => rows?.map((r) => (r.id === updated.id ? updated : r)) ?? rows);
-    } catch {
-      // The optimistic truth failed — refetch shows what the DB really has.
-      setReload((n) => n + 1);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
   if (error) {
     return (
       <div role="alert" className={`mt-4 rounded-[8px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-4 text-[13px] font-bold ${INK}`}>
@@ -374,9 +364,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
         <button
           type="button"
           onClick={() => {
-            setLeads(null);
-            setError(null);
-            setReload((n) => n + 1);
+            void queryClient.invalidateQueries({ queryKey: queryKeys.leads.all() });
           }}
           className={`ui-btn mt-3 block rounded-lg bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)] ${FOCUS}`}
         >
