@@ -13,6 +13,7 @@
     "@bible-strong/avatar-react": "^0.1.0",
     "@sentry/nextjs": "^11.6.0",
     "@tanstack/react-query": "^5.104.5",
+    "@tanstack/react-virtual": "^3.14.23",
     "driver.js": "^1.8.0",
     "next": "16.4.3",
     "qrcode.react": "^4.2.0",

@@ -21,6 +21,7 @@ import {
   useTypingSource,
 } from "@/lib/inbox-typing";
 import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import TypingIndicator from "@/components/inbox/TypingIndicator";
 
 type Filter = "all" | "unread" | "important" | "unknown";
@@ -410,6 +411,17 @@ export default function InboxView() {
     });
   }, [threads, filter, platformFilter, pinned]);
 
+  // Virtualize the thread list so a tenant with thousands of conversations
+  // doesn't render thousands of DOM nodes. The scroll container is the
+  // overflow-y-auto div below; rows are absolutely positioned by offset.
+  const threadListRef = useRef<HTMLDivElement>(null);
+  const threadVirtualizer = useVirtualizer({
+    count: visible.length,
+    getScrollElement: () => threadListRef.current,
+    estimateSize: () => 76,
+    overscan: 6,
+  });
+
   const unreadTotal = useMemo(() => threads.reduce((s, t) => s + t.unread, 0), [threads]);
   const importantTotal = useMemo(
     () => threads.filter((t) => t.important).length,
@@ -541,7 +553,7 @@ export default function InboxView() {
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={threadListRef} className="min-h-0 flex-1 overflow-y-auto">
             {loading && threads.length === 0 ? (
               <div className="flex justify-center py-16"><LogoLoader size={28} /></div>
             ) : visible.length === 0 ? (
@@ -549,13 +561,14 @@ export default function InboxView() {
                 {search ? "No conversations match that search." : "No messages yet. Once customers message your number they appear here."}
               </p>
             ) : (
-              <ul>
-                {visible.map((t) => {
+              <div style={{ height: threadVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+                {threadVirtualizer.getVirtualItems().map((vi) => {
+                  const t = visible[vi.index];
                   const composite = `${t.channel_id}:${t.key}`;
                   const active = composite === targetKey;
                   const isPinned = pinned.has(composite);
                   return (
-                    <li key={composite}>
+                    <div key={composite} data-index={vi.index} ref={threadVirtualizer.measureElement} style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}>
                       <div className={`flex items-start border-b border-ink/[0.04] dark:border-fog/[0.04] ${active ? "bg-deep-violet/[0.06]" : "hover:bg-ink/[0.02] dark:hover:bg-fog/[0.03]"}`}>
                         <button
                           onClick={() => { setSelectedKey(composite); setSendError(null); }}
@@ -610,10 +623,10 @@ export default function InboxView() {
                           📌
                         </button>
                       </div>
-                    </li>
+                    </div>
                   );
                 })}
-              </ul>
+              </div>
             )}
           </div>
         </div>
