@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import LogoLoader from "@/components/LogoLoader";
 import { fetchMetaAssets } from "@/lib/api-meta";
 import {
@@ -43,35 +45,28 @@ function Chip({ strong, children }: { strong?: boolean; children: React.ReactNod
 }
 
 export default function ReviewTicketsPage() {
-  const [issues, setIssues] = useState<ReviewIssue[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [waPhone, setWaPhone] = useState<string | null>(null);
 
   // `silent` keeps the list mounted during a realtime refresh: a ticket
-  // appearing must not blank the page the merchant is reading.
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
-    setError(null);
-    try {
-      // 200 is the API ceiling; like the admin queue, slice in memory.
-      const d = await fetchReviewIssues({ ticketed: true, limit: 200 });
-      setIssues(d.issues);
-      setTotal(d.total);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load review tickets.");
-    } finally {
-      if (!opts?.silent) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // appearing must not blank the page the merchant is reading. TanStack Query
+  // handles this via isFetching (background) vs isPending (first load).
+  const queryClient = useQueryClient();
+  const issuesQuery = useQuery({
+    queryKey: queryKeys.reviewIssues.list("", true, 200),
+    queryFn: () => fetchReviewIssues({ ticketed: true, limit: 200 }),
+    staleTime: 30 * 1000,
+  });
+  const issues = issuesQuery.data?.issues ?? [];
+  const total = issuesQuery.data?.total ?? 0;
+  const loading = issuesQuery.isPending;
+  const error = issuesQuery.isError
+    ? issuesQuery.error instanceof Error
+      ? issuesQuery.error.message
+      : "Could not load review tickets."
+    : null;
 
   // Live tickets. One poll loop classified a review and opened a ticket while
   // nobody was on this page — a customer complaining, then walking in on
@@ -82,8 +77,10 @@ export default function ReviewTicketsPage() {
   const burst = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshQuietly = useCallback(() => {
     if (burst.current) clearTimeout(burst.current);
-    burst.current = setTimeout(() => void load({ silent: true }), 400);
-  }, [load]);
+    burst.current = setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.reviewIssues.all() });
+    }, 400);
+  }, [queryClient]);
 
   useEffect(() => () => {
     if (burst.current) clearTimeout(burst.current);
@@ -148,7 +145,7 @@ export default function ReviewTicketsPage() {
               Problems customers reported in Google reviews that need action, and the WhatsApp handoff that lets the assistant solve them. Praise and neutral reviews are classified, but they do not get tickets and are not shown here.
             </p>
           </div>
-          <button type="button" onClick={() => void load()} disabled={loading} className={BTN_GHOST}>
+          <button type="button" onClick={() => void issuesQuery.refetch()} disabled={issuesQuery.isFetching} className={BTN_GHOST}>
             {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
@@ -263,7 +260,9 @@ export default function ReviewTicketsPage() {
           waPhone={waPhone}
           onClose={() => setOpenId(null)}
           onChanged={(row) =>
-            setIssues((prev) => prev.map((x) => (x.id === row.id ? row : x)))
+            queryClient.setQueryData(queryKeys.reviewIssues.list("", true, 200), (old: { issues: ReviewIssue[]; total: number } | undefined) =>
+              old ? { ...old, issues: old.issues.map((x) => (x.id === row.id ? row : x)) } : old,
+            )
           }
         />
       )}
