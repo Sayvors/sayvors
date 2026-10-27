@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import LogoLoader from "@/components/LogoLoader";
@@ -169,6 +171,7 @@ function StatusTick({ message }: { message: InboxMessage }) {
 }
 
 export default function InboxView() {
+  const queryClient = useQueryClient();
   const [threads, setThreads] = useState<InboxThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -222,12 +225,18 @@ export default function InboxView() {
     });
   };
 
-  const loadThreads = useCallback(async (q: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const list = await fetchInboxThreads(q);
-      setThreads(list);
+  // Debounce the search input so we don't refetch on every keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const threadsQuery = useQuery({
+    queryKey: ["inbox", "threads", debouncedSearch],
+    queryFn: async () => {
+      const list = await fetchInboxThreads(debouncedSearch);
+      // Deep-link handling: if a thread was requested via URL, select it.
       const deep = deepLinkRef.current;
       if (deep.channel && deep.key) {
         const hit = list.find((t) => t.channel_id === deep.channel && t.key === deep.key);
@@ -236,17 +245,27 @@ export default function InboxView() {
           deepLinkRef.current = { channel: null, key: null };
         }
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load conversations.");
-    } finally {
+      return list;
+    },
+    staleTime: 15 * 1000,
+  });
+
+  // Sync server state into local state (preserves realtime/WS mutation paths).
+  useEffect(() => {
+    const list = threadsQuery.data;
+    if (list) {
+      setThreads(list);
+      setLoading(false);
+      setError(null);
+    }
+  }, [threadsQuery.data]);
+  useEffect(() => {
+    if (threadsQuery.isError) {
+      setError(threadsQuery.error instanceof Error ? threadsQuery.error.message : "Could not load conversations.");
+      setThreads([]);
       setLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => void loadThreads(search), 250);
-    return () => clearTimeout(t);
-  }, [search, loadThreads]);
+  }, [threadsQuery.isError, threadsQuery.error]);
 
   const selected = useMemo(
     () => threads.find((t) => `${t.channel_id}:${t.key}` === selectedKey) ?? null,
@@ -501,7 +520,7 @@ export default function InboxView() {
           </p>
         </div>
         <button
-          onClick={() => void loadThreads(search)}
+          onClick={() => void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] })}
           className="rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         >
           Refresh
