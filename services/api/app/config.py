@@ -192,6 +192,13 @@ class Settings(BaseSettings):
     # Dev/test mode for Google Reviews: fabricate sample reviews.
     GOOGLE_REVIEWS_MOCK: bool = False
 
+    # ── Review requests (SMS delivery) ──────────────────────────────────
+    # Twilio REST credentials. Empty means SMS is dormant: the request is
+    # recorded with a visible failure, never silently marked as sent.
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_FROM_NUMBER: str = ""
+
     # ── External benchmarking (Pro feature) ──────────────────────────────
     # Google Places API (New) key for the nearby-competitor peer set. Empty
     # means the feature is dormant: the UI shows "not connected" rather than

@@ -58,19 +58,52 @@ async def get_growth_cards(
         await db.execute(
             select(
                 func.count(),
-                func.sum(case((ReviewRequest.status.in_(("delivered", "clicked", "reviewed")), 1), else_=0)),
-                func.sum(case((ReviewRequest.status.in_(("clicked", "reviewed")), 1), else_=0)),
-                func.sum(case((ReviewRequest.status == "reviewed", 1), else_=0)),
+                func.sum(case((ReviewRequest.clicked_at.isnot(None), 1), else_=0)),
+                func.sum(case((ReviewRequest.status == "failed", 1), else_=0)),
             ).where(*req_filters)
         )
     ).one()
     requests_sent = int(req_row[0] or 0)
-    delivered = int(req_row[1] or 0)
-    clicked = int(req_row[2] or 0)
-    reviewed_via_request = int(req_row[3] or 0)
+    clicked = int(req_row[1] or 0)
+    failed = int(req_row[2] or 0)
+    delivered = int(
+        (
+            await db.execute(
+                select(func.count()).where(
+                    *req_filters,
+                    ReviewRequest.sent_via.in_(("sms", "email")),
+                    ReviewRequest.status != "failed",
+                )
+            )
+        ).scalar()
+        or 0
+    )
 
-    # Reviews in the window are the honest numerator; matching every review to
-    # its request needs provider round-trips we do not have yet.
+    # Per-request attribution: a review is credited to a click within the
+    # attribution window, at most one review per click. This replaces the old
+    # "window reviews / window requests" ratio, which credited reviews that
+    # had nothing to do with a request.
+    clicked_reqs = (
+        await db.execute(
+            select(ReviewRequest.clicked_at).where(*req_filters, ReviewRequest.clicked_at.isnot(None))
+        )
+    ).scalars().all()
+    review_rows = (
+        await db.execute(
+            select(ReviewInsight.review_updated_at, ReviewInsight.created_at).where(
+                *base, bucket >= start, bucket < now
+            )
+        )
+    ).all()
+
+    from .review_requests import ATTRIBUTION_WINDOW_DAYS, attribute_reviews
+
+    attributed = attribute_reviews(
+        list(clicked_reqs),
+        [updated or created for updated, created in review_rows],
+        ATTRIBUTION_WINDOW_DAYS,
+    )
+
     review_row = (
         await db.execute(
             select(func.count(), func.avg(ReviewInsight.rating)).where(*base, bucket >= start, bucket < now)
@@ -94,12 +127,14 @@ async def get_growth_cards(
         "requests_sent": requests_sent,
         "delivered": delivered,
         "clicked": clicked,
+        "failed": failed,
         "reviews": reviews,
-        "reviews_via_request": reviewed_via_request,
-        "conversion_rate": _pct(reviews, requests_sent),
+        "reviews_via_request": attributed,
+        "conversion_rate": _pct(attributed, requests_sent),
         "avg_rating": avg_rating,
         "delivery_tracked": delivered > 0,
         "click_tracked": clicked > 0,
+        "attribution_window_days": ATTRIBUTION_WINDOW_DAYS,
         "by_channel": [{"channel": c or "unknown", "requests": int(n or 0)} for c, n in by_channel_rows],
         "by_trigger": [{"trigger": t or "manual", "requests": int(n or 0)} for t, n in by_trigger_rows],
     }
@@ -187,10 +222,10 @@ async def get_growth_cards(
             "expected": "Improves rating and retention",
             "href": "/dashboard/reviews?status=unanswered",
         })
-    if requests_sent > 0 and reviewed_via_request > 0:
+    if requests_sent > 0 and attributed > 0:
         actions.append({
             "kind": "double_down",
-            "title": f"Repeat the request that produced {reviewed_via_request} reviews",
+            "title": f"Repeat the request that produced {attributed} reviews",
             "detail": "Look at the by-channel split and do more of the winning channel.",
             "expected": "Compounding review volume",
             "href": "/dashboard/reviews?ask=1",

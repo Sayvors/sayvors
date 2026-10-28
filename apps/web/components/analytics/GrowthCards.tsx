@@ -89,9 +89,14 @@ export default function GrowthCardsSection({
           />
           <FunnelStep label="Reviews" value={String(f.reviews)} sub="received in window" />
           <FunnelStep
+            label="Attributed"
+            value={String(f.reviews_via_request)}
+            sub={`click → review ≤ ${f.attribution_window_days}d`}
+          />
+          <FunnelStep
             label="Conversion"
             value={conv === null ? "-" : `${conv}%`}
-            sub="reviews / requests"
+            sub="attributed / requests"
           />
         </div>
 
@@ -133,11 +138,11 @@ export default function GrowthCardsSection({
             )}
           </div>
         </div>
-        {!f.delivery_tracked && (
-          <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
-            Delivery and click tracking are not connected yet. Requests are recorded when the ask is opened; we do not invent the missing stages.
-          </p>
-        )}
+        <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
+          Attribution is per request: a review is credited only when the customer clicked the tracked link and a review landed within {f.attribution_window_days} days. One review is never credited to two clicks.
+          {f.failed > 0 ? ` ${f.failed} request${f.failed === 1 ? "" : "s"} failed to send — check the provider/contact.` : ""}
+          {!f.delivery_tracked && !f.click_tracked ? " SMS/email delivery and click tracking need provider credentials; missing stages are labelled, never faked." : ""}
+        </p>
       </section>
 
       {/* Contacts + retention */}

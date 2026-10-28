@@ -812,9 +812,15 @@ class ReviewRequestIn(BaseModel):
     # manual | qr | after_visit | campaign
     trigger: str = "manual"
     status: str = "sent"
+    # Server-side send for sms/email. WhatsApp/in-person stay client-side.
+    deliver: bool = False
 
 
 class ReviewRequestOut(BaseModel):
     id: str
     status: str
     sent_at: datetime
+    channel: str
+    sent_via: str | None = None
+    link: str | None = None
+    error: str | None = None

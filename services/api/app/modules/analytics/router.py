@@ -662,34 +662,53 @@ async def record_review_request(
     ctx: TenantContext = Depends(require_perm("reviews.reply")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Record a review request the merchant just sent.
+    """Record a review request and optionally deliver it.
 
-    Called by the Ask-for-review flow when it opens WhatsApp/email. Fire-and-
-    forget on the client: a failed record must never block the customer ask.
+    WhatsApp/in-person are recorded without a server send (the client opens the
+    deep link). SMS/email go through the env-gated provider and store the real
+    outcome; a provider failure is visible on the row, never hidden.
     """
-    import uuid
-    from datetime import datetime, timezone
-
-    from .models import ReviewRequest
+    from .review_requests import create_and_deliver
 
     allowed_channels = {"whatsapp", "sms", "email", "in_person"}
     allowed_triggers = {"manual", "qr", "after_visit", "campaign"}
-    allowed_statuses = {"sent", "delivered", "clicked", "reviewed", "failed", "opted_out"}
-    row = ReviewRequest(
-        id=str(uuid.uuid4()),
-        user_id=tenant_id_of(user),
-        channel_id=body.channel_id if body.channel_id else None,
-        contact=(body.contact or "")[:255] or None,
-        contact_name=(body.contact_name or "")[:120] or None,
+    row = await create_and_deliver(
+        db,
+        tenant_id_of(user),
+        channel_id=body.channel_id,
+        contact=body.contact,
+        contact_name=body.contact_name,
         channel=body.channel if body.channel in allowed_channels else "whatsapp",
         trigger=body.trigger if body.trigger in allowed_triggers else "manual",
-        status=body.status if body.status in allowed_statuses else "sent",
-        sent_at=datetime.now(timezone.utc),
+        deliver=body.deliver,
     )
-    db.add(row)
-    await db.commit()
-    await db.refresh(row)
-    return ReviewRequestOut(id=row.id, status=row.status, sent_at=row.sent_at)
+    return ReviewRequestOut(
+        id=row.id,
+        status=row.status,
+        sent_at=row.sent_at,
+        channel=row.channel,
+        sent_via=row.sent_via,
+        link=row.review_url,
+        error=row.error,
+    )
+
+
+@router.get("/review-requests/{token}/click")
+async def review_request_click(token: str, db: AsyncSession = Depends(get_db)):
+    """Public click redirect: mark the click, then send the customer to Google.
+
+    No auth by design - the token is the capability. An unknown token still
+    redirects to Google's generic review page rather than leaking whether the
+    token exists.
+    """
+    from fastapi.responses import RedirectResponse
+
+    from .review_requests import track_click
+
+    target = await track_click(db, token)
+    if target:
+        return RedirectResponse(url=target, status_code=302)
+    return RedirectResponse(url="https://www.google.com/maps", status_code=302)
 
 
 @router.get("/products", response_model=ProductsResponse)

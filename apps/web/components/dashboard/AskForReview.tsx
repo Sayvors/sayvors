@@ -5,7 +5,7 @@ import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import { recordReviewRequest } from "@/lib/api-analytics";
 
-type ReviewChannel = "whatsapp" | "contacts" | "email";
+type ReviewChannel = "whatsapp" | "contacts" | "email" | "sms";
 type PlatformTab = "all" | "whatsapp" | "instagram" | "facebook";
 
 interface PlatformContact {
@@ -60,6 +60,15 @@ export default function AskForReview() {
   const [contactsLoading, setContactsLoading] = useState(true);
   const [contactSearch, setContactSearch] = useState("");
   const [whatsappSearch, setWhatsappSearch] = useState("");
+  // Server-side delivery panels (Resend for email, Twilio for SMS).
+  const [emailAddress, setEmailAddress] = useState("");
+  const [emailName, setEmailName] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailMsg, setEmailMsg] = useState<string | null>(null);
+  const [smsNumber, setSmsNumber] = useState("");
+  const [smsName, setSmsName] = useState("");
+  const [smsBusy, setSmsBusy] = useState(false);
+  const [smsMsg, setSmsMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -217,14 +226,84 @@ export default function AskForReview() {
     });
   };
 
-  const handleWhatsAppSend = (number?: string) => {
+  const handleWhatsAppSend = async (number?: string) => {
     const cleaned = (number ?? phoneNumber).replace(/[^\d]/g, "");
     if (!cleaned) return;
-    // Record the ask before opening WhatsApp. Fire-and-forget: a failed record
-    // must never block the customer-facing action.
-    void recordReviewRequest({ channel: "whatsapp", trigger: "manual", contact: cleaned }).catch(() => {});
-    const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(REVIEW_MESSAGE)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    // Open the window synchronously so the browser does not treat the later
+    // navigation as a popup. The recorded request carries the tracked review
+    // link, so a click on it is attributed back to this ask.
+    const win = window.open("about:blank", "_blank");
+    try {
+      const req = await recordReviewRequest({
+        channel: "whatsapp",
+        trigger: "manual",
+        contact: cleaned,
+      });
+      const text = req.link ? `${REVIEW_MESSAGE} ${req.link}` : REVIEW_MESSAGE;
+      const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`;
+      if (win) {
+        win.location.href = url;
+        win.opener = null;
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    } catch {
+      if (win) win.close();
+      // A failed record must never block the customer-facing action.
+      const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(REVIEW_MESSAGE)}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const sendEmailRequest = async () => {
+    if (!emailAddress.trim()) return;
+    setEmailBusy(true);
+    setEmailMsg(null);
+    try {
+      const res = await recordReviewRequest({
+        channel: "email",
+        contact: emailAddress.trim(),
+        contact_name: emailName.trim() || null,
+        deliver: true,
+      });
+      if (res.status === "failed") {
+        setEmailMsg(res.error ?? "Email could not be sent.");
+      } else {
+        setEmailMsg("Email request sent with a tracked review link.");
+        setEmailAddress("");
+        setEmailName("");
+      }
+    } catch (e) {
+      setEmailMsg(e instanceof Error ? e.message.slice(0, 160) : "Email could not be sent.");
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
+  const sendSmsRequest = async () => {
+    const cleaned = smsNumber.replace(/[^\d+]/g, "");
+    if (!cleaned) return;
+    setSmsBusy(true);
+    setSmsMsg(null);
+    try {
+      const res = await recordReviewRequest({
+        channel: "sms",
+        contact: cleaned,
+        contact_name: smsName.trim() || null,
+        deliver: true,
+      });
+      if (res.status === "failed") {
+        setSmsMsg(res.error ?? "SMS could not be sent.");
+      } else {
+        setSmsMsg("SMS request sent with a tracked review link.");
+        setSmsNumber("");
+        setSmsName("");
+      }
+    } catch (e) {
+      setSmsMsg(e instanceof Error ? e.message.slice(0, 160) : "SMS could not be sent.");
+    } finally {
+      setSmsBusy(false);
+    }
   };
 
   const handleSendSelected = () => {
@@ -421,6 +500,26 @@ export default function AskForReview() {
             <p className="text-[10px] text-ink/45">Send request</p>
           </div>
         </button>
+
+        <button
+          onClick={() => setActiveChannel(activeChannel === "sms" ? null : "sms")}
+          className={`group flex flex-row items-center gap-3 rounded-xl border-2 p-3 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:flex-col sm:gap-2 sm:p-4 sm:text-center ${
+            activeChannel === "sms"
+              ? "border-deep-violet/40 bg-deep-violet/[0.06]"
+              : "border-ink/[0.06] bg-white hover:border-deep-violet/20 hover:bg-deep-violet/[0.03]"
+          }`}
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600 transition group-hover:scale-105">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden>
+              <rect x="7" y="2.5" width="10" height="19" rx="2" />
+              <path d="M10 18.5h4" />
+            </svg>
+          </span>
+          <div>
+            <p className="text-[12px] font-bold text-ink">SMS</p>
+            <p className="text-[10px] text-ink/45">Send request</p>
+          </div>
+        </button>
       </div>
 
       {activeChannel === "whatsapp" && (
@@ -594,18 +693,63 @@ export default function AskForReview() {
         <div className="mt-4 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4">
           <p className="text-[12px] font-semibold text-ink">Send email review request</p>
           <p className="mt-1 text-[11px] text-ink/50">
-            Opens your email client with a pre-filled review request.
+            Sent through Resend with a tracked review link. Only the brand, last digits, and link are used.
           </p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input
               type="email"
+              value={emailAddress}
+              onChange={(e) => setEmailAddress(e.target.value)}
               placeholder="Customer email"
               className="input-field flex-1"
             />
-            <button className="rounded-lg bg-amber px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-amber/25 outline-none transition hover:bg-amber/90 focus-visible:ring-2 focus-visible:ring-amber/40 active:scale-[0.98] disabled:opacity-50">
-              Send
+            <input
+              value={emailName}
+              onChange={(e) => setEmailName(e.target.value)}
+              placeholder="Name (optional)"
+              className="input-field sm:w-40"
+            />
+            <button
+              onClick={() => void sendEmailRequest()}
+              disabled={emailBusy || !emailAddress.trim()}
+              className="rounded-lg bg-amber px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-amber/25 outline-none transition hover:bg-amber/90 focus-visible:ring-2 focus-visible:ring-amber/40 active:scale-[0.98] disabled:opacity-50"
+            >
+              {emailBusy ? "Sending…" : "Send"}
             </button>
           </div>
+          {emailMsg && <p className="mt-2 text-[11px] text-ink/60">{emailMsg}</p>}
+        </div>
+      )}
+
+      {activeChannel === "sms" && (
+        <div className="mt-4 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4">
+          <p className="text-[12px] font-semibold text-ink">Send SMS review request</p>
+          <p className="mt-1 text-[11px] text-ink/50">
+            Sent through Twilio with a tracked review link. A missing provider or invalid number is shown as a failure, never as sent.
+          </p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <input
+              type="tel"
+              value={smsNumber}
+              onChange={(e) => setSmsNumber(e.target.value)}
+              placeholder="+966 55 000 0000"
+              className="input-field flex-1"
+            />
+            <input
+              value={smsName}
+              onChange={(e) => setSmsName(e.target.value)}
+              placeholder="Name (optional)"
+              className="input-field sm:w-40"
+            />
+            <button
+              onClick={() => void sendSmsRequest()}
+              disabled={smsBusy || !smsNumber.trim()}
+              className="rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-sky-600/25 outline-none transition hover:bg-sky-700 focus-visible:ring-2 focus-visible:ring-sky-600/40 active:scale-[0.98] disabled:opacity-50"
+            >
+              {smsBusy ? "Sending…" : "Send"}
+            </button>
+          </div>
+          {smsMsg && <p className="mt-2 text-[11px] text-ink/60">{smsMsg}</p>}
         </div>
       )}
     </section>

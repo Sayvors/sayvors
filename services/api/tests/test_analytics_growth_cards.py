@@ -28,7 +28,9 @@ async def _seed(db, user_id):
             channel="whatsapp" if i < 7 else "email",
             trigger="qr" if i < 4 else "manual",
             status=status,
-            sent_at=now - timedelta(days=2),
+            sent_via="sms" if i < 6 else "email",
+            sent_at=now - timedelta(days=3),
+            clicked_at=(now - timedelta(days=2)) if status in ("clicked", "reviewed") else None,
         ))
     # 2 reviews in the window.
     for i, rating in enumerate((5, 4)):
@@ -54,11 +56,13 @@ async def test_growth_cards_funnel_and_contacts(db, user_id):
 
     f = out["funnel"]
     assert f["requests_sent"] == 10
-    assert f["delivered"] == 6
+    assert f["delivered"] == 10
     assert f["clicked"] == 3
     assert f["reviews"] == 2
-    assert f["reviews_via_request"] == 1
+    # Two reviews, three clicks: each review is credited to a distinct click.
+    assert f["reviews_via_request"] == 2
     assert f["conversion_rate"] == 20.0
+    assert f["attribution_window_days"] == 7
     assert f["avg_rating"] == 4.5
     assert f["delivery_tracked"] is True
     assert f["click_tracked"] is True

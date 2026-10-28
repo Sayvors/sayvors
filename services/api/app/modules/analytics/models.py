@@ -590,6 +590,16 @@ class ReviewRequest(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # The review this request produced, when the platform can match it.
     review_id: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Opaque click token used by the public redirect. Unique + indexed so the
+    # click endpoint is a single lookup; null for in-person/manual asks that
+    # never get a tracked link.
+    token: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    # Where the click redirects (Google "write a review" URL for this listing).
+    review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # How it was delivered: whatsapp_manual | sms | email | in_person.
+    sent_via: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Provider/validation failure reason. Never exposed to customers.
+    error: Mapped[str | None] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

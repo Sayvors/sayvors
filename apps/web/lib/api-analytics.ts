@@ -386,12 +386,14 @@ export interface ReviewFunnel {
   requests_sent: number;
   delivered: number;
   clicked: number;
+  failed: number;
   reviews: number;
   reviews_via_request: number;
   conversion_rate: number | null;
   avg_rating: number | null;
   delivery_tracked: boolean;
   click_tracked: boolean;
+  attribution_window_days: number;
   by_channel: FunnelChannel[];
   by_trigger: FunnelTrigger[];
 }
@@ -429,14 +431,25 @@ export async function fetchGrowthCards(
   return apiFetch(`/api/v1/analytics/growth-cards?${params.toString()}`);
 }
 
+export interface ReviewRequestResult {
+  id: string;
+  status: string;
+  sent_at: string;
+  channel: string;
+  sent_via: string | null;
+  link: string | null;
+  error: string | null;
+}
+
 export async function recordReviewRequest(input: {
   channel_id?: string | null;
   contact?: string | null;
   contact_name?: string | null;
   channel?: "whatsapp" | "sms" | "email" | "in_person";
   trigger?: "manual" | "qr" | "after_visit" | "campaign";
-}): Promise<void> {
-  await apiFetch("/api/v1/analytics/review-requests", {
+  deliver?: boolean;
+}): Promise<ReviewRequestResult> {
+  return apiFetch("/api/v1/analytics/review-requests", {
     method: "POST",
     body: JSON.stringify(input),
   });
