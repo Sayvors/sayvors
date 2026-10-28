@@ -8,6 +8,7 @@ Google review data that already exists.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
 from ..team.context import TenantContext, require_perm

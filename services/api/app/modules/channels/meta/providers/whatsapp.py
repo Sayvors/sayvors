@@ -400,6 +400,8 @@ class WhatsAppAdapter(MetaProviderAdapter):
             media_url=media_url,
             media_type=media_type,
             caption=caption,
+            method=method,
+            description=description,
         )
 
     async def delete_post(self, token: str, post_id: str) -> dict:
@@ -421,6 +423,8 @@ class WhatsAppAdapter(MetaProviderAdapter):
         media_url: str | None,
         media_type: str | None,
         caption: str,
+        method: str = "status",
+        description: str | None = None,
     ) -> dict:
         """Send a WhatsApp status (image/video with caption, or text)."""
         if media_url:
