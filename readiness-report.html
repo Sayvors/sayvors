@@ -916,6 +916,8 @@
   <h2>Analytics redesign - Overview, Insights, Growth, Benchmark</h2>
   <p>Based on a 46-source voice-of-customer review (27 Reddit threads, 5 G2/Capterra review pages, 6 Local Search Forum threads, 3 vendor docs, 5 surveys). Full plan: <code>docs/tracking/analytics-redesign-plan.md</code>; raw evidence: <code>research-smb-analytics-dashboard-2026-10-28.md</code>.</p>
   <p><strong>Core finding:</strong> owners do not want more charts. They want 5-10 numbers they trust, with provenance (source, period, comparison, denominator, last sync) and a clear next action. Absolute numbers first, percentage second, trend third. AI is a labelled draft, not an analyst. Benchmarks are trusted only when local, peer-based, recent, and transparent.</p>
+
+  <h3>Current state vs. what owners want</h3>
   <div class="scroll"><table>
     <tr><th>Page</th><th>What owners want</th><th>What we show today / gap</th></tr>
     <tr><td><strong>Overview</strong></td><td>6 KPI tiles, reputation pulse, who is waiting, location league, one thing that changed, action queue</td><td>Rating/reviews/response/messaging/presence; missing absolute-first cards, action queue, provenance, location roll-up</td></tr>
@@ -923,15 +925,98 @@
     <tr><td><strong>Growth</strong></td><td>Review-request funnel (sent &rarr; delivered &rarr; clicked &rarr; reviews &rarr; rating), realistic conversion (3-10%, never 83%), source attribution with "Unknown", retention cohort, ask timing</td><td>Acquisition/keywords/visibility/opportunities; funnel and denominators missing</td></tr>
     <tr><td><strong>Benchmark</strong></td><td>Editable local peer set, similar size/model, recency + response, own history first, gap math, <code>n</code> + date + confidence</td><td>Opaque 0-100 composite, fixed peer set, no gap-to-4.5 math, no low-sample warnings</td></tr>
   </table></div>
+
+  <h3>Overview - "Is the business okay this week, and what needs me now?"</h3>
+  <p>Hard cap: 6 KPI tiles, 3 action cards, 1 "one thing that changed" insight.</p>
+  <div class="scroll"><table>
+    <tr><th>Card</th><th>Metrics</th><th>Copy pattern</th><th>Action</th></tr>
+    <tr><td>Reputation pulse</td><td>avg_rating, new_reviews_30d, response_rate, awaiting_reply, oldest_wait_days</td><td><strong>4.6&#9733;</strong> +0.1 vs prior 30d &middot; <strong>18 new reviews</strong> &middot; 82% responded &middot; <strong>3 awaiting</strong> &middot; oldest 2d &middot; Google 14 / FB 3 / Yelp 1 &middot; synced 8 min ago</td><td>Reply to 3</td></tr>
+    <tr><td>Who's waiting</td><td>unanswered_texts, missed_calls, median_first_response_min, waiting_over_1h</td><td><strong>5 texts waiting</strong> &middot; 2 missed calls &middot; <strong>14 min</strong> median first reply &middot; 2 waiting &gt;1h &middot; business hours 8am-6pm</td><td>Open inbox</td></tr>
+    <tr><td>This week (POS)</td><td>net_sales, guest_count, avg_check, labor_pct</td><td><strong>$48,210</strong> +6.2% vs same week LY &middot; <strong>1,284 guests</strong> &middot; <strong>$37.55</strong> avg check &middot; labor 28.4%</td><td>View sales</td></tr>
+    <tr><td>Location league</td><td>location, rating, new_reviews, response_rate, unanswered</td><td>Downtown 4.1&#9733; &middot; 6 new &middot; 68% &middot; 5 unanswered &middot; Westside 4.7&#9733; &middot; 9 new &middot; 91% &middot; 1 unanswered</td><td>View location</td></tr>
+    <tr><td>One thing that changed</td><td>theme, mentions, delta, location, example_quote</td><td><strong>Wait time mentions up 38% at Downtown.</strong> 14 of 24 mentions in the last 14 days. "Waited 25 minutes for a table." Based on 78 reviews.</td><td>See 24 reviews</td></tr>
+    <tr><td>Needs attention</td><td>severity, location, issue, owner, due</td><td>Downtown: 2 new 1&#9733; reviews mention wait time. Assign to GM.</td><td>Assign / Reply / Fix</td></tr>
+  </table></div>
+
+  <h3>Insights - "What are customers telling us, where, and what should we do?"</h3>
+  <div class="scroll"><table>
+    <tr><th>Card</th><th>Metrics</th><th>Copy pattern</th><th>Action</th></tr>
+    <tr><td>Complaints by area (shipped)</td><td>category, mentions, trend_pct, staff_named, serious, top_terms</td><td><strong>Waiting time</strong> - 24 mentions &middot; +38% vs prior 30d &middot; 14 staff named &middot; 6 serious &middot; "long wait, cold food"</td><td>See 24 reviews</td></tr>
+    <tr><td>Top themes</td><td>theme, mentions, pct_of_negative, delta, top_location, quote</td><td><strong>Wait time</strong> - 31% of negative reviews - +38% - Downtown (14) + a verbatim quote</td><td>See reviews</td></tr>
+    <tr><td>What changed this week</td><td>negative_reviews_7d, prior_7d, theme, location</td><td><strong>6 new 1&#9733; this week, up from 1.</strong> 4 mention cold food on pickup at Location B.</td><td>Review 6 / Assign</td></tr>
+    <tr><td>Sentiment by location</td><td>location, rating, trend_90d, top_negative_theme, response_rate, unanswered</td><td>Downtown 4.1&#9733; &middot; -0.2 (90d) &middot; wait time &middot; 68% responded &middot; 5 unanswered</td><td>Open location</td></tr>
+    <tr><td>AI summary with receipts</td><td>summary_bullets[], n_per_bullet, confidence, sources[]</td><td>"Staff are praised (n=42). Wait time is the main complaint, mostly Downtown (n=24)." AI-generated; verify sources. Confidence: medium (n=78).</td><td>Show sources / Edit</td></tr>
+    <tr><td>Action plan</td><td>theme, owner, action, due, status</td><td>Wait time &rarr; GM Downtown &rarr; add 2nd host Fri-Sun &rarr; due Nov 3 &rarr; open</td><td>Update status</td></tr>
+  </table></div>
+
+  <h3>Growth - "Where do customers come from, what converts, and what should we do more of?"</h3>
+  <div class="scroll"><table>
+    <tr><th>Card</th><th>Metrics</th><th>Copy pattern</th><th>Action</th></tr>
+    <tr><td>Review engine (funnel)</td><td>requests_sent, delivered, clicked, reviews, conversion, avg_rating</td><td><strong>420 requests &rarr; 405 delivered (96%) &rarr; 38 clicked (9.4%) &rarr; 21 reviews (5.0%) &rarr; 4.7&#9733;</strong> SMS 54% / email 46% &middot; 3 opt-outs &middot; 12 failed</td><td>See request log</td></tr>
+    <tr><td>Where customers come from</td><td>new_customers, source, unknown_pct</td><td>Google 42% &middot; Referral 18% &middot; Walk-in 15% &middot; Instagram 10% &middot; <strong>Unknown 15%</strong> Based on 186 new customers &middot; Oct 1-28</td><td>Add source to booking</td></tr>
+    <tr><td>Retention cohort</td><td>cohort_month, first_time, repeat_30/60/90, repeat_revenue</td><td><strong>38% of January first-timers rebooked within 90 days</strong> &middot; $18,420 repeat revenue from 142 customers</td><td>View cohort</td></tr>
+    <tr><td>Ask timing</td><td>trigger, requests, reviews, conversion</td><td>In-person QR 12% &middot; SMS 2h 6% &middot; Next-day email 3% Based on 420 requests</td><td>Shift requests to QR</td></tr>
+    <tr><td>Growth actions</td><td>action, audience, channel, expected_reviews</td><td>Ask 24 happy customers (5&#9733;, last 7d) &middot; Win back 12 lapsed 90-day customers &middot; Fix 5 unanswered reviews</td><td>Start / Assign</td></tr>
+  </table></div>
+
+  <h3>Benchmark - "How do we compare, and where should we improve?"</h3>
+  <div class="scroll"><table>
+    <tr><th>Card</th><th>Metrics</th><th>Copy pattern</th><th>Action</th></tr>
+    <tr><td>You vs nearby</td><td>your rating/volume/recency/response vs peer median</td><td><strong>You:</strong> 4.6&#9733; &middot; 212 reviews &middot; 38% last 90d &middot; 82% responded &middot; <strong>Peer median:</strong> 4.5&#9733; &middot; 180 &middot; 52% &middot; 61% &middot; 12 competitors within 5 mi &middot; Google only &middot; as of Oct 28 &middot; 3 peers &lt;20 reviews (directional)</td><td>Edit peer group</td></tr>
+    <tr><td>Gap to 4.5</td><td>current_rating, review_count, five_star_needed, pace_per_month</td><td><strong>4.3&#9733; from 84 reviews.</strong> 34 new 5&#9733; needed to reach 4.5 (assuming no new negatives). At 8/month &asymp; 4.3 months. Math: (4.5&times;118 - 4.3&times;84) &divide; 5 &asymp; 34</td><td>Create review campaign</td></tr>
+    <tr><td>Review recency</td><td>pct_reviews_last_90d, peer_median, rank</td><td>38% of your reviews are from the last 90 days. Peer median 52%. You rank 8th of 12.</td><td>Ask recent customers</td></tr>
+    <tr><td>Industry context</td><td>category_avg_rating, listing_count, date</td><td>Restaurants average 4.50&#9733; (5,131 listings, 2026). Context only - use nearby peers for decisions.</td><td>See category</td></tr>
+    <tr><td>Peer group builder</td><td>category, radius, size_band, sources</td><td>Compare to 10 similar businesses within 5 miles. Remove outliers before median. Default: same category, 1-3 locations, Google + Yelp, last 90d.</td><td>Edit peer group</td></tr>
+  </table></div>
+
+  <h3>Cross-cutting rules</h3>
+  <ol>
+    <li><strong>One card, one decision.</strong> Name the decision, the threshold, and the owner.</li>
+    <li><strong>Absolute + delta + trend.</strong> Headline absolute; delta is same-length; trend is a sparkline or 12-week line.</li>
+    <li><strong>Show your work.</strong> Source, period, filters, denominator, last sync, exclusions, "why this number?" popover.</li>
+    <li><strong>No silent zeros.</strong> Failed sync = "Data delayed", never <code>0</code>.</li>
+    <li><strong>Action or dismiss.</strong> Every alert/insight has a primary action and a snooze/dismiss.</li>
+    <li><strong>Colour needs a threshold.</strong> Tooltip shows the rule.</li>
+    <li><strong>Drill-down from every number.</strong> Land on the underlying rows.</li>
+    <li><strong>Mobile is a console.</strong> 3 KPIs + "who's waiting" + "needs attention" above the fold; deep links to the exact item.</li>
+    <li><strong>AI is labeled and editable.</strong> "AI-generated", "based on N", "show sources", "edit", "approve".</li>
+    <li><strong>Benchmarks are owner-reviewed.</strong> Show the peer set, allow outlier removal, label low-sample results.</li>
+    <li><strong>Permissions match the org chart.</strong> Owner &rarr; all; manager &rarr; location; front desk &rarr; inbox/reviews; marketing &rarr; campaigns/themes.</li>
+    <li><strong>Empty/loading/error are product surfaces.</strong> New location: "No reviews yet - send your first 10 requests."</li>
+    <li><strong>Time zones and business hours are per location.</strong></li>
+    <li><strong>Do not ship a metric you cannot reconcile.</strong></li>
+  </ol>
+
   <h3>Phased delivery</h3>
   <ol>
-    <li><strong>Phase 0 - Trust layer (1w):</strong> provenance envelope on every response, "Data delayed" state, shared popover, absolute + delta + comparison label.</li>
+    <li><strong>Phase 0 - Trust layer (1w):</strong> provenance envelope on every analytics response (source, period, comparison, denominator, last sync, exclusions), "Data delayed" state, shared popover, absolute + delta + comparison label.</li>
     <li><strong>Phase 1 - Overview rebuild (1-2w):</strong> 6 KPI cap, reputation pulse, who is waiting, location league, one thing changed, needs attention; mobile console.</li>
     <li><strong>Phase 2 - Insights (1w):</strong> quotes/location split + sample warnings, "What changed this week", "Action plan / close the loop", source drill-down.</li>
-    <li><strong>Phase 3 - Growth funnel (2w):</strong> request funnel, source attribution with Unknown, retention cohort, ask timing, growth actions.</li>
-    <li><strong>Phase 4 - Benchmark (1-2w):</strong> replace composite with sub-scores + weights, editable peer group, gap math, `n`/date/confidence.</li>
+    <li><strong>Phase 3 - Growth funnel (2w):</strong> request events persisted, source + Unknown, cohorts, ask timing, growth actions.</li>
+    <li><strong>Phase 4 - Benchmark (1-2w):</strong> sub-scores + weights, editable peer group, gap math, confidence labels.</li>
     <li><strong>Phase 5 - Alerts + mobile (1w):</strong> severity tiers, quiet hours, escalation, deep links.</li>
   </ol>
+
+  <h3>Backend / data requirements</h3>
+  <ul>
+    <li>Provenance envelope on every analytics response.</li>
+    <li>Review-request events persisted (sent, delivered, clicked, review) with channel and trigger.</li>
+    <li>Customer source field + explicit "unknown" bucket.</li>
+    <li>Cohort query (first visit &rarr; repeat 30/60/90, repeat revenue).</li>
+    <li>Peer group model (category, radius, size band, sources, members, snapshot date).</li>
+    <li>Gap-math helper for rating thresholds.</li>
+    <li>Business hours + timezone per location for "waiting" thresholds.</li>
+    <li>Alert-rules table (severity, threshold, recipient, channel, quiet hours).</li>
+  </ul>
+
+  <h3>Open decisions</h3>
+  <ol>
+    <li><strong>POS integration:</strong> the "This week" sales card needs POS. Ship reputation-only Overview first, then add POS when connected.</li>
+    <li><strong>Composite score:</strong> expose components or remove. Recommend remove from Benchmark and keep raw metrics.</li>
+    <li><strong>Peer dataset:</strong> need a local competitor source (Google Places scan) with disclosed method and snapshot date. Build or defer?</li>
+    <li><strong>Referral:</strong> thin evidence; keep as an experiment, not a headline page.</li>
+  </ol>
+
   <p class="note"><strong>Acceptance:</strong> every number has provenance + drill-down; no failed sync renders as <code>0</code>; every claim shows <code>n</code> and a comparison; Growth shows every denominator; Benchmark shows peer definition and confidence; mobile above the fold is 3 KPIs + "who's waiting" + "needs attention".</p>
 </section>
 
