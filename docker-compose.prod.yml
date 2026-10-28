@@ -153,9 +153,28 @@ services:
       start_period: 30s
     mem_limit: 640m
 
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    mem_limit: 256m
+    depends_on:
+      - api
+
+
 volumes:
   caddy_data:
   caddy_config:
   redisdata:
   kafkadata:
   uploadsdata:
+  prometheus_data:

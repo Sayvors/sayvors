@@ -8,10 +8,7 @@ Monorepo for the Sayvors platform.
 apps/                        User-facing applications
   web/                       Next.js Customer App
   admin/                     Internal Dashboard
-  landing/                   Marketing Website
   docs/                      Documentation Site
-  mobile/                    Future Flutter/React Native
-gateway/                     API Gateway
 services/                    Business Microservices
 integrations/                External APIs & Third-party Platforms
   channels/
@@ -21,8 +18,6 @@ integrations/                External APIs & Third-party Platforms
   email/
   sms/
   webhooks/
-packages/                    Shared libraries
-infrastructure/              Infrastructure as Code
 deployments/                 Environment-specific deployment
 configs/                     Global configuration templates
 scripts/                     Automation scripts

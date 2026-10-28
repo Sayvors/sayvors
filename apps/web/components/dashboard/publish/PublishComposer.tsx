@@ -46,12 +46,215 @@ import {
 const FIELD =
   "rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]";
 
+// ── AI video creator (UI-only, HTML-based, no backend) ─────────────────
+function sanitizeName(s: string): string {
+  return s.replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "") || "business";
+}
+
+function buildVideoHtml(opts: { business: string; primary: string; accent: string; bg: string }): string {
+  const { business, primary, accent, bg } = opts;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1920,height=1080" />
+<title>${business} — launch video</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:1920px;height:1080px;overflow:hidden;background:${bg};font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:${primary}}
+  .stage{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px}
+  .glow{position:absolute;border-radius:50%;filter:blur(60px);pointer-events:none}
+  .name{font-size:150px;font-weight:900;letter-spacing:-0.04em;line-height:1;opacity:0;transform:scale(0.85);animation:nameIn 1.2s 0.3s cubic-bezier(.2,.8,.2,1) forwards}
+  .tag{font-size:42px;font-weight:400;color:${accent};opacity:0;transform:translateY(24px);animation:tagIn 0.9s 1.1s ease-out forwards}
+  .sub{font-size:22px;color:${primary};opacity:0.6;letter-spacing:0.18em;text-transform:uppercase;font-weight:600;opacity:0;animation:subIn 0.8s 1.6s ease-out forwards}
+  @keyframes nameIn{to{opacity:1;transform:scale(1)}}
+  @keyframes tagIn{to{opacity:1;transform:translateY(0)}}
+  @keyframes subIn{to{opacity:0.6}}
+  .ring{position:absolute;width:600px;height:600px;border-radius:50%;border:2px solid ${primary};opacity:0.12;animation:pulse 3s ease-in-out infinite}
+  @keyframes pulse{0%,100%{transform:scale(1);opacity:0.12}50%{transform:scale(1.15);opacity:0.06}}
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="glow ring" style="top:50%;left:50%;transform:translate(-50%,-50%)"></div>
+    <div class="glow ring" style="top:50%;left:50%;transform:translate(-50%,-50%);animation-delay:1s;width:900px;height:900px"></div>
+    <p class="sub">${business}</p>
+    <h1 class="name">${business}.</h1>
+    <p class="tag">AI that runs your merchant's online presence.</p>
+  </div>
+</body>
+</html>`;
+}
+
+function AiVideoCreator({ googleTargets }: { googleTargets: PublishTarget[] }) {
+  const businessOptions = useMemo(() => {
+    const names = new Set<string>();
+    googleTargets.forEach((t) => names.add(t.name));
+    if (names.size === 0) names.add("My Business");
+    return [...names];
+  }, [googleTargets]);
+
+  const [business, setBusiness] = useState(businessOptions[0] ?? "My Business");
+  const [primary, setPrimary] = useState("#3d1d6e");
+  const [accent, setAccent] = useState("#b0338a");
+  const [bg, setBg] = useState("#f4f2f7");
+  const [html, setHtml] = useState<string | null>(null);
+  const [generated, setGenerated] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const fileName = `${sanitizeName(business)}.mp4`;
+
+  const generate = () => {
+    const h = buildVideoHtml({ business, primary, accent, bg });
+    setHtml(h);
+    setGenerated(true);
+    // reload iframe to replay
+    if (iframeRef.current) {
+      iframeRef.current.srcdoc = h;
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* business selector */}
+      <div>
+        <label className={`block text-[11px] font-semibold ${INK2} mb-1`}>Business</label>
+        <select
+          value={business}
+          onChange={(e) => setBusiness(e.target.value)}
+          className="w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+        >
+          {businessOptions.map((b) => (
+            <option key={b} value={b}>{b}</option>
+          ))}
+        </select>
+        {businessOptions.length <= 1 && (
+          <input
+            type="text"
+            value={business}
+            onChange={(e) => setBusiness(e.target.value)}
+            placeholder="Business name"
+            className="mt-2 w-full rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 text-[13px] text-[var(--ui-ink)] outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-line-strong)]"
+          />
+        )}
+      </div>
+
+      {/* color branding */}
+      <div>
+        <label className={`block text-[11px] font-semibold ${INK2} mb-1`}>Brand colors</label>
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <span className={`block text-[10px] ${INK2} mb-1`}>Primary</span>
+            <input type="color" value={primary} onChange={(e) => setPrimary(e.target.value)}
+              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+          </div>
+          <div>
+            <span className={`block text-[10px] ${INK2} mb-1`}>Accent</span>
+            <input type="color" value={accent} onChange={(e) => setAccent(e.target.value)}
+              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+          </div>
+          <div>
+            <span className={`block text-[10px] ${INK2} mb-1`}>Background</span>
+            <input type="color" value={bg} onChange={(e) => setBg(e.target.value)}
+              className="h-9 w-full cursor-pointer rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)]" />
+          </div>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {[
+            { p: "#3d1d6e", a: "#b0338a", b: "#f4f2f7" },
+            { p: "#14101f", a: "#ff4f6e", b: "#f4f2f7" },
+            { p: "#0f766e", a: "#14b8a6", b: "#f0fdfa" },
+            { p: "#1e3a8a", a: "#3b82f6", b: "#eff6ff" },
+          ].map((preset, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => { setPrimary(preset.p); setAccent(preset.a); setBg(preset.b); }}
+              className="h-6 w-6 rounded-full border border-[var(--ui-line)]"
+              style={{ background: `linear-gradient(135deg, ${preset.p}, ${preset.a})` }}
+              title="Apply preset"
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* file name */}
+      <div className={`rounded-[10px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] px-3 py-2 text-[11px] ${INK2}`}>
+        File name: <span className={`font-bold ${INK}`}>{fileName}</span>
+        <span className="ml-1 opacity-60">(will be saved as {fileName} after render)</span>
+      </div>
+
+      {/* actions */}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={generate}
+          className="w-full rounded-[10px] bg-[var(--ui-ink)] px-3 py-2 text-[12px] font-bold text-[var(--ui-on-ink)] transition hover:opacity-90 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)]"
+        >
+          Create video
+        </button>
+      </div>
+
+      {/* video player / preview */}
+      <div className="overflow-hidden rounded-[12px] border border-[var(--ui-line)] bg-[var(--ui-sunken)]">
+        <div className="flex items-center gap-2 border-b border-[var(--ui-line)] px-3 py-2">
+          <span className={`text-[11px] font-bold uppercase tracking-widest ${INK2}`}>Preview</span>
+          <span className={`ml-auto text-[10px] ${INK2}`}>{generated ? "ready" : "no video yet"}</span>
+        </div>
+        <div className="relative" style={{ aspectRatio: "16 / 9" }}>
+          {html ? (
+            <iframe
+              ref={iframeRef}
+              srcDoc={html}
+              title={`${business} video preview`}
+              className="absolute inset-0 h-full w-full border-0"
+              sandbox="allow-scripts"
+            />
+          ) : (
+            <div className={`absolute inset-0 flex flex-col items-center justify-center gap-2 ${INK2}`}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="M10 9l5 3-5 3V9z" fill="currentColor" stroke="none" />
+              </svg>
+              <span className="text-[12px] font-medium">Click &quot;Create video&quot; to generate</span>
+            </div>
+          )}
+        </div>
+        {generated && (
+          <div className="flex items-center justify-between border-t border-[var(--ui-line)] px-3 py-2">
+            <span className={`text-[11px] ${INK2}`}>Video preview · loops automatically</span>
+            <button
+              type="button"
+              onClick={() => { if (iframeRef.current && html) iframeRef.current.srcdoc = html; }}
+              className={`text-[11px] font-semibold ${INK} hover:underline`}
+            >
+              Replay
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* publish video — coming soon */}
+      <button
+        type="button"
+        disabled
+        title="Coming soon — will publish your video as {business}.mp4"
+        className="w-full rounded-[10px] border border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-sunken)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-ink-2)] opacity-60 cursor-not-allowed"
+      >
+        Publish video (coming soon)
+      </button>
+    </div>
+  );
+}
+
 export default function PublishComposer({
   onPublished,
   onCancel,
+  initialScheduleDate,
 }: {
   onPublished?: () => void;
   onCancel?: () => void;
+  initialScheduleDate?: string | null;
 }) {
   // ── Destinations ─────────────────────────────────────────────────
   const [targets, setTargets] = useState<PublishTarget[]>([]);
@@ -97,6 +300,19 @@ export default function PublishComposer({
   // ── Schedule ────────────────────────────────────────────────────
   const [scheduleOn, setScheduleOn] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
+
+  // Pre-fill schedule when navigated from the calendar with a date.
+  useEffect(() => {
+    if (initialScheduleDate) {
+      setScheduleOn(true);
+      // datetime-local input expects "YYYY-MM-DDTHH:MM"
+      const d = new Date(initialScheduleDate + "T09:00");
+      const pad = (n: number) => String(n).padStart(2, "0");
+      setScheduleAt(
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T09:00`
+      );
+    }
+  }, [initialScheduleDate]);
   // A promotional post has an end date: it goes up now and comes down
   // on the day the offer lapses.
   const [removeOn, setRemoveOn] = useState(false);
@@ -558,6 +774,17 @@ export default function PublishComposer({
                 onToggleTarget={toggleTarget}
                 onToggleGoogleTarget={toggleTarget}
               />
+            </section>
+
+            {/* ── AI video — one click, prop looks ── */}
+            <section aria-labelledby="ai-video-h" className="ui-panel bg-[var(--ui-surface)] p-5">
+              <h2 id="ai-video-h" className={`text-[14px] font-bold ${INK}`}>
+                ✨ Create a video for your business
+              </h2>
+              <p className={`mt-0.5 mb-3 text-[12px] ${INK2}`}>
+                One click. Sayvors drafts a launch video from your business — no editing needed.
+              </p>
+              <AiVideoCreator googleTargets={googleTargets} />
             </section>
 
             {/* Configure formats — method pills per selected destination */}

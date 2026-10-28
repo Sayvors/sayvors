@@ -3,6 +3,7 @@
 import { driver, type Driver } from "driver.js";
 import "driver.js/dist/driver.css";
 import { usePathname, useRouter } from "next/navigation";
+import Image from "next/image";
 import {
   createContext,
   useCallback,
@@ -239,7 +240,7 @@ export default function TourProvider({ children }: { children: React.ReactNode }
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-ink/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Welcome to Sayvors">
           <div className="w-full max-w-sm rounded-3xl border-2 border-white bg-white p-6 text-center shadow-[0_18px_50px_rgba(58,39,120,0.25)] dark:border-fog/[0.1] dark:bg-ink">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/Sayvors_Icon.png" alt="" className="mx-auto h-12 w-12 rounded-xl" />
+            <Image src="/Sayvors_Icon.png" alt="" width={48} height={48} className="mx-auto h-12 w-12 rounded-xl" />
             <h2 className="mt-3 text-[17px] font-bold text-ink dark:text-fog">Welcome to Sayvors 👋</h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-ink/55 dark:text-fog/55">
               Take a 1-minute tour: connect your Google location, sync reviews,

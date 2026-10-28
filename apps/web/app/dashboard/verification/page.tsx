@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 
@@ -18,58 +20,62 @@ const METHODS: { id: Method; title: string; description: string; timing: string;
 ];
 
 export default function VerificationPage() {
-  const [channels, setChannels] = useState<Channel[]>([]);
+  const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState("");
-  const [verification, setVerification] = useState<Verification | null>(null);
   const [activeMethod, setActiveMethod] = useState<Method | null>(null);
   const [contactTarget, setContactTarget] = useState("");
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const channelsQuery = useQuery({
+    queryKey: queryKeys.verification.channels(),
+    queryFn: async () => {
+      const data = await apiFetch("/api/v1/channels?limit=100");
+      return ((data.channels ?? []) as Array<Channel & { platform: string }>).filter(
+        (c) => c.platform === "google_reviews",
+      );
+    },
+  });
+  const channels = channelsQuery.data ?? [];
+  // Pick the first channel once channels load (mirrors the old mount effect).
   useEffect(() => {
-    async function loadChannels() {
-      try {
-        const data = await apiFetch("/api/v1/channels?limit=100");
-        const google = (data.channels ?? []).filter((channel: Channel & { platform: string }) => channel.platform === "google_reviews");
-        setChannels(google);
-        setSelectedId(google[0]?.id ?? "");
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : "Could not load channels.");
-      } finally {
-        setLoading(false);
-      }
+    if (!selectedId && channels.length > 0) {
+      setSelectedId(channels[0].id);
     }
-    void loadChannels();
-  }, []);
+  }, [channels, selectedId]);
 
-  useEffect(() => {
-    if (!selectedId) {
-      setVerification(null);
-      return;
-    }
-    void apiFetch(`/api/v1/channels/${selectedId}/verification`)
-      .then(setVerification)
-      .catch((error) => setMessage(error instanceof Error ? error.message : "Could not load verification status."));
-  }, [selectedId]);
+  const verificationQuery = useQuery({
+    queryKey: queryKeys.verification.detail(selectedId),
+    queryFn: () => apiFetch(`/api/v1/channels/${selectedId}/verification`),
+    enabled: !!selectedId,
+  });
+  const verification = (verificationQuery.data ?? null) as Verification | null;
+  const loading = channelsQuery.isPending;
 
-  async function requestVerification() {
-    if (!selectedId || !activeMethod) return;
-    setSaving(true);
-    setMessage(null);
-    try {
+  const requestVerification = useMutation({
+    mutationFn: async () => {
       const next = await apiFetch(`/api/v1/channels/${selectedId}/verification`, {
         method: "POST",
         body: JSON.stringify({ method: activeMethod, contact_target: contactTarget.trim() || null }),
       });
-      setVerification(next);
+      return next as Verification;
+    },
+    onSuccess: (next) => {
+      queryClient.setQueryData(queryKeys.verification.detail(selectedId), next);
       setMessage("Verification request saved.");
-    } catch (error) {
+    },
+    onError: (error) => {
       setMessage(error instanceof Error ? error.message : "Could not save verification request.");
-    } finally {
-      setSaving(false);
-    }
-  }
+    },
+    onSettled: () => setSaving(false),
+  });
+
+  const handleRequestVerification = useCallback(() => {
+    if (!selectedId || !activeMethod) return;
+    setSaving(true);
+    setMessage(null);
+    requestVerification.mutate();
+  }, [selectedId, activeMethod, requestVerification]);
 
   const selected = channels.find((channel) => channel.id === selectedId);
   const selectedMethod = METHODS.find((method) => method.id === activeMethod);
@@ -128,7 +134,7 @@ export default function VerificationPage() {
               <p className="mt-1 text-[12px] text-ink/45">{selectedMethod?.description || "Select a method above to configure a request."}</p>
               <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
                 <label className="text-[11px] font-bold text-ink/55">Contact target <input value={contactTarget} onChange={(event) => setContactTarget(event.target.value)} placeholder="Phone or email, if required" className="input-field mt-1" /></label>
-                <button onClick={() => void requestVerification()} disabled={!selectedId || !activeMethod || saving} className="rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving..." : "Request verification"}</button>
+                <button onClick={() => void handleRequestVerification()} disabled={!selectedId || !activeMethod || saving} className="rounded-xl bg-deep-violet px-4 py-2.5 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving..." : "Request verification"}</button>
               </div>
               <p className="mt-3 text-[11px] text-amber-700">Requests are stored in Sayvors. Verification completion remains provider-managed.</p>
             </section>

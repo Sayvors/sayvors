@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.modules.analytics import consumer
 from app.modules.analytics.consumer import _process_message
+from app.modules.outbox import service as outbox_service
 from conftest import TEST_ENGINE
 
 
@@ -51,13 +52,15 @@ async def test_discovered_flags_edited_review_and_notifies_once(
 
     events: list[str] = []
 
-    async def _fake_enqueue(event_type, payload, topic="review-events"):
+    async def _fake_enqueue_in(db_, event_type, payload, topic="review-events"):
         events.append(event_type)
         return "evt"
 
     monkeypatch.setattr(consumer, "async_session", _test_session_factory())
     monkeypatch.setattr(consumer, "enrich_review", _fake_enrich)
-    monkeypatch.setattr(consumer, "enqueue_event", _fake_enqueue)
+    # The consumer writes through the transactional outbox helper, imported
+    # inside the handler, so the patch targets the source module.
+    monkeypatch.setattr(outbox_service, "enqueue_event_in", _fake_enqueue_in)
 
     payload = {
         "user_id": user_id, "channel_id": channel_id, "review_id": "gg-edit-1",
@@ -113,12 +116,12 @@ async def test_discovered_backfill_is_not_an_edit(db, user_id, channel_id, monke
         return {"sentiment": "positive", "sentiment_score": 0.5,
                 "topics": [], "products": [], "problems": []}
 
-    async def _fake_enqueue(event_type, payload, topic="review-events"):
+    async def _fake_enqueue_in(db_, event_type, payload, topic="review-events"):
         return "evt"
 
     monkeypatch.setattr(consumer, "async_session", _test_session_factory())
     monkeypatch.setattr(consumer, "enrich_review", _fake_enrich)
-    monkeypatch.setattr(consumer, "enqueue_event", _fake_enqueue)
+    monkeypatch.setattr(outbox_service, "enqueue_event_in", _fake_enqueue_in)
 
     await consumer._handle_discovered({
         "user_id": user_id, "channel_id": channel_id, "review_id": "gg-bf-1",

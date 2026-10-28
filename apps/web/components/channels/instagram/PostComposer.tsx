@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import {
   fetchInstagramLocations,
   fetchInstagramPublishingLimit,
@@ -108,15 +109,16 @@ function PostPreview({
         <span className={`text-[13px] font-bold ${INK}`}>{username || "your account"}</span>
       </div>
       <div
-        className="w-full bg-black"
+        className="relative w-full bg-black"
         style={{ aspectRatio: String(aspect) }}
       >
         {first ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
+          <Image
             src={first.url}
             alt=""
-            className="h-full w-full object-cover"
+            fill
+            sizes="100vw"
+            className="object-cover"
           />
         ) : null}
       </div>
@@ -451,10 +453,11 @@ export default function PostComposer({
                 <ul className="flex flex-wrap gap-2">
                   {entries.map((e, i) => (
                     <li key={e.key} className="relative">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
+                      <Image
                         src={e.url}
                         alt={`Post image ${i + 1}`}
+                        width={64}
+                        height={64}
                         className="h-16 w-16 rounded-[8px] border border-[var(--ui-line)] object-cover"
                       />
                       {i === 0 && (
@@ -542,7 +545,7 @@ export default function PostComposer({
                     className="flex items-center gap-1.5 rounded-full border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-1.5 text-[12px] font-semibold text-[var(--ui-ink)] hover:bg-[var(--ui-line)] disabled:opacity-50"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
+                    <Image
                       src="/Sayvors_Icon.png"
                       alt=""
                       width={16}

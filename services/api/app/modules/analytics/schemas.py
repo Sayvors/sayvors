@@ -359,16 +359,35 @@ class TopicsResponse(BaseModel):
 
 class ProblemStat(BaseModel):
     name: str
+    category: str = "other"
     mentions: int
     severity: str
     trend_pct: float | None = None
     status: str
     impact_score: float
+    staff_named: int = 0
+    serious: int = 0
+
+
+class ComplaintTerm(BaseModel):
+    name: str
+    mentions: int
+
+
+class ComplaintArea(BaseModel):
+    category: str
+    mentions: int
+    staff_named: int = 0
+    serious: int = 0
+    trend_pct: float | None = None
+    status: str
+    top_terms: list[ComplaintTerm] = []
 
 
 class ProblemsResponse(BaseModel):
     days: int
     problems: list[ProblemStat]
+    by_area: list[ComplaintArea] = []
 
 
 class ProductStat(BaseModel):
@@ -523,6 +542,13 @@ class BenchmarkResponse(BaseModel):
     cohort: dict | None = None
     market: list[dict] = []
     my_rank: int | None = None
+    # Recency + gap-to-4.5 cards. dicts keep the response stable while the
+    # card copy evolves (same convention as `cohort`/`distribution`).
+    recency: dict | None = None
+    gap_to_target: dict | None = None
+    # Pro: external nearby peer set (Places/crawler). None when not entitled
+    # or when the provider is not configured.
+    external: dict | None = None
 
 
 class ExecutiveSummaryResponse(BaseModel):
@@ -546,6 +572,8 @@ class MessagingChannelRow(BaseModel):
     label: str
     messages_in: int
     messages_out: int
+    ai_handled_out: int = 0
+    human_handled_out: int = 0
     messages_in_prev: int
     conversations: int
     conversations_prev: int
@@ -559,6 +587,8 @@ class MessagingChannelRow(BaseModel):
 class MessagingTotals(BaseModel):
     messages_in: int
     messages_out: int
+    ai_handled_out: int = 0
+    ai_handled_out_prev: int = 0
     messages_in_prev: int
     messages_out_prev: int
     conversations: int
@@ -580,3 +610,290 @@ class MessagingOverviewResponse(BaseModel):
     goal: dict[str, float]
     totals: MessagingTotals
     channels: list[MessagingChannelRow]
+    by_hour_in: list[int] = []  # 24-int heatmap feed, summed across the window
+
+
+
+class PulseSource(BaseModel):
+    platform: str
+    count: int
+
+
+class ReputationPulse(BaseModel):
+    avg_rating: float
+    rating_delta: float | None = None
+    new_reviews: int
+    new_reviews_delta_pct: float | None = None
+    response_rate: float
+    awaiting_reply: int
+    oldest_wait_days: int | None = None
+    sources: list[PulseSource] = []
+    last_synced_at: datetime | None = None
+
+
+class WaitingPulse(BaseModel):
+    unanswered_texts: int
+    missed_calls: int | None = None
+    missed_calls_available: bool = False
+    median_first_response_seconds: int | None = None
+    waiting_over_1h: int
+    oldest_unanswered_seconds: int | None = None
+    business_hours: dict | None = None
+    as_of: datetime | None = None
+
+
+class LocationPulse(BaseModel):
+    channel_id: str
+    name: str
+    platform: str
+    new_reviews: int
+    avg_rating: float | None = None
+    response_rate: float
+    unanswered: int
+    below_threshold: bool
+
+
+class OneThingPulse(BaseModel):
+    kind: str
+    category: str
+    mentions: int
+    trend_pct: float | None = None
+    status: str | None = None
+    staff_named: int = 0
+    serious: int = 0
+    top_terms: list[dict] = []
+    period_days: int
+
+
+class AttentionItem(BaseModel):
+    kind: str
+    severity: str
+    title: str
+    detail: str | None = None
+    href: str | None = None
+
+
+class PulseResponse(BaseModel):
+    as_of: datetime
+    period_days: int
+    reputation: ReputationPulse
+    waiting: WaitingPulse
+    locations: list[LocationPulse] = []
+    one_thing: OneThingPulse | None = None
+    attention: list[AttentionItem] = []
+
+
+
+class ThemeCardOut(BaseModel):
+    name: str
+    mentions: int
+    negative: int
+    negative_pct: float
+    trend_pct: float | None = None
+    top_location: str | None = None
+    quote: str | None = None
+
+
+class WhatChangedOut(BaseModel):
+    low_reviews: int
+    prior_low_reviews: int
+    theme: str | None = None
+    location: str | None = None
+    example: str | None = None
+    period_days: int = 7
+
+
+class LocationSentimentOut(BaseModel):
+    channel_id: str
+    name: str
+    avg_rating: float | None = None
+    rating_trend: float | None = None
+    top_negative_theme: str | None = None
+    response_rate: float
+    unanswered: int
+
+
+class SummaryBulletOut(BaseModel):
+    text: str
+    n: int
+
+
+class InsightsSummaryOut(BaseModel):
+    bullets: list[SummaryBulletOut] = []
+    review_count: int
+    confidence: str
+    source: str
+    analyzed_at: datetime
+
+
+class ActionCardOut(BaseModel):
+    id: str
+    subject: str
+    title: str
+    detail: str
+    status: str
+    negative_count: int
+    review_count: int
+
+
+class InsightsCardsResponse(BaseModel):
+    days: int
+    top_themes: list[ThemeCardOut] = []
+    what_changed: WhatChangedOut
+    sentiment_by_location: list[LocationSentimentOut] = []
+    summary: InsightsSummaryOut
+    action_plan: list[ActionCardOut] = []
+
+
+class FunnelChannelOut(BaseModel):
+    channel: str
+    requests: int
+
+
+class FunnelTriggerOut(BaseModel):
+    trigger: str
+    requests: int
+
+
+class ReviewFunnelOut(BaseModel):
+    requests_sent: int
+    delivered: int
+    clicked: int
+    reviews: int
+    reviews_via_request: int
+    conversion_rate: float | None = None
+    avg_rating: float | None = None
+    delivery_tracked: bool
+    click_tracked: bool
+    by_channel: list[FunnelChannelOut] = []
+    by_trigger: list[FunnelTriggerOut] = []
+
+
+class ContactPlatformOut(BaseModel):
+    platform: str
+    contacts: int
+
+
+class GrowthContactsOut(BaseModel):
+    new_contacts: int
+    prior_contacts: int
+    delta_pct: float | None = None
+    by_platform: list[ContactPlatformOut] = []
+    attribution: str = "unknown"
+
+
+class GrowthActionOut(BaseModel):
+    kind: str
+    title: str
+    detail: str
+    expected: str | None = None
+    href: str | None = None
+
+
+class RetentionOut(BaseModel):
+    available: bool
+    reason: str | None = None
+
+
+class GrowthCardsResponse(BaseModel):
+    days: int
+    funnel: ReviewFunnelOut
+    contacts: GrowthContactsOut
+    retention: RetentionOut
+    actions: list[GrowthActionOut] = []
+
+
+class ReviewRequestIn(BaseModel):
+    channel_id: str | None = None
+    contact: str | None = None
+    contact_name: str | None = None
+    # whatsapp | sms | email | in_person
+    channel: str = "whatsapp"
+    # manual | qr | after_visit | campaign
+    trigger: str = "manual"
+    status: str = "sent"
+    # Server-side send for sms/email. WhatsApp/in-person stay client-side.
+    deliver: bool = False
+
+
+class ReviewRequestOut(BaseModel):
+    id: str
+    status: str
+    sent_at: datetime
+    channel: str
+    sent_via: str | None = None
+    link: str | None = None
+    error: str | None = None
+
+
+class BulkContactIn(BaseModel):
+    email: str | None = None
+    phone: str | None = None
+    name: str | None = None
+
+
+class ReviewRequestBulkIn(BaseModel):
+    channel_id: str | None = None
+    # email | whatsapp
+    channel: str = "email"
+    contacts: list[BulkContactIn] = Field(default_factory=list, max_length=500)
+    # now | batched
+    mode: str = "now"
+    batch_size: int = Field(10, ge=1, le=500)
+    interval_minutes: int = Field(60, ge=1, le=10080)
+    trigger: str = "campaign"
+    subject: str | None = None
+    body: str | None = None
+
+
+class BulkQuotaOut(BaseModel):
+    used: int
+    max: int | None = None
+    remaining: int | None = None
+    requested: int
+
+
+class ReviewRequestBulkOut(BaseModel):
+    queued: int
+    sent_now: int
+    scheduled: int
+    skipped: int
+    skipped_quota: int = 0
+    quota: BulkQuotaOut | None = None
+
+
+class ReviewRequestItemOut(BaseModel):
+    id: str
+    contact: str | None = None
+    contact_name: str | None = None
+    channel: str
+    trigger: str
+    status: str
+    sent_via: str | None = None
+    sent_at: datetime
+    clicked_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    error: str | None = None
+    link: str | None = None
+
+
+class ReviewRequestListOut(BaseModel):
+    items: list[ReviewRequestItemOut] = []
+    total: int
+    counts: dict[str, int] = {}
+
+
+class ReviewRequestRetryOut(BaseModel):
+    retried: int
+
+
+class ReviewTemplateIn(BaseModel):
+    # email | whatsapp
+    channel: str = "email"
+    tone: str = "friendly"
+
+
+class ReviewTemplateOut(BaseModel):
+    subject: str
+    body: str
+    source: str  # ai | fallback

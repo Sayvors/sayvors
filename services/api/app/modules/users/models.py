@@ -56,6 +56,9 @@ class User(Base):
     # Same JSON pattern as lead_settings: a new toggle must not need a
     # migration, and never free-form content.
     notification_settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # "Start here — launch step by step" checklist state: which steps are
+    # done, collapsed/expanded, dismissed. NULL = client-side defaults.
+    onboarding_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Google identity (sign-in with Google). Non-NULL google_sub ⇒ the account
     # authenticates via Google; password_hash stays a random unusable value.
     google_sub: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)

@@ -1,3 +1,4 @@
+import app.modules.admin.models  # noqa: F401 (registers tables)
 """Platform admin auth: separate password, token gate (no network, no DB writes)."""
 import sys
 from pathlib import Path
@@ -46,16 +47,24 @@ def _no_rate_limit(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_disabled_without_hash(client, monkeypatch):
+async def test_admin_disabled_without_hash(client, db, monkeypatch):
+    from sqlalchemy import delete
+
+    from app.modules.admin.models import PlatformOperator
+
+    # Use the test session, never app.database.async_session: the latter points
+    # at the dev Postgres database and would delete real operator accounts.
+    await db.execute(delete(PlatformOperator))
+    await db.commit()
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", "")
-    r = client.post("/api/v1/admin/login", json={"password": "x"}, headers=_HOST)
+    r = client.post("/api/v1/admin/login", json={"username": "admin", "password": "x"}, headers=_HOST)
     assert r.status_code == 503
 
 
 @pytest.mark.asyncio
 async def test_admin_wrong_password(client, monkeypatch):
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
-    r = client.post("/api/v1/admin/login", json={"password": "nope"}, headers=_HOST)
+    r = client.post("/api/v1/admin/login", json={"username": "admin", "password": "nope"}, headers=_HOST)
     assert r.status_code == 401
 
 
@@ -65,7 +74,7 @@ async def test_admin_login_and_me(client, monkeypatch):
 
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
     r = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+        "/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"}, headers=_HOST
     )
     assert r.status_code == 200
     body = r.json()
@@ -75,7 +84,7 @@ async def test_admin_login_and_me(client, monkeypatch):
     assert cookie
     payload = decode_token(cookie)
     assert payload["type"] == "admin"
-    assert payload["sub"] == "admin"
+    assert payload["sub"]  # operator id (UUID) or "admin" for legacy
 
     # Cookie auth without the CSRF header is refused (admin paths are
     # exempt from the global CSRF middleware, so the header is the guard).
@@ -97,7 +106,7 @@ async def test_admin_logout_revokes_and_clears(client, monkeypatch):
 
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
     login = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+        "/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"}, headers=_HOST
     )
     assert login.status_code == 200
     csrf = {**_HOST, "X-Requested-With": "XMLHttpRequest"}
@@ -142,6 +151,22 @@ def test_every_admin_route_is_gated_except_login():
 
     assert admin_router.prefix == "/api/v1/admin"
     for route in admin_router.routes:
+        # FastAPI 0.141 defers include_router: the child's routes are not
+        # copied in, and the include-level dependencies live on the context.
+        include_context = getattr(route, "include_context", None)
+        if include_context is not None:
+            # Include-level deps are fastapi.params.Depends (not Dependant),
+            # so the callable lives on `.dependency`.
+            calls = [
+                getattr(d, "dependency", getattr(d, "call", None))
+                for d in include_context.dependencies
+            ]
+            assert require_admin in calls, (
+                f"included router {include_context.prefix} missing require_admin"
+            )
+            assert include_context.prefix == "/api/v1/admin"
+            continue
+
         path = getattr(route, "path", "")
         methods = getattr(route, "methods", set()) or set()
         if path == "/api/v1/admin/login" and methods == {"POST"}:
@@ -165,8 +190,13 @@ def test_admin_prefix_belongs_only_to_admin_router():
         if name.endswith("_router") and hasattr(obj, "prefix")
     }
     assert routers, "expected mounted routers"
+    # Both routers are admin-only surfaces: every route on each carries
+    # Depends(require_admin), which test_every_admin_route_requires_admin
+    # verifies route by route. The rule below is about tenant routers that
+    # must never be mounted under the admin prefix.
+    admin_routers = {"admin_router", "jobs_admin_router"}
     for name, router in routers.items():
-        if name == "admin_router":
+        if name in admin_routers:
             assert router.prefix == "/api/v1/admin"
         else:
             assert not str(router.prefix).startswith("/api/v1/admin"), name
@@ -197,7 +227,7 @@ async def test_admin_token_rejected_on_tenant_routes(client, monkeypatch):
 
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
     login = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+        "/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"}, headers=_HOST
     )
     assert login.status_code == 200
     from app.security import create_admin_token
@@ -309,7 +339,7 @@ async def test_admin_health_http(client, monkeypatch):
 def _admin_headers(client, monkeypatch):
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
     login = client.post(
-        "/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST
+        "/api/v1/admin/login", json={"username": "admin", "password": "test-admin-pass"}, headers=_HOST
     )
     assert login.status_code == 200
     # Session is an httpOnly cookie; cookie-auth requests must carry the
@@ -350,7 +380,7 @@ async def test_admin_llm_list_and_set_round_trip(client, monkeypatch):
     r = client.put("/api/v1/admin/llm/groq", json={"enabled": False}, headers=headers)
     assert r.json()["key_source"] == "disabled"
 
-    # Clear the key -> falls back to env (none in tests).
+    # Clear the key -> no key.
     r = client.put("/api/v1/admin/llm/groq", json={"api_key": "", "enabled": True}, headers=headers)
     assert r.json()["key_source"] in ("env", "none")
 

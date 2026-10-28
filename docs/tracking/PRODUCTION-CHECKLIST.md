@@ -60,7 +60,7 @@ controls; breaking them reintroduces the vulnerabilities we just fixed.
 |---|-------|-------|
 | I-1 | **Kafka: 3-broker cluster** | Single broker = SPOF; KRaft quorum of 3 |
 | I-2 | **`KAFKA_AUTO_CREATE_TOPICS_ENABLE=false`** | Prevents 1-partition topics; provision explicitly (24/12/6/6 per lane) |
-| I-3 | **Redis: 6–8 GB, multi-AZ, AOF on** | Auth infrastructure — memory alarm at 75%, `noeviction` policy |
+| I-3 | **Redis: 1–2 GB, AOF on → multi-AZ** | Auth infrastructure — memory alarm at 75%, `noeviction` policy. Code side done; deployment steps tracked in §8 |
 | I-4 | **Postgres read replica** | Offload analytics queries; binding constraint is connection pool |
 | I-5 | **PgBouncer connection pooling** | `DATABASE_URL` → PgBouncer port 6432, `DB_POOL_MODE=transaction`, prevents connection exhaustion |
 | I-6 | **DB pool right-sized** | `DB_POOL_SIZE=5`, `MAX_OVERFLOW=5` per process; boot-time headroom check |
@@ -99,9 +99,75 @@ Your `next.config.ts` already sets COOP/COEP/CSP headers — verify they're prod
 | V-6 | **HTTP request is redirected to HTTPS** | `http://` → `https://` at the edge |
 | V-7 | **Rate limiting fails closed** | Stop Redis → login should be denied (not allowed) |
 
+## 7. Job system — Phase 4 (load / chaos / multi-replica)
+
+| # | Check | Notes |
+|---|-------|-------|
+| J-1 | **k6 load test at 10x current peak** | Run before and after lanes land. Scripted peak-hour profile. Free (open source). |
+| J-2 | **Chaos test** | Kill a worker mid-job; verify lease reclaim + no duplicate external calls. |
+| J-3 | **Multi-replica scaling test** | 2+ API replicas + 2+ workers; verify no double-processing. |
+| J-4 | **Single Kafka broker → HA** | 3-broker KRaft cluster or accept single-broker risk with documented RTO. |
+| J-5 | **Single box → managed container platform** | ECS/Fly/Render to retire hand-SSH deploys. |
+| J-6 | **SHA-pinned deploy images** | Pin to digest, not mutable `:staging` tags. |
+| J-7 | **Production host in Caddy** | Stand up prod host + secrets + startup validator (redirect URIs, CORS). |
+| J-8 | **Uptime monitor on /readyz** | External: UptimeRobot / Better Stack. |
+| J-9 | **Prometheus scrape /metrics** | Scrape config in `deploy/prometheus.yml` (already added). |
+| J-10 | **Redis memory alarm** | Alert on `sayvors_redis_memory_utilization_ratio > 0.75` (metric exported by `/metrics`); keep `noeviction`. See §8. |
+
 ---
 
-## Quick reference: env vars for production
+## 8. Redis reliability (auth infrastructure)
+
+Redis holds rate limits, the JWT blacklist, sessions and OTPs, and the auth path
+fails closed — a Redis outage locks every tenant out. Keep `noeviction`:
+once sizing and alarms are real, evicting an OTP or blacklist key is worse than
+erroring.
+
+| # | Check | Type | Status |
+|---|-------|------|--------|
+| R-1 | **Re-arm prober runs in the API process** | Code | ✅ Done — `run_redis_rearmer()` is started in the API lifespan and cancelled on shutdown (the worker already ran it). `get_redis()` also re-probes after `REDIS_REPROBE_COOLDOWN_SECONDS = 5s`. |
+| R-2 | **Redis health + memory on `/metrics`** | Code | ✅ Done — `sayvors_redis_available`, `sayvors_redis_used_memory_bytes`, `sayvors_redis_maxmemory_bytes`, `sayvors_redis_memory_utilization_ratio`; the scrape stays 200 with `available 0` when Redis is down (`tests/test_metrics_redis.py`). |
+| R-3 | **AOF enabled** | Infra | ⬜ Open — `--appendonly yes` plus a persistent volume in `docker-compose.prod.yml`; automatic on ElastiCache. |
+| R-4 | **Raise `maxmemory` to 1–2 GB** | Infra | ⬜ Open — compose flag / ElastiCache parameter group. |
+| R-5 | **Alarm at 75% of `maxmemory`** | Infra | ⬜ Open — Prometheus/Grafana (or CloudWatch) rule on `sayvors_redis_memory_utilization_ratio > 0.75`. The metric already exists. |
+| R-6 | **Multi-AZ (ElastiCache replication group)** | Infra | ⬜ Open — automatic failover when spend allows. |
+| R-7 | **Blacklist fail-closed policy** | Code decision | ⏸ Hold — keep `AUTH_RATE_LIMIT_FAIL_CLOSED=true` once HA exists; fail-open with alerting is defensible before that. No change made. |
+
+**Smoke tests after each change**
+
+- Stop Redis → `/readyz` reports 503, `/metrics` shows `sayvors_redis_available 0`, login is denied (fail-closed), and the API recovers within one prober interval of Redis returning — without a restart.
+- `redis-cli config get appendonly` → `yes`; `redis-cli info memory` → `maxmemory` matches the plan and `maxmemory_policy:noeviction`.
+- Scrape the rule: `sayvors_redis_memory_utilization_ratio` crosses 0.75 in a staging load test and the alert fires once.
+
+---
+
+## 9. Cloud portability (AWS staging → Google Cloud)
+
+The runtime is URL-configured and the image is plain Docker, so the move is a
+deployment project, not a rewrite. Two code items must land before the switch;
+everything else is config or docs.
+
+| # | Check | Type | Status |
+|---|-------|------|--------|
+| G-1 | **Backup scripts off S3-only** | Code | ⬜ Open — `scripts/db_backup.py` / `db_restore.py` import `boto3` and require `S3_DOCS_BUCKET`; on GCP the nightly backup silently stops. Add a GCS backend (`google-cloud-storage` is already a dependency) or a pluggable uploader. |
+| G-2 | **Remove the duplicate S3 adapter** | Code | ⬜ Open — `integrations/storage/s3.py` (repo root) and `services/api/integrations/storage/s3.py` both exist and differ by ~540 lines; the effective adapter depends on the launch directory. Keep the `services/api/` one. |
+| G-3 | **GCS storage config** | Config | ✅ Supported — `GCS_PUBLIC_BUCKET` / `GCS_PRIVATE_BUCKET` + `GOOGLE_APPLICATION_CREDENTIALS`; clear the `S3_*` vars so GCS wins. No code change. |
+| G-4 | **Cloud SQL for PostgreSQL** | Infra | ⬜ Open — enable `pgvector`, confirm the tier's `max_connections` before reusing `DB_POOL_SIZE`, point `DATABASE_URL` at the instance (Cloud SQL connector or TLS). |
+| G-5 | **Memorystore for Redis** | Infra | ⬜ Open — set `maxmemory-policy=noeviction`, size 1–2 GB, point `REDIS_URL` at it. No `CONFIG SET` at runtime. |
+| G-6 | **Kafka** | Infra | ⬜ Open — Cloud Run cannot host the compose sidecars; a lift-and-shift Compute Engine VM keeps the current topology, otherwise use a managed Kafka and set `KAFKA_BOOTSTRAP_SERVERS`. |
+| G-7 | **Compute target** | Infra | ⬜ Open — Compute Engine VM (day one, same compose file) or Cloud Run + managed Redis/Kafka. The web app's `standalone` build already runs as a container. |
+| G-8 | **Registry** | Infra | ⬜ Optional — GHCR still works; private pulls from Cloud Run need credentials. Artifact Registry removes that. |
+| G-9 | **Secrets + observability** | Infra | ⬜ Open — Secret Manager → env/file; Cloud Monitoring/Logging scrape `/metrics` (Prometheus config already exists); Cloud Audit Logs replace CloudTrail. |
+| G-10 | **Docs rewrite** | Docs | ⬜ Open — `docs/security/infrastructure.md` (Secrets Manager, External Secrets `aws-secretsmanager`, CloudTrail, CloudWatch, KMS), `data-protection.md`, `incident-response.md`, `docs/database/migration-safety.md` and the two 2026-10-10 design specs still name AWS. |
+
+**Smoke tests after the move**
+
+- Upload a media file and a databank doc → both land in the GCS buckets (public URL fetchable, private object not public).
+- Run `python scripts/db_backup.py` against the new bucket and restore it into a scratch DB.
+- `/readyz` green; `/metrics` shows `sayvors_redis_available 1`; login + refresh work (Redis-backed sessions).
+- `docker compose -f docker-compose.prod.yml up -d` is unchanged on a Compute Engine VM (only `.env.prod` differs).
+
+---
 
 ```
 # Security

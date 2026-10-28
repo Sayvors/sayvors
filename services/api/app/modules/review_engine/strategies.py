@@ -89,15 +89,17 @@ def evidence_needs_for(analysis: ReviewAnalysis,
             query=product_ref or "offers promotions discounts deals",
         ))
 
-    # Business profile only when the review is an explicit question about
-    # the business (hours, location, prices…).
-    if "question" in (getattr(analysis, "intent", []) or []) and any(
-        k in (getattr(analysis, "customer_request", None) or "").lower()
-        for k in ("hour", "open", "location", "address", "phone", "price")
-    ):
+    # Business profile for ANY explicit question - hours, location, prices,
+    # services, categories, or anything else the business data can answer.
+    # Trigger on the question intent itself (not on English keyword matches)
+    # so Arabic/other-language questions also retrieve business profile +
+    # databank evidence (hybrid lookup runs for business_profile).
+    if "question" in (getattr(analysis, "intent", []) or []):
         needs.append(EvidenceNeed(
             kind="business_profile",
-            query=getattr(analysis, "customer_request", None) or "business profile",
+            query=getattr(analysis, "customer_request", None)
+            or getattr(analysis, "product_reference", None)
+            or "business profile",
         ))
 
     # De-duplicate by kind, keep first.

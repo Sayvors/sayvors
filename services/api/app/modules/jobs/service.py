@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import async_session
-from .models import Job, JobStatus
+from .models import Job, JobLaneHeartbeat, JobStatus
 from .types import JobLane, JobType, JOB_TYPES
 
 logger = logging.getLogger(__name__)
@@ -26,12 +26,13 @@ async def submit_job(
     payload: dict | None = None,
     lane: str | None = None,
     priority: int = 50,
-    max_attempts: int = 5,
+    max_attempts: int | None = None,
     idempotency_key: str | None = None,
     subject_type: str | None = None,
     subject_id: str | None = None,
     lane_key: str | None = None,
     next_run_at: datetime | None = None,
+    hard_deadline_at: datetime | None = None,
 ) -> Job:
     """Insert a Job(row) in status=queued. Caller commits the session.
 
@@ -50,8 +51,14 @@ async def submit_job(
     if job_type not in JOB_TYPES:
         raise ValueError(f"unknown_job_type: {job_type}. known={JOB_TYPES}")
 
-    resolved_lane = lane or JobType(job_type).lane_for().value
+    resolved_type = JobType(job_type)
+    resolved_lane = lane or JobType.lane_for(resolved_type).value
     resolved_lane_key = lane_key or str(subject_id or uuid4())
+
+    from .types import MAX_ATTEMPTS_BY_LANE
+
+    if max_attempts is None:
+        max_attempts = MAX_ATTEMPTS_BY_LANE.get(JobLane(resolved_lane), 5)
 
     # Idempotency: if a job with this key already exists for this tenant, return it.
     if idempotency_key:
@@ -80,6 +87,7 @@ async def submit_job(
         attempts=0,
         max_attempts=max_attempts,
         next_run_at=next_run_at or datetime.now(timezone.utc),
+        hard_deadline_at=hard_deadline_at,
     )
     db.add(job)
     await db.flush()
@@ -153,15 +161,33 @@ async def claim_due_jobs(
     """
     now = datetime.now(timezone.utc)
 
-    # Claim due jobs: status in (queued, retrying), next_run_at <= now.
+    # Claim due jobs: status in (queued, retrying), and due when the schedule
+    # OR the hard deadline has passed. The deadline acts as a clamp
+    # (LEAST(next_run_at, hard_deadline_at)): a job scheduled far out but
+    # with a nearer deadline becomes due AT the deadline, so a backlog after
+    # an outage is worked through in order instead of bursting at once.
+    #
+    # Priority aging: effective_priority = max(1, priority - age_minutes).
+    # Without aging, a steady stream of priority-0 realtime work starves
+    # bulk jobs forever. Age is minutes since created_at.
+    from sqlalchemy import Integer, case, func
+
+    age_minutes = func.extract("epoch", func.now() - Job.created_at) / 60.0
+    effective_priority = Job.priority - func.cast(age_minutes, Integer)
+    order_expr = case((effective_priority < 1, 1), else_=effective_priority)
+
     result = await db.execute(
         select(Job)
         .where(
             Job.lane == lane,
             Job.status.in_([JobStatus.queued.value, JobStatus.retrying.value]),
-            Job.next_run_at <= now,
+            (Job.next_run_at <= now)
+            | (
+                Job.hard_deadline_at.is_not(None)
+                & (Job.hard_deadline_at <= now)
+            ),
         )
-        .order_by(Job.priority, Job.next_run_at, Job.created_at)
+        .order_by(order_expr, Job.next_run_at, Job.created_at)
         .with_for_update(skip_locked=True)
         .limit(limit)
     )
@@ -175,7 +201,35 @@ async def claim_due_jobs(
         db.add(job)
 
     await db.flush()
+    await record_lane_heartbeat(db, lane=lane, worker_id=worker_id, claimed=len(jobs))
     return jobs
+
+
+async def record_lane_heartbeat(
+    db: AsyncSession, *, lane: str, worker_id: str, claimed: int = 0
+) -> None:
+    """Refresh this lane's heartbeat row.
+
+    A lane that stopped ticking is invisible otherwise: the queue just stops
+    moving. The reaper reads these rows to report a stuck lane.
+    """
+    now = datetime.now(timezone.utc)
+    row = (
+        await db.execute(
+            select(JobLaneHeartbeat).where(JobLaneHeartbeat.lane == lane)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        db.add(
+            JobLaneHeartbeat(
+                lane=lane, worker_id=worker_id, last_seen_at=now, jobs_claimed=claimed
+            )
+        )
+        return
+    row.worker_id = worker_id
+    row.last_seen_at = now
+    row.jobs_claimed = claimed
+    db.add(row)
 
 
 async def complete_job(
@@ -217,6 +271,25 @@ async def retry_job(
         job.error_code = "max_attempts_exhausted"
         job.lease_expires_at = None
         job.lease_owner = None
+        # Publish to dead-letter topic for operator replay
+        try:
+            from ..outbox.service import enqueue_event_in
+
+            await enqueue_event_in(
+                db,
+                "job.dead",
+                {
+                    "job_id": job.id,
+                    "job_type": job.job_type,
+                    "lane": job.lane,
+                    "tenant_id": job.tenant_id,
+                    "attempts": job.attempts,
+                    "last_error": (job.last_error or "")[:500],
+                },
+                topic=f"{job.lane}-dispatch-dlq",
+            )
+        except Exception:
+            pass  # DLQ publish is best-effort; the dead row is the truth
     else:
         job.status = JobStatus.retrying.value
         job.next_run_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
@@ -282,12 +355,71 @@ async def block_job(
     db.add(job)
 
 
+async def replay_job(db: AsyncSession, *, job_id: str, tenant_id: str) -> Job | None:
+    job = await get_job(db, job_id, tenant_id)
+    if job is None:
+        return None
+    if job.status not in (JobStatus.dead.value, JobStatus.failed.value):
+        return None
+    job.status = JobStatus.queued.value
+    job.attempts = 0
+    job.last_error = None
+    job.error_code = None
+    job.external_intent = None
+    job.external_result = None
+    job.lease_expires_at = None
+    job.lease_owner = None
+    job.next_run_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.now(timezone.utc)
+    db.add(job)
+    return job
+
 async def get_job(db: AsyncSession, job_id: str, tenant_id: str) -> Job | None:
     """Fetch a job by id, tenant-scoped. Returns None if not found or wrong tenant."""
     result = await db.execute(
         select(Job).where(Job.id == job_id, Job.tenant_id == tenant_id)
     )
     return result.scalar_one_or_none()
+
+
+async def get_queue_metrics() -> dict:
+    """Return queue depth and oldest-job age per lane for Prometheus."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    from ...database import async_session
+
+    async with async_session() as db:
+        now = datetime.now(timezone.utc)
+        depth: dict[str, int] = {}
+        oldest_age: dict[str, int] = {}
+        for lane in ("realtime", "publishing", "media", "bulk"):
+            count = (
+                await db.execute(
+                    select(func.count()).where(
+                        Job.lane == lane,
+                        Job.status.in_([JobStatus.queued.value, JobStatus.retrying.value]),
+                    )
+                )
+            ).scalar() or 0
+            depth[lane] = int(count)
+
+            oldest = (
+                await db.execute(
+                    select(func.min(Job.created_at)).where(
+                        Job.lane == lane,
+                        Job.status.in_([JobStatus.queued.value, JobStatus.retrying.value]),
+                    )
+                )
+            ).scalar()
+            if oldest is not None:
+                if oldest.tzinfo is None:
+                    oldest = oldest.replace(tzinfo=timezone.utc)
+                oldest_age[lane] = int((now - oldest).total_seconds())
+            else:
+                oldest_age[lane] = 0
+        return {"depth": depth, "oldest_age": oldest_age}
 
 
 async def list_jobs(

@@ -179,7 +179,7 @@ async def delete_post(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/{post_id}/publish", response_model=PublishResult)
+@router.post("/{post_id}/publish", status_code=202)
 async def publish_post_now(
     post_id: str,
     ctx: TenantContext = Depends(require_perm("posts.publish")),
@@ -187,17 +187,11 @@ async def publish_post_now(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        result = await service.publish_post(db, tenant_id_of(user), post_id)
+        job = await service.submit_publish_job(db, tenant_id_of(user), post_id)
+        await db.commit()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    return PublishResult(
-        post=_out(result),
-        google_published=result["google_published"],
-        images_sent=result["images_sent"],
-        images_skipped=result["images_skipped"],
-    )
+    return {"job_id": job.id, "status": job.status, "lane": job.lane}
 
 
 @router.post("/sync", response_model=SyncResult)

@@ -173,33 +173,31 @@ export default function UsagePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  // Stable "now" for the render so Date.now() isn't called impurely during render.
+  const now = useMemo(() => Date.now(), []);
 
   const load = useCallback(async (d: number) => {
-    setLoading(true);
-    setError(null);
-    setVoiceError(null);
-    try {
-      const [usage, voiceData] = await Promise.all([
-        adminFetch<UsageOverview>(`/api/v1/admin/usage/overview?days=${d}`),
-        // Voice slice is optional — an older API without /usage/voice
-        // must not blank the token view.
-        adminFetch<VoiceUsageOverview>(`/api/v1/admin/usage/voice?days=${d}`).catch((e) => {
-          setVoiceError(e instanceof Error ? e.message : "Voice usage unavailable");
-          return null;
-        }),
-      ]);
-      setData(usage);
-      setVoice(voiceData);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load usage");
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
+    const [usage, voiceData] = await Promise.all([
+      adminFetch<UsageOverview>(`/api/v1/admin/usage/overview?days=${d}`),
+      // Voice slice is optional — an older API without /usage/voice
+      // must not blank the token view.
+      adminFetch<VoiceUsageOverview>(`/api/v1/admin/usage/voice?days=${d}`).catch((e) => {
+        setVoiceError(e instanceof Error ? e.message : "Voice usage unavailable");
+        return null;
+      }),
+    ]);
+    return { usage, voiceData };
   }, []);
 
   useEffect(() => {
-    void load(days);
+    const cancelled = false;
+    (async () => {
+      try {
+        const { usage, voiceData } = await load(days);
+        if (!cancelled) { setData(usage); setVoice(voiceData); }
+      } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load usage"); }
+      finally { if (!cancelled) setLoading(false); }
+    })();
   }, [days, load]);
 
   const tenants = useMemo(() => {
@@ -220,7 +218,6 @@ export default function UsagePage() {
     const avgPerCall = data.totals.calls ? Math.round(total / data.totals.calls) : 0;
 
     // dormant: last_seen > 7d ago
-    const now = Date.now();
     const dormant = data.per_tenant.filter((t) => {
       if (!t.last_seen) return true;
       return now - new Date(t.last_seen).getTime() > 7 * 86400 * 1000;
@@ -253,7 +250,7 @@ export default function UsagePage() {
     const leaderShare = leader ? pct(leader.total_tokens, modelTotal) : 0;
 
     return { top1, top1Share, top3Share, avgPerTenant, avgPerCall, dormant, active48h, buckets, growth, peak, avgLat, slow, leader, leaderShare };
-  }, [data]);
+  }, [data, now]);
 
   const maxTenant = Math.max(1, ...tenants.map((t) => t.total_tokens));
   const maxModel = Math.max(1, ...(data?.per_model.map((m) => m.total_tokens) ?? [1]));
@@ -521,7 +518,7 @@ export default function UsagePage() {
                 </thead>
                 <tbody className="divide-y divide-ink/[0.04] bg-[var(--ui-surface)]">
                   {tenants.slice(0, 20).map((t) => {
-                    const isDormant = t.last_seen ? Date.now() - new Date(t.last_seen).getTime() > 7 * 86400 * 1000 : true;
+                    const isDormant = t.last_seen ? now - new Date(t.last_seen).getTime() > 7 * 86400 * 1000 : true;
                     const isTop = insights?.top1?.tenant_id === t.tenant_id;
                     return (
                       <tr key={t.tenant_id ?? t.email} className={`transition ${isDormant ? "bg-amber-50/30 hover:bg-amber-50/50" : "hover:bg-ink/[0.02]"}`}>

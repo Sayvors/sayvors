@@ -95,29 +95,21 @@ async def assess_review(
         # Nothing to assess. An empty comment carries no signal either way.
         return None
 
-    from ..llm.providers.base import LLMMessage, LLMRequest
-    from ..llm.providers.registry import get_provider_for_model
-    from ..llm.service import _resolve_model
+    from ..llm.gateway import LLMMessage, complete
 
     try:
-        provider = get_provider_for_model(model)
-        api_model, _ = _resolve_model(model)
-        resp = await provider.complete(
-            LLMRequest(
-                model=api_model,
-                messages=[LLMMessage(role="user", content=json.dumps({
-                    "rating": rating,
-                    "review_text": body,
-                    "reviewer_name": reviewer_name,
-                }))],
-                system_prompt=SYSTEM_PROMPT,
-                temperature=0.0,
-                max_tokens=400,
-                stream=False,
-                tenant_id=tenant_id,
-                model_id=model,
-                purpose="analytics.abuse_triage",
-            )
+        resp = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=json.dumps({
+                "rating": rating,
+                "review_text": body,
+                "reviewer_name": reviewer_name,
+            }))],
+            system_prompt=SYSTEM_PROMPT,
+            temperature=0.0,
+            max_tokens=400,
+            tenant_id=tenant_id,
+            purpose="analytics.abuse_triage",
         )
     except Exception as e:
         logger.warning("abuse triage LLM call failed: %s", e)

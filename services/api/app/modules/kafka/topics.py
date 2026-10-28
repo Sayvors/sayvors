@@ -33,11 +33,21 @@ TOPICS = [
 
 async def provision_topics() -> None:
     """Create all topics with explicit partition counts. Idempotent."""
+    from ...config import settings
+
+    if not getattr(settings, "KAFKA_PROVISION_TOPICS", True):
+        logger.info("KAFKA_PROVISION_TOPICS=false — skipping topic provisioning")
+        return
+
+    from ...modules.kafka.client import _kafka_security_kwargs
+
     admin = AIOAdminClient(
         bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
         client_id="sayvors-topic-provisioner",
         request_timeout_ms=10000,
+        **_kafka_security_kwargs(),
     )
+    rf = getattr(settings, "KAFKA_REPLICATION_FACTOR", 1)
     try:
         await admin.start()
         existing = await admin.describe_topics()
@@ -45,14 +55,14 @@ async def provision_topics() -> None:
 
         new_topics = [
             NewTopic(name=name, num_partitions=parts, replication_factor=rf)
-            for name, parts, rf in TOPICS
+            for name, parts, _ in TOPICS
             if name not in existing_names
         ]
 
         if new_topics:
             await admin.create_topics(new_topics=new_topics, validate_only=False)
             for t in new_topics:
-                logger.info("Created Kafka topic: %s (%d partitions)", t.name, t.num_partitions)
+                logger.info("Created Kafka topic: %s (%d partitions, rf=%d)", t.name, t.num_partitions, rf)
         else:
             logger.info("All Kafka topics already provisioned")
     except Exception:

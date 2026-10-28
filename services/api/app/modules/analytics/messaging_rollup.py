@@ -110,6 +110,14 @@ async def rollup_channel_days(db, channel: Channel, days: list[date]) -> int:
         in_day = [m for m in msgs if _utc(m.created_at) < day_end]
         messages_in = sum(1 for m in in_day if m.direction == "inbound")
         messages_out = sum(1 for m in in_day if m.direction == "outbound")
+        ai_handled_out = sum(
+            1 for m in in_day
+            if m.direction == "outbound" and getattr(m, "handled_by", "unknown") == "ai"
+        )
+        human_handled_out = sum(
+            1 for m in in_day
+            if m.direction == "outbound" and getattr(m, "handled_by", "unknown") == "human"
+        )
 
         # Conversations keyed by platform addressing (contact_phone). Rows
         # with a NULL phone predate the column and stay out of conversation
@@ -207,6 +215,8 @@ async def rollup_channel_days(db, channel: Channel, days: list[date]) -> int:
             )
         row.messages_in = messages_in
         row.messages_out = messages_out
+        row.ai_handled_out = ai_handled_out
+        row.human_handled_out = human_handled_out
         row.conversations_in = conversations_in
         row.conversations_replied = len(samples)
         row.median_first_response_seconds = (

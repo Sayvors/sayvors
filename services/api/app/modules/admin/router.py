@@ -4,12 +4,13 @@ POST   /api/v1/admin/login   exchange the admin password for a short token
 GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
-import uuid
+from datetime import datetime
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ...core.deps import get_db, require_admin
@@ -47,10 +48,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
+
+def _stored_key_works(row) -> bool:
+    """True only when the stored ciphertext decrypts with the current key.
+
+    The admin views mirror the database, not the boot-time overlay: a process
+    that failed to load its overlay must still show the keys an operator
+    saved.
+    """
+    if row is None or not row.key_encrypted:
+        return False
+    try:
+        from ...core.crypto import decrypt_secret
+
+        return bool(decrypt_secret(row.key_encrypted))
+    except Exception:
+        return False
+
+
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
 class AdminLoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
     password: str = Field(..., min_length=1, max_length=256)
 
 
@@ -92,30 +112,108 @@ async def _admin_locked_out() -> bool:
         return False
 
 
+async def _has_any_operator(db: AsyncSession | None = None) -> bool:
+    """Whether any operator account exists.
+
+    Uses the request session when one is available, so the admin endpoints
+    honour the app's dependency injection (and the test overrides) instead of
+    opening a second, unrelated connection.
+    """
+    try:
+        from sqlalchemy import func, select
+
+        from .models import PlatformOperator
+
+        if db is None:
+            from ...database import async_session
+
+            async with async_session() as session:
+                count = (
+                    await session.execute(select(func.count()).select_from(PlatformOperator))
+                ).scalar() or 0
+                return count > 0
+        count = (
+            await db.execute(select(func.count()).select_from(PlatformOperator))
+        ).scalar() or 0
+        return count > 0
+    except Exception:
+        return False
+
+
 @router.post("/login", response_model=AdminLoginResponse)
-async def admin_login(body: AdminLoginRequest, request: Request, response: Response):
-    if not settings.ADMIN_PASSWORD_HASH:
-        raise HTTPException(status_code=503, detail="Admin access is not configured.")
-    from ..auth.rate_limit import rate_limit
+async def admin_login(
+    body: AdminLoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from .models import PlatformOperator, AdminAuditLog
 
     ip = get_client_ip(request)
-    # Tests hit this endpoint constantly across runs and the Redis window
-    # outlives the process — same TESTING bypass admin_rate_limit uses.
+    # If no operators exist and no legacy password is configured, admin is
+    # not set up at all.
+    if not (await _has_any_operator(db)) and not settings.ADMIN_PASSWORD_HASH:
+        raise HTTPException(status_code=503, detail="Admin access is not configured.")
     if not settings.TESTING:
         if not await rate_limit(f"admin-login:{ip}", 5, 300):
             raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
     if await _admin_locked_out():
         logger.error("Admin login globally locked out (repeated failures), ip=%s", ip)
-        raise HTTPException(
-            status_code=429,
-            detail="Admin access temporarily locked. Try again later.",
+        raise HTTPException(status_code=429, detail="Admin access temporarily locked. Try again later.")
+
+    row = (
+        await db.execute(
+            select(PlatformOperator).where(PlatformOperator.username == body.username)
         )
-    if not verify_password(body.password, settings.ADMIN_PASSWORD_HASH):
+    ).scalar_one_or_none()
+
+    # Backward-compat bootstrap: if no operators exist yet, fall back to the
+    # legacy shared password (username "admin").
+    if row is None and not (await _has_any_operator(db)) and settings.ADMIN_PASSWORD_HASH and body.username == "admin":
+        if verify_password(body.password, settings.ADMIN_PASSWORD_HASH):
+            import uuid as _uuid
+
+            row = PlatformOperator(
+                id=str(_uuid.uuid4()),
+                username="admin",
+                password_hash=settings.ADMIN_PASSWORD_HASH,
+                role="superadmin",
+                is_active=True,
+            )
+            db.add(row)
+            await db.commit()
+            await db.refresh(row)
+            logger.warning("Bootstrapped legacy 'admin' operator from ADMIN_PASSWORD_HASH.")
+
+    if row is None or not row.is_active:
         failures = await _register_admin_failure()
-        logger.warning(
-            "Failed admin login from %s (global failures=%d)", ip, failures
-        )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong password.")
+        logger.warning("Failed admin login (unknown/inactive operator) from %s (global failures=%d)", ip, failures)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong credentials.")
+    now = datetime.now(timezone.utc)
+    if row.locked_until is not None and row.locked_until > now:
+        raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account is locked. Try again later.")
+    if not verify_password(body.password, row.password_hash):
+        r = await db.get(PlatformOperator, row.id)
+        if r is not None:
+            r.failed_login_count = (r.failed_login_count or 0) + 1
+            if r.failed_login_count >= settings.ADMIN_MAX_CONSECUTIVE_FAILURES:
+                r.locked_until = now + timedelta(minutes=15)
+            await db.commit()
+        failures = await _register_admin_failure()
+        logger.warning("Failed admin login for operator %s from %s (global failures=%d)", body.username, ip, failures)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong credentials.")
+
+    r = await db.get(PlatformOperator, row.id)
+    if r is not None:
+        r.failed_login_count = 0
+        r.locked_until = None
+        r.last_login_at = now
+        await db.commit()
+
     try:
         from ..redis.client import get_redis
 
@@ -123,7 +221,7 @@ async def admin_login(body: AdminLoginRequest, request: Request, response: Respo
         await redis.delete(_ADMIN_FAIL_KEY)
     except Exception:
         pass
-    token = create_admin_token()
+    token = create_admin_token(subject=row.id)
     secure = (
         request.url.scheme == "https"
         or request.headers.get("x-forwarded-proto", "") == "https"
@@ -137,6 +235,21 @@ async def admin_login(body: AdminLoginRequest, request: Request, response: Respo
         secure=secure,
         path="/api/v1/admin",
     )
+    try:
+        db.add(AdminAuditLog(
+            operator_id=row.id,
+            operator_username=row.username,
+            action="login",
+            method="POST",
+            path="/api/v1/admin/login",
+            status_code=200,
+            ip=ip,
+            user_agent=request.headers.get("user-agent"),
+        ))
+        await db.commit()
+    except Exception as e:
+        logger.warning("Audit log write failed: %s", e)
+        await db.rollback()
     return AdminLoginResponse(expires_in_minutes=settings.ADMIN_SESSION_MINUTES)
 
 
@@ -259,6 +372,26 @@ class PlanGrantResponse(BaseModel):
     currency: str = "usd"
 
 
+class WalletResyncRequest(BaseModel):
+    """Preview by default; applying a repair requires dry_run=false."""
+
+    dry_run: bool = True
+    note: str | None = Field(default=None, max_length=500)
+
+
+class WalletResyncResponse(BaseModel):
+    tenant_id: str
+    applied: bool
+    balance_cents: int
+    db_balance_cents: int
+    redis_balance_cents: int | None = None
+    previous_balance_cents: int | None = None
+    delta_cents: int | None = None
+    redis_synced: bool | None = None
+    reliable: bool = True
+    warning: str | None = None
+
+
 @router.post("/tenants/{user_id}/plan", response_model=PlanGrantResponse)
 async def admin_grant_plan(
     user_id: str,
@@ -280,6 +413,63 @@ async def admin_grant_plan(
         )
     except ValueError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
+
+
+@router.post("/tenants/{user_id}/resync-balance", response_model=WalletResyncResponse)
+async def admin_resync_balance(
+    user_id: str,
+    body: WalletResyncRequest | None = None,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview or repair Redis drift against the durable DB wallet.
+
+    The DB is the source of truth: this endpoint never accepts a balance and
+    never recomputes one from usage. Dry-run is the default. Applying writes a
+    zero-amount ``balance_reconcile`` audit row only when the cache is missing
+    or differs, then overwrites the cache with the DB value. Re-running with no
+    drift is a no-op.
+    """
+    from ..billing.ledger import reconcile_wallet
+
+    request = body or WalletResyncRequest()
+    try:
+        return await reconcile_wallet(
+            user_id,
+            db,
+            dry_run=request.dry_run,
+            note=request.note,
+            created_by="admin",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/billing/overview")
+async def admin_billing_overview(
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .service import get_billing_overview
+
+    return await get_billing_overview(db)
+
+
+@router.get("/tenants/{user_id}/billing")
+async def admin_tenant_billing(
+    user_id: str,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from .service import get_tenant_billing
+
+    result = await get_tenant_billing(db, user_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    return result
 
 
 @router.get("/health", response_model=AdminHealth)
@@ -326,47 +516,57 @@ async def admin_llm_list(
     db: AsyncSession = Depends(get_db),
 ):
     """Provider key status. Key VALUES are never returned."""
-    from ..llm.models import ModelConfig
-    from ..llm.providers import registry
+    from ..llm.models import ModelConfig, ProviderConfig
     from ..llm.providers.catalog import MODELS, PROVIDERS
 
     model_rows: dict[str, ModelConfig] = {}
     for row in (await db.execute(select(ModelConfig))).scalars().all():
         model_rows[row.model_id] = row
 
+    provider_rows: dict[str, ProviderConfig] = {
+        row.provider: row
+        for row in (await db.execute(select(ProviderConfig))).scalars().all()
+    }
+
     out = []
     for name in PROVIDERS:
-        _key, source = registry.resolve_provider_key(name)
-        enabled = True
-        if registry._db_overlay is not None and name in registry._db_overlay:
-            enabled = bool(registry._db_overlay[name].get("enabled", True))
+        row = provider_rows.get(name)
+        enabled = row.enabled if row is not None else True
+        has_key = _stored_key_works(row)
+        source = "disabled" if row is not None and not row.enabled else (
+            "database" if has_key else "none"
+        )
         models = []
         for m in MODELS:
             if m.provider != name:
                 continue
-            row = model_rows.get(m.id)
+            model_row = model_rows.get(m.id)
             models.append(LlmModelStatus(
                 id=m.id, name=m.name,
-                enabled=row.enabled if row else True,
-                tested_ok=row.tested_ok if row else None,
-                tested_at=row.tested_at.isoformat() if row and row.tested_at else None,
+                enabled=model_row.enabled if model_row else True,
+                tested_ok=model_row.tested_ok if model_row else None,
+                tested_at=(
+                    model_row.tested_at.isoformat()
+                    if model_row and model_row.tested_at
+                    else None
+                ),
                 custom=False,
             ))
-        for model_id, row in sorted(model_rows.items()):
-            if not (row.provider and row.api_model) or row.provider != name:
+        for model_id, model_row in sorted(model_rows.items()):
+            if not (model_row.provider and model_row.api_model) or model_row.provider != name:
                 continue
             models.append(LlmModelStatus(
-                id=model_id, name=row.display_name or model_id,
-                enabled=row.enabled,
-                tested_ok=row.tested_ok,
-                tested_at=row.tested_at.isoformat() if row.tested_at else None,
+                id=model_id, name=model_row.display_name or model_id,
+                enabled=model_row.enabled,
+                tested_ok=model_row.tested_ok,
+                tested_at=model_row.tested_at.isoformat() if model_row.tested_at else None,
                 custom=True,
             ))
         out.append(LlmProviderStatus(
             provider=name,
             key_source=source,
             enabled=enabled,
-            has_key=source == "database",
+            has_key=has_key,
             models=models,
         ))
     return out
@@ -400,25 +600,21 @@ async def admin_llm_update(
 
             row.key_encrypted = encrypt_token(key)
         else:
-            row.key_encrypted = None  # clear -> env fallback
+            row.key_encrypted = None  # clear -> no key
     if body.enabled is not None:
         row.enabled = body.enabled
     await db.commit()
 
-    # Write-through to the live overlay (no restart needed).
-    if registry._db_overlay is None:
-        registry._db_overlay = {}
-    registry._db_overlay[provider] = {
-        "key_encrypted": row.key_encrypted,
-        "enabled": row.enabled,
-    }
-    registry._providers.pop(provider, None)
+    # Reload this worker's overlays from the committed row so the response
+    # and the next generation see the key without a restart. Other workers
+    # converge through the registry's TTL refresh.
+    await registry.refresh_provider_keys_from_session(db)
     logger.info("Admin updated LLM provider %s (enabled=%s)", provider, row.enabled)
 
     _key, source = registry.resolve_provider_key(provider)
     return LlmProviderStatus(
         provider=provider, key_source=source, enabled=row.enabled,
-        has_key=source in ("database", "env"),
+        has_key=_stored_key_works(row),
     )
 
 
@@ -426,6 +622,7 @@ async def admin_llm_update(
 async def admin_llm_test(
     provider: str,
     _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
 ):
     """Free liveness probe (model list, no tokens spent)."""
     import time as _time
@@ -437,6 +634,9 @@ async def admin_llm_test(
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider}")
     from .service import _PROBE_URLS, _probe_ai_provider
 
+    # Read the key from the request's database, not this worker's boot
+    # overlay: a key saved by another worker must be testable here.
+    await registry.refresh_provider_keys_from_session(db)
     urls = _PROBE_URLS
     if registry.resolve_provider_key(provider)[0] is None and provider != "ollama":
         return LlmTestResult(provider=provider, ok=False, detail="no API key configured")
@@ -448,6 +648,182 @@ async def admin_llm_test(
     except Exception as e:
         ms = round((_time.monotonic() - start) * 1000)
         return LlmTestResult(provider=provider, ok=False, latency_ms=ms, detail=f"{type(e).__name__}: {str(e)[:160]}")
+
+
+class EmbeddingProviderStatus(BaseModel):
+    provider: str
+    model: str | None = None
+    has_key: bool = False
+    enabled: bool = True
+    active: bool = False
+    base_url: str | None = None
+
+
+class EmbeddingConfigOverview(BaseModel):
+    providers: list[EmbeddingProviderStatus]
+    active_provider: str | None = None
+    canonical_dimensions: int
+    chunks_total: int
+    chunks_with_vector: int
+    # "admin" when a provider is configured separately, "fallback" when the
+    # embedding backend is still borrowing the text-generation keys.
+    source: str
+
+
+class EmbeddingProviderUpdate(BaseModel):
+    model: str | None = None
+    # None keeps the stored key, an empty string clears it.
+    api_key: str | None = None
+    base_url: str | None = None
+    enabled: bool | None = None
+    activate: bool = False
+
+
+class EmbeddingTestRequest(BaseModel):
+    provider: str | None = None
+
+
+class EmbeddingTestResult(BaseModel):
+    ok: bool
+    provider: str | None = None
+    model: str | None = None
+    dimensions: int = 0
+    latency_ms: int = 0
+    detail: str = ""
+
+
+@router.get("/embeddings", response_model=EmbeddingConfigOverview)
+async def admin_embedding_config(
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """The embedding providers, configured apart from the text-generation ones."""
+    from ..rag.embeddings import (
+        CANONICAL_DIMENSIONS,
+        EMBEDDING_PROVIDERS,
+        corpus_stats,
+        get_active_embedding_config,
+        list_embedding_configs,
+    )
+
+    configs = {c["provider"]: c for c in await list_embedding_configs(db)}
+    providers = []
+    for name in EMBEDDING_PROVIDERS:
+        config = configs.get(name, {})
+        providers.append(
+            EmbeddingProviderStatus(
+                provider=name,
+                model=config.get("model"),
+                has_key=bool(config.get("has_key")),
+                enabled=bool(config.get("enabled", True)),
+                active=bool(config.get("active")),
+                base_url=config.get("base_url"),
+            )
+        )
+
+    active = await get_active_embedding_config(db)
+    stats = await corpus_stats(db)
+    return EmbeddingConfigOverview(
+        providers=providers,
+        active_provider=active["provider"] if active else None,
+        canonical_dimensions=CANONICAL_DIMENSIONS,
+        chunks_total=stats["chunks_total"],
+        chunks_with_vector=stats["chunks_with_vector"],
+        source="admin" if active else "fallback",
+    )
+
+
+@router.put("/embeddings/{provider}", response_model=EmbeddingProviderStatus)
+async def admin_embedding_update(
+    provider: str,
+    body: EmbeddingProviderUpdate,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Store/clear the embedding key, pick the model, activate the provider."""
+    from ..rag.embeddings import EMBEDDING_PROVIDERS, save_embedding_config
+
+    if provider not in EMBEDDING_PROVIDERS:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown embedding provider: {provider}"
+        )
+    try:
+        result = await save_embedding_config(
+            provider,
+            model=body.model,
+            api_key=body.api_key.strip() if body.api_key is not None else None,
+            base_url=body.base_url,
+            enabled=body.enabled,
+            activate=body.activate,
+            db=db,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(
+        "Admin updated embedding provider %s (model=%s active=%s)",
+        provider,
+        result["model"],
+        result["active"],
+    )
+    return EmbeddingProviderStatus(
+        provider=result["provider"],
+        model=result["model"],
+        has_key=result["has_key"],
+        enabled=result["enabled"],
+        active=result["active"],
+        base_url=result["base_url"],
+    )
+
+
+@router.get("/embeddings/models")
+async def admin_embedding_models(
+    provider: str,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the live model list from a provider's API.
+
+    There is no built-in fallback: if the provider cannot answer, the admin
+    sees the reason instead of a dropdown that looks legitimately empty.
+    """
+    from ..rag.embeddings import get_embedding_config, list_available_models
+
+    # A refresh must work with the key already stored — asking the admin to
+    # paste it again just to browse models is how the dropdown stayed empty.
+    saved = await get_embedding_config(provider, db=db)
+    effective_key = api_key or (saved or {}).get("key")
+    effective_base = base_url or (saved or {}).get("base_url")
+
+    try:
+        models = await list_available_models(
+            provider, api_key=effective_key, base_url=effective_base
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"provider": provider, "models": models}
+
+
+@router.post("/embeddings/test", response_model=EmbeddingTestResult)
+async def admin_embedding_test(
+    body: EmbeddingTestRequest | None = None,
+    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Embed one sample string and report the width that came back."""
+    from ..rag.embeddings import EMBEDDING_PROVIDERS, test_embedding_provider
+
+    request = body or EmbeddingTestRequest()
+    if request.provider and request.provider not in EMBEDDING_PROVIDERS:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown embedding provider: {request.provider}"
+        )
+    result = await test_embedding_provider(request.provider, db=db)
+    return EmbeddingTestResult(**result)
 
 
 @router.put("/llm/{provider}/models/{model_id:path}", response_model=LlmModelStatus)
@@ -465,6 +841,9 @@ async def admin_llm_model_update(
     from ..llm.providers import registry
     from ..llm.providers.registry import get_effective_model
 
+    # A custom model may have been created by another worker since this
+    # process booted; load the current rows before deciding it is unknown.
+    await registry.refresh_provider_keys_from_session(db)
     info = get_effective_model(model_id)
     if info is None or info.provider != provider:
         raise HTTPException(status_code=404, detail=f"Unknown model: {model_id}")
@@ -504,11 +883,12 @@ async def admin_llm_model_test(
     import time as _time2
     from datetime import datetime, timezone
 
+    from ..llm.gateway import LLMMessage, complete
     from ..llm.models import ModelConfig
     from ..llm.providers import registry
-    from ..llm.providers.base import LLMMessage, LLMRequest
     from ..llm.providers.registry import get_effective_model
 
+    await registry.refresh_provider_keys_from_session(db)
     info = get_effective_model(model_id)
     if info is None or info.provider != provider:
         raise HTTPException(status_code=404, detail=f"Unknown model: {model_id}")
@@ -518,21 +898,15 @@ async def admin_llm_model_test(
     start = _time2.monotonic()
     ok, detail, reply = False, "", ""
     try:
-        provider_inst = registry.get_provider_for_model(model_id)
-        from ..llm.service import _resolve_model
-
-        api_model, _ = _resolve_model(model_id)
-        resp = await provider_inst.complete(LLMRequest(
-            model=api_model,
+        resp = await complete(
+            model=model_id,
             messages=[LLMMessage(role="user", content="Reply with exactly: OK")],
             system_prompt="You are a connectivity probe. Reply with exactly: OK",
             temperature=0.1,
             max_tokens=20,
-            stream=False,
             tenant_id=None,
-            model_id=model_id,
             purpose="admin.test",
-        ))
+        )
         reply = (resp.content or "").strip()[:200]
         ok, detail = True, "model generated a reply"
     except Exception as e:
@@ -588,20 +962,7 @@ async def admin_llm_model_create(
     db.add(row)
     await db.commit()
 
-    if registry._model_overlay is None:
-        registry._model_overlay = {}
-    registry._model_overlay[body.id] = bool(body.enabled)
-    if registry._custom_models is None:
-        registry._custom_models = {}
-    registry._custom_models[body.id] = {
-        "name": body.name,
-        "provider": body.provider,
-        "api_model": body.api_model,
-        "api_url": body.api_url,
-        "context": body.context_window,
-        "max_output": body.max_output,
-        "supports_stream": body.supports_stream,
-    }
+    await registry.refresh_provider_keys_from_session(db)
     logger.info("Admin added custom model %s", body.id)
     await db.refresh(row)
     return LlmModelStatus(
@@ -640,10 +1001,7 @@ async def admin_llm_model_delete(
         raise HTTPException(status_code=404, detail=f"Unknown custom model: {model_id}")
     await db.delete(row)
     await db.commit()
-    if registry._model_overlay is not None:
-        registry._model_overlay.pop(model_id, None)
-    if registry._custom_models is not None:
-        registry._custom_models.pop(model_id, None)
+    await registry.refresh_provider_keys_from_session(db)
     logger.info("Admin deleted custom model %s", model_id)
 
 
@@ -927,263 +1285,363 @@ async def admin_remote_models(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Provider list failed: {type(e).__name__}: {str(e)[:160]}")
 
+# Voice-engine admin is part of the TTS capability. Mount it here so it
+# shares this router's auth and rate limit without TTS importing admin.
+from ..tts.admin_router import router as tts_admin_router
 
-# ── Voice engines (WhatsApp voice notes) ─────────────────────────────────
-#
-# The admin decides which TTS engine serves each tenant tier ("simple" /
-# "advanced"). Tenants only ever see the tier — never the provider or key.
-# Keys are stored Fernet-encrypted and NEVER returned; a response's
-# has_key just says whether one is set.
+router.include_router(
+    tts_admin_router,
+    dependencies=[Depends(require_admin), Depends(admin_rate_limit)],
+)
 
 
-class VoiceEngineStatus(BaseModel):
+# ---------------------------------------------------------------------------
+# Operator management + audit log
+# ---------------------------------------------------------------------------
+
+class OperatorOut(BaseModel):
     id: str
-    label: str
-    provider: str
-    tier: str
-    api_url: str | None = None
-    api_model: str | None = None
-    # Voice identity pin (fish.audio reference_id) — keeps the same persona
-    # in every voice note instead of Fish's per-request default roulette.
-    reference_id: str | None = None
-    # Optional per-language overrides, {"ur": "<id>"} — the customer's
-    # language pin wins over the multilingual voice.
-    language_references: dict[str, str] | None = None
-    languages: str = "*"
-    enabled: bool = True
-    has_key: bool = False
+    username: str
+    role: str
+    is_active: bool
+    created_at: datetime
+    last_login_at: datetime | None = None
 
 
-class VoiceEngineUpsert(BaseModel):
-    label: str = Field(min_length=1, max_length=120)
-    provider: str = Field(min_length=1, max_length=32)
-    tier: str = Field(pattern="^(simple|advanced)$")
-    api_url: str | None = Field(None, max_length=500)
-    api_model: str | None = Field(None, max_length=200)
-    reference_id: str | None = Field(None, max_length=200)
-    language_references: dict[str, str] | None = None
-    languages: str = Field("*", max_length=500)
-    enabled: bool = True
-    # Only applied when non-null — omitting it never clears the stored key;
-    # empty string clears it.
-    api_key: str | None = Field(None, max_length=500)
-
-    @field_validator("language_references")
-    @classmethod
-    def _validate_language_pins(cls, v: dict[str, str] | None) -> dict[str, str] | None:
-        if v is None:
-            return None
-        cleaned = {
-            str(k).strip().lower()[:8]: str(val).strip()[:200]
-            for k, val in v.items()
-            if str(k).strip() and str(val).strip()
-        }
-        if len(cleaned) > 8:
-            raise ValueError("at most 8 language pins per engine")
-        return cleaned or None
+class OperatorCreate(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=8, max_length=256)
+    role: str = Field(default="operator", pattern="^(operator|superadmin)$")
 
 
-def _voice_engine_status(row) -> VoiceEngineStatus:
-    return VoiceEngineStatus(
-        id=row.id,
-        label=row.label,
-        provider=row.provider,
-        tier=row.tier,
-        api_url=row.api_url,
-        api_model=row.api_model,
-        reference_id=row.reference_id,
-        language_references=row.language_references,
-        languages=row.languages,
-        enabled=row.enabled,
-        has_key=bool(row.key_encrypted),
-    )
+class OperatorUpdate(BaseModel):
+    is_active: bool | None = None
+    role: str | None = Field(default=None, pattern="^(operator|superadmin)$")
+    password: str | None = Field(default=None, min_length=8, max_length=256)
 
 
-@router.get("/voice-engines", response_model=list[VoiceEngineStatus])
-async def admin_voice_engines_list(
-    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
-    db: AsyncSession = Depends(get_db),
-):
-    """All configured voice engines. Key VALUES are never returned."""
-    from ..llm.models import VoiceModelConfig
+class AuditLogOut(BaseModel):
+    id: str
+    operator_id: str | None = None
+    operator_username: str | None = None
+    action: str
+    method: str
+    path: str
+    status_code: int
+    ip: str | None = None
+    created_at: datetime
 
-    rows = (await db.execute(select(VoiceModelConfig))).scalars().all()
-    return [_voice_engine_status(r) for r in rows]
 
+@router.get("/operators", response_model=list[OperatorOut])
+async def list_operators(_admin=Depends(require_admin)):
+    from sqlalchemy import select
 
-@router.get("/voice-engines/fish-voices")
-async def admin_fish_voice_catalog(
-    sort_by: str = "task_count",
-    page: int = 1,
-    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
-    db: AsyncSession = Depends(get_db),
-):
-    """Browse the fish.audio public voice library so the admin can pick a
-    persona by name instead of pasting an opaque id. Uses the API key
-    stored on any fish engine — add one first if this 400s."""
-    from ..channels.service import decrypt_token
-    from ..channels.meta.voice import fish_voice_catalog
-    from ..llm.models import VoiceModelConfig
+    from ...database import async_session
+    from .models import PlatformOperator
 
-    row = (
-        await db.execute(
-            select(VoiceModelConfig)
-            .where(
-                VoiceModelConfig.provider == "fish",
-                VoiceModelConfig.key_encrypted.is_not(None),
+    async with async_session() as db:
+        rows = (await db.execute(select(PlatformOperator).order_by(PlatformOperator.created_at))).scalars().all()
+        return [
+            OperatorOut(
+                id=r.id, username=r.username, role=r.role, is_active=r.is_active,
+                created_at=r.created_at, last_login_at=r.last_login_at,
             )
-            .order_by(VoiceModelConfig.updated_at.desc())
+            for r in rows
+        ]
+
+
+@router.post("/operators", response_model=OperatorOut, status_code=status.HTTP_201_CREATED)
+async def create_operator(body: OperatorCreate, _admin=Depends(require_admin)):
+    from sqlalchemy import select
+
+    from ...database import async_session
+    from .models import AdminAuditLog, PlatformOperator
+
+    async with async_session() as db:
+        existing = (await db.execute(
+            select(PlatformOperator).where(PlatformOperator.username == body.username)
+        )).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="Username already exists.")
+        op_row = PlatformOperator(
+            username=body.username,
+            password_hash=hash_password(body.password),
+            role=body.role,
+            is_active=True,
         )
-    ).scalars().first()
-    if row is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Add a Fish Audio engine with an API key first — the "
-            "voice library is browsed with that key.",
-        )
-    try:
-        return await fish_voice_catalog(
-            decrypt_token(row.key_encrypted), sort_by=sort_by, page=page
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not reach fish.audio: {type(e).__name__}: {str(e)[:120]}",
+        db.add(op_row)
+        await db.commit()
+        await db.refresh(op_row)
+        try:
+            db.add(AdminAuditLog(
+                operator_id=_admin.get("operator_id"),
+                operator_username=_admin.get("username"),
+                action="operator.create",
+                method="POST",
+                path="/api/v1/admin/operators",
+                status_code=201,
+                detail=f"created operator {body.username} role={body.role}",
+            ))
+            await db.commit()
+        except Exception as e:
+            logger.warning("Audit log write failed: %s", e)
+        return OperatorOut(
+            id=op_row.id, username=op_row.username, role=op_row.role,
+            is_active=op_row.is_active, created_at=op_row.created_at,
+            last_login_at=op_row.last_login_at,
         )
 
 
-@router.post("/voice-engines", response_model=VoiceEngineStatus, status_code=201)
-async def admin_voice_engine_create(
-    body: VoiceEngineUpsert,
-    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
-    db: AsyncSession = Depends(get_db),
+@router.patch("/operators/{operator_id}", response_model=OperatorOut)
+async def update_operator(operator_id: str, body: OperatorUpdate, _admin=Depends(require_admin)):
+    from ...database import async_session
+    from .models import AdminAuditLog, PlatformOperator
+
+    async with async_session() as db:
+        row = await db.get(PlatformOperator, operator_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Operator not found.")
+        if body.is_active is not None:
+            row.is_active = body.is_active
+        if body.role is not None:
+            row.role = body.role
+        if body.password is not None:
+            row.password_hash = hash_password(body.password)
+        await db.commit()
+        await db.refresh(row)
+        try:
+            db.add(AdminAuditLog(
+                operator_id=_admin.get("operator_id"),
+                operator_username=_admin.get("username"),
+                action="operator.update",
+                method="PATCH",
+                path=f"/api/v1/admin/operators/{operator_id}",
+                status_code=200,
+                detail=f"updated operator {row.username}",
+            ))
+            await db.commit()
+        except Exception as e:
+            logger.warning("Audit log write failed: %s", e)
+        return OperatorOut(
+            id=row.id, username=row.username, role=row.role,
+            is_active=row.is_active, created_at=row.created_at,
+            last_login_at=row.last_login_at,
+        )
+
+
+@router.get("/audit-log", response_model=list[AuditLogOut])
+async def list_audit_log(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None, description="Search action/path/operator/ip"),
+    method: str | None = Query(default=None, description="Filter by HTTP method"),
+    status: int | None = Query(default=None, description="Filter by exact status code"),
+    _admin=Depends(require_admin),
 ):
-    from ..channels.service import encrypt_token
-    from ..llm.models import VoiceModelConfig
+    from sqlalchemy import or_, select
 
-    row = VoiceModelConfig(
-        id=str(uuid.uuid4()),
-        label=body.label,
-        provider=body.provider,
-        api_url=body.api_url,
-        api_model=body.api_model,
-        reference_id=body.reference_id,
-        language_references=body.language_references,
-        tier=body.tier,
-        languages=body.languages,
-        enabled=body.enabled,
-    )
-    if body.api_key is not None:
-        row.key_encrypted = encrypt_token(body.api_key) if body.api_key else None
-    db.add(row)
-    await db.commit()
-    await db.refresh(row)
-    return _voice_engine_status(row)
+    from ...database import async_session
+    from .models import AdminAuditLog
+
+    async with async_session() as db:
+        stmt = select(AdminAuditLog)
+        if q:
+            like = f"%{q}%"
+            stmt = stmt.where(or_(
+                AdminAuditLog.action.ilike(like),
+                AdminAuditLog.path.ilike(like),
+                AdminAuditLog.operator_username.ilike(like),
+                AdminAuditLog.ip.ilike(like),
+            ))
+        if method:
+            stmt = stmt.where(AdminAuditLog.method == method.upper())
+        if status is not None:
+            stmt = stmt.where(AdminAuditLog.status_code == status)
+        stmt = stmt.order_by(AdminAuditLog.created_at.desc()).offset(offset).limit(limit)
+        rows = (await db.execute(stmt)).scalars().all()
+        return [
+            AuditLogOut(
+                id=r.id, operator_id=r.operator_id, operator_username=r.operator_username,
+                action=r.action, method=r.method, path=r.path, status_code=r.status_code,
+                ip=r.ip, created_at=r.created_at,
+            )
+            for r in rows
+        ]
+# -- Plan management (billing) --
+from sqlalchemy import select as _select
+
+from ..billing.features import sanitize_features
+from ..billing.models import Plan, TenantSubscription
+from ..billing.schemas import PlanOut, PlanCreate, PlanUpdate, SubscriptionOut, GrantPlanIn
 
 
-@router.delete("/voice-engines/{engine_id}", status_code=204)
-async def admin_voice_engine_delete(
-    engine_id: str,
-    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
-    db: AsyncSession = Depends(get_db),
-):
-    from ..llm.models import VoiceModelConfig
+@router.get("/plan-features")
+async def list_plan_features(_admin=Depends(require_admin)):
+    from ..billing.features import feature_catalog_as_dicts
 
-    row = (
-        await db.execute(
-            select(VoiceModelConfig).where(VoiceModelConfig.id == engine_id)
+    return feature_catalog_as_dicts()
+
+
+@router.get("/plans", response_model=list[PlanOut])
+async def list_plans(_admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        rows = (
+            await db.execute(_select(Plan).order_by(Plan.sort_order, Plan.name))
+        ).scalars().all()
+        return [
+            PlanOut(
+                id=r.id, slug=r.slug, name=r.name, description=r.description,
+                price_cents=r.price_cents, included_credit_cents=r.included_credit_cents,
+                max_channels=r.max_channels, max_messages_per_month=r.max_messages_per_month,
+                features=r.features or {}, is_active=r.is_active, sort_order=r.sort_order,
+            )
+            for r in rows
+        ]
+
+
+@router.post("/plans", response_model=PlanOut, status_code=status.HTTP_201_CREATED)
+async def create_plan(body: PlanCreate, _admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        existing = (
+            await db.execute(_select(Plan).where(Plan.slug == body.slug))
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="Plan slug already exists.")
+        plan = Plan(
+            slug=body.slug, name=body.name, description=body.description,
+            price_cents=body.price_cents, included_credit_cents=body.included_credit_cents,
+            max_channels=body.max_channels, max_messages_per_month=body.max_messages_per_month,
+            features=sanitize_features(body.features), is_active=body.is_active, sort_order=body.sort_order,
         )
-    ).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Voice engine not found")
-    await db.delete(row)
-    await db.commit()
-    return Response(status_code=204)
-
-
-@router.post("/voice-engines/{engine_id}/test")
-async def admin_voice_engine_test(
-    engine_id: str,
-    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
-    db: AsyncSession = Depends(get_db),
-):
-    """Real synthesis probe through this exact engine — the admin hears the
-    result of a good key, and a bad one shows here before any tenant does."""
-    import time
-
-    from ..channels.meta.voice import _synthesize_edge, _synthesize_fish
-    from ..llm.models import VoiceModelConfig
-
-    row = (
-        await db.execute(
-            select(VoiceModelConfig).where(VoiceModelConfig.id == engine_id)
+        db.add(plan)
+        await db.commit()
+        await db.refresh(plan)
+        return PlanOut(
+            id=plan.id, slug=plan.slug, name=plan.name, description=plan.description,
+            price_cents=plan.price_cents, included_credit_cents=plan.included_credit_cents,
+            max_channels=plan.max_channels, max_messages_per_month=plan.max_messages_per_month,
+            features=plan.features or {}, is_active=plan.is_active, sort_order=plan.sort_order,
         )
-    ).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Voice engine not found")
 
-    text = "Hello! This is a Sayvors voice check."
-    started = time.perf_counter()
-    try:
-        if row.provider == "fish":
-            result = await _synthesize_fish(row, text, "en")
-        elif row.provider == "edge":
-            result = await _synthesize_edge(row.api_model, "en", text)
+
+@router.patch("/plans/{plan_id}", response_model=PlanOut)
+async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        plan = await db.get(Plan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plan not found.")
+        if body.name is not None:
+            plan.name = body.name
+        if body.description is not None:
+            plan.description = body.description
+        if body.price_cents is not None:
+            plan.price_cents = body.price_cents
+        if body.included_credit_cents is not None:
+            plan.included_credit_cents = body.included_credit_cents
+        if "max_channels" in body.model_fields_set:
+            plan.max_channels = body.max_channels
+        if "max_messages_per_month" in body.model_fields_set:
+            plan.max_messages_per_month = body.max_messages_per_month
+        if body.features is not None:
+            plan.features = sanitize_features(body.features)
+        if body.is_active is not None:
+            plan.is_active = body.is_active
+        if body.sort_order is not None:
+            plan.sort_order = body.sort_order
+        await db.commit()
+        await db.refresh(plan)
+        return PlanOut(
+            id=plan.id, slug=plan.slug, name=plan.name, description=plan.description,
+            price_cents=plan.price_cents, included_credit_cents=plan.included_credit_cents,
+            max_channels=plan.max_channels, max_messages_per_month=plan.max_messages_per_month,
+            features=plan.features or {}, is_active=plan.is_active, sort_order=plan.sort_order,
+        )
+
+
+@router.get("/tenants/{tenant_id}/subscription", response_model=SubscriptionOut)
+async def get_tenant_subscription(tenant_id: str, _admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        sub = (
+            await db.execute(
+                _select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id)
+            )
+        ).scalar_one_or_none()
+        if sub is None:
+            raise HTTPException(status_code=404, detail="No subscription for this tenant.")
+        plan = await db.get(Plan, sub.plan_id)
+        return SubscriptionOut(
+            id=sub.id, tenant_id=sub.tenant_id, plan_id=sub.plan_id,
+            plan_slug=plan.slug if plan else None,
+            plan_name=plan.name if plan else None,
+            status=sub.status, period_start=sub.period_start, period_end=sub.period_end,
+            granted_by=sub.granted_by, granted_until=sub.granted_until,
+        )
+
+
+@router.post("/tenants/{tenant_id}/grant-plan", response_model=SubscriptionOut)
+async def grant_plan(tenant_id: str, body: GrantPlanIn, _admin=Depends(require_admin)):
+    from ...database import async_session
+
+    async with async_session() as db:
+        plan = (
+            await db.execute(_select(Plan).where(Plan.slug == body.plan_slug))
+        ).scalar_one_or_none()
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plan not found.")
+        existing = (
+            await db.execute(
+                _select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            sub = TenantSubscription(
+                tenant_id=tenant_id,
+                plan_id=plan.id,
+                status="active",
+                granted_by=_admin.get("username") or "admin",
+                granted_until=body.granted_until,
+            )
+            db.add(sub)
         else:
-            return {
-                "ok": False, "latency_ms": 0,
-                "detail": f"provider {row.provider!r} has no client wired yet",
-            }
-    except Exception as e:
-        return {
-            "ok": False,
-            "latency_ms": int((time.perf_counter() - started) * 1000),
-            "detail": f"{type(e).__name__}: {str(e)[:160]}",
-        }
-    latency = int((time.perf_counter() - started) * 1000)
-    if result is None:
-        return {
-            "ok": False, "latency_ms": latency,
-            "detail": "no audio (missing API key, or language not covered)",
-        }
-    audio, mime = result
-    return {"ok": True, "latency_ms": latency, "detail": f"{len(audio)} bytes {mime}"}
-
-
-@router.put("/voice-engines/{engine_id}", response_model=VoiceEngineStatus)
-async def admin_voice_engine_update(
-    engine_id: str,
-    body: VoiceEngineUpsert,
-    _admin: dict = Depends(require_admin), _rate_limit: None = Depends(admin_rate_limit),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update an engine. A non-null api_key rotates the stored key
-    (encrypted); an empty string clears it; omitting the field changes
-    nothing."""
-    from ..channels.service import encrypt_token
-    from ..llm.models import VoiceModelConfig
-
-    row = (
-        await db.execute(
-            select(VoiceModelConfig).where(VoiceModelConfig.id == engine_id)
+            existing.plan_id = plan.id
+            existing.status = "active"
+            existing.granted_by = _admin.get("username") or "admin"
+            existing.granted_until = body.granted_until
+            sub = existing
+        await db.commit()
+        await db.refresh(sub)
+        return SubscriptionOut(
+            id=sub.id, tenant_id=sub.tenant_id, plan_id=sub.plan_id,
+            plan_slug=plan.slug, plan_name=plan.name, status=sub.status,
+            period_start=sub.period_start, period_end=sub.period_end,
+            granted_by=sub.granted_by, granted_until=sub.granted_until,
         )
-    ).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Voice engine not found")
-    row.label = body.label
-    row.provider = body.provider
-    row.tier = body.tier
-    row.api_url = body.api_url
-    row.api_model = body.api_model
-    row.reference_id = body.reference_id
-    row.language_references = body.language_references
-    row.languages = body.languages
-    row.enabled = body.enabled
-    if body.api_key is not None:
-        row.key_encrypted = encrypt_token(body.api_key) if body.api_key else None
-    db.add(row)
-    await db.commit()
-    await db.refresh(row)
-    return _voice_engine_status(row)
+
+
+@router.get("/tenants/{tenant_id}/entitlements")
+async def get_tenant_entitlements(tenant_id: str, _admin=Depends(require_admin)):
+    from ...billing.entitlements import get_entitlements
+    from ...database import async_session
+
+    async with async_session() as db:
+        ent = await get_entitlements(tenant_id, db)
+        return {
+            "plan_slug": ent.plan_slug,
+            "plan_name": ent.plan_name,
+            "status": ent.status,
+            "max_channels": ent.max_channels,
+            "max_messages_per_month": ent.max_messages_per_month,
+            "included_credit_cents": ent.included_credit_cents,
+            "features": ent.features,
+            "promo_active": ent.promo_active,
+            "granted_by": ent.granted_by,
+            "granted_until": ent.granted_until.isoformat() if ent.granted_until else None,
+        }

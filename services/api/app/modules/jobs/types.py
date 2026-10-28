@@ -28,29 +28,45 @@ class JobType(str, Enum):
     media_process = "media.process"          # image resize / convert
 
     # ── bulk lane ── best-effort, yielding
-    databank_ingest = "databank.ingest"      # RAG document ingest
+    review_request_send = "review_request.send"  # scheduled review ask (bulk)
+    rag_ingest = "rag.ingest"                # RAG document ingest (unified)
+    databank_ingest = "databank.ingest"      # RAG document ingest (legacy)
     scrape_url = "scrape.url"                # URL scraping
     stt_job = "stt.job"                      # speech-to-text
     tts_job = "tts.job"                      # text-to-speech
 
-    # Lane for each job type
-    LANE_MAP: dict["JobType", JobLane] = {
-        meta_send_reply: JobLane.realtime,
-        meta_send_template: JobLane.realtime,
-        post_publish: JobLane.publishing,
-        post_delete: JobLane.publishing,
-        media_publish: JobLane.publishing,
-        media_process: JobLane.media,
-        databank_ingest: JobLane.bulk,
-        scrape_url: JobLane.bulk,
-        stt_job: JobLane.bulk,
-        tts_job: JobLane.bulk,
-    }
-
     @classmethod
     def lane_for(cls, job_type: "JobType") -> JobLane:
-        return cls.LANE_MAP[job_type]
+        return _LANE_MAP[job_type]
 
+
+# Module-level map, not an enum attribute: a dict assigned inside an Enum
+# body becomes a member (and a classmethod that indexes it would look up the
+# member, not the map). Keeping it here makes the mapping data, not a job type.
+_LANE_MAP: dict[JobType, JobLane] = {
+    JobType.meta_send_reply: JobLane.realtime,
+    JobType.meta_send_template: JobLane.realtime,
+    JobType.post_publish: JobLane.publishing,
+    JobType.post_delete: JobLane.publishing,
+    JobType.media_publish: JobLane.publishing,
+    JobType.media_process: JobLane.media,
+    JobType.review_request_send: JobLane.bulk,
+    JobType.rag_ingest: JobLane.bulk,
+    JobType.databank_ingest: JobLane.bulk,
+    JobType.scrape_url: JobLane.bulk,
+    JobType.stt_job: JobLane.bulk,
+    JobType.tts_job: JobLane.bulk,
+}
+
+
+# Per-lane default max attempts. Bulk jobs get more retries (best-effort,
+# transient failures are common); realtime gets fewer (latency matters).
+MAX_ATTEMPTS_BY_LANE: dict[JobLane, int] = {
+    JobLane.realtime: 3,
+    JobLane.publishing: 5,
+    JobLane.media: 3,
+    JobLane.bulk: 10,
+}
 
 # JOB_TYPES is the closed registry validated server-side on submit.
 JOB_TYPES = [jt.value for jt in JobType]

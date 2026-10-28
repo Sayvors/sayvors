@@ -29,7 +29,7 @@ class _FakeDB:
 
 
 class _DeadProvider:
-    async def complete(self, req):
+    async def __call__(self, **kwargs):
         raise ProviderError("openai", "API key not configured", 503)
 
 
@@ -37,8 +37,8 @@ class _GroqProvider:
     def __init__(self):
         self.models_seen = []
 
-    async def complete(self, req):
-        self.models_seen.append(req.model)
+    async def __call__(self, **kwargs):
+        self.models_seen.append(kwargs["model"])
         return _resp("Thank you for the great review!")
 
 
@@ -73,8 +73,8 @@ class _AnalysisProvider:
         self.analysis_text = analysis_text
         self.calls = []
 
-    async def complete(self, req):
-        self.calls.append(req.model)
+    async def __call__(self, **kwargs):
+        self.calls.append(kwargs["model"])
         return _resp(self.analysis_text)
 
 
@@ -83,10 +83,10 @@ class _ReplyProvider:
         self.text = text
         self.captured = {}
 
-    async def complete(self, req):
+    async def __call__(self, **kwargs):
         self.captured["prompt"] = "\n".join(
-            m.content for m in req.messages)
-        self.captured["system"] = req.system_prompt
+            m.content for m in kwargs["messages"])
+        self.captured["system"] = kwargs.get("system_prompt")
         return _resp(self.text)
 
 
@@ -117,14 +117,11 @@ async def test_dead_model_fails_loudly_without_fallback(monkeypatch, db, user_id
     calls = []
 
     class _DeadCountingProvider:
-        async def complete(self, req):
-            calls.append(req.model)
+        async def __call__(self, **kwargs):
+            calls.append(kwargs["model"])
             raise ProviderError("openai", "API key not configured", 503)
 
-    monkeypatch.setattr(
-        und, "get_provider_for_model", lambda mid: _DeadCountingProvider()
-    )
-    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "openai"))
+    monkeypatch.setattr(und, "complete", _DeadCountingProvider())
     from app.modules.review_engine.schemas import ReviewEngineRequest
 
     req = ReviewEngineRequest(review_text="Loved it", rating=5,
@@ -145,17 +142,12 @@ async def test_no_retry_when_groq_itself_fails(monkeypatch, db, user_id):
     await _enable_test_model(db, "groq:oss-120b", provider="groq")
     calls = []
 
-    def _fake_get(model_id):
-        calls.append(model_id)
+    class _Fail:
+        async def __call__(self, **kwargs):
+            calls.append(kwargs["model"])
+            raise ProviderError("groq", "boom", 502)
 
-        class _Fail:
-            async def complete(self, req):
-                raise ProviderError("groq", "boom", 502)
-
-        return _Fail()
-
-    monkeypatch.setattr(und, "get_provider_for_model", _fake_get)
-    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "groq"))
+    monkeypatch.setattr(und, "complete", _Fail())
     from app.modules.review_engine.schemas import ReviewEngineRequest
 
     req = ReviewEngineRequest(review_text="Loved it", rating=5,
@@ -195,13 +187,10 @@ async def test_arabic_review_gets_arabic_language_instruction(monkeypatch, db, u
     monkeypatch.setattr(eng, "_async_session", _shim_session_factory(db))
     await _enable_test_model(db, "groq:oss-120b", provider="groq")
     monkeypatch.setattr(
-        und, "get_provider_for_model",
-        lambda mid: _AnalysisProvider(_analysis_json(language="ar")),
+        und, "complete", _AnalysisProvider(_analysis_json(language="ar"))
     )
-    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "groq"))
     reply = _ReplyProvider("شكراً جزيلاً على تقييمك!")
-    monkeypatch.setattr(gen, "get_provider_for_model", lambda mid: reply)
-    monkeypatch.setattr(gen, "_resolve_model", lambda mid: ("api-x", "groq"))
+    monkeypatch.setattr(gen, "complete", reply)
 
     from app.modules.review_engine.schemas import ReviewEngineRequest
 
@@ -224,13 +213,10 @@ async def test_english_review_gets_language_match_rule(monkeypatch, db, user_id)
     monkeypatch.setattr(eng, "_async_session", _shim_session_factory(db))
     await _enable_test_model(db, "groq:oss-120b", provider="groq")
     monkeypatch.setattr(
-        und, "get_provider_for_model",
-        lambda mid: _AnalysisProvider(_analysis_json()),
+        und, "complete", _AnalysisProvider(_analysis_json())
     )
-    monkeypatch.setattr(und, "_resolve_model", lambda mid: ("api-x", "groq"))
     reply = _ReplyProvider("Thanks for the kind words!")
-    monkeypatch.setattr(gen, "get_provider_for_model", lambda mid: reply)
-    monkeypatch.setattr(gen, "_resolve_model", lambda mid: ("api-x", "groq"))
+    monkeypatch.setattr(gen, "complete", reply)
 
     from app.modules.review_engine.schemas import ReviewEngineRequest
 

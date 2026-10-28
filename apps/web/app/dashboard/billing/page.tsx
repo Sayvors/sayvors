@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import LogoLoader from "@/components/LogoLoader";
@@ -64,6 +65,18 @@ function detectBrand(digits: string): string {
   if (/^6(?:011|5)/.test(digits)) return "discover";
   if (/^62/.test(digits)) return "unionpay";
   return digits.length >= 6 ? "other" : "unknown";
+}
+
+function expectedCardLength(brand: string): number {
+  switch (brand.toLowerCase()) {
+    case "amex":
+      return 15;
+    case "diners":
+    case "carteblanche":
+      return 14;
+    default:
+      return 16;
+  }
 }
 
 function luhnValid(digits: string): boolean {
@@ -281,10 +294,12 @@ export default function BillingPage() {
     digits.length === 0
       ? null
       : digits.length < 13
-        ? `Too short — card numbers have 13–19 digits (${digits.length} typed).`
-        : !luhnValid(digits)
-          ? "This number doesn't pass the checksum — check and retry."
-          : null;
+        ? `Too short - keep typing (${digits.length} typed).`
+        : detected !== "unknown" && detected !== "other" && digits.length !== expectedCardLength(detected)
+          ? `${brandLabel(detected)} cards use ${expectedCardLength(detected)} digits (${digits.length} typed).`
+          : !luhnValid(digits)
+            ? "This number doesn't pass the checksum - check and retry."
+            : null;
   const expiryErr = expiry ? expiryError(expiry) : null;
   const holderError: string | null =
     holder === "" ? null : holder.trim().length < 2 ? "Enter the name printed on the card." : null;
@@ -472,6 +487,28 @@ export default function BillingPage() {
           Plan, billing details and saved cards. Card numbers are never stored — only brand, last digits and expiry.
         </p>
       </div>
+
+      <Link
+        href="/dashboard/billing/credit"
+        className="group flex items-center justify-between gap-3 rounded-2xl border border-deep-violet/15 bg-deep-violet/[0.04] p-4 transition hover:border-deep-violet/30 hover:bg-deep-violet/[0.07] dark:border-violet-soft/20 dark:bg-violet-soft/5"
+      >
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-deep-violet text-white shadow-sm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-5 w-5" aria-hidden>
+              <rect x="3" y="6" width="18" height="12" rx="2" />
+              <path d="M3 10h18" />
+              <circle cx="7" cy="14" r="1" fill="currentColor" />
+            </svg>
+          </span>
+          <div>
+            <p className="text-[13px] font-bold text-ink dark:text-fog">AI credit ledger</p>
+            <p className="text-[11px] text-ink/45 dark:text-fog/45">Balance, holds, and per-call charges — Postgres is the source of truth.</p>
+          </div>
+        </div>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4 shrink-0 text-deep-violet/60 transition group-hover:translate-x-0.5 dark:text-violet-soft/60" aria-hidden>
+          <path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </Link>
 
       {banner && (
         <div
@@ -668,12 +705,25 @@ export default function BillingPage() {
                       <Field
                         label="Card number"
                         required
-                        hint={detected !== "unknown" && detected !== "other" ? `Detected: ${brandLabel(detected)}` : undefined}
+                        hint={
+                          digits.length === 0
+                            ? undefined
+                            : numberError
+                              ? undefined
+                              : detected !== "unknown" && detected !== "other"
+                                ? `Detected: ${brandLabel(detected)} - valid`
+                                : "Valid card number"
+                        }
                         error={cardTouched ? numberError : null}
                       >
                         <input
                           value={cardNumber}
-                          onChange={(e) => setCardNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 19).replace(/(\d{4})(?=\d)/g, "$1 "))}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/[^0-9]/g, "");
+                            const brand = detectBrand(raw);
+                            const cap = brand !== "unknown" && brand !== "other" ? expectedCardLength(brand) : 19;
+                            setCardNumber(raw.slice(0, cap).replace(/(\d{4})(?=\d)/g, "$1 "));
+                          }}
                           disabled={busy !== null}
                           placeholder="4242 4242 4242 4242"
                           inputMode="numeric"

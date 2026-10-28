@@ -4,30 +4,34 @@ import logging
 import re
 import time
 
-from ..llm.providers.base import LLMMessage, LLMRequest, ProviderError
-from ..llm.providers.registry import get_provider_for_model
-from ..llm.service import _resolve_model
+from app.core.language import detect_language
+
+from ..llm.gateway import LLMMessage, ProviderError, complete
 from .schemas import ReviewAnalysis
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_SYSTEM_PROMPT = """Analyze the review → JSON {sentiment,emotion,intent,issue_type,product_reference,urgency,customer_request,language}.
+ANALYSIS_SYSTEM_PROMPT = """Analyze the review - JSON {sentiment,emotion,intent,issue_type,product_reference,urgency,customer_request,language}.
 sentiment: very_negative|negative|neutral|positive|very_positive
 emotion: one word (anger,frustration,joy,disappointment,indifference)
 intent: subset of [complaint,praise,suggestion,refund_request,question,recommendation_request]
 issue_type: pricing|billing|product_quality|product_dissatisfaction|service_quality|delivery|wait_time|cleanliness|staff_behavior|facility_premises|technical_issue|general_complaint|null
 product_reference: product name or null
+product_reference_en: English translation of the product name, or null
 urgency: low|medium|high|critical
 customer_request: what they ask for or null
-language: en|ar …
+language: en|ar|ur|ur-Latn|es|fr|de|zh|ja|… (ISO 639-1)
+Urdu uses the Arabic script but is NOT Arabic - language=ur.
+Roman Urdu (Latin script with Urdu words like kya, hai, nahi) - language=ur-Latn.
+Arabic dialects (Saudi, Egyptian, Levantine) are still language=ar.
 
 PRICING vs BILLING: pricing=price too high (expensive,costly,overpriced,not worth) no transaction error; billing=transaction failed (charged twice,wrong amount,payment failed,invoice wrong,billing error). "cost/price/charge/refund" alone ≠ billing.
 "pricing" when price opinion; NOT make it billing without transaction error.
 TENANT-AGNOSTIC CLASSIFICATION: any kind of business can receive feedback about
 its physical premises. "مبناكم" / "المبنى" means building/premises, not bank or
 account. Use facility_premises for a clear building/facility complaint. Never
-infer a complaint from the tenant's business type. If review text is Arabic,
-set language=ar even if the rest of this prompt is English.
+infer a complaint from the tenant's business type. If review text is Arabic script with Urdu markers (ٹ ڈ ڑ ں ھ ے ک گ چ پ ژ or words like کیا/ہے/نہیں), set language=ur.
+If review text is Arabic script without Urdu markers, set language=ar.
 QUESTIONS: a review that ASKS something (do you sell X? where are you? is there parking? هل تبيعون …؟ عندكم …؟) has intent "question" — even when the rating is 5★. A question is not praise; include "question" whenever anything is being asked.
 Return ONLY JSON."""
 
@@ -44,32 +48,41 @@ _QUESTION_EN = re.compile(
     re.I,
 )
 
+_QUESTION_UR = re.compile(
+    r"(?:^|\s)(?:کیا|کیسے|کیسہ|کہاں|کب|کتنا|کتنے|کون|کیوں|کونسا|آپ کے پاس)\b"
+)
+
+_QUESTION_UR_LATN = re.compile(
+    r"(?:^|\s)(?:kya|kaise|kahan|kab|kitna|kitne|kaun|kyun|kya aap|aap ke paas)\b",
+    re.I,
+)
+
 
 def looks_like_question(review_text: str | None) -> bool:
     """True when the review text is (or contains) a direct question.
 
     Deliberately conservative about English: a bare "?" or a sentence-starting
     auxiliary counts, but mid-sentence "how" inside praise must not flip a
-    review into a question. Arabic markers are unambiguous enough to match
-    anywhere in the text.
+    review into a question. Arabic and Urdu markers are unambiguous enough to
+    match anywhere in the text.
     """
     text = (review_text or "").strip()
     if not text:
         return False
-    if _QUESTION_AR.search(text):
+    if _QUESTION_AR.search(text) or _QUESTION_UR.search(text):
         return True
     if "?" in text or "؟" in text:
         # Any explicit question mark: the review asks something.
         return True
-    # No question mark — only a leading interrogative counts in English.
-    return bool(_QUESTION_EN.match(text))
+    # No question mark — only a leading interrogative counts.
+    return bool(_QUESTION_EN.match(text) or _QUESTION_UR_LATN.match(text))
 
 
 def _salvage_analysis_json(raw: str) -> dict:
     """Extract whatever fields survived a truncated/invalid JSON blob.
 
-    Models sometimes stop mid-object (token cut) — 6 good fields should not
-    be trashed because the 7th got cut. Missing fields fall to ReviewAnalysis
+    Models sometimes stop mid-object (token cut) - 6 good fields should not
+    be trashed because the seventh got cut. Missing fields fall to ReviewAnalysis
     defaults via .get() at the call site.
     """
     import re
@@ -81,9 +94,9 @@ def _salvage_analysis_json(raw: str) -> dict:
         return m.group(1) if m else None
 
     for field in ("sentiment", "emotion", "issue_type", "product_reference",
-                  "urgency", "customer_request", "language"):
+                  "product_reference_en", "urgency", "customer_request", "language"):
         val = _str_field(field)
-        # JSON null literal (unquoted) → treat as absent
+        # JSON null literal (unquoted) - treat as absent
         if val is None and re.search(rf'"{field}"\s*:\s*null', raw):
             continue
         if val is not None:
@@ -111,10 +124,7 @@ async def analyze_review(
         f"Review:\n\"{review_text.strip()[:2000]}\""
     )
 
-    provider = get_provider_for_model(model)
-    api_model, _ = _resolve_model(model)
-
-    # Light in-memory cache: same review → same analysis, no extra tokens
+    # Light in-memory cache: same review - same analysis, no extra tokens
     cache_key = f"{model}:{rating}:{review_text.strip()[:200]}"
     if not hasattr(analyze_review, "_cache"):
         analyze_review._cache = {}  # type: ignore[attr-defined]
@@ -124,19 +134,15 @@ async def analyze_review(
 
     t0 = time.monotonic()
     try:
-        resp = await provider.complete(
-            LLMRequest(
-                model=api_model,
-                messages=[LLMMessage(role="user", content=user_msg)],
-                system_prompt=ANALYSIS_SYSTEM_PROMPT,
-                temperature=0.1,
-                max_tokens=300,
-                stream=False,
-                tenant_id=tenant_id,
-                model_id=model,
-                purpose="review_engine.analysis",
-                channel_id=channel_id,
-            )
+        resp = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=user_msg)],
+            system_prompt=ANALYSIS_SYSTEM_PROMPT,
+            temperature=0.1,
+            max_tokens=300,
+            tenant_id=tenant_id,
+            purpose="review_engine.analysis",
+            channel_id=channel_id,
         )
     except ProviderError:
         logger.warning("Analysis model %s failed; no fallback — surfacing error", model)
@@ -169,14 +175,30 @@ async def analyze_review(
         intent=data.get("intent", []),
         issue_type=data.get("issue_type"),
         product_reference=data.get("product_reference"),
+        product_reference_en=data.get("product_reference_en"),
         urgency=data.get("urgency", "low"),
         customer_request=data.get("customer_request"),
         language=data.get("language", "en"),
     )
-    # Do not let a mistaken model language label make Arabic reviews receive
-    # English replies. Script is a reliable override for Arabic-script reviews.
-    if re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]", review_text or ""):
-        analysis.language = "ar"
+    # Language identification: the LLM label is a candidate; the deterministic
+    # detector is authoritative for the Arabic-script family, where the model
+    # most often mislabels Urdu as Arabic. For other scripts, trust the LLM.
+    from app.core.language import detect_language
+    detected = detect_language(review_text)
+    llm_lang = (analysis.language or "en").strip().lower()
+    if detected.confident and detected.script == "arabic":
+        analysis.language = detected.code
+    elif not detected.confident and llm_lang in ("ar", "ur", "ur-latn", "fa", "ps"):
+        analysis.language = llm_lang
+    elif detected.confident and detected.script != "arabic" and llm_lang == "en":
+        # Keep the LLM's label for non-Arabic scripts (it may be more precise).
+        pass
+    else:
+        # Default: prefer a confident detector, else the LLM label.
+        if detected.confident:
+            analysis.language = detected.code
+        else:
+            analysis.language = llm_lang or detected.code or "en"
     # Deterministic guard: the LLM sometimes misses a question inside a
     # high-rating review. A question review must never be answered as if
     # it were praise ("thanks for your wonderful review!").
@@ -195,7 +217,7 @@ async def analyze_review(
 
 
 def _rule_based_analysis(review_text: str, rating: int) -> ReviewAnalysis:
-    """Fallback when LLM fails — basic sentiment from rating."""
+    """Fallback when LLM fails - basic sentiment from rating."""
     if rating >= 4:
         sentiment = "positive" if rating == 4 else "very_positive"
     elif rating == 3:
@@ -253,5 +275,5 @@ def _rule_based_analysis(review_text: str, rating: int) -> ReviewAnalysis:
         product_reference=product_ref,
         urgency=urgency,
         customer_request=review_text[:200] if review_text else None,
-        language="ar" if re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]", review_text or "") else "en",
+        language=detect_language(review_text).code if review_text else "en",
     )

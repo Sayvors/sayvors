@@ -27,6 +27,10 @@ def upgrade() -> None:
         sa.Column("hours", sa.JSON(), nullable=False, server_default="{}"),
         sa.Column("service_area", sa.JSON(), nullable=False, server_default="[]"),
         sa.Column("attributes", sa.JSON(), nullable=False, server_default="{}"),
+        # Owned by z2a3b4c5d6e7, but that revision can run before this table
+        # exists on a fresh database. Keeping the column here makes both
+        # orderings produce the same schema.
+        sa.Column("opening_date", sa.Date(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),

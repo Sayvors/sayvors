@@ -109,6 +109,60 @@ async def test_get_provider_uses_db_key():
 
 
 @pytest.mark.asyncio
+async def test_openrouter_is_an_openai_compatible_provider():
+    """OpenRouter is keyed like any OpenAI-compatible provider; only its
+    base URL differs, so it must not need a transport of its own."""
+    enc = encrypt_token("sk-or-test")
+    await registry.refresh_provider_keys(
+        session_factory=_factory([SimpleNamespace(
+            provider="openrouter", key_encrypted=enc, enabled=True
+        )])
+    )
+    inst = registry.get_provider("openrouter")
+    assert inst.name() == "openrouter"
+    assert str(inst._client.base_url).rstrip("/") == "https://openrouter.ai/api/v1"
+
+
+@pytest.mark.asyncio
+async def test_unchanged_refresh_keeps_cached_provider():
+    """The 15s TTL refresh must not churn connection pools when nothing changed."""
+    enc = encrypt_token("gsk_db")
+    rows = [SimpleNamespace(provider="groq", key_encrypted=enc, enabled=True)]
+
+    await registry.refresh_provider_keys(session_factory=_factory(rows))
+    first = registry.get_provider("groq")
+
+    await registry.refresh_provider_keys(session_factory=_factory(rows))
+    assert registry.get_provider("groq") is first
+
+
+@pytest.mark.asyncio
+async def test_key_rotation_evicts_and_closes_cached_provider(monkeypatch):
+    old = encrypt_token("gsk_old")
+    new = encrypt_token("gsk_new")
+    await registry.refresh_provider_keys(
+        session_factory=_factory([SimpleNamespace(
+            provider="groq", key_encrypted=old, enabled=True
+        )])
+    )
+    first = registry.get_provider("groq")
+    closed = []
+
+    async def _close(provider):
+        closed.append(provider)
+
+    monkeypatch.setattr(registry, "_close_provider", _close)
+    await registry.refresh_provider_keys(
+        session_factory=_factory([SimpleNamespace(
+            provider="groq", key_encrypted=new, enabled=True
+        )])
+    )
+
+    assert registry.get_provider("groq") is not first
+    assert closed == [first]
+
+
+@pytest.mark.asyncio
 async def test_unknown_provider():
     key, source = registry.resolve_provider_key("nope")
     assert (key, source) == (None, "none")

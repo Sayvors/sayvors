@@ -1,12 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import LogoLoader from "@/components/LogoLoader";
 import {
   fetchInboxThreads,
   fetchThreadMessages,
+  archiveInboxThread,
+  deleteInboxThread,
+  pinInboxThread,
   sendInboxMessage,
   UNKNOWN_THREAD_KEY,
   type InboxMessage,
@@ -21,6 +26,7 @@ import {
   useTypingSource,
 } from "@/lib/inbox-typing";
 import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import TypingIndicator from "@/components/inbox/TypingIndicator";
 
 type Filter = "all" | "unread" | "important" | "unknown";
@@ -31,6 +37,12 @@ const QUICK_REPLIES = [
   "Could you share more details?",
   "All set — anything else I can do for you?",
 ];
+
+/** Cap on the in-memory thread message buffer. Older entries are dropped on
+ *  overflow; the server stays the source of truth and the thread is
+ *  re-fetched on reopen. Keeps a long-lived inbox session (or a realtime
+ *  flood) from growing the array without bound. */
+const INBOX_MESSAGE_BUFFER_CAP = 500;
 
 /** "+966500000001" / "966500000001" -> "+966 50 000 0001" for scannability. */
 function formatPhone(phone: string | null): string {
@@ -161,23 +173,39 @@ function StatusTick({ message }: { message: InboxMessage }) {
   );
 }
 
+const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Meta's free-form messaging window: 24h from the customer's last inbound
+ *  message. Returns the expiry timestamp, or null for platforms without a
+ *  hard window (e.g. Google reviews, which are answered elsewhere). */
+function replyWindowExpiresAt(thread: InboxThread | null): Date | null {
+  if (!thread) return null;
+  const platform = (thread.platform ?? "").toLowerCase();
+  if (platform === "google_reviews" || platform === "google") return null;
+  if (!thread.last_message_at) return null;
+  // If the last message was outbound, the customer's last inbound was
+  // earlier — use last_message_at as a conservative (slightly generous)
+  // reference so we never block a reply that might still be allowed.
+  return new Date(new Date(thread.last_message_at).getTime() + REPLY_WINDOW_MS);
+}
+
+function replyWindowOpen(thread: InboxThread | null): boolean {
+  const expires = replyWindowExpiresAt(thread);
+  if (!expires) return true; // no window constraint
+  return Date.now() < expires.getTime();
+}
+
 export default function InboxView() {
+  const queryClient = useQueryClient();
   const [threads, setThreads] = useState<InboxThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<InboxThread | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [pinned, setPinned] = useState<Set<string>>(() => {
-    try {
-      const raw = typeof window !== "undefined" ? localStorage.getItem("sayvors.inbox.pinned") : null;
-      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
-
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -203,24 +231,63 @@ export default function InboxView() {
     if (ch && key) deepLinkRef.current = { channel: ch, key };
   }, [searchParams]);
 
-  const togglePin = (compositeKey: string) => {
-    setPinned((prev) => {
-      const next = new Set(prev);
-      if (next.has(compositeKey)) next.delete(compositeKey);
-      else next.add(compositeKey);
-      try {
-        localStorage.setItem("sayvors.inbox.pinned", JSON.stringify([...next]));
-      } catch {}
-      return next;
-    });
+  const togglePin = async (thread: InboxThread) => {
+    const composite = `${thread.channel_id}:${thread.key}`;
+    const next = !thread.pinned;
+    try {
+      await pinInboxThread(thread.channel_id, thread.contact_phone, next);
+      setThreads((prev) =>
+        prev.map((t) =>
+          `${t.channel_id}:${t.key}` === composite ? { ...t, pinned: next } : t,
+        ),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+    } catch {
+      /* keep stale */
+    }
   };
 
-  const loadThreads = useCallback(async (q: string) => {
-    setLoading(true);
-    setError(null);
+  const handleArchive = async (thread: InboxThread, archived: boolean) => {
+    const composite = `${thread.channel_id}:${thread.key}`;
     try {
-      const list = await fetchInboxThreads(q);
-      setThreads(list);
+      await archiveInboxThread(thread.channel_id, thread.contact_phone, archived);
+      // Optimistic local update + cache invalidation.
+      setThreads((prev) =>
+        prev.map((t) =>
+          `${t.channel_id}:${t.key}` === composite ? { ...t, archived } : t,
+        ),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+    } catch {
+      // keep stale; the next fetch will correct
+    }
+  };
+
+  const handleDelete = async (thread: InboxThread) => {
+    const composite = `${thread.channel_id}:${thread.key}`;
+    try {
+      await deleteInboxThread(thread.channel_id, thread.contact_phone);
+      setThreads((prev) => prev.filter((t) => `${t.channel_id}:${t.key}` !== composite));
+      if (selectedKey === composite) setSelectedKey(null);
+      void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] });
+    } catch {
+      // keep stale; the next fetch will correct
+    }
+    setDeleteTarget(null);
+  };
+
+  // Debounce the search input so we don't refetch on every keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const threadsQuery = useQuery({
+    queryKey: ["inbox", "threads", debouncedSearch, showArchived],
+    queryFn: async () => {
+      const list = await fetchInboxThreads(debouncedSearch, showArchived);
+      // Deep-link handling: if a thread was requested via URL, select it.
       const deep = deepLinkRef.current;
       if (deep.channel && deep.key) {
         const hit = list.find((t) => t.channel_id === deep.channel && t.key === deep.key);
@@ -229,17 +296,27 @@ export default function InboxView() {
           deepLinkRef.current = { channel: null, key: null };
         }
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load conversations.");
-    } finally {
+      return list;
+    },
+    staleTime: 15 * 1000,
+  });
+
+  // Sync server state into local state (preserves realtime/WS mutation paths).
+  useEffect(() => {
+    const list = threadsQuery.data;
+    if (list) {
+      setThreads(list);
+      setLoading(false);
+      setError(null);
+    }
+  }, [threadsQuery.data]);
+  useEffect(() => {
+    if (threadsQuery.isError) {
+      setError(threadsQuery.error instanceof Error ? threadsQuery.error.message : "Could not load conversations.");
+      setThreads([]);
       setLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => void loadThreads(search), 250);
-    return () => clearTimeout(t);
-  }, [search, loadThreads]);
+  }, [threadsQuery.isError, threadsQuery.error]);
 
   const selected = useMemo(
     () => threads.find((t) => `${t.channel_id}:${t.key}` === selectedKey) ?? null,
@@ -304,7 +381,13 @@ export default function InboxView() {
       created_at: e.created_at ?? new Date().toISOString(),
     };
     if (open) {
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        const next = [...prev, msg];
+        return next.length > INBOX_MESSAGE_BUFFER_CAP
+          ? next.slice(next.length - INBOX_MESSAGE_BUFFER_CAP)
+          : next;
+      });
     }
     setThreads((prev) => {
       const idx = prev.findIndex((t) => `${t.channel_id}:${t.key}` === composite);
@@ -387,16 +470,28 @@ export default function InboxView() {
 
   const visible = useMemo(() => {
     let rows = threads;
+    if (!showArchived) rows = rows.filter((t) => !t.archived);
     if (filter === "unread") rows = rows.filter((t) => t.unread > 0);
     if (filter === "important") rows = rows.filter((t) => t.important);
     if (filter === "unknown") rows = rows.filter((t) => t.is_unknown);
     if (platformFilter !== "all") rows = rows.filter((t) => t.platform === platformFilter);
     return [...rows].sort((a, b) => {
-      const ap = pinned.has(`${a.channel_id}:${a.key}`) ? 0 : 1;
-      const bp = pinned.has(`${b.channel_id}:${b.key}`) ? 0 : 1;
+      const ap = a.pinned ? 0 : 1;
+      const bp = b.pinned ? 0 : 1;
       return ap - bp;
     });
-  }, [threads, filter, platformFilter, pinned]);
+  }, [threads, filter, platformFilter, showArchived]);
+
+  // Virtualize the thread list so a tenant with thousands of conversations
+  // doesn't render thousands of DOM nodes. The scroll container is the
+  // overflow-y-auto div below; rows are absolutely positioned by offset.
+  const threadListRef = useRef<HTMLDivElement>(null);
+  const threadVirtualizer = useVirtualizer({
+    count: visible.length,
+    getScrollElement: () => threadListRef.current,
+    estimateSize: () => 76,
+    overscan: 6,
+  });
 
   const unreadTotal = useMemo(() => threads.reduce((s, t) => s + t.unread, 0), [threads]);
   const importantTotal = useMemo(
@@ -464,7 +559,7 @@ export default function InboxView() {
   // `can_reply === false` (not `!can_reply`) so a thread from an older
   // API — which does not send the field — can still be replied to.
   const canSend =
-    !!target && !target.is_unknown && target.can_reply !== false && !!draft.trim() && !sending;
+    !!target && !target.is_unknown && target.can_reply !== false && replyWindowOpen(target) && !!draft.trim() && !sending;
   const openThread = !!target;
 
   return (
@@ -477,7 +572,7 @@ export default function InboxView() {
           </p>
         </div>
         <button
-          onClick={() => void loadThreads(search)}
+          onClick={() => void queryClient.invalidateQueries({ queryKey: ["inbox", "threads"] })}
           className="rounded-xl border border-ink/[0.08] bg-white px-3 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
         >
           Refresh
@@ -513,6 +608,18 @@ export default function InboxView() {
                   {f.label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setShowArchived((v) => !v)}
+                aria-pressed={showArchived}
+                className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+                  showArchived
+                    ? "border-deep-violet bg-deep-violet/10 text-deep-violet"
+                    : "border-ink/[0.08] bg-white text-ink/60 hover:text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog/60"
+                }`}
+              >
+                {showArchived ? "Hide archived" : "Show archived"}
+              </button>
               <select
                 value={platformFilter}
                 onChange={(e) => setPlatformFilter(e.target.value)}
@@ -529,7 +636,7 @@ export default function InboxView() {
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={threadListRef} className="min-h-0 flex-1 overflow-y-auto">
             {loading && threads.length === 0 ? (
               <div className="flex justify-center py-16"><LogoLoader size={28} /></div>
             ) : visible.length === 0 ? (
@@ -537,13 +644,14 @@ export default function InboxView() {
                 {search ? "No conversations match that search." : "No messages yet. Once customers message your number they appear here."}
               </p>
             ) : (
-              <ul>
-                {visible.map((t) => {
+              <div style={{ height: threadVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+                {threadVirtualizer.getVirtualItems().map((vi) => {
+                  const t = visible[vi.index];
                   const composite = `${t.channel_id}:${t.key}`;
                   const active = composite === targetKey;
-                  const isPinned = pinned.has(composite);
+                  const isPinned = !!t.pinned;
                   return (
-                    <li key={composite}>
+                    <div key={composite} data-index={vi.index} ref={threadVirtualizer.measureElement} style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}>
                       <div className={`flex items-start border-b border-ink/[0.04] dark:border-fog/[0.04] ${active ? "bg-deep-violet/[0.06]" : "hover:bg-ink/[0.02] dark:hover:bg-fog/[0.03]"}`}>
                         <button
                           onClick={() => { setSelectedKey(composite); setSendError(null); }}
@@ -591,17 +699,33 @@ export default function InboxView() {
                           </span>
                         </button>
                         <button
-                          onClick={() => togglePin(composite)}
+                          onClick={() => togglePin(t)}
                           aria-label={isPinned ? "Unpin thread" : "Pin thread"}
                           className={`px-2 py-3 text-[13px] ${isPinned ? "text-deep-violet" : "text-ink/20 hover:text-ink/50"}`}
                         >
                           📌
                         </button>
+                        <button
+                          onClick={() => void handleArchive(t, !t.archived)}
+                          aria-label={t.archived ? "Unarchive thread" : "Archive thread"}
+                          className={`px-2 py-3 text-[13px] ${t.archived ? "text-amber-600" : "text-ink/20 hover:text-ink/50"}`}
+                          title={t.archived ? "Unarchive" : "Archive"}
+                        >
+                          {t.archived ? "📥" : "📦"}
+                        </button>
+                        <button
+                          onClick={() => setDeleteTarget(t)}
+                          aria-label="Delete thread"
+                          className="px-2 py-3 text-[13px] text-ink/20 hover:text-red-600"
+                          title="Delete conversation permanently"
+                        >
+                          🗑
+                        </button>
                       </div>
-                    </li>
+                    </div>
                   );
                 })}
-              </ul>
+              </div>
             )}
           </div>
         </div>
@@ -771,29 +895,39 @@ export default function InboxView() {
                     answered from the Reviews page, not from here.
                   </p>
                 ) : (
-                  <div className="flex items-end gap-2">
-                    <textarea
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          void send();
-                        }
-                      }}
-                      rows={2}
-                      placeholder="Write a reply…"
-                      aria-label="Write a reply"
-                      className="input-field flex-1 resize-none"
-                    />
-                    <button onClick={() => void send()} disabled={!canSend} className="btn-primary disabled:opacity-40">
-                      {sending ? "Sending…" : "Send"}
-                    </button>
-                  </div>
+                  <>
+                    {!replyWindowOpen(target) && (
+                      <p className="mb-2 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                        Reply window closed — Meta only allows free-form replies within 24 hours of the customer&apos;s last message. Use a template message instead.
+                      </p>
+                    )}
+                    <div className="flex items-end gap-2">
+                      <textarea
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            void send();
+                          }
+                        }}
+                        rows={2}
+                        placeholder={replyWindowOpen(target) ? "Write a reply…" : "Reply window closed"}
+                        aria-label="Write a reply"
+                        disabled={!replyWindowOpen(target)}
+                        className="input-field flex-1 resize-none disabled:opacity-50"
+                      />
+                      <button onClick={() => void send()} disabled={!canSend} className="btn-primary disabled:opacity-40">
+                        {sending ? "Sending…" : "Send"}
+                      </button>
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-ink/35 dark:text-fog/35">
+                      {replyWindowOpen(target)
+                        ? `Reply window open — closes ${replyWindowExpiresAt(target)?.toLocaleString() ?? ""}.`
+                        : "WhatsApp/Instagram only allow replies within 24 hours of the customer’s last message."}
+                    </p>
+                  </>
                 )}
-                <p className="mt-1.5 text-[11px] text-ink/35 dark:text-fog/35">
-                  WhatsApp only allows replies within 24 hours of a customer&apos;s message. Outside that window the send is rejected and shown here as failed.
-                </p>
               </div>
             </>
           )}
@@ -863,6 +997,32 @@ export default function InboxView() {
         <p role="status" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[12px] text-red-700">
           {error}
         </p>
+      )}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl dark:bg-ink">
+            <h2 className="text-[15px] font-bold text-ink dark:text-fog">Delete this conversation?</h2>
+            <p className="mt-2 text-[12px] text-ink/60 dark:text-fog/60">
+              This permanently deletes all messages in this thread. This cannot be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="rounded-[2px] border border-[var(--ui-line)] px-3 py-1.5 text-[12px] font-medium text-ink/70"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDelete(deleteTarget)}
+                className="rounded-[2px] bg-red-600 px-3 py-1.5 text-[12px] font-bold text-white"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

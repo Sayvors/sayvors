@@ -1,8 +1,7 @@
 # Sayvors — Tracking Index
 
 This folder is the **single source of truth** for all tracking, audit, and action items.
-All scattered root-level `TODO-*.md`, `FIXES-NEEDED.md`, `PENDING-QUEUE.md`, `FIX-PLAN-SCALE.md`, etc.
-have been consolidated here.
+The historical root-level audits and plans (`SECURITY-AUDIT.md`, `FIXES-NEEDED.md`, `DEEP-SCAN-REPORT.md`, `FIX-PLAN-SCALE.md`, `PENDING-QUEUE.md`) were consolidated here; their root copies were removed on 2026-10-26 so they can no longer contradict the current ledger. Archived originals live in `source-files/`.
 
 ## Folders
 
@@ -16,7 +15,7 @@ have been consolidated here.
 
 | Area | Status | Where |
 |------|--------|-------|
-| Security audit (SECURITY-AUDIT.md) | B+ rating, G1–G9 remaining | `docs/security/SECURITY-AUDIT.md` |
+| Security audit (SECURITY-AUDIT.md) | B+ rating, G1–G9 remaining | `source-files/SECURITY-AUDIT.md` |
 | Production readiness (FIXES-NEEDED.md) | 148 findings, A/B/C/D/E phases | `action-items.md` |
 | Pending product features (PENDING-QUEUE.md) | Facebook section deferred, tone done, multi-location partial | `action-items.md` |
 | Scale fix plan (FIX-PLAN-SCALE.md) | P0–P3 prioritized | `action-items.md` |

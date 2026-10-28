@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
+from ..team.context import tenant_id_of
 from . import service
 from .schemas import (
     BillingProfileIn,
@@ -13,6 +15,7 @@ from .schemas import (
     GatewayTokenizeOut,
     PaymentMethodIn,
     PaymentMethodOut,
+    SubscriptionOut,
 )
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
@@ -20,9 +23,13 @@ router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 @router.get("/budget", response_model=BudgetOut)
 async def read_budget(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Tenant wallet: current plan + remaining AI credit balance."""
+    """Workspace wallet: current plan + remaining AI credit balance.
+
+    Employees see the owner's workspace wallet (AI spend is charged there);
+    billing profile and saved cards below remain owner-scoped.
+    """
     try:
-        return await service.get_budget(user.id, db)
+        return await service.get_budget(tenant_id_of(user), db)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -127,3 +134,90 @@ async def delete_method(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"ok": True}
+
+
+@router.get("/ledger")
+async def read_ledger(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Durable AI credit ledger for the workspace: wallet, pending holds,
+    and recent ledger rows. Employees see the owner's workspace ledger."""
+    from ..admin.service import get_tenant_billing
+
+    result = await get_tenant_billing(db, tenant_id_of(user))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    return result
+
+
+@router.get("/plan", response_model=SubscriptionOut)
+async def read_plan(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """The tenant's current plan + status. Employees read the owner's."""
+    from ...billing.models import TenantSubscription, Plan
+    from ...billing.schemas import SubscriptionOut
+    from ...core.deps import tenant_id_of
+
+    tid = tenant_id_of(user)
+    sub = (
+        await db.execute(
+            select(TenantSubscription).where(TenantSubscription.tenant_id == tid)
+        )
+    ).scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=404, detail="No subscription for this tenant.")
+    plan = await db.get(Plan, sub.plan_id)
+    return SubscriptionOut(
+        id=sub.id, tenant_id=sub.tenant_id, plan_id=sub.plan_id,
+        plan_slug=plan.slug if plan else None,
+        plan_name=plan.name if plan else None,
+        status=sub.status, period_start=sub.period_start, period_end=sub.period_end,
+        granted_by=sub.granted_by, granted_until=sub.granted_until,
+    )
+
+
+@router.get("/plans")
+async def list_public_plans(db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select
+
+    from ..billing.models import Plan
+
+    rows = (await db.execute(select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.sort_order, Plan.name))).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "slug": r.slug,
+            "name": r.name,
+            "description": r.description,
+            "price_cents": r.price_cents,
+            "included_credit_cents": r.included_credit_cents,
+            "max_channels": r.max_channels,
+            "max_messages_per_month": r.max_messages_per_month,
+            "features": r.features or {},
+            "sort_order": r.sort_order,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/entitlements")
+async def read_entitlements(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """The tenant's effective plan + entitlements (base plan + promo overrides)."""
+    from ...core.deps import tenant_id_of
+    from .entitlements import count_messages_this_month, get_entitlements
+
+    tid = tenant_id_of(user)
+    ent = await get_entitlements(tid, db)
+    used = await count_messages_this_month(tid, db)
+    remaining = None if ent.max_messages_per_month is None else max(0, ent.max_messages_per_month - used)
+    return {
+        "plan_slug": ent.plan_slug,
+        "plan_name": ent.plan_name,
+        "status": ent.status,
+        "max_channels": ent.max_channels,
+        "max_messages_per_month": ent.max_messages_per_month,
+        "messages_used_this_month": used,
+        "messages_remaining": remaining,
+        "included_credit_cents": ent.included_credit_cents,
+        "features": ent.features,
+        "promo_active": ent.promo_active,
+        "granted_by": ent.granted_by,
+        "granted_until": ent.granted_until.isoformat() if ent.granted_until else None,
+    }

@@ -3,9 +3,7 @@ import json
 import logging
 import time
 
-from ..llm.providers.base import LLMMessage, LLMRequest, ProviderError
-from ..llm.providers.registry import get_provider_for_model
-from ..llm.service import _resolve_model
+from ..llm.gateway import LLMMessage, ProviderError, complete
 from .schemas import (
     ExtractedIssue,
     GeneratedResponse,
@@ -38,6 +36,7 @@ def _salvage_response_text(raw: str) -> str:
 _LANGUAGE_NAMES = {
     "ar": "Arabic",
     "ur": "Urdu",
+    "ur-Latn": "Urdu (Roman)",
     "es": "Spanish",
     "fr": "French",
     "de": "German",
@@ -205,12 +204,33 @@ async def generate_response(
                 "Avoid generic filler such as نعتذر عن أي إزعاج when the review states a "
                 "specific problem."
             )
-        if dialect:
+        if eff.startswith("ur"):
+            user_parts.append(
+                "URDU CUSTOMER CARE (binding): natural, everyday Urdu. Use آپ and common "
+                "Urdu words. Avoid Hindi/Sanskritized vocabulary and unnecessary English "
+                "code-switching. If the review is Roman Urdu, reply in Roman Urdu; "
+                "otherwise reply in Urdu script. Keep the same warm, simple tone."
+            )
+        # Dialect instructions apply to Arabic only. When no explicit dialect
+        # is configured ("auto"), bias Modern Standard Arabic reviews toward
+        # natural Saudi (Najdi/Gulf) phrasing: Repma's wedge is Saudi dialect
+        # out of the box, and MSA replies read stiff to KSA customers. An
+        # explicit dialect (najdi, hejazi, egyptian, ...) always wins, and a
+        # review already written in a specific dialect is mirrored instead.
+        if eff == "ar" and dialect:
             examples = " / ".join(dialect.get("examples", [])[:4])
             user_parts.append(
                 f"DIALECT (binding): write in {dialect.get('dialect_en')} "
                 f"({dialect.get('dialect_ar')}). Copy this flavor: {examples}. "
                 f"Do not mix dialects."
+            )
+        elif eff == "ar":
+            user_parts.append(
+                "DIALECT (binding): mirror the review's own Arabic dialect when it "
+                "is clearly present (Egyptian, Levantine, Gulf, etc.). When the "
+                "review is Modern Standard Arabic or the dialect is unclear, reply "
+                "in natural Saudi (Najdi/Gulf) Arabic, not stiff formal MSA. "
+                "Keep it respectful and warm; do not mix dialects."
             )
     elif detected != "en":
         user_parts.append(
@@ -255,24 +275,17 @@ async def generate_response(
 
     user_msg = "\n\n".join(user_parts)
 
-    provider = get_provider_for_model(model)
-    api_model, _ = _resolve_model(model)
-
     t0 = time.monotonic()
     try:
-        resp = await provider.complete(
-            LLMRequest(
-                model=api_model,
-                messages=[LLMMessage(role="user", content=user_msg)],
-                system_prompt=RESPONSE_SYSTEM_PROMPT,
-                temperature=0.6,
-                max_tokens=800,
-                stream=False,
-                tenant_id=tenant_id,
-                model_id=model,
-                purpose="review_engine.generate",
-                channel_id=channel_id,
-            )
+        resp = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=user_msg)],
+            system_prompt=RESPONSE_SYSTEM_PROMPT,
+            temperature=0.6,
+            max_tokens=800,
+            tenant_id=tenant_id,
+            purpose="review_engine.generate",
+            channel_id=channel_id,
         )
     except ProviderError as e:
         logger.error("Response generation failed on %s: %s", model, e)

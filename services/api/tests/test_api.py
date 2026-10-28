@@ -277,6 +277,33 @@ async def test_autoreply_config_update(client, channel_id):
 
 
 @pytest.mark.asyncio
+async def test_autoreply_handoff_ttl_roundtrip(client, channel_id):
+    """The code lifetime is a tenant setting, bounded to 1-30 days."""
+    host = {"host": "localhost"}
+    r = client.get(f"/api/v1/channels/{channel_id}/autoreply", headers=host)
+    assert r.status_code == 200
+    assert r.json()["handoff_code_ttl_days"] == 1
+
+    r = client.put(
+        f"/api/v1/channels/{channel_id}/autoreply",
+        json={"handoff_code_ttl_days": 7},
+        headers=host,
+    )
+    assert r.status_code == 200, r.text[:200]
+    assert r.json()["handoff_code_ttl_days"] == 7
+
+    # The schema rejects a zero/negative lifetime and anything past the cap,
+    # so a tenant cannot accidentally create a forever-code.
+    for bad in (0, -1, 31):
+        r = client.put(
+            f"/api/v1/channels/{channel_id}/autoreply",
+            json={"handoff_code_ttl_days": bad},
+            headers=host,
+        )
+        assert r.status_code == 422, (bad, r.text[:200])
+
+
+@pytest.mark.asyncio
 async def test_autoreply_edited_review_autopost_roundtrip(client, channel_id):
     """Default is off (edit follow-ups wait for approval); the PUT flips it."""
     host = {"host": "localhost"}

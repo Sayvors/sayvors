@@ -114,6 +114,36 @@ async def _update_channel_health(
     db.add(channel)
 
 
+# Google failures that do not fix themselves: the token was revoked (401
+# after a failed refresh), the location was removed (404), or the account
+# lost access (403). A channel in one of these states stays broken until the
+# merchant reconnects - it is not a transient error to retry.
+PERMANENT_GOOGLE_STATUSES = (401, 403, 404)
+
+
+async def _mark_channel_expired(db: AsyncSession, channel: Channel, reason: str) -> None:
+    """Mark a channel expired (once) and tell the merchant to reconnect.
+
+    A revoked token, a removed location or a lost account does not repair
+    itself. Leaving the channel "active" means the worker keeps polling a
+    dead connection every cycle and the merchant is told nothing at all - a
+    silently dead channel, which is what this fixes.
+    """
+    if channel.status == "expired":
+        return
+    channel.status = "expired"
+    db.add(channel)
+    await notify(
+        db,
+        channel.user_id,
+        "channel_expired",
+        f"Your {channel.platform} connection expired",
+        (reason or "Reconnect to keep receiving reviews.")[:160],
+        data={"channel_id": channel.id, "platform": channel.platform},
+        href="/dashboard/channels",
+    )
+
+
 async def _claim_channel(db: AsyncSession, config_id: str, last_polled_at) -> bool:
     """Atomically claim a channel for polling (multi-instance safe)."""
     now = datetime.now(timezone.utc)
@@ -385,7 +415,10 @@ async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review)
         )
         if same_content and existing.enrichment_status == "done":
             return
-    await enqueue_event(
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(
+        db,
         "review.discovered",
         {
             "user_id": channel.user_id,
@@ -404,9 +437,12 @@ async def _enqueue_review_discovered(db: AsyncSession, channel: Channel, review)
     )
 
 
-async def _enqueue_review_replied(channel: Channel, review, status: str) -> None:
+async def _enqueue_review_replied(db: AsyncSession, channel: Channel, review, status: str) -> None:
     """Emit review.replied so analytics tracks response rate/time."""
-    await enqueue_event(
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(
+        db,
         "review.replied",
         {
             "user_id": channel.user_id,
@@ -417,6 +453,7 @@ async def _enqueue_review_replied(channel: Channel, review, status: str) -> None
         },
         topic=REVIEW_EVENTS_TOPIC,
     )
+    await db.commit()
 
 
 async def _announce_new_issue(
@@ -575,7 +612,7 @@ async def _refresh_edited_review_reply(
     await db.commit()
     if status == "posted":
         try:
-            await _enqueue_review_replied(channel, review, "posted")
+            await _enqueue_review_replied(db, channel, review, "posted")
         except Exception as e:
             logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 
@@ -633,16 +670,25 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
         account_id = channel.platform_user_id or ""
         # Location is stored in channel metadata: {"location_id": "..."}
         location_id = _channel_meta(channel).get("location_id", "")
-        if not account_id or not location_id:
-            # Fall back: list locations and use the first.
-            locations = await client.list_locations(account_id) if account_id else []
-            if not locations:
-                logger.warning("Channel %s: no account/location configured", channel.id)
-                return stats
-            location_id = locations[0]["name"].split("/")[3]
-        reviews = await client.list_reviews(
-            account_id, location_id, updated_after=config.last_polled_at
-        )
+        try:
+            if not account_id or not location_id:
+                # Fall back: list locations and use the first.
+                locations = await client.list_locations(account_id) if account_id else []
+                if not locations:
+                    logger.warning("Channel %s: no account/location configured", channel.id)
+                    return stats
+                location_id = locations[0]["name"].split("/")[3]
+            reviews = await client.list_reviews(
+                account_id, location_id, updated_after=config.last_polled_at
+            )
+        except GoogleReviewsError as e:
+            # A permanent rejection is not a transient error: the channel is
+            # marked expired so it stops being polled, and the merchant is
+            # told to reconnect.
+            if e.status_code in PERMANENT_GOOGLE_STATUSES:
+                await _mark_channel_expired(db, channel, str(e))
+                await db.commit()
+            raise
 
         for review in reviews:
             stats["reviews"] += 1
@@ -813,7 +859,7 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 )
                 await db.commit()
                 try:
-                    await _enqueue_review_replied(channel, review, "posted")
+                    await _enqueue_review_replied(db, channel, review, "posted")
                 except Exception as e:
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
             else:
@@ -826,7 +872,7 @@ async def process_channel(db: AsyncSession, channel: Channel, config: AutoReplyC
                 await db.commit()
                 stats["queued"] += 1
                 try:
-                    await _enqueue_review_replied(channel, review, "pending_approval")
+                    await _enqueue_review_replied(db, channel, review, "pending_approval")
                 except Exception as e:
                     logger.warning("review.replied enqueue failed for %s: %s", review.review_id, e)
 

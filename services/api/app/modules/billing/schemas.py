@@ -94,3 +94,61 @@ class PlanGrantIn(BaseModel):
     plan: str = Field(..., pattern=r"^(free|pro)$")
     add_credit_cents: int = Field(default=0, ge=0, le=1_000_000)
     note: str | None = Field(default=None, max_length=500)
+
+
+class PlanOut(BaseModel):
+    id: str
+    slug: str
+    name: str
+    description: str | None = None
+    price_cents: int
+    included_credit_cents: int
+    max_channels: int | None = None
+    max_messages_per_month: int | None = None
+    features: dict = {}
+    is_active: bool
+    sort_order: int
+
+
+class PlanCreate(BaseModel):
+    slug: str = Field(..., min_length=1, max_length=40)
+    name: str = Field(..., min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=500)
+    price_cents: int = Field(default=0, ge=0)
+    included_credit_cents: int = Field(default=0, ge=0)
+    max_channels: int | None = Field(default=None, ge=1)
+    max_messages_per_month: int | None = Field(default=None, ge=1)
+    features: dict = Field(default_factory=dict)
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class PlanUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=500)
+    price_cents: int | None = Field(default=None, ge=0)
+    included_credit_cents: int | None = Field(default=None, ge=0)
+    max_channels: int | None = Field(default=None)
+    max_messages_per_month: int | None = Field(default=None)
+    features: dict | None = None
+    is_active: bool | None = None
+    sort_order: int | None = None
+
+
+class SubscriptionOut(BaseModel):
+    id: str
+    tenant_id: str
+    plan_id: str
+    plan_slug: str | None = None
+    plan_name: str | None = None
+    status: str
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    granted_by: str | None = None
+    granted_until: datetime | None = None
+
+
+class GrantPlanIn(BaseModel):
+    plan_slug: str = Field(..., min_length=1, max_length=40)
+    granted_until: datetime | None = None
+    note: str | None = Field(default=None, max_length=500)

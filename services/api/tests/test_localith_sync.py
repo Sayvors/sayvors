@@ -21,6 +21,7 @@ import pytest
 from integrations.channels import embedsocial
 from app.modules.localith import service
 from app.modules.localith import worker as localith_worker
+from app.modules.outbox import service as outbox_service
 
 
 def _listing_payload():
@@ -263,8 +264,14 @@ def test_adapter_get_uses_httpx_with_auth(monkeypatch):
         def json(self):
             return [{"id": "r1"}]
 
-    def _fake_get(url, params=None, headers=None, timeout=None):
-        seen.update(url=url, params=params, headers=headers, timeout=timeout)
+    def _fake_get(url, params=None, headers=None, timeout=None, follow_redirects=None):
+        seen.update(
+            url=url,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
+        )
         return _FakeResp()
 
     monkeypatch.setattr(embedsocial.httpx, "get", _fake_get)
@@ -274,6 +281,8 @@ def test_adapter_get_uses_httpx_with_auth(monkeypatch):
     assert seen["headers"]["Authorization"] == "Bearer k"
     assert seen["params"]["page"] == 1
     assert seen["raised"] is True
+    # The provider moved hosts with a 301; the client must follow it.
+    assert seen["follow_redirects"] is True
 
 
 def test_build_update_body_mapping():
@@ -506,15 +515,15 @@ async def test_autopilot_auto_posts_high_and_queues_low(db, user_id, channel_id,
 
     monkeypatch.setattr(service, "post_reply", _post)
 
-    # enqueue_event writes to the REAL Postgres outbox via its own global
-    # session (not the test engine) — keep the test hermetic.
+    # The sync writes through the transactional outbox helper, imported
+    # inside the function, so the patch targets the source module.
     events = []
 
-    async def _fake_enqueue(event_type, payload, topic="review-events"):
+    async def _fake_enqueue_in(db_, event_type, payload, topic="review-events"):
         events.append((event_type, payload.get("review_id")))
         return "evt"
 
-    monkeypatch.setattr(service, "enqueue_event", _fake_enqueue)
+    monkeypatch.setattr(outbox_service, "enqueue_event_in", _fake_enqueue_in)
 
     totals = await service.sync_connection(SimpleNamespace(id=user_id), db)
 

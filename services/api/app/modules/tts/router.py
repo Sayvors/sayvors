@@ -1,11 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import logging
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db
 from ...core.deps import get_current_user
+from ...core.storage import get_doc
 from ..users.models import User
 from .schemas import TTSJobListResponse, TTSJobResponse, TTSRequest, VoiceResponse
 from .service import create_tts_job, get_job, list_jobs, list_voices
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/tts", tags=["tts"])
 
@@ -75,4 +81,48 @@ async def get_job_by_id(
         duration_ms=job.duration_ms,
         error=job.error,
         created_at=job.created_at.isoformat(),
+    )
+
+
+@router.get("/jobs/{job_id}/audio")
+async def get_job_audio(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve the private audio of one owned job.
+
+    The object lives under the tenant's private docs prefix, so this route is
+    the only way to read it. The key is server-generated; validating its
+    shape prevents a corrupted row from turning the route into an arbitrary
+    document reader.
+    """
+    job = await get_job(job_id, user, db)
+    if not job or not job.storage_key:
+        raise HTTPException(status_code=404, detail="Audio not available")
+
+    expected_prefix = f"tts/{job.id}."
+    if not job.storage_key.startswith(expected_prefix):
+        logger.error(
+            "TTS job %s has an unexpected storage key %r — refusing to serve",
+            job.id, job.storage_key,
+        )
+        raise HTTPException(status_code=404, detail="Audio not available")
+
+    try:
+        audio = get_doc(user.id, job.storage_key)
+    except FileNotFoundError:
+        logger.warning("TTS job %s audio is missing from storage", job.id)
+        raise HTTPException(status_code=404, detail="Audio not available")
+
+    suffix = Path(job.storage_key).suffix or ".bin"
+    return Response(
+        content=audio,
+        media_type=job.audio_mime or "application/octet-stream",
+        headers={
+            # The text that produced this audio may be sensitive; keep it out
+            # of shared caches even though the route is authenticated.
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": f'inline; filename="tts-{job.id}{suffix}"',
+        },
     )

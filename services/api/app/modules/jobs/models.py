@@ -75,6 +75,13 @@ class Job(Base):
         default=lambda: datetime.now(timezone.utc),
         index=True,
     )
+    # Latest moment this job may still run. A job scheduled beyond its
+    # deadline becomes due AT the deadline, so a backlog is worked through in
+    # order instead of bursting late; a job picked up after its deadline is
+    # cancelled rather than run late.
+    hard_deadline_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Lease so a crashed worker's job is reclaimable.
     lease_expires_at: Mapped[datetime | None] = mapped_column(
@@ -108,4 +115,35 @@ class Job(Base):
         Index("ix_jobs_due", "status", "next_run_at"),
         Index("ix_jobs_lane_due", "lane", "status", "next_run_at"),
         Index("ix_jobs_lease", "status", "lease_expires_at"),
+        # Retention deletes terminal rows by status + created_at. The claim
+        # indexes above are ordered by next_run_at, so they cannot serve the
+        # sweep — it would scan the whole jobs table every hour.
+        Index("ix_jobs_status_created", "status", "created_at"),
+        # The reaper finds overdue jobs by deadline. Name matches the
+        # migration so a models-only rebuild produces the same index.
+        Index("ix_jobs_hard_deadline", "hard_deadline_at"),
+    )
+
+
+class JobLaneHeartbeat(Base):
+    """One row per lane: who is running it and when it was last seen.
+
+    A stuck lane is invisible otherwise — the queue simply stops moving and
+    nobody notices until a merchant complains. The runner refreshes its row
+    on every tick; the reaper reports lanes that went quiet.
+    """
+
+    __tablename__ = "job_lane_heartbeats"
+
+    lane: Mapped[str] = mapped_column(String(32), primary_key=True)
+    worker_id: Mapped[str] = mapped_column(String(64))
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    jobs_claimed: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        # Name matches the migration's raw CREATE INDEX.
+        Index("ix_job_lane_heartbeats_last_seen", "last_seen_at"),
     )

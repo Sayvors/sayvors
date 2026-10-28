@@ -8,7 +8,7 @@ DELETE /api/v1/locations/groups/{id}     delete a group
 GET    /api/v1/locations/{listing_id}    merged profile (Google snapshot + local store)
 PUT    /api/v1/locations/{listing_id}    update (description pushes to Google)
 """
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,7 @@ from ...core.deps import get_current_user, get_db
 from ..channels.models import Channel
 from ..users.models import User
 from . import service
+from . import bulk as bulk_service
 from .schemas import (
     LocationGroupIn,
     LocationGroupOut,
@@ -126,7 +127,50 @@ async def delete_location_group(
     return Response(status_code=204)
 
 
-@router.get("/{listing_id}", response_model=LocationProfileOut)
+@router.get("/bulk-data")
+async def get_bulk_data(
+    ctx: TenantContext = Depends(require_perm("locations.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return current listing data as JSON for the in-browser spreadsheet editor."""
+    return await bulk_service.build_template_data(db, tenant_id_of(user))
+async def download_bulk_template(
+    ctx: TenantContext = Depends(require_perm("locations.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a CSV template pre-filled with current listing data."""
+    csv_text = await bulk_service.build_template_csv(db, tenant_id_of(user))
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="locations_bulk_template.csv"'},
+    )
+
+
+@router.post("/bulk-upload")
+async def upload_bulk_csv(
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require_perm("locations.view")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a CSV file to bulk-update listing information."""
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File must be a .csv")
+    content = await file.read()
+    if len(content) > bulk_service.MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large (max {bulk_service.MAX_FILE_BYTES // (1024*1024)} MB)")
+    try:
+        csv_text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded")
+    try:
+        report = await bulk_service.apply_bulk_csv(db, tenant_id_of(user), csv_text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return report
 async def get_location(
     listing_id: str,
     ctx: TenantContext = Depends(require_perm("locations.view")),

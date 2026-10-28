@@ -432,6 +432,8 @@ async def get_messaging_overview(
             "label": meta[cid].display_name or meta[cid].platform if cid in meta else "Channel",
             "messages_in": _sum(cur, "messages_in"),
             "messages_out": _sum(cur, "messages_out"),
+            "ai_handled_out": _sum(cur, "ai_handled_out"),
+            "human_handled_out": _sum(cur, "human_handled_out"),
             "messages_in_prev": _sum(prev, "messages_in"),
             "conversations": _sum(cur, "conversations_in"),
             "conversations_prev": _sum(prev, "conversations_in"),
@@ -458,6 +460,14 @@ async def get_messaging_overview(
     cur_samples = _samples(all_cur)
     prev_samples = _samples(all_prev)
 
+    # Best-time heatmap: sum the per-day 24-bucket arrays across the window.
+    by_hour_in = [0] * 24
+    for r in all_cur:
+        arr = r.by_hour_in or []
+        for i in range(24):
+            if i < len(arr):
+                by_hour_in[i] += arr[i] or 0
+
     # Unanswered NOW = today's snapshots across channels; the oldest one
     # sets the worst age. NULL only when the worker has not run yet.
     latest_per_channel = [
@@ -483,6 +493,10 @@ async def get_messaging_overview(
             "messages_out": _sum(all_cur, "messages_out"),
             "messages_in_prev": _sum(all_prev, "messages_in"),
             "messages_out_prev": _sum(all_prev, "messages_out"),
+            "ai_handled_out": _sum(all_cur, "ai_handled_out"),
+            "ai_handled_out_prev": _sum(all_prev, "ai_handled_out"),
+            "human_handled_out": _sum(all_cur, "human_handled_out"),
+            "human_handled_out_prev": _sum(all_prev, "human_handled_out"),
             "conversations": _sum(all_cur, "conversations_in"),
             "conversations_prev": _sum(all_prev, "conversations_in"),
             "response_rate": _rate(all_cur),
@@ -502,4 +516,5 @@ async def get_messaging_overview(
             "as_of": as_of,
         },
         "channels": channel_rows,
+        "by_hour_in": by_hour_in,
     }

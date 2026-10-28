@@ -1,7 +1,11 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useApproveReply, useEditReply } from "@/lib/mutation-hooks";
+import { queryKeys } from "@/lib/query-keys";
 import { useSearchParams } from "next/navigation";
+import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import GoogleReviewCard, { GoogleStars, ReviewAvatar } from "@/components/reviews/GoogleReviewCard";
@@ -10,6 +14,8 @@ import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateRe
 import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
 import MeaningInspector from "@/components/reviews/MeaningInspector";
 import AskForReview from "@/components/dashboard/AskForReview";
+import BulkReviewRequests from "@/components/dashboard/BulkReviewRequests";
+import ReviewRequestLog from "@/components/dashboard/ReviewRequestLog";
 import QRCodeGenerator from "@/components/dashboard/QRCodeGenerator";
 import { ALL_BRANCHES, groupValue, parseGroupValue, useLocationGroups } from "@/lib/location-groups";
 
@@ -96,6 +102,9 @@ export default function ReviewsPage() {
 function ReviewsInner() {
   const { groups } = useLocationGroups();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const approveReplyHook = useApproveReply();
+  const editReplyHook = useEditReply();
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -306,23 +315,24 @@ function ReviewsInner() {
     }
   };
 
+  const reviewsQuery = useQuery({
+    queryKey: ["reviews", "list", selectedId, selectedGroup?.id ?? null, groupChannels.join(",")],
+    queryFn: async () => {
+      const loc = locations.find((l) => l.id === selectedId);
+      const items = await loadInsights(selectedGroup ? groupChannels : loc?.channelId ? [loc.channelId] : undefined);
+      await loadPendingReplies();
+      return items;
+    },
+    enabled: true,
+    staleTime: 30 * 1000,
+  });
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const loc = locations.find((l) => l.id === selectedId);
-        const items = await loadInsights(selectedGroup ? groupChannels : loc?.channelId ? [loc.channelId] : undefined);
-        if (!cancelled) setReviews(items);
-        await loadPendingReplies();
-      } catch {
-        if (!cancelled) setReviews([]);
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    // Also re-runs when the group's members or their channels resolve, which
-    // land after mount — keying on the joined IDs covers that.
-  }, [selectedId, selectedGroup?.id, groupChannels.join(",")]);
+    const items = reviewsQuery.data;
+    if (items) setReviews(items);
+  }, [reviewsQuery.data]);
+  useEffect(() => {
+    if (reviewsQuery.isError) setReviews([]);
+  }, [reviewsQuery.isError]);
 
   // `reviews` holds live AND removed rows; every count below is over the live
   // set only, so a review Google dropped never inflates a number the merchant
@@ -570,7 +580,7 @@ function ReviewsInner() {
     setSavingResponse(true);
     try {
       const wasPosted = item.status === "posted";
-      const saved = await editReply(item.locationId, item.replyId, responseText.trim());
+      const saved = await editReplyHook.mutateAsync({ channelId: item.locationId, replyId: item.replyId, replyText: responseText.trim() });
       setReviews((prev) => prev.map((r) => r.id === item.id ? { ...r, reply_text: saved.reply_text, status: saved.status } : r));
       setEditingResponse(null);
       await loadPendingReplies();
@@ -601,8 +611,8 @@ function ReviewsInner() {
   async function approveDraft(d: ReviewReplyDTO) {
     setApprovingId(d.id);
     try {
-      if (isDraftEdited(d)) await editReply(d.channel_id, d.id, getDraftText(d));
-      await approveReply(d.channel_id, d.id);
+      if (isDraftEdited(d)) await editReplyHook.mutateAsync({ channelId: d.channel_id, replyId: d.id, replyText: getDraftText(d) });
+      await approveReplyHook.mutateAsync({ channelId: d.channel_id, replyId: d.id });
       setPendingReplies((prev) => prev.filter((x) => x.id !== d.id));
       setBanner({ kind: "ok", text: "Reply approved and published to Google." });
       setTimeout(() => setBanner(null), 3000);
@@ -621,8 +631,8 @@ function ReviewsInner() {
     let ok = 0;
     for (const d of pendingReplies) {
       try {
-        if (isDraftEdited(d)) await editReply(d.channel_id, d.id, getDraftText(d));
-        await approveReply(d.channel_id, d.id);
+        if (isDraftEdited(d)) await editReplyHook.mutateAsync({ channelId: d.channel_id, replyId: d.id, replyText: getDraftText(d) });
+        await approveReplyHook.mutateAsync({ channelId: d.channel_id, replyId: d.id });
         ok += 1;
       } catch {}
     }
@@ -1375,7 +1385,7 @@ function ReviewsInner() {
                     <p className="mt-1 truncate text-[12px] leading-4 text-[#5F6368]">{active.locationName}</p>
                   </div>
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white ring-1 ring-[#DADCE0]">
-                    <img src="/google.svg" alt="Google" width={16} height={16} className="h-4 w-4" />
+                    <Image src="/google.svg" alt="Google" width={16} height={16} className="h-4 w-4" />
                   </span>
                 </div>
 
@@ -1991,6 +2001,12 @@ function ReviewsInner() {
                 <AskForReview />
                 <QRCodeGenerator />
               </div>
+              <div className="mt-4">
+                <BulkReviewRequests />
+              </div>
+              <div className="mt-4">
+                <ReviewRequestLog />
+              </div>
             </>
           )}
         </div>
@@ -2014,11 +2030,11 @@ function ReviewMedia({ media }: { media: ReviewItem["media"] }) {
         const src = String(m.url).startsWith("http") ? String(m.url) : `${API_ORIGIN}${m.url}`;
         return (
           <a key={i} href={src} target="_blank" rel="noreferrer" className="group relative block">
-            {/* eslint-disable-next-line @next/next/no-img-element -- our own
-                already-validated raster copy; the optimizer would re-encode it */}
-            <img
+            <Image
               src={src}
               alt={m.label || `Photo from the reviewer (${i + 1})`}
+              width={96}
+              height={96}
               loading="lazy"
               className="h-24 w-24 rounded-lg border border-[#E8EAED] object-cover transition group-hover:opacity-80"
             />

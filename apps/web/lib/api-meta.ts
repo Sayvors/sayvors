@@ -52,8 +52,24 @@ export interface MetaConnectEntry {
 export const fetchMetaConnections = (): Promise<{ connections: MetaConnection[] }> =>
   apiFetch("/api/v1/meta/connections");
 
-export const startMetaConnect = (provider: MetaProvider): Promise<MetaConnectEntry> =>
-  apiFetch(`/api/v1/meta/${provider}/connect`, { method: "POST" });
+/**
+ * Start a Meta connect flow.
+ *
+ * `next` is an in-app path the OAuth callback returns the tenant to, so a
+ * connect started from an onboarding screen lands back on that screen
+ * instead of the generic channels page. The backend only honours same-app
+ * paths (no scheme, no host).
+ */
+export const startMetaConnect = (
+  provider: MetaProvider,
+  opts?: { next?: string }
+): Promise<MetaConnectEntry> =>
+  apiFetch(
+    `/api/v1/meta/${provider}/connect${
+      opts?.next ? `?next=${encodeURIComponent(opts.next)}` : ""
+    }`,
+    { method: "POST" }
+  );
 
 export const postWhatsAppSession = (body: {
   state: string;

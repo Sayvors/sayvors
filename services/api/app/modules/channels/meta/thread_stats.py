@@ -95,9 +95,7 @@ def parse_classification(raw: str | None) -> dict | None:
 
 async def classify_thread(db, channel_id: str, contact_phone: str | None) -> dict:
     """The three conversation signals for this customer thread (never raises)."""
-    from ...llm.providers.base import LLMMessage, LLMRequest
-    from ...llm.providers.registry import get_provider_for_model
-    from ...llm.service import _resolve_model, resolve_tenant_model
+    from ...llm.gateway import LLMMessage, complete, resolve_tenant_model
 
     rows = []
     parsed = None
@@ -151,19 +149,14 @@ async def classify_thread(db, channel_id: str, contact_phone: str | None) -> dic
         )
         if transcript:
             model_id = await resolve_tenant_model(db)
-            api_model, _provider_key = _resolve_model(model_id)
-            provider = get_provider_for_model(model_id)
-            req = LLMRequest(
-                model=api_model,
+            resp = await complete(
+                model=model_id,
                 messages=[LLMMessage(role="user", content=transcript)],
                 system_prompt=_CLASSIFY_SYSTEM_PROMPT,
                 temperature=_CLASSIFY_TEMPERATURE,
                 max_tokens=_CLASSIFY_MAX_TOKENS,
-                stream=False,
-                model_id=model_id,
                 purpose="whatsapp.thread_stats",
             )
-            resp = await provider.complete(req)
             parsed = parse_classification(resp.content)
     except Exception as e:
         logger.info(

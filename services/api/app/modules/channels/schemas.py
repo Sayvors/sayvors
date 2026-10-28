@@ -135,6 +135,10 @@ class InboxThread(BaseModel):
     # Inbound messages with no outbound reply after them. Computed per thread so
     # the badge matches the conversation the user is about to open.
     unread: int = 0
+    # Soft-archive flag (server-persisted). False/absent = active thread.
+    archived: bool = False
+    # Soft-pin flag (server-persisted). False/absent = not pinned.
+    pinned: bool = False
     is_unknown: bool = False
 
 
@@ -168,12 +172,16 @@ class AutoReplyConfigUpdate(BaseModel):
     edited_review_autopost: bool | None = Field(None, description="Auto-post the follow-up reply when a reviewer edits an already-answered review (still gated by approval_mode and min_rating_auto); default waits for approval")
     custom_instructions: str | None = Field(None, max_length=2000, description="Brand voice / house rules injected into every reply prompt; empty to clear")
     dialect: str | None = Field(None, max_length=30, description="Arabic dialect catalog code or 'auto'")
-    reply_language: str | None = Field(None, pattern="^(match|en|ar)$", description="match = reply in the review's language; en/ar = force a language")
+    reply_language: str | None = Field(None, pattern="^(match|en|ar|ur|ur-Latn)$", description="match = reply in the review's language; en/ar/ur = force a language")
     promo_product_mentions: bool | None = Field(None, description="Allow promotional product mentions in replies")
     promo_links: bool | None = Field(None, description="Allow promotional links in replies")
     promo_only_relevant: bool | None = Field(None, description="Only promote when relevant to the review")
     promo_max_ctas: int | None = Field(None, ge=0, le=5, description="Maximum promotional CTAs per reply")
     handoff_link_enabled: bool | None = Field(None, description="Offer reviewers a WhatsApp link: a ticket-code handoff for problems, or a generic sales link for pricing/plan questions. Note: the link makes your WhatsApp number public on the listing")
+    handoff_code_ttl_days: int | None = Field(
+        None, ge=1, le=30,
+        description="Lifetime (days) of a handoff code before it expires. The wa.me link prefills this code, so the link expires with it. Default 1.",
+    )
 
 
 class AutoReplyConfigResponse(BaseModel):
@@ -193,6 +201,7 @@ class AutoReplyConfigResponse(BaseModel):
     promo_only_relevant: bool = True
     promo_max_ctas: int = 1
     handoff_link_enabled: bool = True
+    handoff_code_ttl_days: int = 1
 
 
 class ReviewReplyResponse(BaseModel):

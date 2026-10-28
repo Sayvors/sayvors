@@ -62,14 +62,14 @@ export default function GlanceCharts() {
   return (
     <section aria-label="Messages, reviews and ratings charts" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       {series.map((s) => (
-        <div key={s.title} className="rounded-[2px] border border-ink/[0.06] bg-white/80 p-4 backdrop-blur-sm dark:border-fog/[0.06] dark:bg-ink/80">
+        <div key={s.title} className="rounded-[2px] border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-[#1d1636]">
           <div className="flex items-baseline justify-between">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40">{s.title}</p>
-            <p className="text-[11px] text-ink/40">{s.sub}</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">{s.title}</p>
+            <p className="text-[11px] text-ink/40 dark:text-fog/40">{s.sub}</p>
           </div>
           <p className="mt-1 text-[22px] font-bold text-ink dark:text-fog">{s.value}</p>
           <MiniArea values={s.values.length ? s.values : [0]} color={s.color} max={s.title === "Avg rating" ? 5 : undefined} />
-          <div className="mt-1 flex justify-between text-[10px] text-ink/35">
+          <div className="mt-1 flex justify-between text-[10px] text-ink/35 dark:text-fog/35">
             <span>{labels[0]}</span>
             <span>{labels[1]}</span>
           </div>

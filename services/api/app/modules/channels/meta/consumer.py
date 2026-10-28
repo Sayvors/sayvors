@@ -392,9 +392,12 @@ async def _generate_reply(
     to surface the failure; nothing is sent on error.
     """
     from ..models import ChannelMessage
-    from ...llm.providers.base import LLMMessage, LLMRequest, merge_consecutive
-    from ...llm.providers.registry import get_provider_for_model
-    from ...llm.service import _resolve_model, resolve_tenant_model
+    from ...llm.gateway import (
+        LLMMessage,
+        complete,
+        merge_consecutive,
+        resolve_tenant_model,
+    )
 
     model_id = await resolve_tenant_model(db)  # ValueError when nothing enabled
 
@@ -454,15 +457,13 @@ async def _generate_reply(
 
     business_card = await prompt_block(tenant_id, db)
 
-    api_model, _provider_key = _resolve_model(model_id)
-    provider = get_provider_for_model(model_id)
     # Lead capture rides this same call: the model may append one silent
     # LEAD line, which the handlers split off after the fact — extraction
     # without a second LLM request.
     from .lead_engine import LEAD_PROMPT_BLOCK
 
-    req = LLMRequest(
-        model=api_model,
+    resp = await complete(
+        model=model_id,
         messages=history,
         system_prompt=_system_prompt(user, platform=platform)
         + (f"\n\n{business_card}" if business_card else "")
@@ -470,13 +471,10 @@ async def _generate_reply(
         + f"\n\n{LEAD_PROMPT_BLOCK}",
         temperature=_REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
-        stream=False,
         tenant_id=tenant_id,
-        model_id=model_id,
         purpose=f"{platform.lower()}.auto_reply",
         channel_id=channel.id,
     )
-    resp = await provider.complete(req)
     return (resp.content or "").strip()
 
 
@@ -795,6 +793,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     contact_phone=encrypt_contact_phone(from_wa or None),
                     contact_phone_hash=hash_contact_phone(from_wa or None),
                     is_ai=True,
+                    handled_by="ai",
                 )
                 db.add(row)
                 await db.commit()
@@ -921,6 +920,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                             contact_phone=encrypt_contact_phone(from_wa or None),
                             contact_phone_hash=hash_contact_phone(from_wa or None),
                             is_ai=True,  # drives the escalation counter
+                            handled_by="ai",
                         )
                     db.add(row)
                     # The voice note is the remedy for the confusion that
@@ -1007,6 +1007,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                         contact_phone=encrypt_contact_phone(from_wa or None),
                         contact_phone_hash=hash_contact_phone(from_wa or None),
                         is_ai=True,  # drives the escalation counter
+                        handled_by="ai",
                     )
                 db.add(row)
                 await db.commit()
@@ -1784,6 +1785,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
                 contact_phone=encrypt_contact_phone(igsid or None),
                 contact_phone_hash=hash_contact_phone(igsid or None),
                 is_ai=True,  # drives the escalation counter
+                handled_by="ai",
             )
             db.add(row)
             await db.commit()
@@ -1846,12 +1848,19 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
 async def _process_message(value: bytes | None) -> None:
     if value is None:
         return
-    try:
-        event = json.loads(value.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.warning("Discarding malformed meta event: %s", e)
+    # The consumer's value_deserializer already parses JSON into a dict.
+    # Handle both raw bytes and pre-parsed dicts for robustness.
+    if isinstance(value, dict):
+        event = value
+    elif isinstance(value, (bytes, bytearray, str)):
+        try:
+            event = json.loads(value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else value)
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+            logger.warning("Discarding malformed event: %s", e)
+            return
+    else:
+        logger.warning("Unexpected event value type: %s", type(value))
         return
-
     # The outbox worker sends the normalized envelope raw; accept the wrapped
     # {"event_type": "meta...", "payload": envelope} shape defensively too.
     if event.get("event_type", "").startswith("meta."):
@@ -1954,7 +1963,7 @@ async def run_meta_events_consumer() -> None:
     while True:
         consumer = None
         try:
-            if not kafka_client._kafka_available:
+            if not kafka_client.is_kafka_available():
                 if not fallback_logged:
                     logger.info(
                         "Kafka unavailable — meta consumer draining events from the DB outbox"
@@ -1977,7 +1986,7 @@ async def run_meta_events_consumer() -> None:
             if not fallback_logged:
                 logger.warning("Kafka connection failed — meta consumer switching to outbox fallback")
                 fallback_logged = True
-            kafka_client.mark_kafka_unavailable()
+            kafka_client.mark_kafka_unavailable(GROUP_ID)
             if consumer:
                 try:
                     await consumer.stop()

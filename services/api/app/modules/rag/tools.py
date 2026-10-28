@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..llm.providers.base import ToolDefinition, ToolParameter
+from ...config import settings
+from ..llm.gateway import ToolDefinition, ToolParameter
 
 logger = logging.getLogger(__name__)
 
@@ -120,16 +121,20 @@ async def vector_search(ctx: ToolContext, query: str, top_k: int = 5) -> dict:
     from .search import hybrid_search
 
     top_k = max(1, min(int(top_k or 5), 10))
-    try:
-        provider = await get_embedding_provider()
-        vectors = await provider.embed([query])
-        query_vector = vectors[0]
-    except Exception:
-        return {"passages": [], "notice": "vector_unavailable"}
+    query_vector = None
+    query_model: str | None = None
+    if settings.embeddings_enabled:
+        try:
+            provider = await get_embedding_provider()
+            vectors = await provider.embed([query])
+            query_vector = vectors[0]
+            query_model = provider.model_tag
+        except Exception:
+            return {"passages": [], "notice": "vector_unavailable"}
 
     results = await hybrid_search(
         databank_id=ctx.databank_id, query_vector=query_vector,
-        query_text=query, top_k=top_k, db=ctx.db,
+        query_text=query, top_k=top_k, db=ctx.db, query_model=query_model,
     )
     names = await ctx.doc_names()
     return {
@@ -149,11 +154,11 @@ async def keyword_search(ctx: ToolContext, query: str, top_k: int = 5) -> dict:
     rows = await ctx.db.execute(
         text("""
             SELECT id, content, document_id,
-                   ts_rank(to_tsvector('english', content),
-                           plainto_tsquery('english', :q)) AS score
+                   ts_rank(to_tsvector('simple', content),
+                           plainto_tsquery('simple', :q)) AS score
             FROM document_chunks
             WHERE databank_id = :b
-              AND to_tsvector('english', content) @@ plainto_tsquery('english', :q)
+              AND to_tsvector('simple', content) @@ plainto_tsquery('simple', :q)
             ORDER BY score DESC
             LIMIT :limit
         """),

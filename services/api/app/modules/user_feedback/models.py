@@ -17,7 +17,7 @@ class UserFeedback(Base):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    emoji_rating: Mapped[int] = mapped_column(Integer)
+    emoji_rating: Mapped[int] = mapped_column(Integer, server_default="3")
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

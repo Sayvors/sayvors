@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 from uuid import uuid4
 import logging
-import json
+
+logger = logging.getLogger(__name__)
 import sys
 import time
 
@@ -30,12 +31,15 @@ from .modules.rag.router import router as rag_router
 from .modules.analytics.router import router as analytics_router
 from .modules.analytics.abuse_router import router as analytics_abuse_router
 from .modules.profile.router import router as profile_router
+from .modules.onboarding.router import router as onboarding_router
 from .modules.localith.router import router as localith_router
 from .modules.locations.router import router as locations_router
 from .modules.posts.router import router as posts_router
 from .modules.media.router import router as media_router
 from .modules.storage.router import router as storage_router
+from .modules.admin.models import AdminAuditLog
 from .modules.admin.router import router as admin_router
+from .modules.admin import models as _admin_models  # noqa: F401 (registers tables)
 from .modules.user_feedback.router import router as feedback_router
 from .modules.email.router import router as email_router
 from .modules.review_engine.router import router as review_engine_router
@@ -43,6 +47,7 @@ from .modules.review_engine.csv_router import router as csv_router
 from .modules.assistant.router import router as assistant_router
 from .modules.notifications.router import router as notifications_router
 from .modules.billing.router import router as billing_router
+from .modules.jobs.router import router as jobs_router, admin_router as jobs_admin_router
 from .modules.team.router import router as team_router
 from .modules.redis.client import close_redis
 from .modules.kafka.client import close_kafka
@@ -211,6 +216,80 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class AdminAuditMiddleware(BaseHTTPMiddleware):
+    """Best-effort audit log for every /api/v1/admin/* request (except login,
+    which is audited explicitly in the login handler)."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        path = request.url.path
+        if not path.startswith("/api/v1/admin/") or path == "/api/v1/admin/login":
+            return response
+        # Audit *actions*, not reads: GET/HEAD/OPTIONS never mutate state, so
+        # logging them only inflates admin_audit_logs (and its write load) with
+        # polling/page-load noise. Mutations (POST/PATCH/PUT/DELETE) are the
+        # security-relevant events worth retaining.
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return response
+        # Resolved inside the try, but declared here so the failure log can
+        # name the operator even when the exception happens during resolution.
+        operator_id = None
+        operator_username = None
+        try:
+            from .database import async_session
+            from .modules.admin.models import AdminAuditLog, PlatformOperator
+            from .security import decode_token
+
+            token = request.cookies.get(settings.ADMIN_COOKIE_NAME, "")
+            if not token:
+                auth = request.headers.get("authorization", "")
+                if auth.lower().startswith("bearer "):
+                    token = auth[7:]
+            if token:
+                try:
+                    payload = decode_token(token)
+                    if payload.get("type") == "admin":
+                        operator_id = payload.get("sub")
+                        if operator_id == "admin":
+                            operator_username = "legacy-admin"
+                            operator_id = None
+                except Exception:
+                    pass
+            if operator_id:
+                try:
+                    async with async_session() as db:
+                        op_row = await db.get(PlatformOperator, operator_id)
+                        if op_row is not None:
+                            operator_username = op_row.username
+                except Exception:
+                    pass
+            ip = request.client.host if request.client else None
+            async with async_session() as db:
+                db.add(AdminAuditLog(
+                    operator_id=operator_id,
+                    operator_username=operator_username,
+                    action=f"{request.method} {path}",
+                    method=request.method,
+                    path=path[:256],
+                    status_code=response.status_code,
+                    ip=ip,
+                    user_agent=request.headers.get("user-agent"),
+                ))
+                await db.commit()
+        except Exception as e:
+            # Best-effort by design, but a dead audit trail must not be silent:
+            # debug-level logging makes a broken trail look identical to a
+            # working one at default log levels.
+            logger.warning(
+                "Admin audit write failed: path=%s operator=%s error=%s",
+                path,
+                operator_username or operator_id or "unresolved",
+                e,
+                exc_info=True,
+            )
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import logging
@@ -228,13 +307,71 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.error("Database pool warmup failed: %s", e)
 
-    # Load DB-backed LLM provider keys (env fallback stays if this fails)
+    # Catalog rows are data, not schema: a models-only rebuild creates the
+    # tables but leaves them empty, and then every tone is invalid and no
+    # strategy matches. The seeder is idempotent and never overwrites an
+    # admin edit, so it is safe on every boot and from every worker.
+    try:
+        from .database import async_session
+        from .modules.review_engine.catalog_seed import seed_catalogs
+
+        async with async_session() as db:
+            seeded = await seed_catalogs(db)
+        log.info("Catalog seed inserted: %s", seeded)
+    except Exception as e:
+        log.error(
+            "Catalog seed failed — tones/dialects/strategies may stay empty "
+            "until the next start: %s",
+            e,
+        )
+
+    # Bootstrap the first platform operator if none exist (replaces the
+    # shared admin password with named accounts on first boot).
+    try:
+        from .database import async_session
+        from .modules.admin.models import PlatformOperator
+        from .security import hash_password
+        from sqlalchemy import select, func
+
+        async with async_session() as db:
+            count = (await db.execute(select(func.count()).select_from(PlatformOperator))).scalar() or 0
+            if count == 0:
+                bootstrap_user = settings.ADMIN_BOOTSTRAP_USERNAME if hasattr(settings, "ADMIN_BOOTSTRAP_USERNAME") else None
+                bootstrap_pw = settings.ADMIN_BOOTSTRAP_PASSWORD if hasattr(settings, "ADMIN_BOOTSTRAP_PASSWORD") else None
+                # Fallback: migrate the legacy shared password into an "admin" operator.
+                if not bootstrap_user and settings.ADMIN_PASSWORD_HASH:
+                    # Can't reverse the hash; create a placeholder that must be
+                    # reset. Log a warning so the operator knows to set a real one.
+                    bootstrap_user = "admin"
+                    bootstrap_pw = None
+                if bootstrap_user:
+                    import uuid as _uuid
+                    import secrets as _secrets
+
+                    if bootstrap_pw:
+                        pw_hash = hash_password(bootstrap_pw)
+                    else:
+                        pw_hash = settings.ADMIN_PASSWORD_HASH or hash_password(secrets.token_urlsafe(32))
+                    db.add(PlatformOperator(
+                        id=str(_uuid.uuid4()),
+                        username=bootstrap_user,
+                        password_hash=pw_hash,
+                        role="superadmin",
+                        is_active=True,
+                    ))
+                    await db.commit()
+                    log.warning(
+                        "Bootstrapped platform operator '%s'. Set ADMIN_BOOTSTRAP_USERNAME/PASSWORD "
+                        "or rotate the password immediately.", bootstrap_user
+                    )
+    except Exception as e:
+        log.warning("Platform operator bootstrap failed: %s", e)
     try:
         from .modules.llm.providers.registry import refresh_provider_keys
         n = await refresh_provider_keys()
         log.info("LLM provider keys loaded from DB: %d", n)
     except Exception as e:
-        log.warning("LLM provider key refresh failed (env fallback active): %s", e)
+        log.warning("LLM provider key refresh failed — generation stays unavailable until it succeeds: %s", e)
 
     # Try Redis — mark unavailable fast if down
     try:
@@ -272,7 +409,15 @@ async def lifespan(app: FastAPI):
     # Schedule periodic retention cleanup
     import asyncio
     from .modules.auth.service import run_retention_loop
+    from .modules.redis.client import run_redis_rearmer
     retention_task = asyncio.create_task(run_retention_loop())
+
+    # Redis re-armer runs in the API process, not only the worker deployment.
+    # A boot-time Redis blip latches the client offline; get_redis() re-probes
+    # on demand after a cooldown, but with no traffic that recovery never
+    # happens and the first request after the outage pays a failed 2s connect.
+    # The prober unlatches it on a fixed interval regardless of traffic.
+    redis_rearmer_task = asyncio.create_task(run_redis_rearmer())
 
     # Queue/poll workers (AI replies, syncs, publishers, Kafka consumers)
     # belong OUTSIDE the HTTP process: in the worker deployment they run via
@@ -288,16 +433,26 @@ async def lifespan(app: FastAPI):
         from .modules.analytics.consumer import run_analytics_consumer
         from .modules.analytics.messaging_rollup import run_messaging_rollup_worker
         from .modules.analytics.performance import run_performance_sync_worker
+        from .modules.analytics.insights_worker import run_conversation_insights_worker
+        from .modules.analytics.market_benchmarks_worker import run_market_benchmarks_worker
+        from .modules.analytics.follower_snapshot_worker import run_follower_snapshot_worker
         from .modules.channels.meta.meta_events_worker import run_meta_events_worker
+        from .modules.channels.meta.lead_action_worker import run_lead_action_worker
+        from .modules.billing.ledger import run_hold_reaper
         from .modules.outbox.worker import OutboxWorker
 
+        bg_tasks.append(asyncio.create_task(run_hold_reaper()))
         bg_tasks.append(asyncio.create_task(run_google_reviews_worker()))
         bg_tasks.append(asyncio.create_task(run_localith_sync_worker()))
         bg_tasks.append(asyncio.create_task(run_post_publish_worker()))
         bg_tasks.append(asyncio.create_task(run_analytics_consumer()))
         bg_tasks.append(asyncio.create_task(run_performance_sync_worker()))
         bg_tasks.append(asyncio.create_task(run_messaging_rollup_worker()))
+        bg_tasks.append(asyncio.create_task(run_conversation_insights_worker()))
+        bg_tasks.append(asyncio.create_task(run_market_benchmarks_worker()))
+        bg_tasks.append(asyncio.create_task(run_follower_snapshot_worker()))
         bg_tasks.append(asyncio.create_task(run_meta_events_worker()))
+        bg_tasks.append(asyncio.create_task(run_lead_action_worker()))
 
         outbox_worker = OutboxWorker()
         await outbox_worker.start()
@@ -311,8 +466,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     retention_task.cancel()
+    redis_rearmer_task.cancel()
     for task in bg_tasks:
         task.cancel()
+    await asyncio.gather(retention_task, redis_rearmer_task, *bg_tasks, return_exceptions=True)
     if outbox_worker is not None:
         await outbox_worker.stop()
     try:
@@ -328,6 +485,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Sayvors API", version="0.1.0", lifespan=lifespan, body_limit=100_000_000)
 
 # ── Middleware ──────────────────────────────────────────────────────────
+app.add_middleware(AdminAuditMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -342,7 +500,16 @@ app.add_middleware(CSRFMiddleware)
 if settings.ALLOWED_HOSTS:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
 
-# ── register modules ──────────────────────────────────────────────────
+# ── Domain exception handlers ────────────────────────────────────────
+# EntitlementDenied -> 403 so callers see a clear "plan limit" error
+# instead of a 500. Fail-closed: a denied feature never silently passes.
+from .modules.billing.entitlements import EntitlementDenied
+
+@app.exception_handler(EntitlementDenied)
+async def _entitlement_denied_handler(request, exc):
+    from fastapi import HTTPException
+
+    raise HTTPException(status_code=403, detail=str(exc))
 # Routers are imported at the top of this module; only registration happens
 # here. Re-importing them lower down shadowed nothing but left two copies of
 # every import to keep in sync.
@@ -368,6 +535,7 @@ app.include_router(redis_router)
 app.include_router(kafka_router)
 app.include_router(rag_router)
 app.include_router(profile_router)
+app.include_router(onboarding_router)
 app.include_router(localith_router)
 app.include_router(locations_router)
 app.include_router(posts_router)
@@ -381,6 +549,8 @@ app.include_router(csv_router)
 app.include_router(assistant_router)
 app.include_router(notifications_router)
 app.include_router(billing_router)
+app.include_router(jobs_router)
+app.include_router(jobs_admin_router)
 app.include_router(team_router)
 
 # Public media files
@@ -458,6 +628,55 @@ async def metrics():
     lines.append(f"sayvors_http_request_duration_seconds_sum {_METRICS_LATENCY_SUM}")
     lines.append(f"sayvors_http_request_duration_seconds_count {total_count}")
     lines.append("")
+
+    # Job queue metrics (dependency-free, queries Postgres)
+    try:
+        from .modules.jobs.service import get_queue_metrics
+
+        qm = await get_queue_metrics()
+        lines.append("# HELP sayvors_job_queue_depth Number of queued+retrying jobs per lane.")
+        lines.append("# TYPE sayvors_job_queue_depth gauge")
+        for lane, depth in qm.get("depth", {}).items():
+            lines.append(f'sayvors_job_queue_depth{{lane="{lane}"}} {depth}')
+        lines.append("")
+        lines.append("# HELP sayvors_job_oldest_age_seconds Age of oldest queued job per lane.")
+        lines.append("# TYPE sayvors_job_oldest_age_seconds gauge")
+        for lane, age in qm.get("oldest_age", {}).items():
+            lines.append(f'sayvors_job_oldest_age_seconds{{lane="{lane}"}} {age}')
+        lines.append("")
+    except Exception:
+        pass
+
+    # Redis health/memory. Rate limits, the token blacklist, sessions and OTPs
+    # all live in Redis, so a scrape is also the honest liveness signal for the
+    # auth path. maxmemory is 128 MB in dev and 1-2 GB in the target topology;
+    # alert at 75% of it.
+    lines.append("# HELP sayvors_redis_available Redis reachable from this replica (1/0).")
+    lines.append("# TYPE sayvors_redis_available gauge")
+    try:
+        from .modules.redis.client import get_redis
+
+        redis = await get_redis()
+        info = await redis.info("memory")
+        used = int(info.get("used_memory") or 0)
+        maxmemory = int(info.get("maxmemory") or 0)
+        lines.append("sayvors_redis_available 1")
+        lines.append("# HELP sayvors_redis_used_memory_bytes Redis used_memory in bytes.")
+        lines.append("# TYPE sayvors_redis_used_memory_bytes gauge")
+        lines.append(f"sayvors_redis_used_memory_bytes {used}")
+        lines.append("# HELP sayvors_redis_maxmemory_bytes Redis maxmemory in bytes (0 = unlimited).")
+        lines.append("# TYPE sayvors_redis_maxmemory_bytes gauge")
+        lines.append(f"sayvors_redis_maxmemory_bytes {maxmemory}")
+        if maxmemory > 0:
+            lines.append("# HELP sayvors_redis_memory_utilization_ratio used_memory divided by maxmemory.")
+            lines.append("# TYPE sayvors_redis_memory_utilization_ratio gauge")
+            lines.append(f"sayvors_redis_memory_utilization_ratio {used / maxmemory:.4f}")
+    except Exception:
+        # Fail closed for the metric, not for the app: an unreachable Redis is
+        # already handled by the auth paths; the scrape must still succeed.
+        lines.append("sayvors_redis_available 0")
+    lines.append("")
+
     return Response(
         content="\n".join(lines),
         media_type="text/plain; version=0.0.4; charset=utf-8",

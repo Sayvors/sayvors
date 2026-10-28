@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
+import { useUpdateReviewIssue } from "@/lib/mutation-hooks";
 import LogoLoader from "@/components/LogoLoader";
 import { fetchMetaAssets } from "@/lib/api-meta";
 import {
@@ -43,35 +47,28 @@ function Chip({ strong, children }: { strong?: boolean; children: React.ReactNod
 }
 
 export default function ReviewTicketsPage() {
-  const [issues, setIssues] = useState<ReviewIssue[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [waPhone, setWaPhone] = useState<string | null>(null);
 
   // `silent` keeps the list mounted during a realtime refresh: a ticket
-  // appearing must not blank the page the merchant is reading.
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
-    setError(null);
-    try {
-      // 200 is the API ceiling; like the admin queue, slice in memory.
-      const d = await fetchReviewIssues({ ticketed: true, limit: 200 });
-      setIssues(d.issues);
-      setTotal(d.total);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load review tickets.");
-    } finally {
-      if (!opts?.silent) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // appearing must not blank the page the merchant is reading. TanStack Query
+  // handles this via isFetching (background) vs isPending (first load).
+  const queryClient = useQueryClient();
+  const issuesQuery = useQuery({
+    queryKey: queryKeys.reviewIssues.list("", true, 200),
+    queryFn: () => fetchReviewIssues({ ticketed: true, limit: 200 }),
+    staleTime: 30 * 1000,
+  });
+  const issues = issuesQuery.data?.issues ?? [];
+  const total = issuesQuery.data?.total ?? 0;
+  const loading = issuesQuery.isPending;
+  const error = issuesQuery.isError
+    ? issuesQuery.error instanceof Error
+      ? issuesQuery.error.message
+      : "Could not load review tickets."
+    : null;
 
   // Live tickets. One poll loop classified a review and opened a ticket while
   // nobody was on this page — a customer complaining, then walking in on
@@ -82,8 +79,10 @@ export default function ReviewTicketsPage() {
   const burst = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshQuietly = useCallback(() => {
     if (burst.current) clearTimeout(burst.current);
-    burst.current = setTimeout(() => void load({ silent: true }), 400);
-  }, [load]);
+    burst.current = setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.reviewIssues.all() });
+    }, 400);
+  }, [queryClient]);
 
   useEffect(() => () => {
     if (burst.current) clearTimeout(burst.current);
@@ -135,10 +134,18 @@ export default function ReviewTicketsPage() {
       .sort((a, b) => (priorityRank[a.priority] ?? 2) - (priorityRank[b.priority] ?? 2));
   }, [issues, statusFilter, q]);
 
+  const listRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 88,
+    overscan: 6,
+  });
+
   const open = openId ? issues.find((i) => i.id === openId) ?? null : null;
 
   return (
-    <div className="team-ui min-h-full px-6 py-6">
+    <div className="team-ui h-full overflow-y-auto px-6 py-6 pb-24">
       <div className="mx-auto max-w-5xl">
         {/* ── header ─────────────────────────────────────────── */}
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -148,7 +155,7 @@ export default function ReviewTicketsPage() {
               Problems customers reported in Google reviews that need action, and the WhatsApp handoff that lets the assistant solve them. Praise and neutral reviews are classified, but they do not get tickets and are not shown here.
             </p>
           </div>
-          <button type="button" onClick={() => void load()} disabled={loading} className={BTN_GHOST}>
+          <button type="button" onClick={() => void issuesQuery.refetch()} disabled={issuesQuery.isFetching} className={BTN_GHOST}>
             {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
@@ -224,35 +231,46 @@ export default function ReviewTicketsPage() {
             </p>
           </div>
         ) : (
-          <div className="ui-panel mt-4 divide-y divide-[var(--ui-line)]">
-            {filtered.map((i) => (
-              <button
-                key={i.id}
-                type="button"
-                onClick={() => setOpenId(i.id)}
-                className={`block w-full px-4 py-3.5 text-left transition hover:bg-[var(--ui-sunken)] ${
-                  i.priority === "urgent"
-                    ? "border-l-4 border-red-500 bg-red-50"
-                    : i.priority === "high"
-                      ? "border-l-4 border-amber-500 bg-amber-50"
-                      : ""
-                }`}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{i.ticket_number ?? "Unticketed"}</span>
-                  <Chip strong={i.priority === "urgent" || i.priority === "high"}>{label(i.priority)}</Chip>
-                  <Chip strong={UNRESOLVED.has(i.status)}>{label(i.status)}</Chip>
-                  <span className="ml-auto text-[12px] text-[var(--ui-ink-2)]">{new Date(i.created_at).toLocaleDateString()}</span>
-                </div>
-                <p className="mt-1.5 truncate text-[13px] text-[var(--ui-ink)]">
-                  {i.summary || i.review_text || label(i.primary_category)}
-                </p>
-                <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
-                  {label(i.primary_category)} · {label(i.subcategory)}
-                  {i.handoff_code && <> · code <span className="font-semibold tabular-nums text-[var(--ui-ink)]">{i.handoff_code}</span></>}
-                </p>
-              </button>
-            ))}
+          <div
+            ref={listRef}
+            className="ui-panel mt-4 max-h-[70vh] overflow-y-auto divide-y divide-[var(--ui-line)]"
+          >
+            <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+              {rowVirtualizer.getVirtualItems().map((vi) => {
+                const i = filtered[vi.index];
+                return (
+                  <button
+                    key={i.id}
+                    type="button"
+                    onClick={() => setOpenId(i.id)}
+                    data-index={vi.index}
+                    ref={rowVirtualizer.measureElement}
+                    className={`block w-full px-4 py-3.5 text-left transition hover:bg-[var(--ui-sunken)] ${
+                      i.priority === "urgent"
+                        ? "border-l-4 border-red-500 bg-red-50"
+                        : i.priority === "high"
+                          ? "border-l-4 border-amber-500 bg-amber-50"
+                          : ""
+                    }`}
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{i.ticket_number ?? "Unticketed"}</span>
+                      <Chip strong={i.priority === "urgent" || i.priority === "high"}>{label(i.priority)}</Chip>
+                      <Chip strong={UNRESOLVED.has(i.status)}>{label(i.status)}</Chip>
+                      <span className="ml-auto text-[12px] text-[var(--ui-ink-2)]">{new Date(i.created_at).toLocaleDateString()}</span>
+                    </div>
+                    <p className="mt-1.5 truncate text-[13px] text-[var(--ui-ink)]">
+                      {i.summary || i.review_text || label(i.primary_category)}
+                    </p>
+                    <p className="mt-0.5 text-[12px] text-[var(--ui-ink-2)]">
+                      {label(i.primary_category)} · {label(i.subcategory)}
+                      {i.handoff_code && <> · code <span className="font-semibold tabular-nums text-[var(--ui-ink)]">#{i.handoff_code}</span></>}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -263,7 +281,9 @@ export default function ReviewTicketsPage() {
           waPhone={waPhone}
           onClose={() => setOpenId(null)}
           onChanged={(row) =>
-            setIssues((prev) => prev.map((x) => (x.id === row.id ? row : x)))
+            queryClient.setQueryData(queryKeys.reviewIssues.list("", true, 200), (old: { issues: ReviewIssue[]; total: number } | undefined) =>
+              old ? { ...old, issues: old.issues.map((x) => (x.id === row.id ? row : x)) } : old,
+            )
           }
         />
       )}
@@ -272,6 +292,23 @@ export default function ReviewTicketsPage() {
 }
 
 /* ── detail drawer ──────────────────────────────────────────────────── */
+
+/**
+ * Human label for a code's remaining life. An absolute timestamp is noise in
+ * a drawer; "expires in 23h" is the decision the merchant is actually making
+ * (re-mint now, or leave it).
+ */
+function describeExpiry(iso: string | null): string | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return null;
+  if (ms <= 0) return "expired";
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `expires in ${minutes} min`;
+  const hours = Math.ceil(minutes / 60);
+  if (hours < 48) return `expires in ${hours}h`;
+  return `expires in ${Math.ceil(hours / 24)} days`;
+}
 
 function TicketDrawer({
   issue,
@@ -286,16 +323,23 @@ function TicketDrawer({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const updateIssue = useUpdateReviewIssue();
   const [code, setCode] = useState<string | null>(issue.handoff_code);
+  const [expiresAt, setExpiresAt] = useState<string | null>(
+    issue.handoff_code_expires_at,
+  );
   const [copied, setCopied] = useState(false);
 
   const link = code ? waMeLink(waPhone, code) : "";
+  const expired = !!expiresAt && new Date(expiresAt).getTime() <= Date.now();
+  const expiryLabel = describeExpiry(expiresAt);
 
   async function setStatus(status: string) {
     setBusy(status);
     setError(null);
     try {
-      onChanged(await updateReviewIssue(issue.id, { status }));
+      const row = await updateIssue.mutateAsync({ id: issue.id, patch: { status } });
+      onChanged(row);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not update the ticket.");
     } finally {
@@ -309,6 +353,7 @@ function TicketDrawer({
     try {
       const row = await mintHandoffCode(issue.id);
       setCode(row.handoff_code);
+      setExpiresAt(row.handoff_code_expires_at);
       onChanged(row);
     } catch (e) {
       // 422 = praise or neutral chatter: nothing to hand off. A fact about
@@ -418,15 +463,32 @@ function TicketDrawer({
           <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--ui-ink-2)]">WhatsApp handoff</div>
           <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--ui-ink-2)]">
             {code
-              ? "The customer quotes this code on WhatsApp, and the assistant picks up the ticket with the full story already in context."
+              ? "The customer sends this code on WhatsApp, and the assistant picks up the ticket with the full story already in context. The # is part of the code — it is what tells the assistant this is a ticket, not an ordinary word."
               : "No code yet. Mint one to hand this ticket to the customer on WhatsApp — the assistant then knows the issue before they say a word."}
           </p>
           {code ? (
             <>
               <p className="mt-3 bg-[var(--ui-sunken)] px-4 py-3 text-center text-[18px] font-bold tabular-nums tracking-[0.2em] text-[var(--ui-ink)]">
-                {code}
+                #{code}
               </p>
-              {link ? (
+              <p className="mt-1 text-center text-[11px] text-[var(--ui-ink-2)]">
+                {expiryLabel ? `Code ${expiryLabel}` : "Legacy code — no expiry"}
+              </p>
+              {expired ? (
+                <div className="mt-2">
+                  <p className="text-[12px] text-[var(--ui-ink-2)]">
+                    This code has expired, so the link in the old review reply no longer attaches the ticket.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void mint()}
+                    className={`${BTN_PRIMARY} mt-2 disabled:opacity-40`}
+                  >
+                    {busy === "code" ? "Minting…" : "Mint a new code"}
+                  </button>
+                </div>
+              ) : link ? (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button type="button" onClick={() => void copyLink()} className={BTN_PRIMARY}>
                     {copied ? "Copied" : "Copy WhatsApp link"}

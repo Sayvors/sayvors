@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     DB_POOL_TIMEOUT_SECONDS: int = 30
     DB_STATEMENT_TIMEOUT_MS: int = 30000  # 30s — kills runaway queries
     DB_IDLE_IN_TX_TIMEOUT_MS: int = 60000  # 60s — kills stuck transactions
+    # A query waiting on a row lock is holding a pool connection the whole
+    # time. At 1M tenants the hot rows (wallet, jobs, thread counters) are
+    # contended, so fail the wait fast and let the caller retry instead of
+    # pinning a connection for the full statement timeout.
+    DB_LOCK_TIMEOUT_MS: int = 5000  # 5s
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_EXPIRATION_MINUTES: int = 15
@@ -34,8 +39,45 @@ class Settings(BaseSettings):
     # app.workers`) sets this false on the api so HTTP traffic can never
     # delay message replies.
     RUN_BACKGROUND_WORKERS: bool = True
+    # Comma-separated job lane allowlist for the worker process. Empty = all
+    # lanes. Lets a single lane be scaled independently (e.g. JOB_LANES=realtime
+    # on a dedicated replica) without running every lane. Unknown names fail fast.
+    JOB_LANES: str = ""
+    # Per-lane in-flight caps. Bulk carries review-request sends (provider
+    # I/O), so it defaults above the old serialized value; raise it on a
+    # dedicated worker replica, not on the latency-critical API process.
+    JOBS_REALTIME_CONCURRENCY: int = 8
+    JOBS_PUBLISHING_CONCURRENCY: int = 4
+    JOBS_MEDIA_CONCURRENCY: int = 2
+    JOBS_BULK_CONCURRENCY: int = 4
     REDIS_URL: str = "redis://localhost:6379/0"
+    # Optional TLS for managed Redis (Memorystore with in-transit encryption,
+    # ElastiCache with TLS). Only consulted when REDIS_URL uses the rediss://
+    # scheme; ignored for plain redis://. "required" verifies the server cert
+    # (needs REDIS_SSL_CA_CERTS for Memorystore's CA), "none" skips
+    # verification (convenient, less safe), "optional" verifies if presented.
+    REDIS_SSL_CERT_REQS: str = "required"
+    REDIS_SSL_CA_CERTS: str = ""  # path to CA bundle; empty = system default
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
+    # ── Managed Kafka (MSK / Confluent Cloud / Google Managed Kafka) ──
+    # Defaults reproduce the current self-hosted plaintext setup byte-for-byte,
+    # so local dev and existing deployments are unaffected. Flip these when
+    # pointing at a managed cluster.
+    KAFKA_SECURITY_PROTOCOL: str = "PLAINTEXT"  # PLAINTEXT | SASL_PLAINTEXT | SASL_SSL | SSL
+    KAFKA_SASL_MECHANISM: str = ""  # PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512 (empty = none)
+    KAFKA_SASL_USERNAME: str = ""
+    KAFKA_SASL_PASSWORD: str = ""
+    KAFKA_SSL_CA_CERTS: str = ""  # path to CA bundle
+    KAFKA_SSL_CERTFILE: str = ""  # client cert (mTLS)
+    KAFKA_SSL_KEYFILE: str = ""  # client key (mTLS)
+    KAFKA_REPLICATION_FACTOR: int = 1  # managed brokers usually require >= 2/3
+    KAFKA_PROVISION_TOPICS: bool = True  # auto-create topics; set false on managed brokers that block it
+    KAFKA_MAX_POLL_INTERVAL_MS: int = 900000
+    # pgvector-backed semantic search. None = auto: on in production, off
+    # everywhere else so a development database without the pgvector
+    # extension still boots and can run the whole migration chain. Set it
+    # explicitly to force the behaviour in either direction.
+    EMBEDDINGS_ENABLED: bool | None = None
 
     # ── Auth security ────────────────────────────────────
     MAX_LOGIN_ATTEMPTS: int = 5
@@ -61,6 +103,20 @@ class Settings(BaseSettings):
     # cookies set by api.sayvors.com are also sent to web.sayvors.com and vice
     # versa. Local dev: set COOKIE_DOMAIN= in .env to get host-only cookies.
     COOKIE_DOMAIN: str | None = ".sayvors.com"
+
+    @property
+    def embeddings_enabled(self) -> bool:
+        """Whether pgvector-backed semantic search runs in this process.
+
+        Auto mode keys off ``ENVIRONMENT``: a staging or production deployment
+        without pgvector would silently degrade every databank to
+        keyword-only, so those default on and the migration fails loudly if
+        the extension is missing. Development and test default off so a
+        database without pgvector still runs the app.
+        """
+        if self.EMBEDDINGS_ENABLED is not None:
+            return self.EMBEDDINGS_ENABLED
+        return self.ENVIRONMENT not in {"development", "test"}
 
     @field_validator("COOKIE_DOMAIN")
     @classmethod
@@ -125,6 +181,9 @@ class Settings(BaseSettings):
     # this is explicitly enabled (self-hosted relay use only).
     EMAIL_SEND_ALLOW_ANY_RECIPIENT: bool = False
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public base URL of THIS API, used to build tracked links that customers
+    # click from SMS/email/WhatsApp (e.g. https://api.sayvors.com).
+    PUBLIC_API_URL: str = "http://localhost:8000"
 
     # Set by the test suite (conftest). Gates the rate-limit/LLM test bypasses
     # so prod code paths can never be disarmed by an import accident.
@@ -143,6 +202,16 @@ class Settings(BaseSettings):
     # Dev/test mode for Google Reviews: fabricate sample reviews.
     GOOGLE_REVIEWS_MOCK: bool = False
 
+    # ── External benchmarking (Pro feature) ──────────────────────────────
+    # Google Places API (New) key for the nearby-competitor peer set. Empty
+    # means the feature is dormant: the UI shows "not connected" rather than
+    # a fabricated peer set. Never log or return this value.
+    GOOGLE_PLACES_API_KEY: str = ""
+    # Radius for the nearby search and how long a snapshot stays fresh.
+    BENCHMARK_PEER_RADIUS_METERS: int = 5000
+    BENCHMARK_PEER_MAX_RESULTS: int = 20
+    BENCHMARK_SNAPSHOT_TTL_HOURS: int = 24
+
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,
     # website clicks, calls, direction requests -> location_daily_metrics).
@@ -154,6 +223,9 @@ class Settings(BaseSettings):
     # enough that the unanswered snapshot reads as "now", cheap enough to
     # never matter.
     MESSAGING_ROLLUP_INTERVAL_SECONDS: int = 900
+    CONVERSATION_INSIGHTS_INTERVAL_SECONDS: int = 86400  # daily
+    MARKET_BENCHMARKS_INTERVAL_SECONDS: int = 86400  # daily
+    FOLLOWER_SNAPSHOT_INTERVAL_SECONDS: int = 86400  # daily
 
     # ── LLM ────────────────────────────────────────────
     # Provider keys live exclusively in the database (Admin → LLMs).
@@ -173,7 +245,7 @@ class Settings(BaseSettings):
 
     # ── Localith (EmbedSocial) ──────────────────────────────
     LOCALITH_API_KEY: str = ""
-    LOCALITH_BASE_URL: str = "https://embedsocial.com/app/api"
+    LOCALITH_BASE_URL: str = "https://app.localith.ai/app/api"
     LOCALITH_ITEMS_PATH: str = "rest/v1/items"
     BUSINESS_DATA_PROVIDER: str = "localith"
     # Background auto-sync: every connected listing is re-synced on this
@@ -237,6 +309,8 @@ class Settings(BaseSettings):
     PLAN_MESSAGE_LIMITS: dict[str, int] = {"free": 1000, "pro": 25000}
 
     ADMIN_PASSWORD_HASH: str = ""
+    ADMIN_BOOTSTRAP_USERNAME: str = ""
+    ADMIN_BOOTSTRAP_PASSWORD: str = ""
     ADMIN_SESSION_MINUTES: int = 120
     # Global (IP-independent) consecutive-failure lockout for the admin login,
     # so per-IP rate limits are not the only brute-force control.

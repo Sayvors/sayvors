@@ -138,7 +138,7 @@ transaction as the job transition.
 |---|---|
 | A fresh `httpx.AsyncClient` per outbound send, never closed | `followup_worker.py:200-206`, `channels/service.py:322-324,378-380` |
 | `alembic/env.py` model-import list is stale — missing `team`, `channels.meta`, `notifications`, `media`, `locations`, `billing`, `user_feedback`. **`--autogenerate` would emit spurious drops** | `services/api/alembic/env.py:20-36` |
-| `run_followup_worker` is registered in the worker but **not** in the API lifespan list | `workers/main.py:97` vs `main.py:157-162` |
+| `run_lead_action_worker` was registered in the worker but **not** in the API lifespan list | `workers/main.py` vs `main.py` — **fixed**: added to lifespan |
 | `mark_redis_available()` exists but is **never called** — a Redis blip at warmup disables Redis for the process lifetime | `redis/client.py:69-71` |
 | Cancel-without-await: `tasks` are cancelled but never `gather`ed | `workers/main.py:120-121`, `main.py:176-177` |
 | `TOKEN_PRICES["unknown"] = (0.0, 0.0)` makes unlisted models free; budget reserve has no TTL so a crashed worker leaks the reserve | `billing/budget.py:54`, `:113-129` |

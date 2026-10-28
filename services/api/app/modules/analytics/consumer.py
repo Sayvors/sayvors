@@ -207,25 +207,31 @@ async def _handle_discovered(payload: dict) -> None:
         insight.topics = result["topics"]
         insight.products = result["products"]
         insight.problems = result["problems"]
-        insight.enrichment_status = "done"
+        # A heuristic fallback is not a finished enrichment: mark it failed so
+        # the next discovery re-runs the LLM instead of remembering a keyword
+        # guess as the final answer. The guess is still stored - it is better
+        # than an empty review while the provider is down.
+        insight.enrichment_status = "failed" if result.get("heuristic") else "done"
 
+        bucket_date = (insight.review_updated_at or insight.created_at or datetime.now(timezone.utc)).date()
+
+        from ..outbox.service import enqueue_event_in
+
+        await enqueue_event_in(
+            db,
+            "review.enriched",
+            {
+                "user_id": insight.user_id,
+                "channel_id": channel_id,
+                "review_id": review_id,
+                "rating": insight.rating,
+                "sentiment": insight.sentiment,
+                "review_date": bucket_date.isoformat(),
+            },
+            topic=TOPIC,
+        )
         db.add(insight)
         await db.commit()
-
-        bucket_date = (insight.review_updated_at or insight.created_at).date()
-
-    await enqueue_event(
-        "review.enriched",
-        {
-            "user_id": insight.user_id,
-            "channel_id": channel_id,
-            "review_id": review_id,
-            "rating": insight.rating,
-            "sentiment": insight.sentiment,
-            "review_date": bucket_date.isoformat(),
-        },
-        topic=TOPIC,
-    )
 
 
 async def _handle_replied(payload: dict) -> None:
@@ -261,7 +267,7 @@ async def _handle_replied(payload: dict) -> None:
             insight.enrichment_status = insight.enrichment_status or "pending"
             db.add(insight)
             await db.commit()
-            bucket_date = (insight.review_updated_at or insight.created_at).date()
+            bucket_date = (insight.review_updated_at or insight.created_at or datetime.now(timezone.utc)).date()
     if insight:
         await recompute_daily_rollup(channel_id, owner or insight.user_id, bucket_date)
 
@@ -362,12 +368,19 @@ async def recompute_daily_rollup(channel_id: str, user_id: str, bucket_date) -> 
 async def _process_message(value: bytes | None) -> None:
     if value is None:
         return
-    try:
-        event = json.loads(value.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.warning("Discarding malformed event: %s", e)
+    # The consumer's value_deserializer already parses JSON into a dict.
+    # Handle both raw bytes and pre-parsed dicts for robustness.
+    if isinstance(value, dict):
+        event = value
+    elif isinstance(value, (bytes, bytearray, str)):
+        try:
+            event = json.loads(value.decode("utf-8") if isinstance(value, (bytes, bytearray)) else value)
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+            logger.warning("Discarding malformed event: %s", e)
+            return
+    else:
+        logger.warning("Unexpected event value type: %s", type(value))
         return
-
     event_type = event.get("event_type", "")
     payload = event.get("payload", event)
     try:
@@ -449,7 +462,7 @@ async def run_analytics_consumer() -> None:
     while True:
         consumer = None
         try:
-            if not kafka_client._kafka_available:
+            if not kafka_client.is_kafka_available():
                 if not fallback_logged:
                     logger.info(
                         "Kafka unavailable — analytics consumer draining review events from the DB outbox"
@@ -472,13 +485,14 @@ async def run_analytics_consumer() -> None:
             if consumer:
                 await consumer.stop()
             raise
-        except Exception:
+        except Exception as _e:
+            logger.exception("Analytics consumer error: %s", _e)
             # Connection failed — flip the flag so the outbox fallback kicks
             # in until the outbox worker's reconnect loop restores Kafka.
             if not fallback_logged:
                 logger.warning("Kafka connection failed — switching to outbox fallback")
                 fallback_logged = True
-            kafka_client.mark_kafka_unavailable()
+            kafka_client.mark_kafka_unavailable(GROUP_ID)
             if consumer:
                 try:
                     await consumer.stop()

@@ -204,15 +204,27 @@ async def list_connections(
 async def start_connect(
     provider: str,
     request: Request,
+    next_path: str | None = Query(None, alias="next", max_length=200),
     ctx: TenantContext = Depends(require_perm("channels.connect")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create an OAuth transaction; return the provider auth entry."""
+    """Create an OAuth transaction; return the provider auth entry.
+
+    `next` is the in-app path the browser returns to after the provider
+    redirects back. It lets a connect started on an onboarding screen
+    resume there instead of the generic channels page. Only same-app paths
+    are stored; the callback re-validates before using it.
+    """
     origin = _request_origin(request)
+    metadata: dict[str, str] = {}
+    if origin:
+        metadata["frontend_origin"] = origin
+    if next_path and _SAFE_NEXT.fullmatch(next_path):
+        metadata["next"] = next_path
     try:
         return await _service.start_connect(
-            db, tenant_id_of(user), provider, {"frontend_origin": origin} if origin else None
+            db, tenant_id_of(user), provider, metadata or None
         )
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown Meta provider")
@@ -1738,9 +1750,7 @@ async def suggest_instagram_caption(
     Uses the tenant's Instagram profile name/username for voice when the
     asset carries it."""
     _asset, _token = await _instagram_asset_or_404(db, user, ig_id)
-    from ...llm.providers.base import LLMMessage, LLMRequest
-    from ...llm.providers.registry import get_provider_for_model
-    from ...llm.service import _resolve_model, resolve_tenant_model
+    from ...llm.gateway import LLMMessage, complete, resolve_tenant_model
 
     try:
         model_id = await resolve_tenant_model(db)
@@ -1755,28 +1765,25 @@ async def suggest_instagram_caption(
             f"{body.current_caption.strip()}"
         ) if body.current_caption.strip() else "",
     ]
-    req = LLMRequest(
-        model=_resolve_model(model_id)[0],
-        messages=[
-            LLMMessage(role="user", content="\n\n".join(s for s in steering if s).strip() or "Write a caption for the business's next Instagram post."),
-        ],
-        system_prompt=(
-            "You write Instagram captions for businesses. You are writing "
-            f"for {account}. Match the business's voice; stay concrete and "
-            "human — no corporate filler. Up to 3 short paragraphs, emojis "
-            "welcome but sparse, at most 5 hashtags at the very end. "
-            "Reply with ONLY the caption text, nothing else. "
-            f"Maximum {2200} characters."
-        ),
-        temperature=0.8,
-        max_tokens=400,
-        stream=False,
-        tenant_id=tenant_id_of(user),
-        model_id=model_id,
-        purpose="instagram.caption_suggest",
-    )
     try:
-        resp = await get_provider_for_model(model_id).complete(req)
+        resp = await complete(
+            model=model_id,
+            messages=[
+                LLMMessage(role="user", content="\n\n".join(s for s in steering if s).strip() or "Write a caption for the business's next Instagram post."),
+            ],
+            system_prompt=(
+                "You write Instagram captions for businesses. You are writing "
+                f"for {account}. Match the business's voice; stay concrete and "
+                "human — no corporate filler. Up to 3 short paragraphs, emojis "
+                "welcome but sparse, at most 5 hashtags at the very end. "
+                "Reply with ONLY the caption text, nothing else. "
+                f"Maximum {2200} characters."
+            ),
+            temperature=0.8,
+            max_tokens=400,
+            tenant_id=tenant_id_of(user),
+            purpose="instagram.caption_suggest",
+        )
     except Exception as e:  # ProviderError and transport failures alike
         raise HTTPException(
             status_code=502, detail=f"Caption generation failed: {str(e)[:150]}"

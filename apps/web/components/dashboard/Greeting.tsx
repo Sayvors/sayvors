@@ -20,7 +20,7 @@ export default function Greeting({ name }: { name: string }) {
   );
 
   return (
-    <h1 className="text-[20px] font-bold text-ink sm:text-[22px]">
+    <h1 className="text-[20px] font-bold text-ink dark:text-fog sm:text-[22px]">
       <Typewriter phrases={phrases} label={`${phrases[0]}. Animated greeting.`} />
     </h1>
   );

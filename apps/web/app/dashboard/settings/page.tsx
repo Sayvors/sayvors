@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
@@ -25,6 +26,7 @@ interface ChannelCfg {
   promo_only_relevant: boolean;
   promo_max_ctas: number;
   handoff_link_enabled: boolean;
+  handoff_code_ttl_days: number;
 }
 
 interface GoogleChannel {
@@ -220,6 +222,7 @@ function VariesBadge() {
 }
 
 export default function SettingsPage() {
+  const queryClient = useQueryClient();
   const [channels, setChannels] = useState<GoogleChannel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [configs, setConfigs] = useState<Record<string, ChannelCfg>>({});
@@ -267,6 +270,7 @@ export default function SettingsPage() {
   const [promoProducts, setPromoProducts] = useState(false);
   const [promoLinks, setPromoLinks] = useState(false);
   const [handoffLink, setHandoffLink] = useState(true);
+  const [handoffTtlDays, setHandoffTtlDays] = useState(1);
   const [promoRelevant, setPromoRelevant] = useState(true);
   const [promoMax, setPromoMax] = useState(1);
   const [editedAutopost, setEditedAutopost] = useState(false);
@@ -277,79 +281,82 @@ export default function SettingsPage() {
   const [dangerTarget, setDangerTarget] = useState<MetaConnection | null>(null);
   const [dangerPhrase, setDangerPhrase] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [chData, diaData, toneData, prof] = await Promise.all([
-          apiFetch("/api/v1/channels?limit=100"),
-          apiFetch("/api/v1/review-engine/dialects").catch(() => ({})),
-          apiFetch("/api/v1/review-engine/tones").catch(() => []),
-          getProfile().catch(() => null),
-        ]);
-        if (cancelled) return;
-        const google: GoogleChannel[] = (chData.channels ?? []).filter(
-          (c: { platform: string }) => c.platform === "google_reviews"
-        );
-        setChannels(google);
-        if (google.length > 0) setSelectedId((prev) => prev ?? (google.length > 1 ? ALL : google[0].id));
-        setDialects(diaData?.dialects ?? diaData ?? []);
-        if (Array.isArray(toneData) && toneData.length > 0) setTones(toneData);
-        if (prof) {
-          setCountry(prof.country ?? "");
-          setSavedCountry(prof.country ?? null);
-          const pType = prof.business_type ?? "";
-          if (pType && !BUSINESS_TYPES.includes(pType)) {
-            setBizType("Other");
-            setBizCustom(pType);
-          } else {
-            setBizType(pType);
-            setBizCustom("");
+  const settingsQuery = useQuery({
+    queryKey: ["settings", "all"],
+    queryFn: async () => {
+      const [chData, diaData, toneData, prof] = await Promise.all([
+        apiFetch("/api/v1/channels?limit=100"),
+        apiFetch("/api/v1/review-engine/dialects").catch(() => ({})),
+        apiFetch("/api/v1/review-engine/tones").catch(() => []),
+        getProfile().catch(() => null),
+      ]);
+      const google: GoogleChannel[] = (chData.channels ?? []).filter(
+        (c: { platform: string }) => c.platform === "google_reviews"
+      );
+      const cfgs: Record<string, ChannelCfg> = {};
+      await Promise.all(
+        google.map(async (c) => {
+          try {
+            cfgs[c.id] = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
+          } catch {
+            /* default config is created server-side on first GET */
           }
-          setBizSells(prof.business_sells ?? "");
-          setBizNoSell(prof.business_doesnt_sell ?? "");
-          setBizDesc(prof.business_description ?? "");
-          setSavedBiz({
-            type: pType,
-            sells: prof.business_sells ?? "",
-            noSell: prof.business_doesnt_sell ?? "",
-            desc: prof.business_description ?? "",
-          });
-        }
-        const cfgs: Record<string, ChannelCfg> = {};
-        await Promise.all(
-          google.map(async (c) => {
-            try {
-              cfgs[c.id] = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
-            } catch {
-              /* default config is created server-side on first GET */
-            }
-          })
-        );
-        if (!cancelled) setConfigs(cfgs);
-      } catch {
-        /* backend down — empty state renders */
-      }
-      if (!cancelled) setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+        })
+      );
+      return { channels: google, dialects: diaData?.dialects ?? diaData ?? [], tones: Array.isArray(toneData) && toneData.length > 0 ? toneData : null, profile: prof, configs: cfgs };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
 
   useEffect(() => {
-    let cancelled = false;
-    fetchMetaConnections()
-      .then((d) => {
-        if (!cancelled) setMetaConnections(d.connections ?? []);
-      })
-      .catch(() => {
-        /* backend down — empty danger zone renders */
+    const d = settingsQuery.data;
+    if (!d) return;
+    setChannels(d.channels);
+    if (d.channels.length > 0) setSelectedId((prev) => prev ?? (d.channels.length > 1 ? ALL : d.channels[0].id));
+    setDialects(d.dialects);
+    if (d.tones) setTones(d.tones);
+    if (d.profile) {
+      const prof = d.profile;
+      setCountry(prof.country ?? "");
+      setSavedCountry(prof.country ?? null);
+      const pType = prof.business_type ?? "";
+      if (pType && !BUSINESS_TYPES.includes(pType)) {
+        setBizType("Other");
+        setBizCustom(pType);
+      } else {
+        setBizType(pType);
+        setBizCustom("");
+      }
+      setBizSells(prof.business_sells ?? "");
+      setBizNoSell(prof.business_doesnt_sell ?? "");
+      setBizDesc(prof.business_description ?? "");
+      setSavedBiz({
+        type: pType,
+        sells: prof.business_sells ?? "",
+        noSell: prof.business_doesnt_sell ?? "",
+        desc: prof.business_description ?? "",
       });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    }
+    setConfigs(d.configs);
+    setLoading(false);
+  }, [settingsQuery.data]);
+
+  useEffect(() => {
+    if (settingsQuery.isError) setLoading(false);
+  }, [settingsQuery.isError]);
+
+  const metaConnectionsQuery = useQuery({
+    queryKey: ["settings", "meta-connections"],
+    queryFn: async () => {
+      const d = await fetchMetaConnections();
+      return d.connections ?? [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  useEffect(() => {
+    const d = metaConnectionsQuery.data;
+    if (d) setMetaConnections(d);
+  }, [metaConnectionsQuery.data]);
 
   const deleteMetaConnection = async (c: MetaConnection) => {
     setDangerBusy(c.id);
@@ -401,6 +408,7 @@ export default function SettingsPage() {
       setPromoMax(Number.isFinite(cfg.promo_max_ctas) ? cfg.promo_max_ctas : 1);
       setEditedAutopost(!!cfg.edited_review_autopost);
       setHandoffLink(cfg.handoff_link_enabled ?? true);
+      setHandoffTtlDays(cfg.handoff_code_ttl_days ?? 1);
     } else if (isBulk) {
       setTone("friendly");
       setReplyLang("match");
@@ -411,6 +419,7 @@ export default function SettingsPage() {
       setPromoMax(1);
       setEditedAutopost(false);
       setHandoffLink(true);
+      setHandoffTtlDays(1);
     }
   }
 
@@ -429,6 +438,7 @@ export default function SettingsPage() {
     if (differs((id) => !!configs[id]?.promo_product_mentions)) set.add("promoProducts");
     if (differs((id) => !!configs[id]?.promo_links)) set.add("promoLinks");
     if (differs((id) => configs[id]?.handoff_link_enabled ?? true)) set.add("handoffLink");
+    if (differs((id) => configs[id]?.handoff_code_ttl_days ?? 1)) set.add("handoffTtl");
     if (differs((id) => configs[id]?.promo_only_relevant ?? true)) set.add("promoRelevant");
     if (differs((id) => configs[id]?.promo_max_ctas ?? 1)) set.add("promoMax");
     if (differs((id) => !!configs[id]?.edited_review_autopost)) set.add("editedAutopost");
@@ -615,7 +625,7 @@ export default function SettingsPage() {
     const d = dialects.find((x) => x.code === code);
     return d ? `${d.dialect_ar} · ${d.dialect_en}` : code;
   };
-  const langName = replyLang === "en" ? "English" : replyLang === "ar" ? "Arabic" : "match review";
+  const langName = replyLang === "en" ? "English" : replyLang === "ar" ? "Arabic" : replyLang === "ur" ? "Urdu" : replyLang === "ur-Latn" ? "Roman Urdu" : "match review";
   const countryName = COUNTRIES.find((c) => c.code === savedCountry)?.name ?? savedCountry ?? "unset";
   const selectedName = channels.find((c) => c.id === selectedId)?.display_name ?? "location";
 
@@ -930,6 +940,8 @@ export default function SettingsPage() {
                       { id: "match", label: "Match the review", hint: "Arabic review → Arabic reply, English → English" },
                       { id: "en", label: "Always English", hint: "Every reply in English" },
                       { id: "ar", label: "Always Arabic", hint: "Every reply in Arabic" },
+{ id: "ur", label: "Always Urdu", hint: "Every reply in Urdu script" },
+{ id: "ur-Latn", label: "Always Roman Urdu", hint: "Every reply in Roman Urdu" },
                     ].map((l) => (
                       <label key={l.id} className="flex cursor-pointer items-start gap-2.5 rounded-[2px] border border-ink/[0.06] px-3 py-2 transition hover:border-deep-violet/25 dark:border-fog/[0.06]">
                         <input
@@ -949,7 +961,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <Field label="Arabic dialect" hint="used whenever a reply is written in Arabic" varies={bulk?.varies.has("dialect") ?? false}>
-                  <select value={dialect} onChange={(e) => setDialect(e.target.value)} disabled={busy !== null} className={selectCls}>
+                  <select value={dialect} onChange={(e) => setDialect(e.target.value)} disabled={busy !== null || replyLang === "en" || replyLang === "ur" || replyLang === "ur-Latn"} className={selectCls}>
                     <option value="auto">Auto — match the review</option>
                     {dialects
                       .filter((d) => d.code !== "auto")
@@ -1143,7 +1155,7 @@ export default function SettingsPage() {
               <Section
                 eyebrow="Review replies"
                 title="WhatsApp recovery link"
-                subtitle="When a review needs attention, the public reply offers a WhatsApp link with the customer's ticket code. Pricing and plan questions get a normal WhatsApp sales link instead, without a ticket. Note: this makes your WhatsApp number publicly visible on Google."
+                subtitle="When a review needs attention, the public reply offers a WhatsApp link with the customer's ticket code. Pricing and plan questions get a normal WhatsApp sales link instead, without a ticket. The code expires after the lifetime below, so an old reply cannot reopen a closed ticket. Note: this makes your WhatsApp number publicly visible on Google."
               >
                 <label className="flex cursor-pointer items-start gap-2.5">
                   <input
@@ -1183,6 +1195,51 @@ export default function SettingsPage() {
                 >
                   {busy === "handoffLink" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save"}
                 </button>
+
+                <div className="mt-4 border-t border-ink/[0.06] pt-4 dark:border-fog/[0.06]">
+                  <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-ink dark:text-fog">
+                    Code lifetime
+                    {bulk?.varies.has("handoffTtl") ? <VariesBadge /> : null}
+                    <select
+                      value={handoffTtlDays}
+                      onChange={(e) => setHandoffTtlDays(Number(e.target.value))}
+                      disabled={busy !== null}
+                      className={`${selectCls} w-32`}
+                    >
+                      {Array.from(new Set([1, 3, 7, 14, 30, handoffTtlDays]))
+                        .sort((a, b) => a - b)
+                        .map((days) => (
+                          <option key={days} value={days}>
+                            {days} day{days === 1 ? "" : "s"}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <p className="mt-1 text-[11px] leading-relaxed text-ink/45 dark:text-fog/45">
+                    After this many days the code in the review reply stops working — the wa.me link prefills that
+                    code, so the link expires with it. 1 day is the default; 30 is the maximum.
+                  </p>
+                  <button
+                    onClick={() => {
+                      const patch = { handoff_code_ttl_days: handoffTtlDays };
+                      if (!isBulk) {
+                        void saveCfg(patch, "Handoff code lifetime saved.", "handoffTtl");
+                        return;
+                      }
+                      requestBulkSave(
+                        "Apply code lifetime to all branches?",
+                        [`Handoff codes expire after ${handoffTtlDays} day${handoffTtlDays === 1 ? "" : "s"}`],
+                        () => runBulkCfg("Code lifetime", patch),
+                        "handoffTtl",
+                        (ids) => runBulkCfg("Code lifetime", patch, ids),
+                      );
+                    }}
+                    disabled={busy !== null}
+                    className="mt-2 rounded-[2px] bg-deep-violet px-4 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-40"
+                  >
+                    {busy === "handoffTtl" ? "Saving…" : bulk ? `Apply to ${bulk.branches.length} branches` : "Save lifetime"}
+                  </button>
+                </div>
               </Section>
 
               <p className="rounded-[2px] border border-ink/[0.06] bg-white/60 px-4 py-3 text-[12px] text-ink/55 dark:border-fog/[0.06] dark:bg-ink/60 dark:text-fog/55">
@@ -1191,6 +1248,7 @@ export default function SettingsPage() {
                 <strong>{countryName}</strong> · Promo:{" "}
                 <strong>{promoProducts || promoLinks ? `on (max ${promoMax} CTA${promoMax === 1 ? "" : "s"})` : "off"}</strong>
                 {" "}· WhatsApp link: <strong>{handoffLink ? "on" : "off"}</strong>
+                {" "}· Code lifetime: <strong>{handoffTtlDays} day{handoffTtlDays === 1 ? "" : "s"}</strong>
               </p>
             </>
           ) : (

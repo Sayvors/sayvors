@@ -264,9 +264,40 @@ _ALTER_TABLE = re.compile(
     re.I,
 )
 
+# ``CREATE TABLE ... (...)`` in raw SQL (op.execute). Captures the table
+# name and the parenthesized column list so individual columns can be
+# extracted by ``_RAW_COLUMN``. The body is non-greedy: one migration file
+# may hold several CREATE TABLE statements, and a greedy ``.*`` swallowed
+# every later table into the first one (so the later tables read as having
+# no migrated columns at all).
+_CREATE_TABLE_RAW = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?['\"]?(?P<table>[A-Za-z_][A-Za-z0-9_]*)['\"]?\s*\((?P<body>.*?)\)\s*['\"]",
+    re.S | re.I,
+)
+
+# Column definitions inside a raw ``CREATE TABLE``: ``column_name TYPE``.
+_RAW_COLUMN = re.compile(
+    r"(?P<column>[A-Za-z_][A-Za-z0-9_]*)\s+"
+    r"(?:VARCHAR|CHAR|TEXT|INTEGER|BIGINT|SMALLINT|BOOLEAN|TIMESTAMPTZ|TIMESTAMP|DATE|TIME|"
+    r"JSON|JSONB|FLOAT|REAL|DOUBLE|NUMERIC|DECIMAL|UUID|BYTEA|SERIAL|BIGSERIAL)\b",
+    re.I,
+)
+
 # Any quoted identifier appearing anywhere in a migration - the fallback used
 # when a table-scoped match cannot be established.
 _ANY_IDENTIFIER = re.compile(r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
+
+# Migrations often build one SQL statement from adjacent string literals:
+#     op.execute(
+#         "ALTER TABLE widgets "
+#         "ADD COLUMN IF NOT EXISTS cost_cents INTEGER"
+#     )
+# The parser reads source text, not the runtime string, so the ALTER TABLE
+# regex would never see the two halves as one statement. Join implicit
+# concatenations first. A comma-separated list ("a", "b") is untouched because
+# the pattern only matches a closing quote followed by whitespace and an
+# opening quote.
+_IMPLICIT_CONCAT = re.compile(r"(['\"])\s*\n\s*(['\"])")
 
 
 def _model_tables() -> dict[str, set[str]]:
@@ -297,7 +328,9 @@ def _model_tables() -> dict[str, set[str]]:
         import app.modules.notifications.models  # noqa: F401
         import app.modules.outbox.models  # noqa: F401
         import app.modules.posts.models  # noqa: F401
+        import app.modules.rag.models  # noqa: F401
         import app.modules.stt.models  # noqa: F401
+        import app.modules.tts.models  # noqa: F401
         import app.modules.users.models  # noqa: F401
     finally:
         if previous_secret is None:
@@ -319,7 +352,7 @@ def _migrated_columns() -> tuple[dict[str, set[str]], set[str]]:
     for path in sorted(VERSIONS_DIR.glob("*.py")):
         if path.name == "__init__.py":
             continue
-        src = path.read_text(encoding="utf-8")
+        src = _IMPLICIT_CONCAT.sub("", path.read_text(encoding="utf-8"))
 
         all_identifiers.update(_ANY_IDENTIFIER.findall(src))
 
@@ -336,6 +369,11 @@ def _migrated_columns() -> tuple[dict[str, set[str]], set[str]]:
         for match in _CREATE_TABLE.finditer(src):
             table = match.group("table").lower()
             for column in _COLUMN_ANYWHERE.finditer(match.group("body")):
+                by_table.setdefault(table, set()).add(column.group("column"))
+
+        for match in _CREATE_TABLE_RAW.finditer(src):
+            table = match.group("table").lower()
+            for column in _RAW_COLUMN.finditer(match.group("body")):
                 by_table.setdefault(table, set()).add(column.group("column"))
 
     return by_table, all_identifiers

@@ -1,12 +1,15 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import Image from "next/image";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
+import { useUpdateChannelConfig } from "@/lib/mutation-hooks";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import MetaConnections from "@/components/channels/MetaConnections";
+import PlatformMark from "@/components/channels/PlatformMark";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -485,6 +488,8 @@ function LocalithListingRow({
 
 function ConnectHub() {
   const params = useSearchParams();
+  const queryClient = useQueryClient();
+  const updateConfig = useUpdateChannelConfig();
   const [channels, setChannels] = useState<ApiChannel[]>([]);
   const [autoreply, setAutoreply] = useState<Record<string, AutoReply>>({});
   const [pending, setPending] = useState<Record<string, number>>({});
@@ -506,6 +511,7 @@ function ConnectHub() {
   const [localithConns, setLocalithConns] = useState<LocalithConnection[]>([]);
   const [localithProfiles, setLocalithProfiles] = useState<Record<string, LocalithProfile>>({});
   const [localithListings, setLocalithListings] = useState<LocalithListing[]>([]);
+  const [localithListingsUnavailable, setLocalithListingsUnavailable] = useState<string | null>(null);
   const [busyBranch, setBusyBranch] = useState<string | null>(null); // listing_id | "all"
 
   const connectedCount = params.get("google_connected");
@@ -571,52 +577,63 @@ function ConnectHub() {
     }
   }, []);
 
-  // ── Fetch existing Localith connections on mount (all branches) ──
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  // ── Localith connections + profiles + listings (TanStack Query) ──
+  const localithQuery = useQuery({
+    queryKey: ["localith", "all"],
+    queryFn: async () => {
+      let conns: LocalithConnection[] = [];
+      const profs: Record<string, LocalithProfile> = {};
       try {
         const data = await apiFetch("/api/v1/integrations/localith/connections");
-        if (cancelled) return;
-        const conns = (data ?? []) as LocalithConnection[];
-        setLocalithConns(conns);
-        const profs: Record<string, LocalithProfile> = {};
+        conns = (data ?? []) as LocalithConnection[];
         await Promise.all(
-          conns.map(async (c) => {
+          conns.map(async (c: LocalithConnection) => {
             try {
               const prof = await apiFetch(
-                `/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(c.listing_id)}`
+                `/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(c.listing_id)}`,
               );
               if (prof) profs[c.listing_id] = prof as LocalithProfile;
             } catch {
               /* snapshot missing for this branch — fine */
             }
-          })
+          }),
         );
-        if (!cancelled) setLocalithProfiles(profs);
       } catch {
         /* not connected — fine */
       }
+      let listings: LocalithListing[] = [];
+      let listingsUnavailable: string | null = null;
       try {
         const data = await apiFetch("/api/v1/integrations/localith/listings");
-        if (!cancelled) setLocalithListings(data.listings ?? []);
+        listings = (data.listings ?? []) as LocalithListing[];
+        listingsUnavailable = (data.unavailable ?? null) as string | null;
       } catch {
         /* rows fall back to connected branches only */
       }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+      return { conns, profs, listings, listingsUnavailable };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  useEffect(() => {
+    const d = localithQuery.data;
+    if (!d) return;
+    setLocalithConns(d.conns);
+    setLocalithProfiles(d.profs);
+    setLocalithListings(d.listings);
+    setLocalithListingsUnavailable(d.listingsUnavailable);
+  }, [localithQuery.data]);
 
   const refreshLocalithConns = useCallback(async () => {
     try {
       const data = await apiFetch("/api/v1/integrations/localith/connections");
       const conns = (data ?? []) as LocalithConnection[];
       setLocalithConns(conns);
+      void queryClient.invalidateQueries({ queryKey: ["localith", "all"] });
       return conns;
     } catch {
       return null; // keep stale list
     }
-  }, []);
+  }, [queryClient]);
 
   const refreshLocalithProfile = useCallback(async (listingId: string) => {
     try {
@@ -629,54 +646,50 @@ function ConnectHub() {
     }
   }, []);
 
+  const channelsQuery = useQuery({
+    queryKey: queryKeys.channels.list(100),
+    queryFn: async () => {
+      const data = await apiFetch("/api/v1/channels?limit=100");
+      const chs = (data.channels ?? []) as ApiChannel[];
+      const configs: Record<string, AutoReply> = {};
+      const pend: Record<string, number> = {};
+      await Promise.all(
+        chs
+          .filter((c: ApiChannel) => c.platform === "google_reviews")
+          .map(async (c: ApiChannel) => {
+            try {
+              const cfg = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
+              configs[c.id] = cfg;
+            } catch {
+              /* config endpoint creates default on first GET; ignore errors */
+            }
+            try {
+              const r = await apiFetch(`/api/v1/channels/${c.id}/reviews?status=pending_approval&limit=1`);
+              pend[c.id] = r.pending ?? 0;
+            } catch {
+              pend[c.id] = 0;
+            }
+          }),
+      );
+      return { channels: chs, configs, pend };
+    },
+    staleTime: 30 * 1000,
+  });
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiFetch("/api/v1/channels?limit=100");
-        if (cancelled) return;
-        setChannels(data.channels ?? []);
-        const configs: Record<string, AutoReply> = {};
-        const pend: Record<string, number> = {};
-        await Promise.all(
-          (data.channels ?? [])
-            .filter((c: ApiChannel) => c.platform === "google_reviews")
-            .map(async (c: ApiChannel) => {
-              try {
-                const cfg = await apiFetch(`/api/v1/channels/${c.id}/autoreply`);
-                configs[c.id] = cfg;
-              } catch {
-                /* config endpoint creates default on first GET; ignore errors */
-              }
-              try {
-                const r = await apiFetch(`/api/v1/channels/${c.id}/reviews?status=pending_approval&limit=1`);
-                pend[c.id] = r.pending ?? 0;
-              } catch {
-                pend[c.id] = 0;
-              }
-            })
-        );
-        if (!cancelled) setAutoreply(configs);
-        if (!cancelled) setPending(pend);
-      } catch {
-        /* not logged in yet or backend down — cards still render */
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    const d = channelsQuery.data;
+    if (!d) return;
+    setChannels(d.channels);
+    setAutoreply(d.configs);
+    setPending(d.pend);
+    setLoading(false);
+  }, [channelsQuery.data]);
 
   const toggleAutoReply = async (channelId: string, enable: boolean) => {
     setBusy(channelId);
     try {
-      const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
-        method: "PUT",
-        body: JSON.stringify({ enabled: enable }),
-      });
-      setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
+      const cfg = await updateConfig.mutateAsync({ channelId, body: { enabled: enable } });
+      setAutoreply((prev) => ({ ...prev, [channelId]: cfg as AutoReply }));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channels.list(100) });
     } catch (e) {
       setBanner({ kind: "err", text: errDetail(e, "Could not save the auto-reply setting.") });
     } finally {
@@ -695,11 +708,12 @@ function ConnectHub() {
   const saveConfig = async (channelId: string) => {
     setSavingConfig(true);
     try {
-      const cfg = await apiFetch(`/api/v1/channels/${channelId}/autoreply`, {
-        method: "PUT",
-        body: JSON.stringify({ approval_mode: approvalDraft, custom_instructions: voiceDraft, tone: toneDraft }),
+      const cfg = await updateConfig.mutateAsync({
+        channelId,
+        body: { approval_mode: approvalDraft, custom_instructions: voiceDraft, tone: toneDraft },
       });
-      setAutoreply((prev) => ({ ...prev, [channelId]: cfg }));
+      setAutoreply((prev) => ({ ...prev, [channelId]: cfg as AutoReply }));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channels.list(100) });
       setBanner({ kind: "ok", text: "Response engine settings saved." });
     } catch (e) {
       setBanner({ kind: "err", text: errDetail(e, "Could not save the response engine settings.") });
@@ -939,10 +953,13 @@ function ConnectHub() {
         </div>
       )}
 
-      {/* ── Available channels ── */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {/* ── Google reviews & locations ── */}
+      <section className="space-y-2">
+        <h2 className="text-[11px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
+          Google reviews &amp; locations
+        </h2>
         {/* Localith — ONE card: every listing on the account, enabled per row */}
-        <div className="rounded-xl border border-ink/[0.06] bg-white p-4 sm:col-span-2 lg:col-span-3 dark:border-fog/[0.06] dark:bg-ink" data-tour="connect-location">
+        <div className="rounded-xl border border-ink/[0.06] bg-white p-4 dark:border-fog/[0.06] dark:bg-ink" data-tour="connect-location">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-sm">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
@@ -1059,38 +1076,53 @@ function ConnectHub() {
             ))}
             {listingRows.length === 0 && (
               <p className="rounded-lg bg-ink/[0.03] px-3 py-2.5 text-[12px] text-ink/45 dark:bg-fog/[0.04] dark:text-fog/45">
-                No listings found on the Localith account yet. Add your locations in Localith first, then enable them here.
+                {localithListingsUnavailable
+                  ? `Localith listings are temporarily unavailable: ${localithListingsUnavailable}`
+                  : "No listings found on the Localith account yet. Add your locations in Localith first, then enable them here."}
               </p>
             )}
           </div>
         </div>
+      </section>
 
-        {/* Meta connections — tenant-owned WhatsApp / Facebook / Instagram */}
-        <MetaConnections
-          onNotice={(kind, text) => setBanner({ kind, text })}
-        />
+      {/* ── Messaging channels: one card per provider, each with its own
+          guided onboarding screen. ── */}
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-[11px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
+            Messaging channels
+          </h2>
+          <p className="text-[11px] text-ink/35 dark:text-fog/35">
+            Meta — your own business accounts
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Meta connections — tenant-owned WhatsApp / Facebook / Instagram */}
+          <MetaConnections
+            onNotice={(kind, text) => setBanner({ kind, text })}
+          />
 
-        {/* Coming soon */}
-        {[
-          { name: "X / Twitter", icon: "\u{1F426}", color: "from-sky-400 to-blue-500" },
-        ].map((c) => (
-          <div
-            key={c.name}
-            className="flex flex-wrap items-center gap-4 rounded-xl border border-ink/[0.06] bg-white p-4 opacity-70 dark:border-fog/[0.06] dark:bg-ink"
-          >
-            <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${c.color} text-[22px] text-white shadow-sm`}>
-              {c.icon}
+          {/* Coming soon */}
+          <article className="flex flex-col rounded-xl border border-ink/[0.06] bg-white p-4 opacity-70 dark:border-fog/[0.06] dark:bg-ink">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ink/[0.04] dark:bg-fog/[0.06]">
+                <PlatformMark platform="x" size={20} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <p className="text-[13.5px] font-semibold text-ink dark:text-fog">X / Twitter</p>
+                  <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45">
+                    Soon
+                  </span>
+                </div>
+                <p className="mt-0.5 truncate text-[11.5px] text-ink/45 dark:text-fog/45">
+                  Auto-reply to DMs
+                </p>
+              </div>
             </div>
-            <div className="flex-1">
-              <p className="text-[14px] font-semibold text-ink dark:text-fog">{c.name}</p>
-              <p className="text-[12px] text-ink/40 dark:text-fog/40">Auto-reply to DMs</p>
-            </div>
-            <span className="rounded-full bg-ink/[0.04] px-2 py-0.5 text-[10px] font-semibold text-ink/40 dark:bg-fog/[0.04] dark:text-fog/40">
-              soon
-            </span>
-          </div>
-        ))}
-      </div>
+          </article>
+        </div>
+      </section>
 
       {/* ── Native Google OAuth locations only. Localith-mirrored branches
           live on the Localith card above (with their AI controls), so each

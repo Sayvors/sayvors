@@ -46,7 +46,7 @@ async def _warmup() -> None:
         n = await refresh_provider_keys()
         logger.info("LLM provider keys loaded from DB: %d", n)
     except Exception as e:
-        logger.warning("LLM provider key refresh failed (env fallback active): %s", e)
+        logger.warning("LLM provider key refresh failed — generation stays unavailable until it succeeds: %s", e)
 
     try:
         redis = await get_redis()
@@ -89,16 +89,39 @@ async def _amain() -> None:
     from ..modules.analytics.consumer import run_analytics_consumer
     from ..modules.analytics.messaging_rollup import run_messaging_rollup_worker
     from ..modules.analytics.performance import run_performance_sync_worker
+    from ..modules.analytics.insights_worker import run_conversation_insights_worker
+    from ..modules.analytics.market_benchmarks_worker import run_market_benchmarks_worker
+    from ..modules.analytics.follower_snapshot_worker import run_follower_snapshot_worker
     from ..modules.channels.meta.meta_events_worker import run_meta_events_worker
     from ..modules.channels.meta.lead_action_worker import run_lead_action_worker
     from ..modules.channels.meta.digest_worker import run_lead_digest_sweeps
     from ..modules.channels.meta.escalation_worker import run_escalation_sweeps
+    from ..modules.billing.ledger import run_hold_reaper
     from ..modules.channels.reviews_worker import run_google_reviews_worker
     from ..modules.jobs.reaper import run_job_reaper
     from ..modules.jobs.runner import JobRunner
     from ..modules.localith.worker import run_localith_sync_worker
     from ..modules.posts.worker import run_post_publish_worker
+    from ..modules.rag import jobs as rag_jobs
     from ..modules.redis.client import run_redis_rearmer
+    from ..modules.kafka.client import run_kafka_rearmer
+
+    # Provision Kafka topics with explicit partition counts before any consumer
+    # or runner starts. Prevents auto-create from making 1-partition topics.
+    try:
+        from ..modules.kafka.topics import provision_topics
+
+        await provision_topics()
+    except Exception:
+        logger.exception("Topic provisioning failed - continuing without it")
+
+    # JOB_LANES: comma-separated lane allowlist (e.g. "realtime,publishing").
+    # Empty = all lanes. Maps to the job-runner-* loop names.
+    job_lanes_raw = settings.JOB_LANES.strip()
+    if job_lanes_raw:
+        wanted_lanes = {l.strip() for l in job_lanes_raw.split(",") if l.strip()}
+    else:
+        wanted_lanes = {"realtime", "publishing", "media", "bulk"}
 
     loops = {
         "google-reviews-auto-reply": run_google_reviews_worker,
@@ -107,30 +130,45 @@ async def _amain() -> None:
         "analytics-consumer": run_analytics_consumer,
         "performance-sync": run_performance_sync_worker,
         "messaging-rollup": run_messaging_rollup_worker,
+        "conversation-insights": run_conversation_insights_worker,
+        "market-benchmarks": run_market_benchmarks_worker,
+        "follower-snapshot": run_follower_snapshot_worker,
         "meta-events-ai-replies": run_meta_events_worker,
         "lead-actions": run_lead_action_worker,
-        # Job queue lanes — unified job processing (Phase 0+1).
-        # Each JobRunner claims jobs from Postgres (SKIP LOCKED), runs the
-        # handler, records outcome, commits Kafka offset.
-        "job-runner-realtime": lambda: JobRunner(lane="realtime", worker_id="realtime-1").start(),
-        "job-runner-publishing": lambda: JobRunner(lane="publishing", worker_id="publishing-1").start(),
-        "job-runner-media": lambda: JobRunner(lane="media", worker_id="media-1").start(),
-        "job-runner-bulk": lambda: JobRunner(lane="bulk", worker_id="bulk-1").start(),
-        # Lease reaper + `accepted` reconciler — returns crashed workers'
-        # jobs to the queue and un-strands rows the dispatcher never
-        # promoted.
-        "job-reaper": run_job_reaper,
-        # Redis re-arm prober — re-latches Redis after an outage so fail-closed
-        # paths (rate limiting, auth) recover once Redis is back.
-        "redis-rearmer": run_redis_rearmer,
-        # Reminder + handover resume for escalated leads. Cheap enough to run
-        # everywhere; an AI-only deployment still wants the 24h resume, since
-        # that is what stops a misrouted escalation silencing a customer.
-        "escalation-sweeps": run_escalation_sweeps,
-        # Daily pending-leads summary, hourly poll, one send per tenant per
-        # local day. Opt-in per tenant, so it is inert until enabled.
-        "lead-digest": run_lead_digest_sweeps,
     }
+    # RAG ingest worker (was lazily started from request handlers).
+    loops["rag-ingest"] = rag_jobs.start_worker
+
+    # Job queue lanes — only start the requested lanes.
+    if "realtime" in wanted_lanes:
+        loops["job-runner-realtime"] = lambda: JobRunner(lane="realtime").start()
+    if "publishing" in wanted_lanes:
+        loops["job-runner-publishing"] = lambda: JobRunner(lane="publishing").start()
+    if "media" in wanted_lanes:
+        loops["job-runner-media"] = lambda: JobRunner(lane="media").start()
+    if "bulk" in wanted_lanes:
+        loops["job-runner-bulk"] = lambda: JobRunner(lane="bulk").start()
+
+    # Lease reaper + `accepted` reconciler — returns crashed workers'
+    # jobs to the queue and un-strands rows the dispatcher never
+    # promoted.
+    loops["job-reaper"] = run_job_reaper
+    # AI-credit hold reaper — settles holds that already have a priced
+    # usage row, then refunds crashed/abandoned holds after the TTL.
+    loops["credit-hold-reaper"] = run_hold_reaper
+    # Redis re-arm prober — re-latches Redis after an outage so fail-closed
+    # paths (rate limiting, auth) recover once Redis is back.
+    loops["redis-rearmer"] = run_redis_rearmer
+    # Kafka re-arm prober — re-latches Kafka after an outage so consumers
+    # and producers can retry instead of staying latched offline.
+    loops["kafka-rearmer"] = run_kafka_rearmer
+    # Reminder + handover resume for escalated leads. Cheap enough to run
+    # everywhere; an AI-only deployment still wants the 24h resume, since
+    # that is what stops a misrouted escalation silencing a customer.
+    loops["escalation-sweeps"] = run_escalation_sweeps
+    # Daily pending-leads summary, hourly poll, one send per tenant per
+    # local day. Opt-in per tenant, so it is inert until enabled.
+    loops["lead-digest"] = run_lead_digest_sweeps
     # Deployment-only split by role, no code changes: WORKER_LOOPS is a
     # comma-separated allowlist of loop names ("meta-events-ai-replies,
     # lead-actions" -> an AI-only container on the same image). Unknown
@@ -170,6 +208,7 @@ async def _amain() -> None:
     logger.info("Shutdown: cancelling worker loops")
     for task in tasks:
         task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
     await outbox_worker.stop()
     try:
         producer = await get_kafka_producer()

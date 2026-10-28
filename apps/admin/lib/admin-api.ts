@@ -22,12 +22,12 @@ export async function checkAdminSession(): Promise<boolean> {
   }
 }
 
-export async function adminLogin(password: string): Promise<{ expires_in_minutes: number }> {
+export async function adminLogin(username: string, password: string): Promise<{ expires_in_minutes: number }> {
   const res = await fetch(`${API}/api/v1/admin/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...ADMIN_HEADERS },
     credentials: "include",
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ username, password }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -63,9 +63,6 @@ export async function adminFetch<T = unknown>(path: string, options: RequestInit
       signal: controller.signal,
     });
     if (res.status === 401 || res.status === 403) {
-      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
-      }
       throw new Error("Admin session expired. Please log in again.");
     }
     if (!res.ok) throw new Error(extractDetail(await res.text().catch(() => ""), res.status));

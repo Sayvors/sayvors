@@ -66,18 +66,21 @@ export default function AdminLogsPage() {
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async (probe: boolean) => {
-    if (probe) setProbing(true); else setLoading(true);
-    try {
-      const data = await adminFetch<Health>(probe ? "/api/v1/admin/health?probe=true" : "/api/v1/admin/health");
-      setHealth(data); setError(null);
-    } catch (e) { setError(e instanceof Error ? e.message : "Load failed."); }
-    finally { setLoading(false); setProbing(false); }
+    return adminFetch<Health>(probe ? "/api/v1/admin/health?probe=true" : "/api/v1/admin/health");
   }, []);
 
   useEffect(() => {
-    void load(false);
-    timer.current = setInterval(() => void load(false), 30000);
-    return () => { if (timer.current) clearInterval(timer.current); };
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const data = await load(false);
+        if (!cancelled) { setHealth(data); setError(null); }
+      } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : "Load failed."); }
+      finally { if (!cancelled) { setLoading(false); setProbing(false); } }
+    };
+    refresh();
+    timer.current = setInterval(refresh, 30000);
+    return () => { cancelled = true; if (timer.current) clearInterval(timer.current); };
   }, [load]);
 
   const isAI = (s: HealthService) => s.name.startsWith("AI:");
@@ -154,7 +157,17 @@ export default function AdminLogsPage() {
               <button onClick={() => void load(false)} disabled={loading} className="rounded-[2px] bg-[var(--ui-surface)]px-3 py-2 text-[12px] font-semibold text-ink/60 ring-1 ring-ink/[0.08] transition hover:bg-ink/[0.03] hover:text-ink disabled:opacity-50">
                 {loading ? "Checking…" : "Refresh"}
               </button>
-              <button onClick={() => void load(true)} disabled={probing || loading} title="Live probe hits Localith + each AI provider (free list calls)" className="rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50">
+              <button onClick={() => {
+                setProbing(true);
+                (async () => {
+                  try {
+                    const data = await load(true);
+                    if (!timer.current) setHealth(data);
+                    setError(null);
+                  } catch (e) { setError(e instanceof Error ? e.message : "Load failed."); }
+                  finally { setProbing(false); }
+                })();
+              }} disabled={probing || loading} title="Live probe hits Localith + each AI provider (free list calls)" className="rounded-[2px] bg-deep-violet px-3.5 py-2 text-[12px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50">
                 {probing ? "Probing…" : "Live check"}
               </button>
             </div>
@@ -198,7 +211,7 @@ export default function AdminLogsPage() {
               {filters.map((f) => (
                 <button
                   key={f.key}
-                  onClick={() => setFilter(f.key as any)}
+                  onClick={() => setFilter(f.key)}
                   aria-pressed={filter === f.key}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition ${filter === f.key ? "bg-deep-violet text-white" : "bg-[var(--ui-surface)]text-ink/60 ring-1 ring-ink/[0.06] hover:bg-ink/[0.03] hover:text-ink"}`}
                 >

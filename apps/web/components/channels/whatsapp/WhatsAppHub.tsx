@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { fetchMetaAssets, type MetaAsset } from "@/lib/api-meta";
@@ -131,7 +132,7 @@ export default function WhatsAppHub() {
       {/* ── Left: business number manager (tablet/desktop only) ── */}
       <aside className="hidden w-[300px] shrink-0 flex-col border-r border-[var(--wa-border)] bg-[var(--wa-panel)] md:flex xl:w-[340px]">
         <div className="flex items-center gap-3 bg-[var(--wa-header-bg)] px-4 py-3.5 text-[var(--wa-header-text)]">
-          <img src="/channels/whatsapp-logo.png" alt="WhatsApp" className="h-9 w-auto object-contain" />
+          <Image src="/channels/whatsapp-logo.png" alt="WhatsApp" width={36} height={36} className="h-9 w-auto object-contain" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-[16px] font-semibold leading-tight">Business Numbers</p>
             <p className="text-[12px] text-[var(--wa-header-muted)]">

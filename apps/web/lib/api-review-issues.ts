@@ -14,6 +14,8 @@ export interface ReviewIssue {
   review_id: string;
   ticket_number: string | null;
   handoff_code: string | null;
+  /** When the code (and the wa.me link that prefills it) stops resolving. */
+  handoff_code_expires_at: string | null;
   rating: number;
   primary_category: string;
   subcategory: string;
@@ -78,12 +80,14 @@ export const mintHandoffCode = (id: string): Promise<ReviewIssue> =>
   apiFetch(`/api/v1/reviews/issues/${id}/handoff-code`, { method: "POST" });
 
 /**
- * The wa.me deep link for a code: digits-only number, code as the prefilled
- * text. Empty string when there is no WhatsApp number connected — the page
- * shows the bare code instead of a link.
+ * The wa.me deep link for a code: digits-only number, `#CODE` as the
+ * prefilled text. The `#` is required by the backend's inbound extractor —
+ * without it "THANKS" would be indistinguishable from a real code. Empty
+ * string when there is no WhatsApp number connected, so the page can show the
+ * bare code instead of a dead link.
  */
 export const waMeLink = (phone: string | null | undefined, code: string): string => {
   const digits = (phone ?? "").replace(/\D/g, "");
   if (!digits || !code) return "";
-  return `https://wa.me/${digits}?text=${encodeURIComponent(code)}`;
+  return `https://wa.me/${digits}?text=${encodeURIComponent(`#${code}`)}`;
 };

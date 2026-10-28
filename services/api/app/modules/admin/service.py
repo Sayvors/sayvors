@@ -224,11 +224,15 @@ async def get_tenant(db: AsyncSession, user_id: str) -> dict | None:
         }
         for p in recent_posts
     ]
-    # AI wallet: live Redis balance + estimated 30d spend (upper bound —
+    # AI wallet: durable DB balance + estimated 30d spend (upper bound —
     # by_model rows carry totals only, priced at the completion rate).
     from ..billing.budget import TOKEN_PRICES, get_balance
 
     base["ai_balance_cents"] = await get_balance(user_id)
+    # Keep the detail payload consistent with the authoritative wallet even
+    # for a tenant whose column has not been cut over yet.
+    if base["ai_balance_cents"] is not None:
+        base["ai_credit_cents"] = base["ai_balance_cents"]
     try:
         from ..llm.usage import get_tenant_summary
 
@@ -282,16 +286,18 @@ async def _check_redis() -> str:
 async def _check_kafka() -> str:
     from ..kafka import client as kafka_client
 
-    if not kafka_client._kafka_available:
+    if not kafka_client.is_kafka_available():
         raise RuntimeError("producer not connected (outbox fallback active)")
     return "producer connected"
 
 
-_PROBE_URLS = {    "groq": "https://api.groq.com/openai/v1/models",
+_PROBE_URLS = {
+    "groq": "https://api.groq.com/openai/v1/models",
     "openai": "https://api.openai.com/v1/models",
     "grok": "https://api.x.ai/v1/models",
     "kimi": "https://api.moonshot.cn/v1/models",
     "deepseek": "https://api.deepseek.com/v1/models",
+    "openrouter": "https://openrouter.ai/api/v1/models",
     "gemini": "gemini",
     "ollama": "http://localhost:11434/api/tags",
 }
@@ -468,4 +474,121 @@ async def get_health(db: AsyncSession, probe: bool = False) -> dict:
         "probe": probe,
         "services": services,
         "recent_failures": failures,
+    }
+
+
+async def get_billing_overview(db: AsyncSession) -> list[dict]:
+    from sqlalchemy import func, select as _select
+
+    from ..billing.models import BillingEvent
+    from ..users.models import User
+
+    held_sub = (
+        _select(
+            BillingEvent.tenant_id,
+            func.coalesce(func.sum(BillingEvent.reserved_cents), 0).label("held"),
+        )
+        .where(BillingEvent.kind == "ai_usage", BillingEvent.status == "pending")
+        .group_by(BillingEvent.tenant_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            _select(
+                User.id,
+                User.email,
+                User.plan,
+                User.ai_credit_cents,
+                func.coalesce(held_sub.c.held, 0).label("held_cents"),
+            )
+            .outerjoin(held_sub, held_sub.c.tenant_id == User.id)
+            .order_by(User.ai_credit_cents.asc(), User.email)
+        )
+    ).all()
+    out = []
+    for uid, email, plan, balance, held in rows:
+        balance = int(balance or 0)
+        held = int(held or 0)
+        if balance < 0:
+            status = "debt"
+        elif balance == 0:
+            status = "empty"
+        elif balance < 100:
+            status = "low"
+        else:
+            status = "ok"
+        out.append({
+            "tenant_id": uid,
+            "email": email,
+            "plan": plan or "free",
+            "balance_cents": balance,
+            "held_cents": held,
+            "total_cents": balance + held,
+            "status": status,
+        })
+    return out
+
+
+async def get_tenant_billing(db: AsyncSession, user_id: str) -> dict | None:
+    from sqlalchemy import select as _select
+
+    from ..billing.models import BillingEvent
+    from ..users.models import User
+
+    user = await db.get(User, user_id)
+    if user is None:
+        return None
+
+    held_rows = (
+        await db.execute(
+            _select(BillingEvent)
+            .where(
+                BillingEvent.tenant_id == user_id,
+                BillingEvent.kind == "ai_usage",
+                BillingEvent.status == "pending",
+            )
+            .order_by(BillingEvent.created_at.desc())
+        )
+    ).scalars().all()
+    held_cents = int(sum(h.reserved_cents or 0 for h in held_rows))
+
+    ledger_rows = (
+        await db.execute(
+            _select(BillingEvent)
+            .where(BillingEvent.tenant_id == user_id)
+            .order_by(BillingEvent.created_at.desc(), BillingEvent.id.desc())
+            .limit(75)
+        )
+    ).scalars().all()
+
+    def _row(e: BillingEvent) -> dict:
+        return {
+            "id": e.id,
+            "kind": e.kind,
+            "status": e.status,
+            "amount_cents": int(e.amount_cents or 0),
+            "reserved_cents": int(e.reserved_cents or 0),
+            "balance_after_cents": e.balance_after_cents,
+            "model_id": e.model_id,
+            "prompt_tokens": int(e.prompt_tokens or 0),
+            "completion_tokens": int(e.completion_tokens or 0),
+            "idempotency_key": e.idempotency_key,
+            "expires_at": e.expires_at.isoformat() if e.expires_at else None,
+            "settled_at": e.settled_at.isoformat() if e.settled_at else None,
+            "note": e.note,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+
+    balance = int(user.ai_credit_cents or 0)
+    status = "debt" if balance < 0 else "empty" if balance == 0 else "low" if balance < 100 else "ok"
+    return {
+        "tenant_id": user_id,
+        "email": user.email,
+        "plan": user.plan or "free",
+        "balance_cents": balance,
+        "held_cents": held_cents,
+        "total_cents": balance + held_cents,
+        "status": status,
+        "holds": [_row(h) for h in held_rows],
+        "ledger": [_row(e) for e in ledger_rows],
     }

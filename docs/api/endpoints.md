@@ -509,8 +509,10 @@ See the [RAG / Databanks guide](rag.md) for the ingestion and query workflows.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/budget` | Read plan and remaining AI credit balance |
+| GET | `/budget` | Read plan and remaining AI credit balance (durable Postgres wallet) |
 | GET | `/profile` | Read billing profile |
+| GET | `/admin/billing/overview` | Wallet summary for every tenant (debt first) |
+| GET | `/admin/tenants/{user_id}/billing` | Wallet, pending holds, and recent ledger rows |
 | PUT | `/profile` | Create or update billing profile |
 | GET | `/methods` | List saved payment methods |
 | POST | `/gateway/tokenize` | Tokenize card metadata using the current stub gateway |
@@ -520,7 +522,9 @@ See the [RAG / Databanks guide](rag.md) for the ingestion and query workflows.
 | DELETE | `/methods/{method_id}` | Remove a payment method |
 
 The gateway endpoints currently use a stub provider; they do not process real
-payments or grant credits.
+payments or grant credits. `GET /budget` reads the durable Postgres wallet
+(`users.ai_credit_cents` + `billing_events`), not Redis; deleting the Redis
+mirror does not change the response.
 
 ---
 
@@ -754,6 +758,7 @@ GET /health
 | GET | `/tenants/{user_id}` | Tenant detail |
 | GET | `/tenants/{user_id}/usage` | Tenant LLM usage |
 | POST | `/tenants/{user_id}/plan` | Grant plan + credits |
+| POST | `/tenants/{user_id}/resync-balance` | Preview/repair Redis drift against the durable DB wallet |
 | GET | `/llm` | LLM provider status |
 | PUT | `/llm/{provider}` | Update provider key/enabled |
 | POST | `/llm/{provider}/test` | Test provider connection |

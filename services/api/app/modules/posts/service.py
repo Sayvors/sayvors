@@ -420,6 +420,51 @@ async def _publish_post_inner(
     }
 
 
+async def submit_publish_job(
+    db: AsyncSession, tenant_id: str, post_id: str
+) -> Job:
+    """Submit a post.publish job instead of publishing inline.
+
+    Returns the Job row. The caller commits the session. The handler
+    does the actual publishing in the publishing lane.
+    """
+    from ...modules.jobs.service import submit_job
+    from ...modules.jobs.types import JobType
+
+    post = await _owned_post(db, tenant_id, post_id)
+    if post is None:
+        raise ValueError("Post not found")
+    if post.status not in PUBLISHABLE_FROM:
+        raise ValueError(f"Cannot publish a {post.status} post.")
+
+    payload = {
+        "post_id": post.id,
+        "tenant_id": tenant_id,
+        "listing_id": post.listing_id,
+        "title": post.title,
+        "content": post.content,
+        "media_url": post.media_url,
+        "scheduled_at": post.scheduled_on.isoformat() if post.scheduled_on else None,
+    }
+
+    job = await submit_job(
+        db,
+        tenant_id=tenant_id,
+        job_type=JobType.post_publish.value,
+        payload=payload,
+        lane="publishing",
+        priority=40,
+        max_attempts=5,
+        subject_type="location_post",
+        subject_id=post.id,
+        lane_key=str(post.listing_id or post.id),
+    )
+
+    post.status = "scheduled"
+    db.add(post)
+
+    return job
+
 def _register_publish_failure(post: LocationPost, error: str) -> None:
     """Retry-then-park: stay scheduled with backoff until MAX_PUBLISH_ATTEMPTS,
     then park as failed for the manual Retry button. Non-scheduled rows
@@ -592,9 +637,7 @@ async def draft_post_content(
     title. Model comes from the tenant's enabled list — no default, no
     fallback. Raises ValueError for bad input, RuntimeError when the
     single attempt fails."""
-    from ..llm.providers.base import LLMMessage, LLMRequest
-    from ..llm.providers.registry import get_provider_for_model
-    from ..llm.service import _resolve_model, resolve_tenant_model
+    from ..llm.gateway import LLMMessage, complete, resolve_tenant_model
 
     title = (title or "").strip()
     if not title:
@@ -654,11 +697,9 @@ async def draft_post_content(
         f"Post type: {kind_line}\nTitle: {title}\nWrite the post content."
     )
 
-    def _build(mid: str):
-        provider = get_provider_for_model(mid)
-        api_model, _ = _resolve_model(mid)
-        return provider, LLMRequest(
-            model=api_model,
+    async def _generate(mid: str):
+        return await complete(
+            model=mid,
             messages=[LLMMessage(role="user", content=user_msg)],
             system_prompt=system,
             temperature=0.7,
@@ -666,15 +707,12 @@ async def draft_post_content(
             # a tight cap makes them return 200 with EMPTY content
             # (finish_reason="length"). Keep generous headroom.
             max_tokens=2000,
-            stream=False,
             tenant_id=user_id,
-            model_id=mid,
             purpose="posts.ai_draft",
         )
 
-    provider, req = _build(model_id)
     try:
-        resp = await provider.complete(req)
+        resp = await _generate(model_id)
     except Exception as e:
         logger.warning("Post drafting failed on first attempt: %s", e)
         raise RuntimeError("AI drafting failed.")
@@ -688,7 +726,7 @@ async def draft_post_content(
             getattr(resp, "finish_reason", "?"),
         )
         try:
-            resp = await provider.complete(req)
+            resp = await _generate(model_id)
         except Exception as e:
             raise RuntimeError("AI drafting failed.")
         content = (resp.content or "").strip()

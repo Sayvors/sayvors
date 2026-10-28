@@ -29,6 +29,16 @@ const nextConfig: NextConfig = {
   images: {
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 60 * 60 * 24 * 30,
+    remotePatterns: [
+      { protocol: "http", hostname: "localhost" },
+      { protocol: "https", hostname: "localhost" },
+      { protocol: "https", hostname: "**.sayvors.com" },
+      { protocol: "https", hostname: "**.googleusercontent.com" },
+      { protocol: "https", hostname: "**.ggpht.com" },
+      { protocol: "https", hostname: "**.amazonaws.com" },
+      { protocol: "https", hostname: "**.storage.googleapis.com" },
+      { protocol: "https", hostname: "**.googleapis.com" },
+    ],
   },
   experimental: {
     optimizePackageImports: ["lucide-react", "@heroicons/react"],

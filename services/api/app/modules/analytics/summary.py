@@ -109,9 +109,7 @@ def _fallback_headline(overview: dict, top_problem: dict | None) -> str:
 async def _llm_headline(overview: dict, top_problem: dict | None, loved: str | None, visibility: dict, tenant_id: str | None = None) -> str:
     import json
 
-    from ..llm.providers.base import LLMMessage, LLMRequest
-    from ..llm.providers.registry import get_provider_for_model
-    from ..llm.service import _resolve_model
+    from ..llm.gateway import LLMMessage, complete
 
     model = "groq:qwen3.8-27b"
     facts = {
@@ -130,20 +128,14 @@ async def _llm_headline(overview: dict, top_problem: dict | None, loved: str | N
         "impressions": visibility["impressions_maps"],
         "customer_actions": visibility["customer_actions"],
     }
-    provider = get_provider_for_model(model)
-    api_model, _ = _resolve_model(model)
-    resp = await provider.complete(
-        LLMRequest(
-            model=api_model,
-            messages=[LLMMessage(role="user", content=json.dumps(facts))],
-            system_prompt=SYSTEM_PROMPT,
-            temperature=0.4,
-            max_tokens=160,
-            stream=False,
-            tenant_id=tenant_id,
-            model_id=model,
-            purpose="analytics.summary",
-        )
+    resp = await complete(
+        model=model,
+        messages=[LLMMessage(role="user", content=json.dumps(facts))],
+        system_prompt=SYSTEM_PROMPT,
+        temperature=0.4,
+        max_tokens=160,
+        tenant_id=tenant_id,
+        purpose="analytics.summary",
     )
     text = resp.content.strip()
     return text if text else _fallback_headline(overview, top_problem)

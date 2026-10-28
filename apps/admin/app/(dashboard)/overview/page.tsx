@@ -132,10 +132,13 @@ function AttentionCard({
   return (
     <Link
       href={href}
-      className="flex items-center gap-3 rounded-[2px] border border-red-200 bg-red-50 px-4 py-3.5 transition hover:bg-red-100/50"
+      className="flex items-center gap-3 rounded-[2px] border border-red-500/80 bg-red-50 px-4 py-3.5 transition hover:bg-red-100/50 shadow-[0_0_22px_-2px_rgba(239,68,68,0.7)] animate-pulse"
     >
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-500 text-white text-[10px]">
-        !
+      <span className="relative flex h-6 w-6 shrink-0 items-center justify-center">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60" />
+        <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white text-[10px]">
+          !
+        </span>
       </span>
       <div className="flex-1 min-w-0">
         <p className="text-[12px] font-bold leading-none text-red-800">{service.name}</p>
@@ -173,16 +176,12 @@ export default function AdminOverviewPage() {
   const statsStale = stats !== null && stats.window !== statWindow;
 
   const total = data?.users_total ?? 0;
-  const verifiedRate = pct(data?.users_verified ?? 0, total);
-  const connectionRate = pct(data?.connections ?? 0, total);
-  const connectionRateVerified = pct(data?.connections ?? 0, data?.users_verified ?? 0);
   const problems = (data?.outbox_failed ?? 0) + (data?.ingest_failed ?? 0);
   const isHealthy = problems === 0 && (data?.outbox_pending ?? 0) < 25;
   const isDegraded = problems > 0;
   const avgReviews = total ? (data?.reviews_total ?? 0) / total : 0;
   const avgPosts = total ? (data?.posts_total ?? 0) / total : 0;
   const docsPerBank = data?.databanks_total ? (data?.documents_total ?? 0) / data.databanks_total : 0;
-  const newShare = pct(data?.signups_last_7d ?? 0, total);
   const postsEntries = Object.entries(data?.posts_by_status ?? {}).sort((a, b) => b[1] - a[1]);
   const postsTotal = postsEntries.reduce((s, [, v]) => s + v, 0) || (data?.posts_total ?? 0) || 1;
   const topPost: [string, number] | null = postsEntries[0] ?? null;
@@ -666,104 +665,6 @@ export default function AdminOverviewPage() {
           </>
         )}
       </p>
-
-      {/* ── funnel ── */}
-      <section
-        aria-labelledby="funnel-heading"
-        className="admin-rise overflow-hidden rounded-[2px] bg-deep-violet p-5 sm:p-6"
-        style={{ animationDelay: "140ms" }}
-      >
-        <h2 id="funnel-heading" className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/40">
-          Tenant funnel
-        </h2>
-        <div className="mt-4 grid items-stretch gap-5 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:gap-3">
-          {/* stage 1 */}
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/40">1 · Acquisition</p>
-            <p className="mt-1 text-[44px] font-bold tabular-nums leading-none sm:text-[52px]">
-              <HeroNumeral value={total} dark />
-            </p>
-            <p className="mt-1.5 text-[12px] font-semibold text-white">tenants</p>
-            <p className="mt-0.5 text-[11px] text-white/45">
-              {data?.signups_last_7d ?? 0 > 0 ? (
-                <>
-                  +{fmtNum(data?.signups_last_7d)} in 7 days · {newShare}% of base
-                </>
-              ) : (
-                "no sign-ups in 7 days"
-              )}
-            </p>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full rounded-full bg-violet-soft transition-[width] duration-700 ease-out"
-                style={{ width: barsIn && total > 0 ? "100%" : "0%" }}
-              />
-            </div>
-          </div>
-          {/* connector */}
-          <div className="flex items-center justify-center" aria-hidden>
-            <div className="text-center">
-              <p className="text-[18px] font-bold tabular-nums text-violet-soft">
-                {total > 0 ? `${verifiedRate}%` : "—"}
-              </p>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-white/35">
-                <span className="sm:hidden">↓ verify</span>
-                <span className="hidden sm:inline">→ verify</span>
-              </p>
-            </div>
-          </div>
-          {/* stage 2 */}
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/40">2 · Verification</p>
-            <p className="mt-1 text-[44px] font-bold tabular-nums leading-none sm:text-[52px]">
-              <HeroNumeral value={data?.users_verified ?? 0} dark />
-            </p>
-            <p className="mt-1.5 text-[12px] font-semibold text-white">verified</p>
-            <p className="mt-0.5 text-[11px] text-white/45">
-              {total > 0 ? `${verifiedRate}% of tenants` : "nothing to verify yet"}
-            </p>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full rounded-full bg-violet-soft transition-[width] duration-700 ease-out"
-                style={{ width: barsIn ? `${Math.max(total > 0 ? 4 : 0, verifiedRate)}%` : "0%" }}
-              />
-            </div>
-          </div>
-          {/* connector */}
-          <div className="flex items-center justify-center" aria-hidden>
-            <div className="text-center">
-              <p className="text-[18px] font-bold tabular-nums text-violet-soft">
-                {data?.users_verified ?? 0 > 0 ? `${connectionRateVerified}%` : "—"}
-              </p>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-white/35">
-                <span className="sm:hidden">↓ connect</span>
-                <span className="hidden sm:inline">→ connect</span>
-              </p>
-            </div>
-          </div>
-          {/* stage 3 */}
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/40">3 · Activation</p>
-            <p className="mt-1 text-[44px] font-bold tabular-nums leading-none sm:text-[52px]">
-              <HeroNumeral value={data?.connections ?? 0} dark />
-            </p>
-            <p className="mt-1.5 text-[12px] font-semibold text-white">connected listings</p>
-            <p className="mt-0.5 text-[11px] text-white/45">
-              {data?.users_verified ?? 0 > 0 ? (
-                `${connectionRateVerified}% of verified`
-              ) : (
-                <span className="text-white/60">activation starts at verification</span>
-              )}
-            </p>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full rounded-full bg-violet-soft transition-[width] duration-700 ease-out"
-                style={{ width: barsIn ? `${Math.max(total > 0 ? 4 : 0, connectionRate)}%` : "0%" }}
-              />
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* ── urgent first: problems ── */}
       {problems > 0 && (

@@ -220,26 +220,18 @@ async def _collect_material(user_id: str, db: AsyncSession) -> str:
 
 
 async def _ask_llm(material: str, user_id: str, db: AsyncSession) -> dict:
-    from ..llm.providers.base import LLMMessage, LLMRequest
-    from ..llm.providers.registry import get_provider_for_model
-    from ..llm.service import _resolve_model, resolve_tenant_model
+    from ..llm.gateway import LLMMessage, complete, resolve_tenant_model
 
     model_id = await resolve_tenant_model(db)  # ValueError when nothing enabled
-    api_model, _provider = _resolve_model(model_id)
-    provider = get_provider_for_model(model_id)
 
-    resp = await provider.complete(
-        LLMRequest(
-            model=api_model,
-            messages=[LLMMessage(role="user", content=material)],
-            system_prompt=_GENERATE_SYSTEM_PROMPT,
-            temperature=0.3,
-            max_tokens=600,
-            stream=False,
-            tenant_id=user_id,
-            model_id=model_id,
-            purpose="databank.business_profile",
-        )
+    resp = await complete(
+        model=model_id,
+        messages=[LLMMessage(role="user", content=material)],
+        system_prompt=_GENERATE_SYSTEM_PROMPT,
+        temperature=0.3,
+        max_tokens=600,
+        tenant_id=user_id,
+        purpose="databank.business_profile",
     )
     return _parse_profile_json(resp.content or "")
 

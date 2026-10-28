@@ -105,6 +105,22 @@ async def connect_channel(
     ctx: TenantContext = Depends(require_perm("channels.connect")),
     db: AsyncSession = Depends(get_db),
 ):
+    from ...billing.entitlements import get_entitlements
+    from ...core.deps import tenant_id_of
+
+    tid = tenant_id_of(ctx.user)
+    ent = await get_entitlements(tid, db)
+    from ...channels.service import list_channels
+
+    existing, _ = await list_channels(ctx.user, db, limit=100, offset=0)
+    if not ent.channel_quota_ok(len(existing)):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Channel limit reached for plan '{ent.plan_slug}' (max {ent.max_channels}). Upgrade to add more.",
+        )
+    if not ent.has_feature("channels"):
+        raise HTTPException(status_code=403, detail="Channels are not included in your plan.")
+
     try:
         channel = await create_channel(body, ctx.user, db)
     except ValueError as e:
@@ -212,10 +228,11 @@ async def request_verification(
     record.contact_target = body.contact_target
     record.attempts += 1
     record.requested_at = now
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(db, "google.verification.requested", {"channel_id": channel.id, "method": body.method}, "google-business-events")
     await db.commit()
     await db.refresh(record)
-    from ..outbox.service import enqueue_event
-    await enqueue_event("google.verification.requested", {"channel_id": channel.id, "method": body.method}, "google-business-events")
     return _verification_response(record, channel_id)
 
 
@@ -258,10 +275,11 @@ async def create_service(
     await _google_channel(channel_id, ctx.user, db)
     service = BusinessService(channel_id=channel_id, **body.model_dump())
     db.add(service)
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(db, "google.service.created", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     await db.commit()
     await db.refresh(service)
-    from ..outbox.service import enqueue_event
-    await enqueue_event("google.service.created", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     return _service_response(service)
 
 
@@ -282,10 +300,11 @@ async def update_service(
         raise HTTPException(status_code=404, detail="Service not found")
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(service, key, value)
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(db, "google.service.updated", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     await db.commit()
     await db.refresh(service)
-    from ..outbox.service import enqueue_event
-    await enqueue_event("google.service.updated", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     return _service_response(service)
 
 
@@ -304,9 +323,10 @@ async def delete_service(
     if service is None:
         raise HTTPException(status_code=404, detail="Service not found")
     await db.delete(service)
+    from ..outbox.service import enqueue_event_in
+
+    await enqueue_event_in(db, "google.service.deleted", {"channel_id": channel_id, "service_id": service_id}, "google-business-events")
     await db.commit()
-    from ..outbox.service import enqueue_event
-    await enqueue_event("google.service.deleted", {"channel_id": channel_id, "service_id": service_id}, "google-business-events")
 
 
 @router.post("/{channel_id}/messages", response_model=ChannelMessageResponse, status_code=status.HTTP_201_CREATED)
@@ -540,13 +560,14 @@ async def inbox_threads(
     category: str | None = Query(None, max_length=32),
     priority: str | None = Query(None, max_length=16),
     important: bool | None = Query(None),
+    include_archived: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     ctx: TenantContext = Depends(require_perm("inbox.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """List inbox threads, optionally filtered by category, priority or
     the derived `important` flag."""
-    threads = await list_inbox_threads(ctx.user, db, search=search, limit=limit)
+    threads = await list_inbox_threads(ctx.user, db, search=search, limit=limit, include_archived=include_archived)
     if category:
         threads = [t for t in threads if t.get("category") == category]
     if priority:
@@ -641,6 +662,108 @@ async def inbox_thread_update_category(
     return {"channel_id": channel_id, "contact_phone": phone, "category": body.category, "priority": body.priority}
 
 
+@_inbox_router.patch("/threads/{channel_id}/{contact_phone}/archive", response_model=dict)
+async def inbox_thread_archive(
+    channel_id: str,
+    contact_phone: str,
+    body: dict,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Archive or unarchive a thread. Body: {\"archived\": true|false}.
+
+    Soft delete: sets archived_at on the ChannelThread row. The thread and
+    its messages are preserved and reappear when unarchived.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    from sqlalchemy import update
+
+    phone_hash = hash_contact_phone(phone) if phone else None
+    conditions = [ChannelThread.channel_id == channel_id]
+    if phone_hash is None:
+        conditions.append(ChannelThread.contact_phone_hash.is_(None))
+    else:
+        conditions.append(ChannelThread.contact_phone_hash == phone_hash)
+
+    archived = bool(body.get("archived", True))
+    await db.execute(
+        update(ChannelThread)
+        .where(*conditions)
+        .values(archived_at=datetime.now(timezone.utc) if archived else None)
+    )
+    await db.commit()
+    return {"channel_id": channel_id, "contact_phone": phone, "archived": archived}
+
+
+@_inbox_router.delete("/threads/{channel_id}/{contact_phone}", status_code=status.HTTP_204_NO_CONTENT)
+async def inbox_thread_delete(
+    channel_id: str,
+    contact_phone: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete a thread and all its messages.
+
+    Destructive: removes every channel_messages row for this (channel,
+    contact) and the channel_threads summary row. Cannot be undone.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    phone_hash = hash_contact_phone(phone) if phone else None
+    from sqlalchemy import delete
+
+    msg_conditions = [ChannelMessage.channel_id == channel_id]
+    if phone_hash is None:
+        msg_conditions.append(ChannelMessage.contact_phone_hash.is_(None))
+    else:
+        msg_conditions.append(ChannelMessage.contact_phone_hash == phone_hash)
+
+    await db.execute(delete(ChannelMessage).where(*msg_conditions))
+
+    thread_conditions = [ChannelThread.channel_id == channel_id]
+    if phone_hash is None:
+        thread_conditions.append(ChannelThread.contact_phone_hash.is_(None))
+    else:
+        thread_conditions.append(ChannelThread.contact_phone_hash == phone_hash)
+    await db.execute(delete(ChannelThread).where(*thread_conditions))
+    await db.commit()
+    return None
+
+
+@_inbox_router.patch("/threads/{channel_id}/{contact_phone}/pin", response_model=dict)
+async def inbox_thread_pin(
+    channel_id: str,
+    contact_phone: str,
+    body: dict,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pin or unpin a thread. Body: {"pinned": true|false}."""
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    phone_hash = hash_contact_phone(phone) if phone else None
+    from sqlalchemy import update
+
+    conditions = [ChannelThread.channel_id == channel_id]
+    if phone_hash is None:
+        conditions.append(ChannelThread.contact_phone_hash.is_(None))
+    else:
+        conditions.append(ChannelThread.contact_phone_hash == phone_hash)
+
+    pinned = bool(body.get("pinned", True))
+    await db.execute(
+        update(ChannelThread)
+        .where(*conditions)
+        .values(pinned_at=datetime.now(timezone.utc) if pinned else None)
+    )
+    await db.commit()
+    return {"channel_id": channel_id, "contact_phone": phone, "pinned": pinned}
+
+
 @_inbox_router.post("/send", response_model=InboxSendResponse)
 async def inbox_send(
     body: InboxSendRequest,
@@ -655,6 +778,17 @@ async def inbox_send(
     """
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
+    # Plan entitlements: feature gate + monthly message cap (fail closed).
+    from ...billing.entitlements import get_entitlements
+    from ...core.deps import tenant_id_of
+
+    tid = tenant_id_of(ctx.user)
+    ent = await get_entitlements(tid, db)
+    if not ent.has_feature("messaging"):
+        raise HTTPException(status_code=403, detail="Messaging is not included in your plan.")
+    used = await count_messages_this_month(tid, db)
+    if not ent.message_quota_ok(used):
+        raise HTTPException(status_code=429, detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.")
     try:
         msg = await send_message(
             body.channel_id,
@@ -1190,6 +1324,9 @@ def _config_response(config: AutoReplyConfig) -> AutoReplyConfigResponse:
         promo_max_ctas=config.promo_max_ctas
         if config.promo_max_ctas is not None else 1,
         handoff_link_enabled=bool(getattr(config, "handoff_link_enabled", True)),
+        handoff_code_ttl_days=max(
+            1, min(30, int(getattr(config, "handoff_code_ttl_days", 1) or 1))
+        ),
     )
 
 
@@ -1284,6 +1421,8 @@ async def update_autoreply_config(
         config.promo_max_ctas = body.promo_max_ctas
     if body.handoff_link_enabled is not None:
         config.handoff_link_enabled = body.handoff_link_enabled
+    if body.handoff_code_ttl_days is not None:
+        config.handoff_code_ttl_days = body.handoff_code_ttl_days
 
     await db.commit()
     await db.refresh(config)
@@ -1625,13 +1764,12 @@ async def approve_review_reply(
     for sibling in sibling_result.scalars().all():
         sibling.status = "rejected"
         sibling.error = None
-    await db.commit()
-
     # Keep analytics response-rate/response-time accurate
     try:
-        from ..outbox.service import enqueue_event
+        from ..outbox.service import enqueue_event_in
 
-        await enqueue_event(
+        await enqueue_event_in(
+            db,
             "review.replied",
             {
                 "user_id": ctx.user.id,
@@ -1642,6 +1780,7 @@ async def approve_review_reply(
             },
             topic="review-events",
         )
+        await db.commit()
     except Exception:
         logger.warning("review.replied enqueue failed for %s", reply.review_id)
 

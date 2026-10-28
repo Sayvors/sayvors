@@ -288,6 +288,9 @@ def validate_response(
     has_offer_data: bool = False,
     rating: int | None = None,
     promo_max_ctas: int | None = None,
+    reply_language: str | None = None,
+    relevance_verdict: str | None = None,
+    off_topic_product: str | None = None,
 ) -> ValidationResult:
     """Policy + fulfillment + grounding + quality. New args optional (legacy tests)."""
     checks: dict[str, bool] = {}
@@ -423,6 +426,31 @@ def validate_response(
     if not specific_ok:
         problems.append(f"Generic reply: only {n_overlap} concrete review word(s) echoed.")
 
+    # -- Language match: the reply must be in the expected language.
+    try:
+        from app.core.language import detect_language as _detect_lang
+        expected = (reply_language or getattr(analysis, "language", "en") or "en").strip().lower()
+        if expected == "match":
+            expected = (getattr(analysis, "language", "en") or "en").strip().lower()
+        actual = _detect_lang(text)
+        lang_ok = True
+        if actual.confident:
+            if expected in ("ar", "ur", "ur-latn") or actual.code in ("ar", "ur", "ur-latn"):
+                # Arabic-script family: require the same code.
+                if expected != actual.code:
+                    # Allow ar<->ur confusion only when the detector is unsure.
+                    if not (expected in ("ar", "ur") and actual.code in ("ar", "ur") and actual.confidence < 0.8):
+                        lang_ok = False
+            elif expected != "match" and expected != actual.code:
+                lang_ok = False
+        checks["language_match"] = lang_ok
+        if not lang_ok:
+            problems.append(
+                f"Reply language ({actual.code}) does not match expected ({expected})."
+            )
+    except Exception:
+        checks["language_match"] = True
+
     # ── Claim grounding: patterns + extracted-claim verdicts ──
     grounding_ok = True
     for name, pattern, stems in OPERATIONAL_CLAIMS:
@@ -549,6 +577,23 @@ def validate_response(
                     "offer_appropriateness", "naturalness", "conciseness",
                     "taxonomy_leak", "pricing_purity"]
     checks["helpfulness"] = all(checks.get(k, True) for k in helpful_keys)
+
+    # -- Off-topic echo guard.
+    if relevance_verdict == "off_topic" and off_topic_product:
+        prod = off_topic_product.strip().lower()
+        if prod and prod in (text or "").lower():
+            denial_markers = ("don't sell", "do not sell", "don't offer", "not a",
+                              "we're a", "we are a", "لا نبيع", "لا نقدم", "نحن شركة",
+                              "we don't", "not our", "different business")
+            if not any(m in (text or "").lower() for m in denial_markers):
+                checks["off_topic_echo"] = False
+                problems.append(
+                    f"Reply echoes the off-topic item '{off_topic_product}' without a clear denial."
+                )
+            else:
+                checks["off_topic_echo"] = True
+        else:
+            checks["off_topic_echo"] = True
 
     passed = all(checks.values())
     return ValidationResult(

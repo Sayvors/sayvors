@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { setChatOpen, useChatOpen } from "@/lib/chat-store";
 import { streamAssistantChat } from "@/lib/api-assistant";
 import FeedbackPanel from "@/components/FeedbackPanel";
@@ -507,7 +508,7 @@ export default function SayvorsChat() {
           {/* Header */}
           <div className="flex items-center gap-2.5 border-b border-ink/[0.06] bg-deep-violet px-4 py-3 dark:border-fog/[0.06]">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/Sayvors_Icon.png" alt="" className="h-7 w-7 rounded-[2px]" />
+            <Image src="/Sayvors_Icon.png" alt="" width={28} height={28} className="h-7 w-7 rounded-[2px]" />
             <div className="min-w-0 flex-1">
               <p className="text-[13px] font-bold text-white">Ask Sayvors</p>
               <p className="truncate text-[10px] text-white/60">{active?.title ?? "Answers from your live business data"}</p>

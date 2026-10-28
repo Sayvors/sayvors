@@ -35,6 +35,10 @@ export interface InboxThread {
   /** False for a conversation that cannot be answered from the inbox —
    * a Google review is answered through the review-reply flow. */
   can_reply?: boolean;
+  /** Soft-archived: hidden from the default inbox view. */
+  archived?: boolean;
+  /** Soft-pinned: sorts to the top of the inbox list. */
+  pinned?: boolean;
 }
 
 export interface InboxMessage {
@@ -58,10 +62,36 @@ export interface InboxSendResult {
   error: string | null;
 }
 
-export async function fetchInboxThreads(search = ""): Promise<InboxThread[]> {
-  const q = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
+export async function fetchInboxThreads(search = "", includeArchived = false): Promise<InboxThread[]> {
+  const params = new URLSearchParams();
+  if (search.trim()) params.set("search", search.trim());
+  if (includeArchived) params.set("include_archived", "true");
+  const q = params.toString() ? `?${params.toString()}` : "";
   const data = await apiFetch(`/api/v1/inbox/threads${q}`);
   return (data?.threads ?? []) as InboxThread[];
+}
+
+export async function archiveInboxThread(channelId: string, contactPhone: string | null, archived: boolean): Promise<void> {
+  const key = contactPhone ?? "unknown";
+  await apiFetch(`/api/v1/inbox/threads/${channelId}/${encodeURIComponent(key)}/archive`, {
+    method: "PATCH",
+    body: JSON.stringify({ archived }),
+  });
+}
+
+export async function pinInboxThread(channelId: string, contactPhone: string | null, pinned: boolean): Promise<void> {
+  const key = contactPhone ?? "unknown";
+  await apiFetch(`/api/v1/inbox/threads/${channelId}/${encodeURIComponent(key)}/pin`, {
+    method: "PATCH",
+    body: JSON.stringify({ pinned }),
+  });
+}
+
+export async function deleteInboxThread(channelId: string, contactPhone: string | null): Promise<void> {
+  const key = contactPhone ?? "unknown";
+  await apiFetch(`/api/v1/inbox/threads/${channelId}/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
 }
 export async function fetchThreadMessages(
   channelId: string,

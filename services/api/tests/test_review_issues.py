@@ -498,14 +498,117 @@ async def test_issue_list_defaults_to_ticketed_only(
     assert [i["review_id"] for i in unticketed["issues"]] == ["praise-1"]
 
 
-async def test_mint_is_idempotent(db, channel_id, user_id):
-    """A customer who saved yesterday's code must not find it dead today."""
+async def test_mint_is_idempotent_while_the_code_is_valid(db, channel_id, user_id):
+    """Re-composing a reply must reuse the code, not rotate it mid-conversation."""
     from app.modules.review_engine.handoff import ensure_handoff_code
 
     issue = await _issue(db, channel_id, user_id)
     first = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
     assert first and len(first) == 6
     assert (await ensure_handoff_code(db, tenant_id=user_id, issue=issue)) == first
+
+
+async def test_mint_sets_expiry_from_tenant_config(
+    db, channel_id, user_id, config_id
+):
+    """The tenant's Settings value is the lifetime, not a hard-coded day."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.channels.models import AutoReplyConfig
+
+    cfg = (await db.execute(
+        sa_select(AutoReplyConfig).where(AutoReplyConfig.id == config_id)
+    )).scalar_one()
+    cfg.handoff_code_ttl_days = 7
+    await db.commit()
+
+    issue = await _issue(db, channel_id, user_id)
+    code = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    await db.refresh(issue)
+    assert code and len(code) == 6
+    expires = issue.handoff_code_expires_at
+    assert expires is not None
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    remaining = expires - datetime.now(timezone.utc)
+    assert timedelta(days=6, hours=23) < remaining <= timedelta(days=7, minutes=1)
+
+
+async def test_mint_clamps_out_of_range_ttl(db, channel_id, config_id):
+    """A direct DB edit must not create a forever-code or an already-dead one.
+
+    The API schema enforces 1-30, but rows written before validation existed
+    (or by an operator) still reach the mint path. The service layer is the
+    last line, so it clamps rather than trusting the column.
+    """
+    from app.modules.channels.models import AutoReplyConfig
+    from app.modules.review_engine.handoff import _code_ttl_days
+
+    cfg = (await db.execute(
+        sa_select(AutoReplyConfig).where(AutoReplyConfig.id == config_id)
+    )).scalar_one()
+    cfg.handoff_code_ttl_days = 999
+    await db.commit()
+    assert await _code_ttl_days(db, channel_id=channel_id) == 30
+
+    cfg.handoff_code_ttl_days = 0
+    await db.commit()
+    assert await _code_ttl_days(db, channel_id=channel_id) == 1
+
+
+async def test_expired_code_does_not_resolve_and_is_rotated(
+    db, channel_id, user_id
+):
+    """TTL is enforced on the inbound path, and the next mint replaces the code."""
+    from datetime import datetime, timedelta, timezone
+
+    issue = await _issue(db, channel_id, user_id)
+    first = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    await db.refresh(issue)
+    issue.handoff_code_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db.commit()
+    await db.refresh(issue)
+
+    # The old link prefills "#CODE"; neither the marked form nor an explicit
+    # code list may attach a ticket after expiry.
+    assert await resolve_inbound(db, tenant_id=user_id, text=f"#{first}") is None
+    assert await resolve_inbound(db, tenant_id=user_id, handoff_codes=[first]) is None
+
+    second = await ensure_handoff_code(db, tenant_id=user_id, issue=issue)
+    assert second and second != first
+    m = await resolve_inbound(db, tenant_id=user_id, text=f"#{second}")
+    assert m is not None
+    assert m.issue.id == issue.id
+    assert m.matched_by == "handoff_code"
+
+
+async def test_bare_code_is_not_a_code_only_the_marked_form_is(
+    db, channel_id, user_id
+):
+    """A six-letter word must not attach a customer to a stranger's ticket."""
+    issue = await _issue(db, channel_id, user_id)
+    await db.refresh(issue)
+    # The pathological case: the ticket's code is an ordinary word.
+    issue.handoff_code = "THANKS"
+    await db.commit()
+    await db.refresh(issue)
+
+    assert await resolve_inbound(db, tenant_id=user_id, text="THANKS") is None
+    m = await resolve_inbound(db, tenant_id=user_id, text="#THANKS")
+    assert m is not None
+    assert m.issue.id == issue.id
+
+
+def test_extract_handoff_codes_requires_the_marker():
+    from app.modules.review_engine.tickets import extract_handoff_codes
+
+    assert extract_handoff_codes("#K7M2QX") == ["K7M2QX"]
+    assert extract_handoff_codes("  # k7m2qx \n") == ["K7M2QX"]
+    assert extract_handoff_codes("#K7M2QX.") == ["K7M2QX"]
+    assert extract_handoff_codes("K7M2QX") == []
+    assert extract_handoff_codes("THANKS") == []
+    assert extract_handoff_codes("hi #K7M2QX") == []
+    assert extract_handoff_codes(None) == []
 
 
 async def test_no_code_for_praise(db, channel_id, user_id):
@@ -761,7 +864,7 @@ async def test_tenant_whatsapp_number_is_tenant_scoped(db, user_id):
 def test_wa_me_link_shape():
     from app.modules.review_engine.handoff import wa_me_link
 
-    assert wa_me_link("+1555 625 9436", "K7M2QX") == "https://wa.me/15556259436?text=K7M2QX"
+    assert wa_me_link("+1555 625 9436", "K7M2QX") == "https://wa.me/15556259436?text=%23K7M2QX"
     assert wa_me_link("junk", "K7M2QX") == ""
 
 
@@ -787,7 +890,7 @@ async def test_append_adds_generic_sales_link_for_a_question(
 
     await _issue(
         db, channel_id, user_id,
-        primary_category="information_inquiries",
+        primary_category="pricing_promotions",
         intent="ask_question",
         sentiment="positive",
         priority="low",
@@ -831,9 +934,34 @@ async def test_append_adds_link_for_needs_attention(db, channel_id, user_id):
         "We are sorry about the cold food.", db, ch, "r", "The food was cold"
     )
     assert "wa.me/15556259436" in out
-    assert f"text={code}" in out
+    assert f"text=%23{code}" in out
     # The base reply survives untouched, on its own line.
     assert out.startswith("We are sorry about the cold food.\n")
+
+
+async def test_append_skips_an_expired_code(db, channel_id, user_id):
+    """A dead code must never reach a public reply.
+
+    The customer would tap the link, send the code, and `resolve_inbound`
+    would ignore it -- so they would be re-interviewed as a stranger while
+    the merchant believes the ticket was handed off.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.channels.models import ReviewIssue
+    from app.modules.channels.review_reply import _append_handoff_link
+
+    code, ch = await _linked_reply(db, channel_id, user_id)
+    issue = (await db.execute(
+        sa_select(ReviewIssue).where(ReviewIssue.review_id == "r")
+    )).scalar_one()
+    issue.handoff_code_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    await db.commit()
+
+    text = "We are sorry about the cold food."
+    out = await _append_handoff_link(text, db, ch, "r", "The food was cold")
+    assert out == text
+    assert code not in out
 
 
 async def test_append_skips_praise(db, channel_id, user_id):
@@ -930,7 +1058,7 @@ async def test_generate_auto_reply_appends_the_link(db, channel_id, user_id, mon
         db, review_id="r",
     )
     assert out.startswith("Sorry about the cold food.\n")
-    assert f"text={code}" in out
+    assert f"text=%23{code}" in out
 
 
 async def test_mock_auto_reply_still_appends_the_link(
@@ -959,7 +1087,7 @@ async def test_mock_auto_reply_still_appends_the_link(
         SimpleNamespace(model=None, handoff_link_enabled=True), ch, 1,
         "The food was cold", "Ali", db, review_id="r",
     )
-    assert f"text={code}" in out
+    assert f"text=%23{code}" in out
     assert "wa.me/15556259436" in out
 
 
@@ -980,7 +1108,7 @@ async def test_generate_auto_reply_appends_generic_sales_link(
     await db.commit()
     await _issue(
         db, ch_id, user_id,
-        primary_category="information_inquiries",
+        primary_category="pricing_promotions",
         intent="ask_question",
         sentiment="positive",
         priority="low",

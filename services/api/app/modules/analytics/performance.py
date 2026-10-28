@@ -139,24 +139,27 @@ async def _sync_channel(channel: Channel) -> int:
                         date=day,
                         impressions=int(value),
                     ))
-        await db.commit()
+        # Emit one Kafka event per synced day (summary payload), atomically
+        # with the metric upserts so a crash cannot lose the notification.
+        from ..outbox.service import enqueue_event_in
 
-    # Emit one Kafka event per synced day (summary payload)
-    for day in sorted(days_touched):
-        await enqueue_event(
-            "metrics.synced",
-            {
-                "user_id": channel.user_id,
-                "channel_id": channel.id,
-                "date": day.isoformat(),
-                "metrics": {
-                    _METRIC_COLUMNS[m]: dict(series.get(m, {})).get(day, 0)
-                    for m in _METRIC_COLUMNS
-                    if m in series
+        for day in sorted(days_touched):
+            await enqueue_event_in(
+                db,
+                "metrics.synced",
+                {
+                    "user_id": channel.user_id,
+                    "channel_id": channel.id,
+                    "date": day.isoformat(),
+                    "metrics": {
+                        _METRIC_COLUMNS[m]: dict(series.get(m, {})).get(day, 0)
+                        for m in _METRIC_COLUMNS
+                        if m in series
+                    },
                 },
-            },
-            topic="metrics-events",
-        )
+                topic="metrics-events",
+            )
+        await db.commit()
     return len(days_touched)
 
 
@@ -244,15 +247,18 @@ async def _sync_localith_channel(channel: Channel) -> int:
                 continue
             await _upsert_localith_day(db, channel, day, nums)
             touched_days.add(day)
-        await db.commit()
 
-    for day in sorted(touched_days):
-        await enqueue_event(
-            "metrics.synced",
-            {"user_id": channel.user_id, "channel_id": channel.id,
-             "date": day.isoformat(), "source": "localith"},
-            topic="metrics-events",
-        )
+        from ..outbox.service import enqueue_event_in
+
+        for day in sorted(touched_days):
+            await enqueue_event_in(
+                db,
+                "metrics.synced",
+                {"user_id": channel.user_id, "channel_id": channel.id,
+                 "date": day.isoformat(), "source": "localith"},
+                topic="metrics-events",
+            )
+        await db.commit()
     return len(touched_days)
 
 

@@ -7,7 +7,7 @@ Types: sync_completed | sync_failed | review_pulled | reply_posted
 """
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -32,3 +32,13 @@ class Notification(Base):
 
 
 Index("ix_notifications_user_unread", Notification.user_id, Notification.read_at)
+
+# Retention only deletes notifications that were read, and only by age. A
+# partial index keeps that sweep proportional to the rows it can actually
+# remove instead of scanning every notification ever created. The predicate
+# is Postgres-only; SQLite (tests) builds a plain index and ignores it.
+Index(
+    "ix_notifications_read_created",
+    Notification.created_at,
+    postgresql_where=text("read_at IS NOT NULL"),
+)

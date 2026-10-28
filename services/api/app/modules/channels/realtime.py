@@ -36,13 +36,12 @@ async def _ensure_shared_subscriber():
     from ...config import settings
     from redis.asyncio import Redis
 
+    from ...modules.redis.client import redis_connection_kwargs
+
     _shared_client = Redis.from_url(
         settings.REDIS_URL,
-        decode_responses=True,
-        socket_connect_timeout=2,
-        socket_timeout=None,
-        retry_on_timeout=False,
         max_connections=4,  # pooled: one shared connection, not one per tab
+        **redis_connection_kwargs(),
     )
     _shared_pubsub = _shared_client.pubsub()
     await _shared_pubsub.psubscribe("inbox:*")
@@ -84,13 +83,11 @@ async def _fanout_loop():
                 from ...config import settings
                 from redis.asyncio import Redis
                 _shared_pubsub = None
+                from ...modules.redis.client import redis_connection_kwargs
                 _shared_client = Redis.from_url(
                     settings.REDIS_URL,
-                    decode_responses=True,
-                    socket_connect_timeout=2,
-                    socket_timeout=None,
-                    retry_on_timeout=False,
                     max_connections=4,
+                    **redis_connection_kwargs(),
                 )
                 _shared_pubsub = _shared_client.pubsub()
                 await _shared_pubsub.psubscribe("inbox:*")

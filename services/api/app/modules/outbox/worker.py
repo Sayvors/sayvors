@@ -50,10 +50,10 @@ class OutboxWorker:
 
                 # Periodic cleanup of old sent events + retention for growing tables
                 if now - last_cleanup > CLEANUP_INTERVAL:
-                    from .service import cleanup_sent_events
-                    deleted = await cleanup_sent_events()
+                    from .service import cleanup_outbox_events
+                    deleted = await cleanup_outbox_events()
                     if deleted:
-                        logger.info("Outbox cleanup: deleted %d sent events", deleted)
+                        logger.info("Outbox cleanup: deleted %d terminal events", deleted)
                     # Retention: prune old rows from unbounded tables
                     from ..retention import cleanup_all
                     counts = await cleanup_all()
@@ -63,8 +63,8 @@ class OutboxWorker:
                     last_cleanup = now
 
                 # If Kafka is down, periodically try to reconnect
-                from ..kafka.client import _kafka_available
-                if not _kafka_available and now - last_kafka_check > KAFKA_RETRY_INTERVAL:
+                from ..kafka.client import is_kafka_available
+                if not is_kafka_available() and now - last_kafka_check > KAFKA_RETRY_INTERVAL:
                     last_kafka_check = now
                     try:
                         from ..kafka.client import get_kafka_producer, mark_kafka_available

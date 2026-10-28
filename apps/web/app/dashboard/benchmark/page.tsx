@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchBenchmark,
+  fetchMarketBenchmarks,
   type BenchmarkResponse,
   type BranchBenchmark,
 } from "@/lib/api-analytics";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
+import BenchmarkCards from "@/components/analytics/BenchmarkCards";
+import { refreshExternalBenchmark } from "@/lib/api-analytics";
 
 type MetricFocus = "reputation" | "rating" | "sentiment" | "response" | "volume";
 
@@ -46,17 +49,45 @@ export default function BenchmarkPage() {
   const [branchFilter, setBranchFilter] = useState<"all" | "with_reviews" | "no_reviews" | "top3" | "needs_attention">("all");
   const channels = useGoogleChannels();
   const [benchmark, setBenchmark] = useState<BenchmarkResponse | null>(null);
+  const [marketBenchmarks, setMarketBenchmarks] = useState<{ metric: string; median: number | null; p25: number | null; p75: number | null; business_count: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const hasLoaded = useRef(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [refreshingExternal, setRefreshingExternal] = useState(false);
+
+  const handleRefreshExternal = async () => {
+    setRefreshingExternal(true);
+    try {
+      await refreshExternalBenchmark();
+      setLoading(true);
+      setRetryCount((c) => c + 1);
+    } catch {
+      // Entitlement/key errors are surfaced by the API; the card keeps its
+      // previous state rather than pretending a refresh happened.
+    } finally {
+      setRefreshingExternal(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
-    fetchBenchmark(days, channelId)
-      .then((b) => {
+    Promise.all([
+      fetchBenchmark(days, channelId),
+      fetchMarketBenchmarks().catch(() => []),
+    ])
+      .then(([b, mb]) => {
         if (cancelled) return;
         setBenchmark(b);
+        // The endpoint returns up to 50 stored rows (one per scope/date). The
+        // card is a current snapshot, so keep the latest row per metric
+        // instead of rendering the same metric five times.
+        const latest = new Map<string, (typeof mb)[number]>();
+        for (const row of mb ?? []) {
+          const prev = latest.get(row.metric);
+          if (!prev || row.date > prev.date) latest.set(row.metric, row);
+        }
+        setMarketBenchmarks([...latest.values()]);
         setError(false);
         hasLoaded.current = true;
       })
@@ -125,6 +156,15 @@ export default function BenchmarkPage() {
         />
       </div>
 
+      <div className="mb-5">
+        <BenchmarkCards
+          benchmark={benchmark}
+          loading={loading}
+          onRefreshExternal={() => void handleRefreshExternal()}
+          refreshingExternal={refreshingExternal}
+        />
+      </div>
+
       {error && !loading ? (
         <div className="ui-card flex flex-col items-center gap-3 py-16 text-center">
           <p className="text-[13px] font-semibold text-[var(--ui-ink-2)]">Couldn&apos;t load benchmark data.</p>
@@ -188,7 +228,100 @@ export default function BenchmarkPage() {
             </section>
           )}
 
-          {/* Metric focus filter */}
+          {/* Industry benchmark bands */}
+          {benchmark && (
+            <section aria-label="Industry benchmarks" className="ui-card p-5">
+              <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">You vs. the market</h3>
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">Industry medians from published studies.</p>
+              <ul className="mt-4 divide-y divide-[var(--ui-line)]">
+                {[
+                  { label: "Review response rate", you: benchmark.current_response_rate, unit: "%", median: 75.5, good: 90 },
+                  { label: "Average rating", you: benchmark.current_avg_rating, unit: "", median: 4.3, good: 4.7 },
+                  { label: "Sentiment (positive %)", you: benchmark.current_sentiment_positive_pct, unit: "%", median: 70, good: 85 },
+                ].map((b) => {
+                  const you = b.you ?? 0;
+                  const status = you >= b.good ? "Excellent" : you >= b.median ? "On par" : "Below median";
+                  const statusCls = you >= b.good ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : you >= b.median ? "bg-[var(--ui-sunken)] text-[var(--ui-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]";
+                  return (
+                    <li key={b.label} className="flex items-center gap-3 py-3 first:pt-1 last:pb-1">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12.5px] font-semibold text-[var(--ui-ink)]">{b.label}</p>
+                        <p className="mt-0.5 text-[10.5px] text-[var(--ui-ink-2)]">Median {b.median}{b.unit} / Good {b.good}{b.unit}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-[13px] font-bold tabular-nums text-[var(--ui-ink)]">{typeof you === "number" ? you.toFixed(1) : "—"}{b.unit}</p>
+                        <span className={`mt-1 inline-block rounded-[2px] px-2 py-0.5 text-[10px] font-bold ${statusCls}`}>{status}</span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              {benchmark.current_response_rate < 90 && (
+                <div className="mt-4 rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-3">
+                  <p className="text-[12px] font-semibold text-[var(--ui-ink)]">Nudge: every +25% response rate = +4.1% GBP conversions (SOCi 2024)</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">You are at {benchmark.current_response_rate.toFixed(0)}%. Reaching 90% could lift conversions.</p>
+                </div>
+              )}
+            </section>
+          )}
+
+ 
+           {/* Market response ranking — your median vs. other Sayvors businesses */}
+           {marketBenchmarks.length > 0 ? (
+             <section aria-label="Market response ranking" className="ui-card p-5">
+               <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Your response speed vs. the market</h3>
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                Median first reply across {Math.max(...marketBenchmarks.map((m) => m.business_count || 0))} businesses on Sayvors. Aggregates only.
+              </p>
+              {Math.max(...marketBenchmarks.map((m) => m.business_count || 0)) < 3 && (
+                <p className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink)]">
+                  Not enough peers for a market median. At least 3 businesses are needed - a median from one business is just that business.
+                </p>
+              )}
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {marketBenchmarks.map((mb, idx) => {
+                  const enough = (mb.business_count ?? 0) >= 3 && mb.median !== null;
+                  return (
+                    <div key={`${mb.metric}:${idx}`} className="rounded-[2px] bg-[var(--ui-sunken)] p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{mb.metric.replace(/_/g, " ")}</p>
+                      <p className="mt-1 text-[18px] font-black tabular-nums text-[var(--ui-ink)]">
+                        {enough ? (mb.metric.includes("seconds") ? Math.round(mb.median as number) + "s" : (mb.median as number).toFixed(1)) : "-"}
+                      </p>
+                      {enough && mb.p25 !== null && mb.p75 !== null && (
+                        <p className="mt-1 text-[10.5px] text-[var(--ui-ink-2)]">
+                          p25: {mb.metric.includes("seconds") ? Math.round(mb.p25) + "s" : mb.p25.toFixed(1)} - p75: {mb.metric.includes("seconds") ? Math.round(mb.p75) + "s" : mb.p75.toFixed(1)}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[10px] text-[var(--ui-ink-2)]">{mb.business_count} businesses</p>
+                    </div>
+                  );
+                })}
+              </div>
+               {benchmark && marketBenchmarks.some((mb) => mb.metric === "median_first_response_seconds" && mb.median !== null) && (() => {
+                 const mb = marketBenchmarks.find((m) => m.metric === "median_first_response_seconds");
+                 if (!mb?.median || (mb.business_count ?? 0) < 3) return null;
+                 return (
+                   <div className="mt-4 rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-3">
+                     <p className="text-[12px] font-semibold text-[var(--ui-ink)]">
+                       Market median first reply: {Math.round(mb.median)}s across {mb.business_count} businesses
+                     </p>
+                     <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                       Your response rate: {benchmark.current_response_rate.toFixed(0)}% (market median for response rate: {marketBenchmarks.find((m) => m.metric === "response_rate")?.median?.toFixed(0) ?? "—"}%)
+                     </p>
+                   </div>
+                 );
+               })()}
+             </section>
+           ) : (
+             <section aria-label="Market response ranking" className="ui-card p-5">
+               <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Your response speed vs. the market</h3>
+               <p className="mt-2 text-[12px] text-[var(--ui-ink-2)]">
+                 Collecting history — market benchmarks appear after the daily aggregation worker has run across multiple businesses. Check back tomorrow.
+               </p>
+             </section>
+           )}
+
+                      {/* Metric focus filter */}
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Comparison metric">
             {(Object.keys(FOCUS_META) as MetricFocus[]).map((f) => (
               <button
@@ -511,7 +644,7 @@ export default function BenchmarkPage() {
                   ))}
                 </div>
               )}
-              <Link href="/dashboard/services" className="mt-3 inline-block text-[11px] font-semibold text-[var(--ui-ink)] hover:underline">Manage services →</Link>
+              <Link href="/dashboard/locations?tab=services" className="mt-3 inline-block text-[11px] font-semibold text-[var(--ui-ink)] hover:underline">Manage services →</Link>
             </section>
           )}
 

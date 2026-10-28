@@ -389,9 +389,7 @@ async def _competitive_facts(
 
 
 async def _call_llm(facts: dict, rag_text: str, model: str, tenant_id: str | None = None) -> tuple[str, str]:
-    from ..llm.providers.base import LLMMessage, LLMRequest
-    from ..llm.providers.registry import get_provider_for_model
-    from ..llm.service import _resolve_model
+    from ..llm.gateway import LLMMessage, complete
 
     user_content = json.dumps({
         "total_reviews": facts["stats"]["total"],
@@ -405,20 +403,14 @@ async def _call_llm(facts: dict, rag_text: str, model: str, tenant_id: str | Non
         "competitive_facts": facts.get("competitive") or
             "unavailable — return empty wins and gaps",
     })
-    provider = get_provider_for_model(model)
-    api_model, _ = _resolve_model(model)
-    resp = await provider.complete(
-        LLMRequest(
-            model=api_model,
-            messages=[LLMMessage(role="user", content=user_content)],
-            system_prompt=SYSTEM_PROMPT,
-            temperature=0.2,
-            max_tokens=1500,
-            stream=False,
-            tenant_id=tenant_id,
-            model_id=model,
-            purpose="analytics.intelligence",
-        )
+    resp = await complete(
+        model=model,
+        messages=[LLMMessage(role="user", content=user_content)],
+        system_prompt=SYSTEM_PROMPT,
+        temperature=0.2,
+        max_tokens=1500,
+        tenant_id=tenant_id,
+        purpose="analytics.intelligence",
     )
     return resp.content, model
 
@@ -900,28 +892,20 @@ async def get_review_intelligence(
 
 
 async def _call_llm_retry(facts: dict, rag_text: str, model: str, error: str, tenant_id: str | None = None) -> tuple[str, str]:
-    from ..llm.providers.base import LLMMessage, LLMRequest
-    from ..llm.providers.registry import get_provider_for_model
-    from ..llm.service import _resolve_model
+    from ..llm.gateway import LLMMessage, complete
 
-    provider = get_provider_for_model(model)
-    api_model, _ = _resolve_model(model)
-    resp = await provider.complete(
-        LLMRequest(
-            model=api_model,
-            messages=[LLMMessage(
-                role="user",
-                content=json.dumps({"total_reviews": facts["stats"]["total"], "reviews": facts["reviews"]})
-                + f"\nYour previous output failed validation ({error}). Output ONLY the valid JSON object, nothing else.",
-            )],
-            system_prompt=SYSTEM_PROMPT,
-            temperature=0.1,
-            max_tokens=1500,
-            stream=False,
-            tenant_id=tenant_id,
-            model_id=model,
-            purpose="analytics.intelligence",
-        )
+    resp = await complete(
+        model=model,
+        messages=[LLMMessage(
+            role="user",
+            content=json.dumps({"total_reviews": facts["stats"]["total"], "reviews": facts["reviews"]})
+            + f"\nYour previous output failed validation ({error}). Output ONLY the valid JSON object, nothing else.",
+        )],
+        system_prompt=SYSTEM_PROMPT,
+        temperature=0.1,
+        max_tokens=1500,
+        tenant_id=tenant_id,
+        purpose="analytics.intelligence",
     )
     return resp.content, model
 

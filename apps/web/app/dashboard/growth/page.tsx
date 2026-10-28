@@ -1,23 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import {
   fetchAcquisition,
   fetchKeywords,
+  fetchMessagingGrowth,
   fetchOpportunities,
   fetchOverview,
   fetchTimeseries,
   fetchVisibility,
-  type AcquisitionResponse,
-  type KeywordsResponse,
-  type OpportunitiesResponse,
-  type Overview,
+  fetchGrowthCards,
   type TimeseriesPoint,
-  type VisibilityResponse,
 } from "@/lib/api-analytics";
 import { apiFetch } from "@/lib/api-rag";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import { StatCard } from "@/components/analytics/StatCard";
+import GrowthCardsSection from "@/components/analytics/GrowthCards";
 
 function num(v: unknown): number {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
@@ -180,53 +180,49 @@ export default function GrowthPage() {
   const [days, setDays] = useState<number>(30);
   const [channelId, setChannelId] = useState<string | null>(null);
   const channels = useGoogleChannels();
-  const [visibility, setVisibility] = useState<VisibilityResponse | null>(null);
-  const [acquisition, setAcquisition] = useState<AcquisitionResponse | null>(null);
-  const [opportunities, setOpportunities] = useState<OpportunitiesResponse | null>(null);
-  const [keywords, setKeywords] = useState<KeywordsResponse | null>(null);
   const [granularity, setGranularity] = useState<"day" | "month">("day");
   const [trendMetric, setTrendMetric] = useState<"impressions" | "website" | "calls" | "directions">("impressions");
-  const [points, setPoints] = useState<TimeseriesPoint[]>([]);
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [presence, setPresence] = useState<PresencePerf | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [refreshToken, setRefreshToken] = useState(0);
-  const hasLoaded = useRef(false);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      fetchVisibility(days, channelId),
-      fetchAcquisition(days, channelId),
-      fetchOpportunities(days, channelId),
-      fetchTimeseries(days, channelId),
-      fetchKeywords(days, channelId).catch(() => null),
-      fetchOverview(days, channelId).catch(() => null),
-      apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
-    ])
-      .then(([v, a, o, t, k, ov, prof]) => {
-        if (cancelled) return;
-        setVisibility(v);
-        setAcquisition(a);
-        setOpportunities(o);
-        setPoints(t);
-        setKeywords(k);
-        setOverview(ov);
-        setPresence(presencePerf(prof));
-        setError(false);
-        hasLoaded.current = true;
-      })
-      .catch(() => {
-        if (!cancelled && !hasLoaded.current) setError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [days, channelId, refreshToken]);
+  const growthQuery = useQuery({
+    queryKey: queryKeys.growth.all(days, channelId),
+    queryFn: async () => {
+      const [v, a, o, t, k, ov, mg, prof, gc] = await Promise.all([
+        fetchVisibility(days, channelId),
+        fetchAcquisition(days, channelId),
+        fetchOpportunities(days, channelId),
+        fetchTimeseries(days, channelId),
+        fetchKeywords(days, channelId).catch(() => null),
+        fetchOverview(days, channelId).catch(() => null),
+        fetchMessagingGrowth(days, channelId).catch(() => null),
+        apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
+        fetchGrowthCards(days, channelId).catch(() => null),
+      ]);
+      return {
+        visibility: v,
+        acquisition: a,
+        opportunities: o,
+        points: t,
+        keywords: k,
+        overview: ov,
+        messagingGrowth: mg,
+        presence: presencePerf(prof),
+        growthCards: gc,
+      };
+    },
+    staleTime: 30 * 1000,
+  });
+  const visibility = growthQuery.data?.visibility ?? null;
+  const acquisition = growthQuery.data?.acquisition ?? null;
+  const opportunities = growthQuery.data?.opportunities ?? null;
+  const points = growthQuery.data?.points ?? [];
+  const keywords = growthQuery.data?.keywords ?? null;
+  const overview = growthQuery.data?.overview ?? null;
+  const messagingGrowth = growthQuery.data?.messagingGrowth ?? null;
+  const presence = growthQuery.data?.presence ?? null;
+  const growthCards = growthQuery.data?.growthCards ?? null;
+  const loading = growthQuery.isPending;
+  const error = growthQuery.isError && !growthQuery.data;
 
   const fmt = (n: number) => new Intl.NumberFormat("en").format(n);
   const nativePerf = !!visibility && visibility.impressions_maps > 0;
@@ -268,15 +264,17 @@ export default function GrowthPage() {
           days={days}
           setDays={(d) => {
             setDays(d);
-            setLoading(true);
           }}
           channelId={channelId}
           setChannelId={(c) => {
             setChannelId(c);
-            setLoading(true);
           }}
           channels={channels}
         />
+      </div>
+
+      <div className="mb-5">
+        <GrowthCardsSection cards={growthCards} loading={loading} />
       </div>
 
       {error && !loading ? (
@@ -284,9 +282,7 @@ export default function GrowthPage() {
           <p className="text-[13px] font-semibold text-[var(--ui-ink-2)]">Couldn&apos;t load growth data.</p>
           <button
             onClick={() => {
-              setError(false);
-              setLoading(true);
-              setRefreshToken((t) => t + 1);
+              void queryClient.invalidateQueries({ queryKey: ["growth"] });
             }}
             className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
           >
@@ -484,6 +480,64 @@ export default function GrowthPage() {
               </ol>
             )}
           </section>
+
+          {/* Messaging growth — customer growth from stored daily rollups */}
+          {messagingGrowth && (
+            <section aria-label="Messaging growth" className="ui-card p-5">
+              <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">Customer growth (messaging)</h3>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">New contacts</p>
+                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messagingGrowth.total_new_contacts}</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">unique contacts who messaged you</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Messages in</p>
+                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messagingGrowth.total_messages_in}</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">inbound messages</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Messages out</p>
+                  <p className="mt-1 text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{messagingGrowth.total_messages_out}</p>
+                  <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">outbound replies</p>
+                </div>
+              </div>
+              {messagingGrowth.customer_growth.length > 0 && (
+                <div className="mt-5">
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">New contacts per week</p>
+                  <div className="flex items-end gap-2" style={{ height: 80 }}>
+                    {messagingGrowth.customer_growth.map((w) => {
+                      const max = Math.max(...messagingGrowth.customer_growth.map((x) => x.new_contacts), 1);
+                      const pct = (w.new_contacts / max) * 100;
+                      return (
+                        <div key={w.week} className="flex flex-1 flex-col items-center justify-end gap-1" title={`${w.week}: ${w.new_contacts} new contacts`}>
+                          <div className="w-full rounded-t-[2px] bg-[var(--ui-ink)] transition-all" style={{ height: `${Math.max(2, pct)}%` }} />
+                          <span className="text-[9px] tabular-nums text-[var(--ui-ink-2)]">{w.week.split("-W")[1]}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {messagingGrowth.follower_growth && (
+                <div className="mt-5 border-t border-[var(--ui-line)] pt-4">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Follower growth</p>
+                  {messagingGrowth.follower_growth.collecting ? (
+                    <p className="mt-2 text-[12px] text-[var(--ui-ink-2)]">Collecting history — need 7+ days of snapshots for a trend.</p>
+                  ) : (
+                    <div className="mt-2 flex items-baseline gap-4">
+                      <span className="text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
+                        {messagingGrowth.follower_growth.net >= 0 ? "+" : ""}{messagingGrowth.follower_growth.net}
+                      </span>
+                      <span className="text-[12px] text-[var(--ui-ink-2)]">
+                        {messagingGrowth.follower_growth.rate_pct !== null ? `${messagingGrowth.follower_growth.rate_pct}%` : "—"} change
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
         </div>
       )}
     </div>

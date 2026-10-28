@@ -210,22 +210,49 @@ async def set_default(method_id: str, user_id: str, db: AsyncSession) -> dict:
 
 # ── Plan + AI credits (D1) ─────────────────────────────────
 
-async def get_budget(user_id: str, db: AsyncSession) -> dict:
-    """Tenant-facing wallet: plan + live balance.
+async def get_budget(tenant_id: str, db: AsyncSession) -> dict:
+    """Tenant-facing wallet: plan + durable available balance.
 
-    The live balance is Redis when available, else the DB column (top-up
-    source of truth — may lag spend made since the last grant).
+    The DB wallet is authoritative. A tenant that predates the ledger gets its
+    one-time opening baseline on first read; after that this is a plain row
+    read. Redis is never consulted for the number.
     """
     from ..users.models import User
-    from .budget import get_balance
+    from .ledger import OPENING_KEY_PREFIX, ensure_ledger_initialized
+    from .models import BillingEvent
 
-    user = await db.get(User, user_id)
+    user = await db.get(User, tenant_id)
     if user is None:
         raise ValueError("Tenant not found.")
-    live = await get_balance(user_id)
-    balance = live if live is not None else (user.ai_credit_cents or 0)
+    fallback = int(user.ai_credit_cents or 0)
+    plan = user.plan or "free"
+    try:
+        # Fast path: after cutover the opening row exists, so a dashboard read
+        # is a plain row read with no wallet lock. Only a tenant that still
+        # predates the ledger pays for the one-time reconstruction.
+        opening = (
+            await db.execute(
+                select(BillingEvent.id).where(
+                    BillingEvent.tenant_id == tenant_id,
+                    BillingEvent.idempotency_key == f"{OPENING_KEY_PREFIX}{tenant_id}",
+                )
+            )
+        ).scalar_one_or_none()
+        if opening is not None:
+            balance = fallback
+        else:
+            balance = int(await ensure_ledger_initialized(tenant_id, db))
+            await db.commit()
+    except Exception as e:
+        logger.exception(
+            "Wallet read failed for %s; showing the last committed DB balance: %s",
+            tenant_id,
+            e,
+        )
+        await db.rollback()
+        balance = fallback
     return {
-        "plan": user.plan or "free",
+        "plan": plan,
         "balance_cents": balance,
         "balance_dollars": round(balance / 100, 2),
         "currency": "usd",
@@ -238,37 +265,58 @@ async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
     """Admin purchase flow: set the plan, add credits, ledger it, sync Redis.
 
     A Pro purchase grants PLAN_INCLUDED_CENTS bundled credits on top of any
-    explicit top-up — the DB is updated as a pro user with a $20 AI budget.
+    explicit top-up. The grant adds to the locked durable wallet; it never
+    recomputes a balance from grants, so a top-up cannot re-grant credit the
+    tenant already spent. A tenant that predates the ledger gets its one-time
+    opening baseline in the same transaction.
     """
     from ..users.models import User
     from .budget import PLAN_INCLUDED_CENTS, sync_balance
+    from .ledger import ensure_ledger_initialized
 
     if plan not in ("free", "pro"):
         raise ValueError("Unknown plan.")
-    user = await db.get(User, user_id)
+    # Serialise grants so two admins cannot lose one top-up to a
+    # read-modify-write race.
+    user = (
+        await db.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+    ).scalar_one_or_none()
     if user is None:
         raise ValueError("Tenant not found.")
     old_plan = user.plan or "free"
     plan_changed = old_plan != plan
     bundled = PLAN_INCLUDED_CENTS.get(plan, 0) if plan_changed else 0
     total_add = (add_credit_cents or 0) + bundled
+
+    before = int(await ensure_ledger_initialized(user_id, db))
+    new_balance = before + total_add
     user.plan = plan
-    user.ai_credit_cents = (user.ai_credit_cents or 0) + total_add
+    user.ai_credit_cents = new_balance
     db.add(BillingEvent(
         id=str(uuid.uuid4()),
         tenant_id=user_id,
         kind="plan_grant" if plan_changed else "credit_topup",
+        status="posted",
         amount_cents=total_add,
-        balance_after_cents=user.ai_credit_cents,
+        reserved_cents=0,
+        balance_after_cents=new_balance,
         note=note,
         created_by=created_by,
     ))
     await db.commit()
-    await sync_balance(user_id, user.ai_credit_cents)
+    synced = await sync_balance(user_id, new_balance)
+    if not synced:
+        logger.warning(
+            "Plan grant committed; Redis mirror sync failed: tenant=%s balance=%s¢",
+            user_id,
+            new_balance,
+        )
     logger.info("Plan grant: tenant=%s plan=%s +%s¢ (by=%s)", user_id, plan, total_add, created_by)
     return {
-        "plan": user.plan,
-        "balance_cents": user.ai_credit_cents,
-        "balance_dollars": round(user.ai_credit_cents / 100, 2),
+        "plan": plan,
+        "balance_cents": new_balance,
+        "balance_dollars": round(new_balance / 100, 2),
         "currency": "usd",
     }

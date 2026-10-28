@@ -98,3 +98,46 @@
 - Reviews worker serial poller — concurrent polling with semaphore
 - Redis re-arm prober — fail-closed paths recover after outage
 - OPS-1 backups — pg_dump → S3 backup script + restore rehearsal script written
+- TTS capability consolidated behind one interface
+- LLM gateway — one metered, budgeted door to every provider
+- OpenRouter provider added to admin
+- Streamed LLM calls budgeted and metered
+- LLM chat double-charge removed
+- TTS admin voice routes extracted behind admin auth
+- TTS `/convert` durable job with private audio storage + playback
+- TTS speed via one-pass ffmpeg tempo chain
+- TTS job failure contract: terminal no-audio, retryable storage errors
+- Job lane map moved off the enum + `lane_for` call fixed
+- Admin LLM key status reads the DB, not a stale worker overlay
+- Provider key refresh across uvicorn workers (15s TTL)
+- RAG search moved to pgvector: `embedding_vector vector(1024)` + HNSW index,
+  GIN `to_tsvector('simple', content)` index, prefix window removed (the whole
+  databank is searched now), one canonical embedding width, model tag so
+  foreign vectors are excluded, Arabic-safe keyword config
+- Fixed the embedding write path: a Python list was written into a TEXT column,
+  so any database with a working embedding backend failed the chunk insert
+- asyncpg taught the pgvector `vector` type; CI postgres now runs the pgvector
+  image and `tests/test_rag_pgvector.py` exercises the real ANN path
+- `scripts/backfill_embeddings.py` re-embeds existing chunks (dry-run default)
+- Embedding providers configured apart from the chat providers: own key, own
+  model, one active provider (`embedding_provider_configs` + Admin → Embeddings)
+- Admin → Embeddings page: provider cards, model picker, key store, "make
+  active", live test that reports the width the API answered with
+- STT `/transcribe` now queues a durable job on the bulk lane — the request
+  used to save a pending STTJob row that nothing ever ran
+- Google channel health: a revoked token (401), a removed location (404) or a
+  lost account (403) marks the channel `expired` once and notifies the
+  merchant; the poll loop stops selecting expired channels
+- Kafka publish dispatch is bounded (5s) — `send_and_wait` had no timeout and
+  could hold the HTTP request (and an API worker) open forever; the job stays
+  queued in Postgres and the lane runner picks it up
+- Review enrichment: a heuristic fallback is stored as `failed`, not `done`,
+  so the next discovery re-runs the model instead of keeping a keyword guess
+  as the final answer; the LLM call itself retries once
+- Job system Phase-0 gaps closed: terminal job rows are swept (the jobs table
+  grew forever), jobs carry a hard deadline (a backlog cannot become a burst
+  of late external calls), the outbox has a nullable UNIQUE dedupe key, and
+  every lane writes a heartbeat the reaper reports when it goes quiet
+- Readiness report updated: CI gating marked done (103 test files, PRs
+  gated), job system marked phases 0–4 built, infra items moved to
+  `docs/tracking/production-later.md`

@@ -24,6 +24,7 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import case, select
@@ -62,6 +63,54 @@ def _normalize_code(raw: str | None) -> Optional[str]:
         return None
     token = str(raw).strip().upper().replace(" ", "").replace("-", "")
     return token if _CODE_RE.match(token) else None
+
+
+def handoff_code_expired(
+    expires_at: datetime | None, *, now: datetime | None = None
+) -> bool:
+    """Has this code's lifetime run out?
+
+    NULL means "no expiry": rows minted before the TTL column existed keep
+    working, and a caller that sets a code directly in a test is not silently
+    treated as expired. SQLite hands back naive datetimes even for
+    DateTime(timezone=True), so normalise before comparing rather than letting
+    a TypeError turn a lookup into a 500.
+    """
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at <= (now or datetime.now(timezone.utc))
+
+
+# The wa.me prefill is "#K7M2QX", not the bare six characters. The marker is
+# load-bearing: "THANKS" and "PLEASE" are both six letters from the code
+# alphabet, so a bare-code match would attach a customer to whichever ticket
+# happened to own that word. At a million tenants that stops being theoretical.
+# A customer who types the bare code falls through to the ordinary new-enquiry
+# flow; the dashboard and the link both show the marked form, so that path is
+# for someone retyping from memory, not the normal journey.
+_CODE_TOKEN_RE = re.compile(rf"^#\s*([A-HJ-NP-Z2-9]{{{CODE_LENGTH}}})$")
+
+
+def extract_handoff_codes(text: str | None) -> list[str]:
+    """The handoff code in an inbound message, if the message is just a code.
+
+    The wa.me link prefills exactly ``#CODE``, so the normal path is a message
+    that contains nothing else. The leading ``#`` is required here even though
+    ``_normalize_code`` accepts a bare code: callers that already know they
+    have a code (the dashboard, tests, future channel adapters) can pass it
+    explicitly, but text arriving from a stranger must prove it is a code and
+    not an ordinary word. Anything else falls through to the ticket-number
+    rung or the ordinary new-enquiry flow.
+    """
+    if not text:
+        return []
+    # Case-fold because a customer may type the code by hand; trailing
+    # sentence punctuation is what a phone keyboard adds, not a different code.
+    token = str(text).strip().upper().rstrip(".,!?")
+    m = _CODE_TOKEN_RE.match(token)
+    return [m.group(1)] if m else []
 
 
 def format_ticket(number: int) -> str:
@@ -322,10 +371,18 @@ async def resolve_inbound(
 
     Returns None when nothing resolves. The caller then treats the message as
     an ordinary new enquiry -- absence of a match must never block a reply.
+
+    `handoff_codes` is for callers that already parsed the message (the tests,
+    and any future channel adapter). Production passes only `text`, so the
+    marked-code extraction below is what makes the wa.me prefill actually
+    resolve -- without it the customer taps the link, sends the code, and is
+    re-interviewed from zero, which was the bug this rung existed to prevent.
     """
     from ..channels.models import ReviewIssue
 
-    for code in handoff_codes or []:
+    candidates = handoff_codes if handoff_codes is not None else extract_handoff_codes(text)
+    now = datetime.now(timezone.utc)
+    for code in candidates:
         canon = _normalize_code(code)
         if canon is None:
             continue
@@ -337,8 +394,16 @@ async def resolve_inbound(
                 )
             )
         ).scalar_one_or_none()
-        if row is not None:
-            return InboundMatch(issue=row, matched_by="handoff_code", raw=code)
+        if row is None:
+            continue
+        if handoff_code_expired(row.handoff_code_expires_at, now=now):
+            logger.info(
+                "inbound quoted expired handoff code %s (tenant=%s) -- "
+                "falling through to ticket number",
+                canon, tenant_id,
+            )
+            continue
+        return InboundMatch(issue=row, matched_by="handoff_code", raw=code)
 
     refs = extract_ticket_refs(text)
     if not refs:

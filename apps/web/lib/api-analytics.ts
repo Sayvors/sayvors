@@ -222,6 +222,322 @@ export async function fetchOverview(
   return apiFetch(`/api/v1/analytics/overview?${params.toString()}`);
 }
 
+export interface PulseSource {
+  platform: string;
+  count: number;
+}
+
+export interface ReputationPulse {
+  avg_rating: number;
+  rating_delta: number | null;
+  new_reviews: number;
+  new_reviews_delta_pct: number | null;
+  response_rate: number;
+  awaiting_reply: number;
+  oldest_wait_days: number | null;
+  sources: PulseSource[];
+  last_synced_at: string | null;
+}
+
+export interface WaitingPulse {
+  unanswered_texts: number;
+  missed_calls: number | null;
+  missed_calls_available: boolean;
+  median_first_response_seconds: number | null;
+  waiting_over_1h: number;
+  oldest_unanswered_seconds: number | null;
+  business_hours: Record<string, unknown> | null;
+  as_of: string | null;
+}
+
+export interface LocationPulse {
+  channel_id: string;
+  name: string;
+  platform: string;
+  new_reviews: number;
+  avg_rating: number | null;
+  response_rate: number;
+  unanswered: number;
+  below_threshold: boolean;
+}
+
+export interface OneThingPulse {
+  kind: string;
+  category: string;
+  mentions: number;
+  trend_pct: number | null;
+  status: string | null;
+  staff_named: number;
+  serious: number;
+  top_terms: { name: string; mentions: number }[];
+  period_days: number;
+}
+
+export interface AttentionItem {
+  kind: string;
+  severity: string;
+  title: string;
+  detail: string | null;
+  href: string | null;
+}
+
+export interface PulseResponse {
+  as_of: string;
+  period_days: number;
+  reputation: ReputationPulse;
+  waiting: WaitingPulse;
+  // Optional so a frontend deploy can land before the API restart that adds
+  // them; the cards default to an empty list / null rather than crashing.
+  locations?: LocationPulse[];
+  one_thing?: OneThingPulse | null;
+  attention?: AttentionItem[];
+}
+
+export async function fetchPulse(
+  days: number,
+  channelId?: string | null
+): Promise<PulseResponse> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (channelId) params.set("channel_id", channelId);
+  return apiFetch(`/api/v1/analytics/pulse?${params.toString()}`);
+}
+
+export interface ThemeCard {
+  name: string;
+  mentions: number;
+  negative: number;
+  negative_pct: number;
+  trend_pct: number | null;
+  top_location: string | null;
+  quote: string | null;
+}
+
+export interface WhatChanged {
+  low_reviews: number;
+  prior_low_reviews: number;
+  theme: string | null;
+  location: string | null;
+  example: string | null;
+  period_days: number;
+}
+
+export interface LocationSentiment {
+  channel_id: string;
+  name: string;
+  avg_rating: number | null;
+  rating_trend: number | null;
+  top_negative_theme: string | null;
+  response_rate: number;
+  unanswered: number;
+}
+
+export interface InsightsSummaryBullet {
+  text: string;
+  n: number;
+}
+
+export interface InsightsSummary {
+  bullets: InsightsSummaryBullet[];
+  review_count: number;
+  confidence: string;
+  source: string;
+  analyzed_at: string;
+}
+
+export interface ActionCard {
+  id: string;
+  subject: string;
+  title: string;
+  detail: string;
+  status: string;
+  negative_count: number;
+  review_count: number;
+}
+
+export interface InsightsCards {
+  days: number;
+  top_themes: ThemeCard[];
+  what_changed: WhatChanged;
+  sentiment_by_location: LocationSentiment[];
+  summary: InsightsSummary;
+  action_plan: ActionCard[];
+}
+
+export async function fetchInsightsCards(
+  days: number,
+  channelId?: string | null
+): Promise<InsightsCards> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (channelId) params.set("channel_id", channelId);
+  return apiFetch(`/api/v1/analytics/insights-cards?${params.toString()}`);
+}
+
+export interface FunnelChannel {
+  channel: string;
+  requests: number;
+}
+
+export interface FunnelTrigger {
+  trigger: string;
+  requests: number;
+}
+
+export interface ReviewFunnel {
+  requests_sent: number;
+  delivered: number;
+  clicked: number;
+  failed: number;
+  reviews: number;
+  reviews_via_request: number;
+  conversion_rate: number | null;
+  avg_rating: number | null;
+  delivery_tracked: boolean;
+  click_tracked: boolean;
+  attribution_window_days: number;
+  by_channel: FunnelChannel[];
+  by_trigger: FunnelTrigger[];
+}
+
+export interface GrowthContacts {
+  new_contacts: number;
+  prior_contacts: number;
+  delta_pct: number | null;
+  by_platform: { platform: string; contacts: number }[];
+  attribution: string;
+}
+
+export interface GrowthAction {
+  kind: string;
+  title: string;
+  detail: string;
+  expected: string | null;
+  href: string | null;
+}
+
+export interface GrowthCards {
+  days: number;
+  funnel: ReviewFunnel;
+  contacts: GrowthContacts;
+  retention: { available: boolean; reason: string | null };
+  actions: GrowthAction[];
+}
+
+export async function fetchGrowthCards(
+  days: number,
+  channelId?: string | null
+): Promise<GrowthCards> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (channelId) params.set("channel_id", channelId);
+  return apiFetch(`/api/v1/analytics/growth-cards?${params.toString()}`);
+}
+
+export interface ReviewRequestResult {
+  id: string;
+  status: string;
+  sent_at: string;
+  channel: string;
+  sent_via: string | null;
+  link: string | null;
+  error: string | null;
+}
+
+export async function recordReviewRequest(input: {
+  channel_id?: string | null;
+  contact?: string | null;
+  contact_name?: string | null;
+  channel?: "whatsapp" | "sms" | "email" | "in_person";
+  trigger?: "manual" | "qr" | "after_visit" | "campaign";
+  deliver?: boolean;
+}): Promise<ReviewRequestResult> {
+  return apiFetch("/api/v1/analytics/review-requests", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function bulkReviewRequests(input: {
+  channel_id?: string | null;
+  channel: "email" | "whatsapp";
+  contacts: { email?: string | null; phone?: string | null; name?: string | null }[];
+  mode: "now" | "batched";
+  batch_size: number;
+  interval_minutes: number;
+  trigger?: string;
+  subject?: string | null;
+  body?: string | null;
+}): Promise<{
+  queued: number;
+  sent_now: number;
+  scheduled: number;
+  skipped: number;
+  skipped_quota: number;
+  quota: { used: number; max: number | null; remaining: number | null; requested: number } | null;
+}> {
+  return apiFetch("/api/v1/analytics/review-requests/bulk", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function generateReviewTemplate(input: {
+  channel: "email" | "whatsapp";
+  tone?: string;
+}): Promise<{ subject: string; body: string; source: string }> {
+  return apiFetch("/api/v1/analytics/review-requests/template", {
+    method: "POST",
+    body: JSON.stringify({ ...input, tone: input.tone ?? "friendly" }),
+  });
+}
+
+export interface ReviewRequestItem {
+  id: string;
+  contact: string | null;
+  contact_name: string | null;
+  channel: string;
+  trigger: string;
+  status: string;
+  sent_via: string | null;
+  sent_at: string;
+  clicked_at: string | null;
+  reviewed_at: string | null;
+  error: string | null;
+  link: string | null;
+}
+
+export interface ReviewRequestList {
+  items: ReviewRequestItem[];
+  total: number;
+  counts: Record<string, number>;
+}
+
+export async function fetchReviewRequests(params: {
+  status?: string;
+  channel?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<ReviewRequestList> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.channel) qs.set("channel", params.channel);
+  if (params.q) qs.set("q", params.q);
+  qs.set("limit", String(params.limit ?? 50));
+  qs.set("offset", String(params.offset ?? 0));
+  return apiFetch(`/api/v1/analytics/review-requests?${qs.toString()}`);
+}
+
+export async function retryReviewRequest(id: string): Promise<{ retried: number }> {
+  return apiFetch(`/api/v1/analytics/review-requests/${encodeURIComponent(id)}/retry`, { method: "POST" });
+}
+
+export async function retryFailedReviewRequests(): Promise<{ retried: number }> {
+  return apiFetch("/api/v1/analytics/review-requests/retry-failed", { method: "POST" });
+}
+
+export async function cancelReviewRequest(id: string): Promise<{ retried: number }> {
+  return apiFetch(`/api/v1/analytics/review-requests/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+}
+
 export async function fetchTimeseries(
   days: number,
   channelId?: string | null
@@ -274,11 +590,29 @@ export interface TopicStat {
 
 export interface ProblemStat {
   name: string;
+  category: string;
   mentions: number;
   severity: string;
   trend_pct: number | null;
   status: string;
   impact_score: number;
+  staff_named: number;
+  serious: number;
+}
+
+export interface ComplaintTerm {
+  name: string;
+  mentions: number;
+}
+
+export interface ComplaintArea {
+  category: string;
+  mentions: number;
+  staff_named: number;
+  serious: number;
+  trend_pct: number | null;
+  status: string;
+  top_terms: ComplaintTerm[];
 }
 
 export interface ProductStat {
@@ -302,6 +636,7 @@ export interface TopicsResponse {
 export interface ProblemsResponse {
   days: number;
   problems: ProblemStat[];
+  by_area: ComplaintArea[];
 }
 
 export interface ProductsResponse {
@@ -395,6 +730,8 @@ export interface MessagingChannelRow {
   label: string;
   messages_in: number;
   messages_out: number;
+  ai_handled_out: number;
+  human_handled_out: number;
   messages_in_prev: number;
   conversations: number;
   conversations_prev: number;
@@ -408,6 +745,10 @@ export interface MessagingChannelRow {
 export interface MessagingTotals {
   messages_in: number;
   messages_out: number;
+  ai_handled_out: number;
+  ai_handled_out_prev: number;
+  human_handled_out: number;
+  human_handled_out_prev: number;
   messages_in_prev: number;
   messages_out_prev: number;
   conversations: number;
@@ -428,6 +769,7 @@ export interface MessagingOverview {
   goal: { response_rate: number; median_seconds: number };
   totals: MessagingTotals;
   channels: MessagingChannelRow[];
+  by_hour_in: number[];
 }
 
 export const fetchMessagingOverview = (
@@ -435,6 +777,47 @@ export const fetchMessagingOverview = (
   channelId?: string | null
 ): Promise<MessagingOverview> =>
   apiFetch(`/api/v1/analytics/messaging/overview?${qs(days, channelId)}`);
+
+export type MessagingGrowthResponse = {
+  days: number;
+  customer_growth: { week: string; new_contacts: number; messages_in: number; messages_out: number; conversations: number }[];
+  total_new_contacts: number;
+  total_messages_in: number;
+  total_messages_out: number;
+  follower_growth: {
+    first: number;
+    last: number;
+    net: number;
+    rate_pct: number | null;
+    snapshots: { date: string; count: number }[];
+    collecting: boolean;
+  } | null;
+};
+
+export const fetchMessagingGrowth = (
+  days: number,
+  channelId?: string | null
+): Promise<MessagingGrowthResponse> =>
+  apiFetch(`/api/v1/analytics/messaging/growth?${qs(days, channelId)}`);
+
+export const fetchConversationInsights = (): Promise<{
+  insights: Record<string, unknown>;
+  message_count: number;
+  window_start: string | null;
+  window_end: string | null;
+  computed_at: string | null;
+}> => apiFetch("/api/v1/analytics/conversations/insights");
+
+export const fetchMarketBenchmarks = (metric?: string): Promise<{
+  date: string;
+  scope_market: string;
+  scope_network: string;
+  metric: string;
+  median: number | null;
+  p25: number | null;
+  p75: number | null;
+  business_count: number;
+}[]> => apiFetch(`/api/v1/analytics/market-benchmarks${metric ? `?metric=${encodeURIComponent(metric)}` : ""}`);
 
 /* ── Benchmark pillar ─────────────────────────────────────────────── */
 
@@ -488,6 +871,44 @@ export interface BenchmarkResponse {
   } | null;
   market?: MarketEntry[];
   my_rank?: number | null;
+  recency?: {
+    recent_90: number;
+    total: number;
+    my_pct: number | null;
+    peer_median_pct: number | null;
+    rank: number | null;
+    cohort_count: number;
+  } | null;
+  gap_to_target?: {
+    target: number;
+    current_rating: number;
+    current_reviews: number;
+    five_star_needed: number;
+    pace_per_month: number;
+    months: number | null;
+    math: string | null;
+  } | null;
+  external?: {
+    configured: boolean;
+    available: boolean;
+    count: number;
+    source?: string;
+    radius_m?: number | null;
+    category?: string | null;
+    fetched_at?: string | null;
+    stale?: boolean;
+    median_rating?: number | null;
+    median_reviews?: number | null;
+    peers?: { place_id: string; name: string; category: string | null; rating: number | null; review_count: number }[];
+  } | null;
+}
+
+export async function refreshExternalBenchmark(): Promise<{
+  configured: boolean;
+  inserted: number;
+  reason: string | null;
+}> {
+  return apiFetch("/api/v1/analytics/benchmark/external/refresh", { method: "POST" });
 }
 
 export interface MarketEntry {

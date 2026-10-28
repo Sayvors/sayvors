@@ -30,6 +30,7 @@ from app.modules.users.models import User
 from app.modules.channels.models import AutoReplyConfig, Channel
 from app.modules.analytics.models import LocationDailyMetric, ReviewInsight
 from app.modules.outbox.models import EventOutbox
+from app.modules.admin import models as admin_models  # noqa: F401
 
 # In-memory SQLite shared across sessions/threads (StaticPool) so the test
 # client and the fixtures read the same rows.
@@ -40,6 +41,22 @@ TEST_ENGINE = create_async_engine(
     echo=False,
 )
 TEST_SESSION = async_sessionmaker(TEST_ENGINE, class_=AsyncSession, expire_on_commit=False)
+
+
+@pytest.fixture(autouse=True)
+def _test_billing_sessions(monkeypatch):
+    """Point background billing/metering writes at the in-memory test DB.
+
+    Both modules own their own session factory because they run outside the
+    request session (fire-and-forget usage, wallet locks). Without this every
+    test would write usage events to the dev Postgres database.
+    """
+    from app.modules.billing import entitlements, ledger
+    from app.modules.llm import usage
+
+    monkeypatch.setattr(entitlements, "_session_factory", TEST_SESSION, raising=False)
+    monkeypatch.setattr(ledger, "_session_factory", TEST_SESSION, raising=False)
+    monkeypatch.setattr(usage, "_session_factory", TEST_SESSION, raising=False)
 
 
 @asynccontextmanager
@@ -77,6 +94,28 @@ _disable_lifespan(fastapi_app)
 async def engine():
     async with TEST_ENGINE.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Seed the launch plans so entitlements lookups (which fall back to the
+    # free-trial plan when a tenant has no subscription) resolve in tests,
+    # mirroring the migration seed in production.
+    async with TEST_SESSION() as session:
+        from app.modules.billing.models import Plan
+
+        session.add(
+            Plan(
+                id="test-plan-free-trial",
+                slug="free-trial",
+                name="Free Trial",
+                description="test seed",
+                price_cents=0,
+                included_credit_cents=5000,
+                max_channels=None,
+                max_messages_per_month=1000,
+                features={"ai_replies": True, "posts": True, "media": True, "reviews": True},
+                is_active=True,
+                sort_order=0,
+            )
+        )
+        await session.commit()
     yield
     async with TEST_ENGINE.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

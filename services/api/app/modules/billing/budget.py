@@ -1,32 +1,23 @@
-"""AI credit budget: pre-authorize + settle per LLM call (D1 enforcement).
+"""AI credit pricing plus the Redis mirror for the durable wallet.
 
-How it works
+PostgreSQL is the source of truth: ``users.ai_credit_cents`` is the available
+balance and ``billing_events`` is the ledger. The reserve/settle implementation
+lives in :mod:`billing.ledger`; the functions here keep the historical import
+surface and own the best-effort Redis cache.
+
+Redis policy
 ------------
-Every LLM completion spends USD cents from the tenant's AI credit balance:
-
-1. BEFORE the provider is called, a flat ``RESERVE_CENTS`` pre-authorization
-   is atomically decremented from ``ai_balance:{tenant}`` in Redis. If the
-   balance would go negative the reservation is refunded and
-   :class:`BudgetExhausted` is raised — the provider is never called, so an
-   empty wallet cannot burn money.
-2. AFTER the call, the real cost (actual tokens × :data:`TOKEN_PRICES`) is
-   computed and the difference (reserve − actual) is credited back.
-
-The live balance lives in Redis (atomic, no DB session needed inside the
-provider hot path). The DB columns (``users.ai_credit_cents`` + the
-``billing_events`` ledger) are the top-up source of truth — grants sync the
-Redis key via :func:`sync_balance`.
-
-Redis-down policy: FAIL OPEN with a loud log. Redis is internal
-infrastructure the tenant cannot take down themselves; refusing all AI
-during a Redis blip would be an availability outage, while the spend is
-still recorded afterwards in ``llm_usage_events`` for reconciliation.
-
-Free plan: no grant → balance 0 → every gated call raises 402 immediately.
-System calls pass ``tenant_id=None`` and are never gated.
+The cache is written only after a DB commit. If Redis is down, reserve/settle
+still work and the DB stays correct. The cache is never used to decide a
+charge; it exists for dashboard compatibility and cheap reads. Keys have no
+TTL (the previous 24h TTL was the original wallet-loss bug).
 """
 import logging
 import math
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .ledger import Reservation, SettleResult
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +25,6 @@ logger = logging.getLogger(__name__)
 # reply (~3k prompt + ~500 completion tokens on a budget model); the
 # difference to the real cost is settled afterwards.
 RESERVE_CENTS = 5
-
-# TTL for live balance keys in Redis (24 hours). DB is source of truth;
-# Redis is a live cache that re-syncs from DB on expiry.
-BUDGET_TTL_SECONDS = 86_400
 
 # Credits bundled with each plan on grant (cents). Pro = $20 of AI budget.
 PLAN_INCLUDED_CENTS = {"free": 0, "pro": 2000}
@@ -48,6 +35,10 @@ PLAN_INCLUDED_CENTS = {"free": 0, "pro": 2000}
 TOKEN_PRICES: dict[str, tuple[float, float]] = {
     "groq": (15.0, 60.0),
     "openai": (150.0, 600.0),
+    # OpenRouter resells every family at its own price. Use the middle
+    # OpenAI-compatible rate rather than the zero "unknown" fallback, so a
+    # cheap model is slightly overcharged and an expensive one is not free.
+    "openrouter": (150.0, 600.0),
     "anthropic": (300.0, 1500.0),
     "google": (30.0, 120.0),
     "gemini": (30.0, 120.0),
@@ -71,6 +62,19 @@ class BudgetExhausted(Exception):
         )
 
 
+class BudgetUnavailable(Exception):
+    """The durable wallet could not be read/locked. Never call the provider."""
+
+    status_code = 503
+
+    def __init__(self, tenant_id: str, reason: str | None = None):
+        self.tenant_id = tenant_id
+        detail = f" ({reason})" if reason else ""
+        super().__init__(
+            "The AI credit wallet is temporarily unavailable. Try again shortly." + detail
+        )
+
+
 def _key(tenant_id: str) -> str:
     return f"ai_balance:{tenant_id}"
 
@@ -89,65 +93,158 @@ def cost_cents(model_id: str | None, prompt_tokens: int, completion_tokens: int)
     return max(0, math.ceil(total))
 
 
-async def get_balance(tenant_id: str) -> int | None:
-    """Live Redis balance, or None when unknown (fail-open upstream)."""
+async def get_cached_balance(tenant_id: str) -> int | None:
+    """Raw Redis mirror, or None when the key is missing/unavailable.
+
+    Never decide a charge from this value. The reconciler uses it only to
+    report and repair drift.
+    """
     try:
         from ..redis.client import get_redis
 
         redis = await get_redis()
         raw = await redis.get(_key(tenant_id))
-        return int(raw) if raw is not None else None
+        if raw is None:
+            return None
+        try:
+            await redis.persist(_key(tenant_id))
+        except Exception as e:  # a failed PERSIST must not hide a valid value
+            logger.warning("AI budget PERSIST failed for %s: %s", tenant_id, e)
+        return int(raw)
     except Exception as e:
-        logger.error("AI budget balance check failed (fail-open): %s", e)
+        logger.warning("AI budget cache read failed for %s: %s", tenant_id, e)
         return None
 
 
-async def sync_balance(tenant_id: str, cents: int) -> None:
-    """Overwrite the live balance (called on every grant/topup/adjust)."""
+async def sync_balance(tenant_id: str, cents: int) -> bool:
+    """Overwrite the Redis mirror without a TTL.
+
+    Returns True when Redis accepted the write. DB state is already committed;
+    a False result is a cache warning, never a billing failure.
+    """
     try:
         from ..redis.client import get_redis
 
         redis = await get_redis()
-        await redis.setex(_key(tenant_id), BUDGET_TTL_SECONDS, int(cents))
+        # Keep the mirror byte-for-byte equal to the DB wallet, including a
+        # negative overage debt. Clamping here would make the reconciler see
+        # permanent drift after a real cost exceeded its hold.
+        await redis.set(_key(tenant_id), int(cents))
+        return True
     except Exception as e:
-        logger.error("AI budget sync failed for %s (DB remains source of truth): %s",
-                     tenant_id, e)
+        logger.warning(
+            "AI budget cache sync failed for %s (DB remains authoritative): %s",
+            tenant_id,
+            e,
+        )
+        return False
 
 
-async def reserve(tenant_id: str, cents: int = RESERVE_CENTS) -> int | None:
-    """Atomically pre-authorize ``cents``. Returns the reserved amount on
-    success, None when Redis is down (fail-open), or raises BudgetExhausted."""
+async def seed_balance(tenant_id: str, cents: int) -> bool:
+    """Set the mirror only when it is missing (legacy/cold-start helper)."""
     try:
         from ..redis.client import get_redis
 
         redis = await get_redis()
-        new_balance = await redis.decrby(_key(tenant_id), int(cents))
-        # Ensure the key always carries a TTL, even if reserve runs before
-        # sync_balance ever created it with setex.
-        await redis.expire(_key(tenant_id), BUDGET_TTL_SECONDS)
-        if new_balance < 0:
-            await redis.incrby(_key(tenant_id), int(cents))  # refund
-            await redis.expire(_key(tenant_id), BUDGET_TTL_SECONDS)
-            raise BudgetExhausted(tenant_id)
-        return int(cents)
-    except BudgetExhausted:
-        raise
+        key = _key(tenant_id)
+        wrote = await redis.set(key, int(cents), nx=True)
+        if wrote:
+            return True
+        return bool(await redis.exists(key))
     except Exception as e:
-        logger.error("AI budget reserve failed (fail-open, spend still metered): %s", e)
-        return None
+        logger.warning("AI budget cache seed failed for %s: %s", tenant_id, e)
+        return False
 
 
-async def settle(tenant_id: str, reserved_cents: int, actual_cents: int) -> None:
-    """Credit back (reserve − actual). Never raises — metering must not
-    break generation."""
+async def get_balance(tenant_id: str) -> int | None:
+    """Durable available balance from PostgreSQL.
+
+    Missing tenant returns 0 so a pre-flight check denies instead of treating
+    the caller as funded. A DB failure returns the Redis mirror when possible
+    (the caller's reserve still fails closed); otherwise None.
+    """
     try:
-        delta = int(reserved_cents) - int(actual_cents)
-        if delta == 0:
-            return
-        from ..redis.client import get_redis
+        from sqlalchemy import select
 
-        redis = await get_redis()
-        await redis.incrby(_key(tenant_id), delta)
-        await redis.expire(_key(tenant_id), BUDGET_TTL_SECONDS)
+        from ..users.models import User
+        from .ledger import (
+            OPENING_KEY_PREFIX,
+            _get_session_factory,
+            ensure_ledger_initialized,
+        )
+        from .models import BillingEvent
+
+        async with _get_session_factory()() as db:
+            user = (
+                await db.execute(select(User).where(User.id == tenant_id))
+            ).scalar_one_or_none()
+            if user is None:
+                return 0
+            opening = (
+                await db.execute(
+                    select(BillingEvent.id).where(
+                        BillingEvent.tenant_id == tenant_id,
+                        BillingEvent.idempotency_key == (
+                            f"{OPENING_KEY_PREFIX}{tenant_id}"
+                        ),
+                    )
+                )
+            ).scalar_one_or_none()
+            if opening is not None:
+                return int(user.ai_credit_cents or 0)
+            balance, created = await ensure_ledger_initialized(
+                tenant_id, db, allow_unreliable=True, _return_created=True
+            )
+            if created:
+                await db.commit()
+            else:
+                await db.rollback()
+        return int(balance)
     except Exception as e:
-        logger.warning("AI budget settle failed (reconcile from usage events): %s", e)
+        logger.warning(
+            "AI budget DB read failed for %s; falling back to cache: %s", tenant_id, e
+        )
+        return await get_cached_balance(tenant_id)
+
+
+# ── Compatibility surface (implementation in billing.ledger) ─────────────
+
+
+async def reserve(
+    tenant_id: str,
+    cents: int = RESERVE_CENTS,
+    *,
+    model_id: str | None = None,
+    purpose: str | None = None,
+    idempotency_key: str | None = None,
+) -> "Reservation":
+    """Pre-authorize credit against the durable wallet. See ledger.reserve."""
+    from .ledger import reserve as _reserve
+
+    return await _reserve(
+        tenant_id,
+        cents,
+        model_id=model_id,
+        purpose=purpose,
+        idempotency_key=idempotency_key,
+    )
+
+
+async def settle(
+    reservation: "Reservation | str",
+    actual_cents: int,
+    *,
+    tenant_id: str | None = None,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> "SettleResult | None":
+    """Finalize a hold exactly once. See ledger.settle."""
+    from .ledger import settle as _settle
+
+    return await _settle(
+        reservation,
+        actual_cents,
+        tenant_id=tenant_id,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )

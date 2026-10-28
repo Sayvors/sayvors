@@ -2,7 +2,10 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 import { fetchLeads, updateLead, type Lead, type LeadStage } from "@/lib/api-leads";
 
@@ -277,44 +280,46 @@ function LeadCard({
 }
 
 export default function LeadsBoard({ platform }: { platform?: string }) {
-  const [leads, setLeads] = useState<Lead[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const [priorityFirst, setPriorityFirst] = useState(true);
   const [stageFilter, setStageFilter] = useState<"all" | LeadStage>("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "important">("all");
-  const [priorityFirst, setPriorityFirst] = useState(true);
   const [channelFilter, setChannelFilter] = useState<string>("all");
   const [age, setAge] = useState<AgeKey>("any");
   const [busyId, setBusyId] = useState<string | null>(null);
-  // Bumping this re-runs the fetch — the honest reset after a failed patch.
-  const [reload, setReload] = useState(0);
   // Captured per fetch (Date.now is impure — hooks must not call it during
   // render), so age filters and countdowns share one consistent clock read.
-  const [now, setNow] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchLeads({ platform, limit: 200, priorityFirst }).then(
-      (data) => {
-        if (!cancelled) {
-          setLeads(data.leads ?? []);
-          setNow(Date.now());
-          setError(null);
-        }
-      },
-      (e: unknown) => {
-        if (!cancelled) {
-          setLeads([]);
-          setError(e instanceof Error ? e.message : "Could not load leads.");
-        }
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [platform, reload, priorityFirst]);
+  const leadsQuery = useQuery({
+    queryKey: queryKeys.leads.list(platform, priorityFirst),
+    queryFn: async () => {
+      const data = await fetchLeads({ platform, limit: 200, priorityFirst });
+      return { leads: data.leads ?? [], now: Date.now() };
+    },
+    staleTime: 30 * 1000,
+  });
+  const leads = leadsQuery.data?.leads ?? null;
+  const now = leadsQuery.data?.now ?? 0;
+  const error = leadsQuery.isError
+    ? leadsQuery.error instanceof Error
+      ? leadsQuery.error.message
+      : "Could not load leads."
+    : null;
 
-  // Channel + age narrow the base set; stage chips count against it, so
-  // the numbers always describe what the filters can actually show.
+  const move = async (lead: Lead, stage: LeadStage) => {
+    if (stage === lead.stage || busyId) return;
+    setBusyId(lead.id);
+    try {
+      const updated = await updateLead(lead.id, { stage });
+      queryClient.setQueryData(queryKeys.leads.list(platform, priorityFirst), (old: { leads: Lead[]; now: number } | undefined) =>
+        old ? { ...old, leads: (old.leads ?? []).map((r) => (r.id === updated.id ? updated : r)) } : old,
+      );
+    } catch {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.leads.all() });
+    } finally {
+      setBusyId(null);
+    }
+  };
   const base = useMemo(() => {
     let rows = leads ?? [];
     if (!platform && channelFilter !== "all") {
@@ -353,19 +358,28 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
     return c;
   }, [leads, age, now]);
 
-  const move = async (lead: Lead, stage: LeadStage) => {
-    if (stage === lead.stage || busyId) return;
-    setBusyId(lead.id);
-    try {
-      const updated = await updateLead(lead.id, { stage });
-      setLeads((rows) => rows?.map((r) => (r.id === updated.id ? updated : r)) ?? rows);
-    } catch {
-      // The optimistic truth failed — refetch shows what the DB really has.
-      setReload((n) => n + 1);
-    } finally {
-      setBusyId(null);
-    }
-  };
+  // Virtualization hooks must run unconditionally (before any early return).
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [cols, setCols] = useState(3);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const update = () => {
+      const w = el.clientWidth;
+      setCols(w >= 1024 ? 3 : w >= 640 ? 2 : 1);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const rowCount = Math.ceil(base.length / cols);
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => gridRef.current,
+    estimateSize: () => 260,
+    overscan: 2,
+  });
 
   if (error) {
     return (
@@ -374,9 +388,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
         <button
           type="button"
           onClick={() => {
-            setLeads(null);
-            setError(null);
-            setReload((n) => n + 1);
+            void queryClient.invalidateQueries({ queryKey: queryKeys.leads.all() });
           }}
           className={`ui-btn mt-3 block rounded-lg bg-[var(--ui-surface)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-ink)] ${FOCUS}`}
         >
@@ -403,6 +415,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
     return rank(a) - rank(b) || +new Date(b.updated_at) - +new Date(a.updated_at);
   });
   const visible = rows;
+
 
   return (
     <>
@@ -529,11 +542,30 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
             : "No leads in this view."}
         </p>
       ) : (
-        <ul className="mt-3 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-          {visible.map((lead) => (
-            <LeadCard key={lead.id} lead={lead} busy={busyId === lead.id} onMove={move} />
-          ))}
-        </ul>
+        <div
+          ref={gridRef}
+          className="mt-3 max-h-[70vh] overflow-y-auto"
+        >
+          <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+            {rowVirtualizer.getVirtualItems().map((vi) => {
+              const start = vi.index * cols;
+              const rowItems = visible.slice(start, start + cols);
+              return (
+                <div
+                  key={vi.index}
+                  data-index={vi.index}
+                  ref={rowVirtualizer.measureElement}
+                  style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+                  className={`grid gap-3 ${cols === 3 ? "lg:grid-cols-3" : cols === 2 ? "lg:grid-cols-2" : "grid-cols-1"}`}
+                >
+                  {rowItems.map((lead) => (
+                    <LeadCard key={lead.id} lead={lead} busy={busyId === lead.id} onMove={move} />
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </>
   );

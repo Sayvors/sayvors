@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
+import { recordReviewRequest } from "@/lib/api-analytics";
 
 type ReviewChannel = "whatsapp" | "contacts" | "email";
 type PlatformTab = "all" | "whatsapp" | "instagram" | "facebook";
@@ -58,6 +60,11 @@ export default function AskForReview() {
   const [contactsLoading, setContactsLoading] = useState(true);
   const [contactSearch, setContactSearch] = useState("");
   const [whatsappSearch, setWhatsappSearch] = useState("");
+  // Server-side delivery panels (Resend for email, Twilio for SMS).
+  const [emailAddress, setEmailAddress] = useState("");
+  const [emailName, setEmailName] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailMsg, setEmailMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -215,11 +222,58 @@ export default function AskForReview() {
     });
   };
 
-  const handleWhatsAppSend = (number?: string) => {
+  const handleWhatsAppSend = async (number?: string) => {
     const cleaned = (number ?? phoneNumber).replace(/[^\d]/g, "");
     if (!cleaned) return;
-    const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(REVIEW_MESSAGE)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    // Open the window synchronously so the browser does not treat the later
+    // navigation as a popup. The recorded request carries the tracked review
+    // link, so a click on it is attributed back to this ask.
+    const win = window.open("about:blank", "_blank");
+    try {
+      const req = await recordReviewRequest({
+        channel: "whatsapp",
+        trigger: "manual",
+        contact: cleaned,
+      });
+      const text = req.link ? `${REVIEW_MESSAGE} ${req.link}` : REVIEW_MESSAGE;
+      const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`;
+      if (win) {
+        win.location.href = url;
+        win.opener = null;
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    } catch {
+      if (win) win.close();
+      // A failed record must never block the customer-facing action.
+      const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(REVIEW_MESSAGE)}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const sendEmailRequest = async () => {
+    if (!emailAddress.trim()) return;
+    setEmailBusy(true);
+    setEmailMsg(null);
+    try {
+      const res = await recordReviewRequest({
+        channel: "email",
+        contact: emailAddress.trim(),
+        contact_name: emailName.trim() || null,
+        deliver: true,
+      });
+      if (res.status === "failed") {
+        setEmailMsg(res.error ?? "Email could not be sent.");
+      } else {
+        setEmailMsg("Email request sent with a tracked review link.");
+        setEmailAddress("");
+        setEmailName("");
+      }
+    } catch (e) {
+      setEmailMsg(e instanceof Error ? e.message.slice(0, 160) : "Email could not be sent.");
+    } finally {
+      setEmailBusy(false);
+    }
   };
 
   const handleSendSelected = () => {
@@ -289,7 +343,7 @@ export default function AskForReview() {
               <span className={`flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg ${meta?.bg ?? "bg-ink/[0.06]"} ${meta?.color ?? "text-ink/50"}`}>
                 {contact.avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={contact.avatarUrl} alt="" className="h-7 w-7 object-cover" />
+                  <Image src={contact.avatarUrl} alt="" width={28} height={28} className="h-7 w-7 object-cover" />
                 ) : (
                   <span className="text-[10px] font-bold">
                     {contact.name[0]?.toUpperCase() ?? "?"}
@@ -416,6 +470,7 @@ export default function AskForReview() {
             <p className="text-[10px] text-ink/45">Send request</p>
           </div>
         </button>
+
       </div>
 
       {activeChannel === "whatsapp" && (
@@ -423,6 +478,10 @@ export default function AskForReview() {
           <p className="text-[12px] font-semibold text-ink">Send WhatsApp review request</p>
           <p className="mt-1 text-[11px] text-ink/50">
             Opens WhatsApp with a pre-filled message asking for a review.
+          </p>
+          <p className="mt-2 rounded-lg border border-amber-300/60 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            WhatsApp only allows free-form messages within 24 hours of the customer&apos;s last message.
+            Bulk WhatsApp sends outside that window are rejected by Meta and marked failed until an approved template is configured.
           </p>
 
           <div className="mt-3">
@@ -589,20 +648,34 @@ export default function AskForReview() {
         <div className="mt-4 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4">
           <p className="text-[12px] font-semibold text-ink">Send email review request</p>
           <p className="mt-1 text-[11px] text-ink/50">
-            Opens your email client with a pre-filled review request.
+            Sent through Resend with a tracked review link. Only the brand, last digits, and link are used.
           </p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input
               type="email"
+              value={emailAddress}
+              onChange={(e) => setEmailAddress(e.target.value)}
               placeholder="Customer email"
               className="input-field flex-1"
             />
-            <button className="rounded-lg bg-amber px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-amber/25 outline-none transition hover:bg-amber/90 focus-visible:ring-2 focus-visible:ring-amber/40 active:scale-[0.98] disabled:opacity-50">
-              Send
+            <input
+              value={emailName}
+              onChange={(e) => setEmailName(e.target.value)}
+              placeholder="Name (optional)"
+              className="input-field sm:w-40"
+            />
+            <button
+              onClick={() => void sendEmailRequest()}
+              disabled={emailBusy || !emailAddress.trim()}
+              className="rounded-lg bg-amber px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-amber/25 outline-none transition hover:bg-amber/90 focus-visible:ring-2 focus-visible:ring-amber/40 active:scale-[0.98] disabled:opacity-50"
+            >
+              {emailBusy ? "Sending…" : "Send"}
             </button>
           </div>
+          {emailMsg && <p className="mt-2 text-[11px] text-ink/60">{emailMsg}</p>}
         </div>
       )}
+
     </section>
   );
 }

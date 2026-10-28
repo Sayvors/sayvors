@@ -1,20 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query-keys";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api-rag";
 import { dedupeBusinesses } from "@/lib/channel-identity";
 import {
   fetchOverview,
   fetchTimeseries,
-  type Overview,
-  type TimeseriesPoint,
-  type ChannelOption,
 } from "@/lib/api-analytics";
-import { StatCard } from "@/components/analytics/StatCard";
 import MessagingSection from "@/components/analytics/MessagingSection";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
-import { ReviewInbox } from "@/components/analytics/ReviewInbox";
+import PulseCards from "@/components/analytics/PulseCards";
 import PresenceSection, {
   presenceFromProfile,
   type PresenceData,
@@ -33,133 +31,99 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 
 const RANGES = [7, 30, 90] as const;
 
-function fmtDuration(seconds: number | null, locale: string, labels: { minutes: string; hours: string; days: string }) {
-  if (seconds === null) return "—";
-  const number = (value: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
-  if (seconds < 3600) return labels.minutes.replace("{value}", number(Math.round(seconds / 60)));
-  if (seconds < 86_400) return labels.hours.replace("{value}", number(Number((seconds / 3600).toFixed(1))));
-  return labels.days.replace("{value}", number(Number((seconds / 86_400).toFixed(1))));
-}
-
 export default function OverviewPanel() {
   const { t, locale } = useI18n();
-  const copy = t.analytics.kpis;
+  const queryClient = useQueryClient();
   const [days, setDays] = useState<number>(30);
-  const [channels, setChannels] = useState<ChannelOption[]>([]);
   const [channelId, setChannelId] = useState<string | null>(null);
-  const [channelListingIds, setChannelListingIds] = useState<Record<string, string>>({});
-  const [channelLabels, setChannelLabels] = useState<Record<string, string>>({});
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [points, setPoints] = useState<TimeseriesPoint[]>([]);
-  const [presence, setPresence] = useState<PresenceData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
   // Messaging section reports back once its fetch settles, so the empty
   // state below waits for it — a WhatsApp-only tenant has no reviews but
   // plenty to show. null = still unknown.
   const [messagingHasData, setMessagingHasData] = useState<boolean | null>(null);
-  const hasLoadedOnce = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      fetchOverview(days, channelId),
-      fetchTimeseries(days, channelId),
-    ])
-      .then(([o, t]) => {
-        if (cancelled) return;
-        setOverview(o);
-        setPoints(t);
-        setError(false);
-        hasLoadedOnce.current = true;
-      })
-      .catch(() => {
-        if (!cancelled && !hasLoadedOnce.current) setError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [days, channelId, refreshToken]);
+  // Channels (Google) + derived label/listing maps.
+  const channelsQuery = useQuery({
+    queryKey: queryKeys.analytics.channels(),
+    queryFn: async () => {
+      const data = await apiFetch("/api/v1/channels");
+      const google = dedupeBusinesses(
+        (data.channels ?? []).filter(
+          (c: { platform: string }) => c.platform === "google_reviews"
+        )
+      );
+      const channels = google.map((c: { id: string; display_name: string | null }) => ({
+        id: c.id,
+        label: c.display_name ?? "Google Business",
+      }));
+      const labelMap: Record<string, string> = {};
+      for (const c of google as { id: string; display_name: string | null }[]) {
+        if (c.id) labelMap[c.id] = c.display_name ?? "Google Business";
+      }
+      const idMap: Record<string, string> = {};
+      for (const c of google as { id: string; listing_id?: string | null }[]) {
+        if (c.id && c.listing_id) idMap[c.id] = c.listing_id;
+      }
+      return { channels, labelMap, idMap };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const channels = channelsQuery.data?.channels ?? [];
+  const channelLabels = channelsQuery.data?.labelMap ?? {};
+  const channelListingIds = channelsQuery.data?.idMap ?? {};
 
-  // Google presence follows the business selector — each channel maps to its
-  // Localith listing_id, so the snapshot refetches per branch. "All locations"
-  // shows cumulative totals across every branch (additive metrics summed,
-  // rates review-weighted by the backend).
-  useEffect(() => {
-    let cancelled = false;
-    if (channelId) {
-      const listingId = channelListingIds[channelId] ?? null;
-      // Native Google channel with no Localith listing — no snapshot to show
-      // (presenceFromProfile(null) is null, clearing the previous one).
-      (listingId
-        ? apiFetch(`/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(listingId)}`)
-        : Promise.resolve(null))
-        .catch(() => null)
-        .then((prof) => {
-          if (!cancelled) setPresence(presenceFromProfile(prof));
-        });
-    } else {
-      apiFetch("/api/v1/integrations/localith/profiles/aggregate")
-        .catch(() => null)
-        .then((agg: Record<string, unknown> | null) => {
-          if (cancelled) return;
-          if (!agg) {
-            setPresence(null);
-            return;
-          }
-          const n = (k: string) => {
-            const v = agg[k];
-            const f = typeof v === "number" ? v : parseFloat(String(v ?? ""));
-            return Number.isFinite(f) ? f : 0;
-          };
-          setPresence({
-            listingName: typeof agg.listing_name === "string" ? agg.listing_name : "",
-            windowLabel: typeof agg.window_label === "string" ? agg.window_label : null,
-            searchViews: n("search_views"),
-            mapViews: n("map_views"),
-            websiteClicks: n("website_clicks"),
-            directionRequests: n("direction_requests"),
-            phoneCalls: n("phone_calls"),
-            totalReviews: n("total_reviews"),
-            averageRating: n("average_rating"),
-          });
-        });
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [channelId, channelListingIds]);
+  // Overview + timeseries (refetch on days/channel/refresh).
+  const overviewQuery = useQuery({
+    queryKey: queryKeys.analytics.overview(days, channelId ?? "all"),
+    queryFn: async () => {
+      const [o, pts] = await Promise.all([
+        fetchOverview(days, channelId),
+        fetchTimeseries(days, channelId),
+      ]);
+      return { overview: o, points: pts };
+    },
+    staleTime: 30 * 1000,
+  });
+  const overview = overviewQuery.data?.overview ?? null;
+  const points = overviewQuery.data?.points ?? [];
+  const loading = channelsQuery.isPending || overviewQuery.isPending;
+  const error = overviewQuery.isError && !overviewQuery.data;
 
-  useEffect(() => {
-    apiFetch("/api/v1/channels")
-      .then((data) => {
-        const google = dedupeBusinesses(
-          (data.channels ?? []).filter(
-            (c: { platform: string }) => c.platform === "google_reviews"
-          )
-        );
-        setChannels(google.map((c: { id: string; display_name: string | null }) => ({
-          id: c.id,
-          label: c.display_name ?? "Google Business",
-        })));
-        // Branch names for the chart's "By branch" comparison lines.
-        const labelMap: Record<string, string> = {};
-        for (const c of google as { id: string; display_name: string | null }[]) {
-          if (c.id) labelMap[c.id] = c.display_name ?? "Google Business";
-        }
-        setChannelLabels(labelMap);
-        const idMap: Record<string, string> = {};
-        for (const c of google as { id: string; listing_id?: string | null }[]) {
-          if (c.id && c.listing_id) idMap[c.id] = c.listing_id;
-        }
-        setChannelListingIds(idMap);
-      })
-      .catch(() => setChannels([]));
-  }, []);
+  // Google presence snapshot (per branch or aggregate).
+  const presenceQuery = useQuery({
+    queryKey: queryKeys.analytics.presence(channelId),
+    queryFn: async () => {
+      if (channelId) {
+        const listingId = channelListingIds[channelId] ?? null;
+        if (!listingId) return null;
+        const prof = await apiFetch(
+          `/api/v1/integrations/localith/profile?listing_id=${encodeURIComponent(listingId)}`
+        ).catch(() => null);
+        return presenceFromProfile(prof);
+      }
+      const agg = await apiFetch("/api/v1/integrations/localith/profiles/aggregate").catch(() => null);
+      if (!agg) return null;
+      const n = (k: string) => {
+        const v = agg[k];
+        const f = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+        return Number.isFinite(f) ? f : 0;
+      };
+      return {
+        listingName: typeof agg.listing_name === "string" ? agg.listing_name : "",
+        windowLabel: typeof agg.window_label === "string" ? agg.window_label : null,
+        searchViews: n("search_views"),
+        mapViews: n("map_views"),
+        websiteClicks: n("website_clicks"),
+        directionRequests: n("direction_requests"),
+        phoneCalls: n("phone_calls"),
+        totalReviews: n("total_reviews"),
+        averageRating: n("average_rating"),
+      } as PresenceData;
+    },
+    enabled: !channelsQuery.isPending,
+    staleTime: 60 * 1000,
+  });
+  const presence = presenceQuery.data ?? null;
 
   const hasData = !!overview && overview.total_reviews > 0;
   const hasPresence = !!presence;
@@ -179,7 +143,6 @@ export default function OverviewPanel() {
               value={channelId ?? ""}
               onChange={(e) => {
                 setChannelId(e.target.value || null);
-                setLoading(true);
               }}
               aria-label="Filter by location"
               className="h-8 w-full rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-2 text-[12px] text-[var(--ui-ink)] outline-none transition focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ui-ink)] sm:w-auto"
@@ -196,7 +159,6 @@ export default function OverviewPanel() {
                 key={r}
                 onClick={() => {
                   setDays(r);
-                  setLoading(true);
                 }}
                 aria-pressed={days === r}
                 className={rangeBtn(days === r)}
@@ -219,8 +181,7 @@ export default function OverviewPanel() {
           <p className="text-[11px] text-[var(--ui-ink-2)]">Check that the API is running, then try again.</p>
           <button
             onClick={() => {
-              setError(false);
-              setLoading(true);
+              void queryClient.invalidateQueries({ queryKey: ["analytics"] });
               setRefreshToken((t) => t + 1);
             }}
             className="ui-btn bg-[var(--ui-ink)] px-4 py-2 text-[12px] font-semibold text-[var(--ui-on-ink)]"
@@ -250,6 +211,9 @@ export default function OverviewPanel() {
         </div>
       ) : (
         <div className="space-y-6">
+          {/* Reputation pulse + who is waiting: the two decision cards. */}
+          <PulseCards days={days} channelId={channelId} />
+
           {/* Google presence — daily trends charted, window totals as tiles */}
           {presence && (
             <PresenceSection
@@ -263,66 +227,6 @@ export default function OverviewPanel() {
           )}
           {hasData && (
           <>
-          {/* KPI cards */}
-          <div className="grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-4">
-            <StatCard
-              loading={loading}
-              label={copy.avgRating}
-              value={overview ? new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(overview.avg_rating) : "0"}
-              sub={copy.outOfFiveStars}
-              noPriorData={copy.noPriorData}
-              delta={overview?.period.rating_delta}
-              deltaSuffix=""
-              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
-              icon={
-                <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5" aria-hidden>
-                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
-                </svg>
-              }
-            />
-            <StatCard
-              loading={loading}
-              label={copy.reviews}
-              value={overview ? new Intl.NumberFormat(locale).format(overview.period.reviews) : "0"}
-              sub={copy.lastDays.replace("{days}", new Intl.NumberFormat(locale).format(days))}
-              noPriorData={copy.noPriorData}
-              delta={overview?.period.reviews_delta_pct}
-              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
-              icon={
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5" aria-hidden>
-                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              }
-            />
-            <StatCard
-              loading={loading}
-              label={copy.responseRate}
-              value={overview ? `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(overview.response_rate)}%` : "0%"}
-              sub={overview && overview.avg_response_seconds !== null ? copy.avgDuration.replace("{duration}", fmtDuration(overview.avg_response_seconds, locale, copy)) : copy.noRepliesYet}
-              noPriorData={copy.noPriorData}
-              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
-              icon={
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5" aria-hidden>
-                  <polyline points="20 6 9 17 4 12" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              }
-            />
-            <StatCard
-              loading={loading}
-              label={copy.customerActions}
-              value={overview ? new Intl.NumberFormat(locale).format(overview.google_performance.customer_actions) : "0"}
-              sub={copy.actionBreakdown}
-              noPriorData={copy.noPriorData}
-              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
-              icon={
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5" aria-hidden>
-                  <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M15 3h6v6M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              }
-            />
-          </div>
-
           {/* Charts row */}
           <div className="grid grid-cols-1 gap-5 sm:gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
@@ -361,9 +265,6 @@ export default function OverviewPanel() {
               </div>
             </div>
           </div>
-
-          {/* Review inbox */}
-          <ReviewInbox channelId={channelId} refreshToken={refreshToken} />
           </>
           )}
         </div>

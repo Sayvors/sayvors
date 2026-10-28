@@ -588,7 +588,7 @@ async def ask_databank(
 ):
     """Agentic answer: the tenant's model reasons over the tools
     (vector, keyword, live DB)."""
-    from ..llm.providers.base import ProviderError
+    from ..llm.gateway import ProviderError
     from .agent import ask_question
 
     try:

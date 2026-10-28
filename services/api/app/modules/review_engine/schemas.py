@@ -7,9 +7,10 @@ class ReviewAnalysis(BaseModel):
     intent: list[str] = Field(default_factory=list, max_length=5)
     issue_type: str | None = Field(default=None, max_length=80)
     product_reference: str | None = Field(default=None, max_length=200)
+    product_reference_en: str | None = Field(default=None, max_length=200)
     urgency: str = Field(default="low", pattern="^(low|medium|high|critical)$")
     customer_request: str | None = Field(default=None, max_length=200)
-    language: str = Field(default="en", max_length=5)
+    language: str = Field(default="en", max_length=12)
 
 
 class StrategyMatch(BaseModel):
@@ -114,7 +115,7 @@ class ReviewEngineRequest(BaseModel):
     # If omitted and channel_id is set, the channel's auto-reply config wins.
     dialect: str | None = Field(default=None, max_length=30)
     # Optional explicit language policy: match the review, or force en/ar.
-    reply_language: str | None = Field(default=None, pattern="^(match|en|ar)$")
+    reply_language: str | None = Field(default=None, pattern="^(match|en|ar|ur|ur-Latn)$")
     # Optional explicit databank override (playground/tests): honored only
     # when the tenant owns the bank, else the channel-linked bank is used.
     databank_id: str | None = Field(default=None, max_length=36)

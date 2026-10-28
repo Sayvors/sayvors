@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
+import ScheduledPostsCalendar, { type ScheduledEntry } from "@/components/dashboard/ScheduledPostsCalendar";
 
 type MediaType = "PHOTO" | "VIDEO";
 type MediaSource = "OWN" | "CUSTOMER";
@@ -395,6 +396,7 @@ function MediaInner({ initialLocationId, autoUpload, focusMediaId, onExit }: Med
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-4xl space-y-4">
+          <ScheduledPostsCalendar items={items.filter((m) => m.status === "SCHEDULED").map((m) => ({ id: m.id, name: m.category?.toLowerCase() ?? "photo", scheduledAt: m.scheduledAt!, platform: "Google Business Profile", thumbnailUrl: m.thumbnailUrl }))} />
           {/* Autopilot explainer — permanent by design; there is no dismiss. */}
           <div className="rounded-[2px] border border-deep-violet/15 bg-gradient-to-br from-deep-violet/[0.06] to-transparent p-4 dark:border-deep-violet/25">
               <h3 className="text-[14px] font-bold text-ink dark:text-fog">📸 Let your photos sell while you work</h3>

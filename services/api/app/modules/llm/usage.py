@@ -39,19 +39,43 @@ def _get_session_factory():
     return async_session
 
 
-def record_usage_event(req, resp, latency_ms: int, status: str = "ok", error: str | None = None):
-    """Schedule a usage-event insert. Never raises; returns the task (or None)."""
+def record_usage_event(
+    req,
+    resp,
+    latency_ms: int,
+    status: str = "ok",
+    error: str | None = None,
+    *,
+    cost_cents: int = 0,
+    ledger_id: str | None = None,
+):
+    """Schedule a usage-event insert. Never raises; returns the task (or None).
+
+    ``cost_cents`` and ``ledger_id`` link the metering row to the durable
+    billing hold. The reaper uses that link to recover a charge when the
+    process died after the provider returned but before ``settle`` ran.
+    """
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return None  # no loop (tests/shell) — skip silently
-    task = loop.create_task(_insert_event(req, resp, latency_ms, status, error))
+    task = loop.create_task(_insert_event(
+        req, resp, latency_ms, status, error, cost_cents, ledger_id
+    ))
     _pending.add(task)
     task.add_done_callback(_pending.discard)
     return task
 
 
-async def _insert_event(req, resp, latency_ms: int, status: str, error: str | None) -> None:
+async def _insert_event(
+    req,
+    resp,
+    latency_ms: int,
+    status: str,
+    error: str | None,
+    cost_cents: int = 0,
+    ledger_id: str | None = None,
+) -> None:
     try:
         from .models import LLMUsageEvent
 
@@ -71,6 +95,8 @@ async def _insert_event(req, resp, latency_ms: int, status: str, error: str | No
                 latency_ms=latency_ms,
                 status=status,
                 error=error,
+                cost_cents=max(0, int(cost_cents or 0)),
+                ledger_id=ledger_id,
             ))
             await db.commit()
     except Exception as e:

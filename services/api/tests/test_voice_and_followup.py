@@ -18,6 +18,8 @@ from app.modules.channels.meta import consumer as meta_consumer
 from app.modules.channels.meta import thread_stats as ts
 from app.modules.channels.meta import thread_state as tstate
 from app.modules.channels.meta import voice as vo
+from app.modules.tts import registry as tts_registry
+from app.modules.tts.engines import fish as fish_engine
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
 from app.modules.channels.models import (
     Channel,
@@ -126,7 +128,7 @@ async def test_classify_ignores_history_before_last_voice_note(db, channel_id, m
     """Voice hysteresis: confusion expressed BEFORE the last voice note is
     old news — the note answered it. Only post-voice messages count, so a
     customer's 'okay' after a voice note cannot re-trigger voice."""
-    from app.modules.llm.models import VoiceModelConfig
+    from app.modules.tts.models import VoiceModelConfig
 
     now = datetime.now(timezone.utc)
     # Confusion, then the AI's voice note (the remedy), then a calm "okay".
@@ -227,15 +229,15 @@ def test_normalize_voice_tier():
 
 
 def test_engine_supports_language():
-    assert vo.engine_supports_language("*", "ur") is True
-    assert vo.engine_supports_language("ar,ur", "ur") is True
-    assert vo.engine_supports_language("ar,ur", "en") is False
-    assert vo.engine_supports_language("", "en") is True  # empty reads as *
-    assert vo.engine_supports_language("EN", "en") is True
+    assert tts_registry.engine_supports_language("*", "ur") is True
+    assert tts_registry.engine_supports_language("ar,ur", "ur") is True
+    assert tts_registry.engine_supports_language("ar,ur", "en") is False
+    assert tts_registry.engine_supports_language("", "en") is True  # empty reads as *
+    assert tts_registry.engine_supports_language("EN", "en") is True
 
 
 async def _engine(db, **fields):
-    from app.modules.llm.models import VoiceModelConfig
+    from app.modules.tts.models import VoiceModelConfig
 
     defaults = {
         "id": str(uuid.uuid4()),
@@ -257,7 +259,7 @@ async def test_resolve_prefers_keyed_engine_over_edge(db):
     await _engine(db, label="edge simple", provider="edge", tier="simple")
     await _engine(db, label="fish simple", provider="fish", tier="simple",
                   key_encrypted="x")
-    engine = await vo.resolve_voice_engine(db, "simple", "en")
+    engine = await tts_registry.resolve_engine(db, "simple", "en")
     assert engine.label == "fish simple"
 
 
@@ -269,29 +271,36 @@ async def test_resolve_filters_by_tier_and_language_and_enabled(db):
     await _engine(db, label="ur only", provider="fish", tier="simple",
                   languages="ur", key_encrypted="x")
 
-    assert await vo.resolve_voice_engine(db, "simple", "en") is None  # only disabled rows
-    engine = await vo.resolve_voice_engine(db, "advanced", "bn")
+    assert await tts_registry.resolve_engine(db, "simple", "en") is None  # only disabled rows
+    engine = await tts_registry.resolve_engine(db, "advanced", "bn")
     assert engine.label == "edge advanced"
-    engine = await vo.resolve_voice_engine(db, "simple", "ur")
+    engine = await tts_registry.resolve_engine(db, "simple", "ur")
     assert engine.label == "ur only"
 
 
 @pytest.mark.asyncio
 async def test_resolve_off_tier_never_fires(db):
     await _engine(db, label="edge simple", provider="edge", tier="simple")
-    assert await vo.resolve_voice_engine(db, "off", "en") is None
+    assert await tts_registry.resolve_engine(db, "off", "en") is None
 
 
 @pytest.mark.asyncio
-async def test_synthesize_truncates_long_text(db):
+async def test_synthesize_truncates_long_text(db, monkeypatch):
+    from app.modules.tts.engines import edge as edge_engine
+
     await _engine(db, label="edge", provider="edge", tier="simple")
+    captured: dict = {}
+
+    async def _fake_edge(api_model, language, text):
+        captured["text"] = text
+        return b"AUDIO", "audio/mpeg"
+
+    monkeypatch.setattr(edge_engine, "synthesize", _fake_edge)
     long_text = "word " * 400  # 2000 chars
     result = await vo.synthesize_voice_note(db, "simple", "en", long_text)
-    # Real Edge call — the guard under test is the text cap, not the audio.
-    if result is not None:
-        audio, mime = result
-        assert mime == "audio/mpeg"
-        assert audio
+    assert result is not None
+    assert captured["text"].endswith("…")
+    assert len(captured["text"]) <= vo.MAX_VOICE_CHARS + 1
 
 
 @pytest.mark.asyncio
@@ -458,7 +467,7 @@ async def test_fish_voice_catalog_slims_items(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
 
-    out = await vo.fish_voice_catalog("sk-fish-test")
+    out = await fish_engine.voice_catalog("sk-fish-test")
     assert out["has_more"] is True
     assert len(out["items"]) == 1
     item = out["items"][0]
@@ -501,7 +510,7 @@ async def test_fish_voice_catalog_bad_sort_and_failure(monkeypatch):
             return _Resp()
 
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
-    await vo.fish_voice_catalog("k", sort_by="weird")
+    await fish_engine.voice_catalog("k", sort_by="weird")
     assert seen["sort_by"] == "task_count"
 
     class _BoomClient(_FakeClient):
@@ -513,7 +522,7 @@ async def test_fish_voice_catalog_bad_sort_and_failure(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", _BoomClient)
     try:
-        await vo.fish_voice_catalog("k")
+        await fish_engine.voice_catalog("k")
         raised = False
     except ValueError:
         raised = True
@@ -1179,9 +1188,14 @@ async def test_consumer_schedules_lead_followup_only_for_questions(db, user_id, 
 
     # A statement reply -> no new action; and the customer's inbound
     # ("ok chicken") already cancelled the armed one.
-    adapter2 = _VoiceAdapter()
+    #
+    # Reuse the adapter: the mock derives the provider message id from the
+    # number of sends on the instance. A fresh instance would restart at
+    # "wamp-1" and collide with the first reply under the partial unique
+    # index on channel_messages.platform_message_id (real provider ids are
+    # globally unique).
     _wire_voice_consumer(
-        monkeypatch, adapter2, reply="Great, your order is confirmed.",
+        monkeypatch, adapter, reply="Great, your order is confirmed.",
         confused=False, language="en", voice_result=None,
     )
     event2 = ({"external_asset_id": _PHONE_ID, "external_event_id": _WAMID + "2"},
@@ -1232,14 +1246,18 @@ def admin_headers(client, monkeypatch):
     from app.config import settings
 
     monkeypatch.setattr(settings, "ADMIN_PASSWORD_HASH", TEST_ADMIN_HASH)
-    r = client.post("/api/v1/admin/login", json={"password": "test-admin-pass"}, headers=_HOST)
+    r = client.post(
+        "/api/v1/admin/login",
+        json={"username": "admin", "password": "test-admin-pass"},
+        headers=_HOST,
+    )
     assert r.status_code == 200
     return {**_HOST, "X-Requested-With": "XMLHttpRequest"}
 
 
 @pytest.mark.asyncio
 async def test_admin_voice_engine_lifecycle(db, client, admin_headers):
-    from app.modules.llm.models import VoiceModelConfig
+    from app.modules.tts.models import VoiceModelConfig
 
     # Empty to start (tables are created fresh in tests, no seeds).
     r = client.get("/api/v1/admin/voice-engines", headers=admin_headers)
@@ -1294,8 +1312,7 @@ async def test_admin_voice_engine_lifecycle(db, client, admin_headers):
 
 @pytest.mark.asyncio
 async def test_admin_voice_engine_delete_and_test(db, client, admin_headers, monkeypatch):
-    from app.modules.channels.meta import voice as vo_mod
-    from app.modules.llm.models import VoiceModelConfig
+    from app.modules.tts.models import VoiceModelConfig
 
     r = client.post("/api/v1/admin/voice-engines", headers=admin_headers, json={
         "label": "Fish test", "provider": "fish", "tier": "advanced",
@@ -1305,13 +1322,13 @@ async def test_admin_voice_engine_delete_and_test(db, client, admin_headers, mon
     engine_id = r.json()["id"]
 
     # Test endpoint reports a real synthesis through this exact engine.
-    real_fish = vo_mod._synthesize_fish
+    real_fish = fish_engine.synthesize
 
     async def _fake_fish(engine, text, language="en"):
         assert engine.api_model == "s2.1-pro-free"
         return b"FAKEAUDIO", "audio/mpeg"
 
-    monkeypatch.setattr(vo_mod, "_synthesize_fish", _fake_fish)
+    monkeypatch.setattr(fish_engine, "synthesize", _fake_fish)
     r = client.post(f"/api/v1/admin/voice-engines/{engine_id}/test", headers=admin_headers)
     assert r.status_code == 200
     body = r.json()
@@ -1319,7 +1336,7 @@ async def test_admin_voice_engine_delete_and_test(db, client, admin_headers, mon
     assert "audio/mpeg" in body["detail"]
 
     # Missing key -> the probe explains it instead of pretending success.
-    monkeypatch.setattr(vo_mod, "_synthesize_fish", real_fish)
+    monkeypatch.setattr(fish_engine, "synthesize", real_fish)
 
     # Missing key -> the probe explains it instead of pretending success.
     r = client.put(f"/api/v1/admin/voice-engines/{engine_id}", headers=admin_headers, json={
@@ -1348,7 +1365,7 @@ async def test_admin_voice_engine_delete_and_test(db, client, admin_headers, mon
 async def test_admin_voice_language_pins_roundtrip(db, client, admin_headers):
     """Per-language pins persist (normalized), and a language without one
     falls back to the multilingual voice — that's the resolution contract."""
-    from app.modules.llm.models import VoiceModelConfig
+    from app.modules.tts.models import VoiceModelConfig
 
     r = client.post("/api/v1/admin/voice-engines", headers=admin_headers, json={
         "label": "Fish multilingual", "provider": "fish", "tier": "advanced",
@@ -1383,7 +1400,6 @@ async def test_admin_voice_language_pins_roundtrip(db, client, admin_headers):
 async def test_admin_fish_voice_catalog_endpoint(db, client, admin_headers, monkeypatch):
     """The voice library needs a fish engine with a key; with one, it serves
     the slimmed catalog (key value never leaves the server)."""
-    from app.modules.channels.meta import voice as vo_mod
 
     # No fish engine with a key yet -> actionable 400.
     r = client.get("/api/v1/admin/voice-engines/fish-voices", headers=admin_headers)
@@ -1402,7 +1418,7 @@ async def test_admin_fish_voice_catalog_endpoint(db, client, admin_headers, monk
         return {"items": [{"id": "abc", "title": "V", "languages": ["en"],
                            "tags": [], "likes": 1, "uses": 2}], "has_more": False}
 
-    monkeypatch.setattr(vo_mod, "fish_voice_catalog", _fake_catalog)
+    monkeypatch.setattr(fish_engine, "voice_catalog", _fake_catalog)
     r = client.get("/api/v1/admin/voice-engines/fish-voices?sort_by=score&page=2",
                    headers=admin_headers)
     assert r.status_code == 200
@@ -1412,7 +1428,7 @@ async def test_admin_fish_voice_catalog_endpoint(db, client, admin_headers, monk
     async def _boom(api_key, sort_by="task_count", page=1):
         raise ValueError("fish.audio catalog failed (503)")
 
-    monkeypatch.setattr(vo_mod, "fish_voice_catalog", _boom)
+    monkeypatch.setattr(fish_engine, "voice_catalog", _boom)
     r = client.get("/api/v1/admin/voice-engines/fish-voices", headers=admin_headers)
     assert r.status_code == 502
     assert "503" in r.json()["detail"]

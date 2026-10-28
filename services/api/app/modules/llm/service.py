@@ -5,10 +5,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..users.models import User
+from . import gateway
 from .models import Conversation, Message
-from .providers.base import LLMMessage, LLMRequest, ProviderError
+from .providers.base import LLMMessage, ProviderError
 from .providers.catalog import get_model_by_id, get_provider_from_model
-from .providers.registry import get_provider_for_model
 from .schemas import ChatRequest, ConversationCreate, MessageCreate
 from ...database import async_session as _async_session
 from ..team.context import tenant_id_of, require_perm, TenantContext
@@ -151,30 +151,24 @@ async def send_message(
 
     history.append(LLMMessage(role="user", content=body.content))
 
-    api_model, provider_key = _resolve_model(conv.model)
-
-    provider = get_provider_for_model(conv.model)
-    req = LLMRequest(
-        model=api_model,
-        messages=history,
-        system_prompt=conv.system_prompt,
-        temperature=0.7,
-        max_tokens=1000,
-        stream=False,
-        tenant_id=tenant_id_of(user),
-        model_id=conv.model,
-        purpose="chat.message",
-    )
-
+    resolved = gateway.resolve_model(conv.model)
     try:
-        resp = await provider.complete(req)
+        resp = await gateway.complete(
+            model=conv.model,
+            messages=history,
+            system_prompt=conv.system_prompt,
+            temperature=0.7,
+            max_tokens=1000,
+            tenant_id=tenant_id_of(user),
+            purpose="chat.message",
+        )
         content = resp.content
         tokens = resp.usage.total_tokens
         actual_model = resp.model
     except ProviderError:
         raise
     except Exception as e:
-        raise ProviderError(provider_key, str(e), 502)
+        raise ProviderError(resolved.provider, str(e), 502)
 
     async with _async_session() as write_db:
         assistant_msg = Message(
@@ -217,33 +211,27 @@ async def stream_message(
 
     history.append(LLMMessage(role="user", content=body.content))
 
-    api_model, provider_key = _resolve_model(conv.model)
-    provider = get_provider_for_model(conv.model)
+    resolved = gateway.resolve_model(conv.model)
 
-    # D1: budget reservation + settlement is handled by the LLM chat router
-    # (reserve before the provider call, settle after with actual cost).
-
-    req = LLMRequest(
-        model=api_model,
-        messages=history,
-        system_prompt=conv.system_prompt,
-        temperature=0.7,
-        max_tokens=1000,
-        stream=True,
-        tenant_id=tenant_id_of(user),
-        model_id=conv.model,
-        purpose="assistant.chat",
-    )
-
+    # The gateway reserves, meters and settles the streamed cost; the chat
+    # router only performs the read-only 402 pre-check.
     full_content = []
     try:
-        async for chunk in provider.stream(req):
+        async for chunk in gateway.stream(
+            model=conv.model,
+            messages=history,
+            system_prompt=conv.system_prompt,
+            temperature=0.7,
+            max_tokens=1000,
+            tenant_id=tenant_id_of(user),
+            purpose="assistant.chat",
+        ):
             full_content.append(chunk)
             yield {"type": "token", "content": chunk}
     except ProviderError:
         raise
     except Exception as e:
-        raise ProviderError(provider_key, str(e), 502)
+        raise ProviderError(resolved.provider, str(e), 502)
 
     final_text = "".join(full_content)
 

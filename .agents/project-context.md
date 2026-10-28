@@ -3,24 +3,23 @@
 ## Overview
 - **Name:** Sayvors
 - **Type:** 10M-user SaaS MVP monorepo
-- **Branch:** development @ 84e556d (localith integration on top)
+- **Branch:** `development` (default branch)
 - **Python:** >=3.11, managed by `uv`
 - **Backend:** FastAPI async service in `services/api/`
-- **Frontend:** Next.js 16.2.12 + React 19 + Tailwind 4 in `apps/web/`
+- **Frontend:** Next.js 16.4.3 + React 19 + Tailwind 4 in `apps/web/`
 - **Workspace:** uv workspace with `services/*` members
 - **Git identity:** syabahmad / syabblogger@gmail.com
 
 ## Monorepo Layout
 ```
-apps/              web, admin, landing, docs, mobile (mostly empty)
+apps/              web, admin, docs (docs is a placeholder)
 services/api/      FastAPI backend (the only active service)
 integrations/      channels (embedsocial.py adapter), payments, ai, storage, email, sms, webhooks
-infrastructure/    empty scaffold
 deployments/       empty scaffold
 configs/           empty scaffold
 tests/             empty
-.github/           empty (no CI)
-docs/              empty
+.github/           CI workflows (PR gates + staging deploy)
+docs/              architecture, security, specs, tracking
 ```
 
 ## Backend (`services/api/`)

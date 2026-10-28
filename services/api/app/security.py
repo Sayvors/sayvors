@@ -22,14 +22,14 @@ def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
-def create_admin_token() -> str:
+def create_admin_token(subject: str = "admin") -> str:
     """Short-lived admin session token (type claim separates it from user tokens)."""
     from .config import settings as _settings
 
     expire = datetime.now(timezone.utc) + timedelta(minutes=_settings.ADMIN_SESSION_MINUTES)
     jti = secrets.token_hex(16)
     return jwt.encode(
-        {"sub": "admin", "exp": expire, "jti": jti, "type": "admin"},
+        {"sub": subject, "exp": expire, "jti": jti, "type": "admin"},
         _settings.JWT_SECRET,
         algorithm=_settings.JWT_ALGORITHM,
     )

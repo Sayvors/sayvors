@@ -70,7 +70,7 @@ class _FakeProvider:
     def __init__(self):
         self.calls = 0
 
-    async def complete(self, req):
+    async def __call__(self, **kwargs):
         self.calls += 1
         if self.calls == 1:
             return LLMResponse(
@@ -100,12 +100,13 @@ async def test_agent_loop_uses_tool_then_answers(monkeypatch):
     fake = _FakeProvider()
     # The agent no longer resolves a provider directly: `_resolve_agent_model`
     # picks the tenant's own model first (it used to be hardcoded to Gemini,
-    # which broke databank search for anyone on another provider). So the seam
-    # to patch is that resolver, returning (provider, model_id, api_model).
+    # which broke databank search for anyone on another provider). The model
+    # call itself goes through the gateway, so both seams are stubbed.
     async def _resolve(db, preferred=None):
-        return fake, "fake-model", "fake-api-model"
+        return "fake-model"
 
     monkeypatch.setattr(agent, "_resolve_agent_model", _resolve)
+    monkeypatch.setattr(agent, "complete", fake)
     monkeypatch.setattr(agent, "get_databank", _fake_bank)
     monkeypatch.setitem(TOOL_RUNNERS, "keyword_search", _fake_keyword_search)
 
@@ -123,7 +124,7 @@ async def test_agent_unknown_tool_does_not_crash(monkeypatch):
     class _BadProvider:
         calls = 0
 
-        async def complete(self, req):
+        async def __call__(self, **kwargs):
             type(self).calls += 1
             if type(self).calls == 1:
                 return LLMResponse(content="", provider="fake", model="fake",
@@ -133,9 +134,10 @@ async def test_agent_unknown_tool_does_not_crash(monkeypatch):
                                model="fake", usage=LLMUsage())
 
     async def _resolve(db, preferred=None):
-        return _BadProvider(), "fake-model", "fake-api-model"
+        return "fake-model"
 
     monkeypatch.setattr(agent, "_resolve_agent_model", _resolve)
+    monkeypatch.setattr(agent, "complete", _BadProvider())
     monkeypatch.setattr(agent, "get_databank", _fake_bank)
 
     result = await ask_question("bank1", "Hi?", _User(), db=None)

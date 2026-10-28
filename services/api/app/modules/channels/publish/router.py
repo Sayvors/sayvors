@@ -12,6 +12,7 @@ Flow:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -36,6 +37,12 @@ from ..models import Channel
 from ..service import channel_location_ids, encrypt_token, decrypt_token
 
 logger = logging.getLogger(__name__)
+
+# A dispatch is a hint, not a delivery guarantee: the job is already
+# committed to Postgres and the lane runner claims it from there. The wait is
+# therefore bounded - a sick broker must not hold the HTTP request (and an
+# API worker) open forever.
+KAFKA_DISPATCH_TIMEOUT_SECONDS = 5.0
 
 router = APIRouter(prefix="/api/v1/channels", tags=["channels-publish"])
 
@@ -275,17 +282,27 @@ async def publish_post(
         try:
             producer = await get_kafka_producer()
             for job_out in jobs_out:
-                await producer.send_and_wait(
-                    "publishing-dispatch",
-                    key=job_out.job_id.encode(),
-                    value=json.dumps(
-                        {
-                            "job_id": job_out.job_id,
-                            "lane": "publishing",
-                            "action": "run",
-                        }
-                    ).encode(),
+                await asyncio.wait_for(
+                    producer.send_and_wait(
+                        "publishing-dispatch",
+                        key=job_out.job_id.encode(),
+                        value=json.dumps(
+                            {
+                                "job_id": job_out.job_id,
+                                "lane": "publishing",
+                                "action": "run",
+                            }
+                        ).encode(),
+                    ),
+                    timeout=KAFKA_DISPATCH_TIMEOUT_SECONDS,
                 )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Kafka dispatch timed out after %ss - %d jobs remain queued in "
+                "Postgres and will be picked up by the publishing worker",
+                KAFKA_DISPATCH_TIMEOUT_SECONDS,
+                len(jobs_out),
+            )
         except Exception:
             logger.warning(
                 "Kafka dispatch failed - %d jobs remain queued in Postgres "

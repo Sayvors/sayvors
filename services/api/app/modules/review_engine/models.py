@@ -23,16 +23,22 @@ class ResponseStrategy(Base):
     conditions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     instructions: Mapped[list | None] = mapped_column(JSON, nullable=True)
     compatible_strategies: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    priority: Mapped[int] = mapped_column(Integer, default=50)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    priority: Mapped[int | None] = mapped_column(Integer, default=50, nullable=True)
+    enabled: Mapped[bool | None] = mapped_column(Boolean, default=True, nullable=True)
     channel_restrictions: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    # Nullable to match the migrated table: the migration created these
+    # columns without NOT NULL. The Python defaults above/below still
+    # populate every ORM insert, so only raw SQL can leave them NULL.
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=True,
     )
-    updated_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+        nullable=True,
     )
 
 
@@ -88,11 +94,22 @@ class ReviewResponseLog(Base):
     retrieved_offers: Mapped[list | None] = mapped_column(JSON, nullable=True)
     generated_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     validation_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="generated")
+    status: Mapped[str | None] = mapped_column(
+        String(20), default="generated", nullable=True
+    )
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     token_input: Mapped[int | None] = mapped_column(Integer, nullable=True)
     token_output: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    # Nullable in the migrated table; the Python default still fills it.
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=True,
     )
+
+
+# Imported for its side effect: registers csv_uploads/csv_rows in
+# Base.metadata. The CSV router imports these models only at runtime, which is
+# too late for Alembic autogenerate and for a models-only rebuild.
+from . import csv_models as _csv_models  # noqa: E402,F401

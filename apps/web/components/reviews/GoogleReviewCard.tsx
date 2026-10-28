@@ -81,11 +81,12 @@ export function ReviewAvatar({ name, photoUrl }: { name: string; photoUrl?: stri
   const [imgFailed, setImgFailed] = useState(false);
   if (photoUrl && !imgFailed) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
+      <Image
         src={photoUrl}
         alt=""
         aria-hidden
+        width={32}
+        height={32}
         className="h-8 w-8 shrink-0 rounded-full bg-[#F1F3F4] object-cover ring-1 ring-[#E8EAED]"
         onError={() => setImgFailed(true)}
       />

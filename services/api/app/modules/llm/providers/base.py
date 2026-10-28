@@ -100,51 +100,67 @@ class LLMProvider(ABC):
     async def complete(self, req: LLMRequest) -> LLMResponse:
         """Timed template: runs _complete, records metering, re-raises errors.
 
-        D1 enforcement: when the request carries a tenant_id, a flat AI
-        credit reservation is taken BEFORE the provider is called (402 when
-        the wallet is empty) and settled to the real token cost afterwards.
-        Metering never blocks or breaks generation — recording is
-        fire-and-forget with its own session.
+        A tenant request takes a durable hold BEFORE the provider is called
+        (402 when the wallet is empty, 503 when the ledger is unavailable) and
+        settles it exactly once to the real token cost afterwards. Metering
+        never blocks or breaks generation — recording is fire-and-forget with
+        its own session.
         """
         import time
 
-        reserved = 0
+        reservation = None
         if req.tenant_id:
-            from ...billing.budget import BudgetExhausted, reserve
+            from ...billing.budget import BudgetExhausted, BudgetUnavailable, reserve
 
             try:
-                reserved = await reserve(req.tenant_id) or 0
-            except BudgetExhausted as e:
+                reservation = await reserve(
+                    req.tenant_id,
+                    model_id=req.model_id,
+                    purpose=req.purpose,
+                )
+            except (BudgetExhausted, BudgetUnavailable) as e:
                 from ..usage import record_usage_event
 
                 record_usage_event(req, None, 0, status="error", error=str(e)[:300])
-                raise ProviderError("budget", str(e), 402) from e
+                raise ProviderError("budget", str(e), e.status_code) from e
 
         t0 = time.monotonic()
         try:
             resp = await self._complete(req)
         except Exception as e:
+            if reservation is not None:
+                from ...billing.budget import settle
+
+                await settle(reservation, 0)
             from ..usage import record_usage_event
 
             record_usage_event(
                 req, None, int((time.monotonic() - t0) * 1000),
                 status="error", error=str(e)[:300],
+                ledger_id=reservation.id if reservation is not None else None,
             )
-            if req.tenant_id and reserved:
-                from ...billing.budget import settle
-
-                await settle(req.tenant_id, reserved, 0)
             raise
         from ..usage import record_usage_event
 
-        record_usage_event(req, resp, int((time.monotonic() - t0) * 1000))
-        if req.tenant_id and reserved:
-            from ...billing.budget import cost_cents, settle
+        from ...billing.budget import cost_cents
 
-            usage = resp.usage or LLMUsage()
-            actual = cost_cents(req.model_id or req.model,
-                                usage.prompt_tokens, usage.completion_tokens)
-            await settle(req.tenant_id, reserved, actual)
+        usage = resp.usage or LLMUsage()
+        actual = cost_cents(req.model_id or req.model,
+                            usage.prompt_tokens, usage.completion_tokens)
+        if reservation is not None:
+            from ...billing.budget import settle
+
+            await settle(
+                reservation,
+                actual,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+            )
+        record_usage_event(
+            req, resp, int((time.monotonic() - t0) * 1000),
+            cost_cents=actual,
+            ledger_id=reservation.id if reservation is not None else None,
+        )
         return resp
 
     @abstractmethod

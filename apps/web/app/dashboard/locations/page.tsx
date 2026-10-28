@@ -1,9 +1,13 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import BulkEditSheet from "@/components/locations/BulkEditSheet";
+import LocationsMap from "@/components/locations/LocationsMap";
+import ServicesPanel from "@/app/dashboard/services/page";
 
 /* ---------------------------------------------------------------------------------------*/
 
@@ -194,6 +198,7 @@ function statusLabel(status: string | null | undefined, copy: LocationsCopy): st
 /* ── Page ───────────────────────────────────────── */
 
 export default function LocationsPage() {
+  const queryClient = useQueryClient();
   const { t } = useI18n();
   const copy = t.analytics.locations;
   const [loading, setLoading] = useState(true);
@@ -206,6 +211,7 @@ export default function LocationsPage() {
   const [fullProfile, setFullProfile] = useState<FullProfile | null>(null);
   const [bulkProfiles, setBulkProfiles] = useState<Record<string, FullProfile>>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [confirmBulk, setConfirmBulk] = useState<null | {
     title: string;
     lines: string[];
@@ -434,57 +440,60 @@ export default function LocationsPage() {
     });
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  const locationsQuery = useQuery({
+    queryKey: ["locations", "list"],
+    queryFn: async () => {
+      // Localith snapshots first — they carry the real address/phone/website.
+      // Every connected branch is listed; nothing is hidden or overwritten.
       try {
-        // Localith snapshots first — they carry the real address/phone/website.
-        // Every connected branch is listed; nothing is hidden or overwritten.
-        try {
-          const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as LocalithConn[];
-          if (!cancelled && Array.isArray(conns) && conns.length > 0) {
-            const byId: Record<string, LocalithConn> = {};
-            const opts = conns.map((c) => {
-              byId[c.listing_id] = c;
-              return {
-                id: c.listing_id,
-                name: c.listing_name,
-                address: c.address ?? "",
-                status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
-              };
-            });
-            setLocalithConns(byId);
-            setLocalith(byId[opts[0].id] ?? null);
-            setLocations(opts);
-            setSelectedId(opts[0].id);
-            return;
-          }
-        } catch {
-          /* no Localith connections — fall through to channels */
+        const conns = (await apiFetch("/api/v1/integrations/localith/connections")) as LocalithConn[];
+        if (Array.isArray(conns) && conns.length > 0) {
+          const byId: Record<string, LocalithConn> = {};
+          const opts = conns.map((c) => {
+            byId[c.listing_id] = c;
+            return {
+              id: c.listing_id,
+              name: c.listing_name,
+              address: c.address ?? "",
+              status: c.is_suspended ? "suspended" : c.is_verified ? "active" : "pending",
+            };
+          });
+          return { localithConns: byId, localith: byId[opts[0].id] ?? null, locations: opts, selectedId: opts[0].id };
         }
-        try {
-          const data = await apiFetch("/api/v1/channels?limit=100");
-          const googleChannels = (data.channels ?? [])
-            .filter((channel: { platform: string }) => channel.platform === "google_reviews")
-            .map((channel: { id: string; display_name: string | null; status: string }) => ({
-              id: channel.id,
-              name: channel.display_name ?? "",
-              address: "",
-              status: channel.status,
-            }));
-          if (!cancelled) {
-            setLocations(googleChannels);
-            if (googleChannels.length) setSelectedId(googleChannels[0].id);
-          }
-        } catch {
-          setLocations([]);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+      } catch {
+        /* no Localith connections — fall through to channels */
       }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+      try {
+        const data = await apiFetch("/api/v1/channels?limit=100");
+        const googleChannels = (data.channels ?? [])
+          .filter((channel: { platform: string }) => channel.platform === "google_reviews")
+          .map((channel: { id: string; display_name: string | null; status: string }) => ({
+            id: channel.id,
+            name: channel.display_name ?? "",
+            address: "",
+            status: channel.status,
+          }));
+        return { localithConns: {}, localith: null, locations: googleChannels, selectedId: googleChannels.length ? googleChannels[0].id : null };
+      } catch {
+        return { localithConns: {}, localith: null, locations: [], selectedId: null };
+      }
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    const d = locationsQuery.data;
+    if (!d) return;
+    setLocalithConns(d.localithConns);
+    setLocalith(d.localith);
+    setLocations(d.locations);
+    if (d.selectedId) setSelectedId((prev) => prev ?? d.selectedId);
+    setLoading(false);
+  }, [locationsQuery.data]);
+
+  useEffect(() => {
+    if (locationsQuery.isError) setLoading(false);
+  }, [locationsQuery.isError]);
 
    const selectedLocation = isBulk ? null : (locations.find((l) => l.id === selectedId) ?? locations[0] ?? null);
 
@@ -611,6 +620,7 @@ const bulk: BulkScope | null = isBulk
     { key: "service-area", label: copy.tabServiceArea },
     { key: "attributes", label: copy.tabAttributes },
     { key: "description", label: copy.tabDescription },
+    { key: "services", label: copy.tabServices },
     { key: "google-updates", label: copy.tabGoogleUpdates },
   ];
 
@@ -640,29 +650,47 @@ const bulk: BulkScope | null = isBulk
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Stable identity for the map: a fresh array every render would re-run the
+  // map effect (and re-geocode) on every parent update.
+  const mapLocations = useMemo(
+    () =>
+      locations.map((l) => {
+        const conn = localithConns[l.id];
+        return {
+          id: l.id,
+          name: l.name,
+          address: l.address,
+          rating: conn?.average_rating ?? null,
+          reviews: conn?.total_reviews ?? null,
+        };
+      }),
+    [locations, localithConns]
+  );
+
   return (
     <div className="h-full space-y-5 overflow-y-auto p-4 sm:p-6">
       {/* Header */}
-      {/* Stacks until xl. The sidebar eats ~220px, so at 1024 the content column
-          is only ~800px and a side-by-side header still wrapped the subtitle,
-          the status pill and "Create location" onto two lines each. */}
-      <div className="flex flex-col items-start gap-3 xl:flex-row xl:items-start xl:justify-between xl:gap-4">
-        <div className="min-w-0">
-          <h1 className="text-[20px] font-bold text-ink dark:text-fog">{copy.title}</h1>
-          <p className="mt-0.5 text-[13px] text-ink/45 dark:text-fog/45">
-            {copy.subtitle}
-          </p>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-[20px] font-bold tracking-tight text-ink dark:text-fog">{copy.title}</h1>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+              {locations.length ? copy.googleConnected : copy.googleNotConnected}
+            </span>
+          </div>
+          <p className="text-[13px] text-ink/45 dark:text-fog/45">{copy.subtitle}</p>
         </div>
-        <div className="flex flex-col items-stretch gap-3 xl:flex-row xl:items-center">
-          {/* Location selector dropdown — "All branches" enables bulk edit */}
-          <div className="relative w-full xl:w-auto xl:min-w-56">
+
+        {/* Toolbar row: location selector + actions */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
             <select
               value={selectedId ?? ""}
               onChange={(e) => {
                 setSelectedId(e.target.value);
                 setLastBulkFail(null);
               }}
-              className="w-full appearance-none rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] font-medium text-ink outline-none transition focus:border-deep-violet/30 focus:ring-2 focus:ring-deep-violet/[0.1] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className="rounded-xl border border-ink/[0.08] bg-white py-2 pl-3 pr-9 text-[13px] text-ink dark:border-fog/[0.08] dark:bg-ink dark:text-fog"
             >
               {locations.length > 1 && (
                 <option value={ALL}>{copy.allBranches.replace("{count}", String(locations.length))}</option>
@@ -673,20 +701,13 @@ const bulk: BulkScope | null = isBulk
                 </option>
               ))}
               {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
+                <option key={loc.id} value={loc.id}>{loc.name}</option>
               ))}
               {locations.length === 0 && <option value="">{copy.noLocations}</option>}
             </select>
-            <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40 dark:text-fog/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </div>
-          <div className="flex w-full flex-wrap items-center gap-3 xl:w-auto xl:flex-nowrap">
             <button
               onClick={() => setGroupsOpen(true)}
-              className="min-h-9 rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink transition hover:border-deep-violet/30 hover:bg-ink/[0.02] dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              className="rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-ink dark:text-fog/70"
             >
               {copy.manageGroups}
               {groups.length > 0 && (
@@ -695,16 +716,22 @@ const bulk: BulkScope | null = isBulk
                 </span>
               )}
             </button>
-            <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${locations.length ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-              {locations.length ? copy.googleConnected : copy.googleNotConnected}
-            </span>
+          </div>
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setCreateOpen(true)}
               title={copy.createLocationTitle}
               data-tour="add-location"
-              className="min-h-9 rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:opacity-90"
+              className="rounded-xl bg-deep-violet px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-deep-violet/90"
             >
               {copy.createLocation}
+            </button>
+            <button
+              onClick={() => setBulkEditOpen(true)}
+              title="Bulk edit locations via CSV"
+              className="rounded-xl border border-ink/[0.08] bg-white px-3.5 py-2 text-[12px] font-semibold text-ink/70 transition hover:bg-ink/[0.04] dark:border-fog/[0.08] dark:bg-ink dark:text-fog/70"
+            >
+              Bulk edit (CSV)
             </button>
           </div>
         </div>
@@ -823,7 +850,11 @@ const bulk: BulkScope | null = isBulk
       )}
 
       {/* Add-location wizard (Google create workflow, draft-only until Google connects) */}
-      {createOpen && (
+      {bulkEditOpen && (
+    <BulkEditSheet onClose={() => setBulkEditOpen(false)} />
+  )}
+
+  {createOpen && (
         <AddLocationModal
           onClose={() => setCreateOpen(false)}
           onSaved={(text) => {
@@ -1034,6 +1065,14 @@ const bulk: BulkScope | null = isBulk
             {activeTab === "google-updates" && (
               <GoogleUpdatesTab copy={copy} />
             )}
+            {activeTab === "services" && <ServicesPanel embedded />}
+          </div>
+
+          <div className="mt-6">
+            <LocationsMap
+              apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? ""}
+              locations={mapLocations}
+            />
           </div>
 
         </>
@@ -1069,6 +1108,9 @@ function DetailsTab({
   const [phone, setPhone] = useState(profile?.phone_number ?? "");
   const [website, setWebsite] = useState(profile?.website_url ?? "");
   const [saving, setSaving] = useState(false);
+  // Details is a long form; collapsed by default so the map and the other
+  // tabs stay reachable without scrolling past every field.
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     setName(fullProfile?.name ?? location?.name ?? "");
@@ -1109,9 +1151,23 @@ function DetailsTab({
   return (
     <div className="space-y-5">
       <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-        <SectionTitle title={copy.tabDetails} subtitle={copy.detailsSubtitle} />
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex items-center gap-2 text-left"
+        >
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink/[0.06] text-[13px] font-bold text-ink/60 dark:bg-fog/[0.08] dark:text-fog/60">
+            <svg viewBox="0 0 12 12" className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M2 4l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+          <SectionTitle title={copy.tabDetails} subtitle={copy.detailsSubtitle} />
+        </button>
         <SourceBadge google={!!profile} copy={copy} />
       </div>
+      {open && (
+      <>
       {profile && (
         <p className="-mt-2 text-[11px] text-ink/45 dark:text-fog/45">
           {copy.syncedViaLocalith}
@@ -1179,6 +1235,8 @@ function DetailsTab({
               : copy.saveChanges}
         </button>
       </div>
+      </>
+      )}
     </div>
   );
 }

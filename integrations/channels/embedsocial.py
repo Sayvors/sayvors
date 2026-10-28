@@ -1,4 +1,7 @@
-"""Localith reviews adapter (SPIKE — embedsocial branch only).
+"""Localith reviews adapter — the live reviews/GBP integration.
+
+Imported by analytics, admin, locations, posts and localith services. This
+module is production code, not a spike; deleting it breaks the app.
 
 Localith is an authorized Google Business Profile partner that exposes a
 read-first REST API for reviews, listings, metrics, and posts. We use it
@@ -118,6 +121,7 @@ def _get(path: str, params: dict | None = None, timeout: int = 30, api_key: str 
         params=params or {},
         headers={**_HEADERS, "Authorization": f"Bearer {key}"},
         timeout=timeout,
+        follow_redirects=True,
     )
     resp.raise_for_status()
     return resp.json()

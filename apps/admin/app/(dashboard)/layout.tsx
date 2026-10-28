@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { adminLogout, checkAdminSession } from "@/lib/admin-api";
@@ -10,7 +11,7 @@ type NavItem = {
   href: string;
   label: string;
   desc: string;
-  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice";
+  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings" | "billing" | "jobs";
 };
 
 const SECTIONS: { title: string; items: NavItem[] }[] = [
@@ -25,6 +26,9 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Operations",
     items: [
       { href: "/usage", label: "Usage", desc: "Tokens & metering", icon: "usage" },
+      { href: "/billing", label: "Billing", desc: "Wallets & ledger", icon: "billing" },
+      { href: "/plans", label: "Plans", desc: "Plans & entitlements", icon: "billing" },
+      { href: "/jobs", label: "Jobs", desc: "Queue & workers", icon: "jobs" },
       { href: "/logs", label: "Logs", desc: "Services & failures", icon: "logs" },
     ],
   },
@@ -32,7 +36,15 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Intelligence",
     items: [
       { href: "/llms", label: "LLMs", desc: "Providers & models", icon: "llms" },
+      { href: "/embeddings", label: "Embeddings", desc: "RAG vector API", icon: "embeddings" },
       { href: "/voice", label: "Voice models", desc: "WhatsApp voice TTS", icon: "voice" },
+    ],
+  },
+  {
+    title: "Access",
+    items: [
+      { href: "/operators", label: "Operators", desc: "Admin accounts", icon: "tenants" },
+      { href: "/audit-log", label: "Audit log", desc: "Admin actions", icon: "logs" },
     ],
   },
 ];
@@ -84,17 +96,52 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
         <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
           <path d="M12 3.2l1.6 4 4.2.4-3.1 2.7.9 4.1L12 12.1 8.4 14.4l.9-4.1L6.2 7.6l4.2-.4L12 3.2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
           <path d="M5 14.5l.9 1.9 2 .4-1.5 1.3.4 2-1.8-1.1-1.8 1.1.4-2L2.1 16.8l2-.4.9-1.9z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-          <path d="M19 13.2l.7 1.4 1.5.3-1.1 1 .3 1.5-1.4-.8-1.4.8.3-1.5-1.1-1 1.5-.3.7-1.4z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
         </svg>
       );
     case "voice":
       return (
         <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
           <rect x="9" y="3" width="6" height="11.5" rx="3" stroke="currentColor" strokeWidth="1.6" />
-          <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          <path d="M12 18v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M12 18v3" stroke="currentColor" strokeWidth="1.6" />
         </svg>
       );
+    case "embeddings":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <circle cx="6" cy="6.5" r="2.2" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="18" cy="6.5" r="2.2" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="12" cy="17.5" r="2.2" stroke="currentColor" strokeWidth="1.5" />
+          <path
+            d="M7.7 7.8l2.8 7.5M16.3 7.8l-2.8 7.5M8.2 6.5h7.6"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+    case "billing":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <rect x="3.5" y="6" width="17" height="12" rx="2" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M3.5 10h17" stroke="currentColor" strokeWidth="1.6" />
+          <circle cx="7.5" cy="14" r="1.2" fill="currentColor" />
+          <path d="M11 14h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      );
+    case "jobs":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <rect x="3.5" y="4" width="17" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.6" />
+          <rect x="3.5" y="10" width="17" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.6" />
+          <rect x="3.5" y="16" width="17" height="4" rx="1.2" stroke="currentColor" strokeWidth="1.6" />
+          <circle cx="7" cy="6" r="0.9" fill="currentColor" />
+          <circle cx="7" cy="12" r="0.9" fill="currentColor" />
+          <circle cx="7" cy="18" r="0.9" fill="currentColor" />
+        </svg>
+      );
+    default:
+      return null;
   }
 }
 
@@ -103,7 +150,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const { theme, toggle } = useTheme();
   const [ready, setReady] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return localStorage.getItem(SIDEBAR_KEY) === "1";
+    } catch {
+      /* private mode */
+    }
+    return false;
+  });
   const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
@@ -112,15 +167,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       else setReady(true);
     });
   }, [router]);
-
-  // Restore the saved rail width once, after mount (SSR-safe).
-  useEffect(() => {
-    try {
-      setCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
-    } catch {
-      /* private mode */
-    }
-  }, []);
 
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
@@ -190,6 +236,58 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     </nav>
   );
 
+  const header = (
+    <header className="sticky top-0 z-20 hidden items-center justify-between border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 lg:flex">
+      {/* Brand — mirrors the sidebar rail */}
+      <div className="flex items-center gap-3">
+        <Image
+          src="/Sayvors_Icon.png"
+          alt="Sayvors"
+          width={32}
+          height={32}
+          className="h-8 w-8 shrink-0 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-1"
+          unoptimized
+        />
+        <div className="min-w-0">
+          <p className="text-[13px] font-bold leading-none tracking-tight text-[var(--ui-ink)]">Sayvors</p>
+          <p className="mt-0.5 text-[11px] font-medium leading-none text-ink/45">Admin console</p>
+        </div>
+        <span className="ml-1 rounded-[2px] border border-[var(--ui-line)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-ink/50">
+          Admin
+        </span>
+      </div>
+
+      {/* Right rail — identity + sign out, styled like sidebar items */}
+      <div className="flex items-center gap-2">
+        <div className="hidden items-center gap-2.5 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3 py-2 sm:flex">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-deep-violet text-[11px] font-bold text-white">
+            AD
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-[12px] font-semibold leading-none text-[var(--ui-ink)]">Admin</p>
+            <p className="truncate text-[11px] leading-none text-ink/40">Session · secure</p>
+          </div>
+          <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden title="Session active" />
+        </div>
+        <button
+          onClick={() => {
+            adminLogout().finally(() => router.replace("/login"));
+          }}
+          title="Sign out"
+          className="flex items-center justify-center gap-2 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[12px] font-semibold text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink"
+        >
+          <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-60">
+            <path d="M15.2 18.2L9 12l6.2-6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M9 12H21" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            <path d="M3 5.2a2 2 0 0 1 2-2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M3 18.8a2 2 0 0 0 2 2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <span className="hidden sm:inline">Sign out</span>
+        </button>
+      </div>
+    </header>
+  );
+
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--ui-page)]">
       {/* Sidebar: a drawer under lg, a flat rail on desktop. */}
@@ -204,12 +302,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Brand */}
         <div className="sticky top-0 z-10 bg-[var(--ui-surface)] px-4 pb-3 pt-4">
           <div className={`flex items-center gap-3 ${collapsed ? "lg:justify-center lg:px-0" : ""}`}>
-            <img
+            <Image
               src="/Sayvors_Icon.png"
               alt="Sayvors"
               width={36}
               height={36}
               className="h-9 w-9 shrink-0 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-1"
+              unoptimized
             />
             {!collapsed && (
               <div className="min-w-0">
@@ -227,60 +326,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
 
         {nav}
-
-        {/* Footer */}
-        <div className="sticky bottom-0 mt-auto bg-[var(--ui-surface)] p-3">
-          <div className="h-px bg-[var(--ui-line)]" aria-hidden />
-          <div className={`mt-3 flex items-center gap-2 rounded-[2px] border border-[var(--ui-line)] px-3 py-2.5 ${collapsed ? "lg:justify-center lg:px-0" : ""}`}>
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-deep-violet text-[11px] font-bold text-white">AD</div>
-            {!collapsed && (
-              <>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12px] font-semibold leading-none text-[var(--ui-ink)]">Admin</p>
-                  <p className="truncate text-[11px] leading-none text-ink/40">Session · secure</p>
-                </div>
-                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden title="Session active" />
-              </>
-            )}
-          </div>
-          <div className={`mt-2 flex gap-2 ${collapsed ? "lg:flex-col" : ""}`}>
-            <button
-              onClick={toggle}
-              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-              title={theme === "dark" ? "Light mode" : "Dark mode"}
-              className="flex flex-1 items-center justify-center rounded-[2px] border border-[var(--ui-line-strong)] px-3 py-2.5 text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink"
-            >
-              {theme === "dark" ? (
-                <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="4.2" stroke="currentColor" strokeWidth="1.7" />
-                  <path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5 5l1.7 1.7M17.3 17.3L19 19M19 5l-1.7 1.7M6.7 17.3L5 19" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                </svg>
-              ) : (
-                <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none">
-                  <path d="M20 13.6A8.4 8.4 0 0 1 10.4 4a8.4 8.4 0 1 0 9.6 9.6z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-                </svg>
-              )}
-            </button>
-            <button
-              onClick={() => {
-                adminLogout().finally(() => router.replace("/login"));
-              }}
-              title="Sign out"
-              className={`flex flex-1 items-center justify-center gap-2 rounded-[2px] border border-[var(--ui-line-strong)] px-3 py-2.5 text-[12px] font-semibold text-ink/60 transition-colors duration-150 hover:border-[var(--ui-ink)] hover:text-ink ${collapsed ? "lg:px-0" : ""}`}
-            >
-              <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-60">
-                <path d="M15.2 18.2L9 12l6.2-6.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M9 12H21" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                <path d="M3 5.2a2 2 0 0 1 2-2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                <path d="M3 18.8a2 2 0 0 0 2 2h6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-              {!collapsed && "Sign out"}
-            </button>
-          </div>
-          {!collapsed && (
-            <p className="mt-2.5 text-center text-[10px] font-medium tracking-wide text-ink/30">Sayvors · Admin v1 · Internal</p>
-          )}
-        </div>
         </div>
 
         {/* Collapse toggle: a small circular arrow straddling the sidebar's
@@ -309,6 +354,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* Desktop header (hidden on mobile) */}
+        {header}
         {/* Mobile top bar */}
         <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-[var(--ui-line)] bg-[var(--ui-surface)] px-4 py-3 lg:hidden">
           <button
@@ -322,7 +369,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
             </svg>
           </button>
-          <img src="/Sayvors_Icon.png" alt="Sayvors" width={24} height={24} className="h-6 w-6 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-0.5" />
+          <Image src="/Sayvors_Icon.png" alt="Sayvors" width={24} height={24} className="h-6 w-6 rounded-[2px] border border-[var(--ui-line)] bg-white object-contain p-0.5" unoptimized />
           <p className="text-[13px] font-bold tracking-tight text-[var(--ui-ink)]">Sayvors Admin</p>
         </header>
 

@@ -749,7 +749,26 @@ async def _sync_single_connection(
                 raise RuntimeError("Channel vanished mid-sync — retry the sync.")
 
     # 1. Profile snapshot — every field the detail endpoint returns.
+    # Resolve the API key with a proper fallback chain: per-connection key
+    # (decrypted) -> shared env key -> settings. If none is available, skip
+    # the sync rather than crashing.
     api_key = _connection_api_key(connection)
+    if not api_key:
+        try:
+            from ...config import settings as _s
+            api_key = _s.LOCALITH_API_KEY
+        except Exception:
+            pass
+    if not api_key:
+        import os
+        api_key = os.environ.get("LOCALITH_API_KEY")
+    if not api_key:
+        logger.warning(
+            "Localith sync skipped for %s: no API key configured "
+            "(set LOCALITH_API_KEY in .env or add a per-connection key)",
+            connection.listing_id,
+        )
+        return
     detail = await get_listing_detail(connection.listing_id, api_key=api_key)
     if detail:
         apply_listing_snapshot(connection, detail)
@@ -757,9 +776,13 @@ async def _sync_single_connection(
         channel.platform_user_id = connection.listing_google_id or connection.listing_id
 
     # 2. All review items, paginated (100/page, newest first).
-    items = await asyncio.to_thread(
-        embedsocial.fetch_all_items, connection.listing_id, 50, api_key
-    )
+    try:
+        items = await asyncio.to_thread(
+            embedsocial.fetch_all_items, connection.listing_id, 50, api_key
+        )
+    except Exception as e:
+        logger.warning("Localith item fetch failed for %s: %s", connection.listing_id, e)
+        items = []
     synced = 0
     pulled: list = []
     edited_pinged: list = []
@@ -965,7 +988,7 @@ async def _sync_single_connection(
             None,
             data={"listing_id": connection.listing_id, "channel_id": channel.id,
                   "new_reviews": synced, "activity": new_activity},
-            href="/dashboard",
+            href="/dashboard/locations",
         )
         await db.commit()
 
@@ -1267,7 +1290,10 @@ async def _sync_single_connection(
             if same_content and _ins.enrichment_status == "done":
                 continue
         try:
-            await enqueue_event(
+            from ..outbox.service import enqueue_event_in
+
+            await enqueue_event_in(
+                db,
                 "review.discovered",
                 {
                     "user_id": user_id,
@@ -1281,6 +1307,7 @@ async def _sync_single_connection(
                 },
                 topic="review-events",
             )
+            await db.commit()
         except Exception as e:
             logger.warning("Localith discover-event enqueue failed review=%s: %s", review_id, e)
 

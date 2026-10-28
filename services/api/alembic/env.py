@@ -19,6 +19,7 @@ if config.config_file_name is not None:
 
 # import Base + all models so autogenerate sees them
 from app.database import Base
+from app.db_indexes import managed_postgres_index_names
 from app.modules.users import models as users_models  # noqa: F401
 from app.modules.tts import models as tts_models  # noqa: F401
 from app.modules.stt import models as stt_models  # noqa: F401
@@ -33,8 +34,29 @@ from app.modules.profile import models as profile_models  # noqa: F401
 from app.modules.localith import models as localith_models  # noqa: F401
 from app.modules.posts import models as posts_models  # noqa: F401
 from app.modules.review_engine import models as review_engine_models  # noqa: F401
+from app.modules.team import models as team_models  # noqa: F401
+from app.modules.channels import meta as _channels_meta  # noqa: F401
+from app.modules.channels.meta import models as channels_meta_models  # noqa: F401
+from app.modules.notifications import models as notifications_models  # noqa: F401
+from app.modules.media import models as media_models  # noqa: F401
+from app.modules.locations import models as locations_models  # noqa: F401
+from app.modules.billing import models as billing_models  # noqa: F401
+from app.modules.user_feedback import models as user_feedback_models  # noqa: F401
+from app.modules.admin import models as admin_models  # noqa: F401
 
 target_metadata = Base.metadata
+
+# Indexes created by the PostgreSQL after_create hooks live in the database
+# but not in Base.metadata (SQLite cannot express GIN/HNSW/expression
+# indexes). Without this filter, autogenerate would propose dropping them.
+_MANAGED_POSTGRES_INDEXES = managed_postgres_index_names()
+
+
+def include_object(object, name, type_, reflected, compare_to):  # noqa: ANN001
+    if type_ == "index" and name in _MANAGED_POSTGRES_INDEXES:
+        return False
+    return True
+
 
 # override sqlalchemy.url from .env
 db_url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
@@ -48,13 +70,18 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection):
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

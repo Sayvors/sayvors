@@ -25,15 +25,6 @@ import {
 
 const INK = "text-[var(--ui-ink)]";
 const INK2 = "text-[var(--ui-ink-2)]";
-const GOAL_RATE = 90; // Meta's "Very responsive" bar, mirrored by the API
-const GOAL_MEDIAN_MIN = 15;
-
-function fmtDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-  if (seconds < 86_400) return `${(seconds / 3600).toFixed(1)} h`;
-  return `${(seconds / 86_400).toFixed(1)} d`;
-}
 
 function Delta({ value }: { value: number | null }) {
   if (value === null) return null;
@@ -108,11 +99,6 @@ export default function MessagingSection({
   }
 
   const t = data.totals;
-  const median = t.median_first_response_seconds;
-  const rate = t.response_rate;
-  const meetsRate = rate !== null && rate >= GOAL_RATE;
-  const meetsMedian = median !== null && median < GOAL_MEDIAN_MIN * 60;
-  const meetsBoth = meetsRate && meetsMedian;
 
   return (
     /* .team-ui scopes the --ui-* variables and paints the #F5F5F5 page, so
@@ -127,43 +113,9 @@ export default function MessagingSection({
         )}
       </div>
 
-      <div className="mt-5 grid gap-5 sm:gap-6 lg:grid-cols-3">
-        {/* Response health — the two numbers Meta's badge is made of */}
-        <div className="ui-card p-5">
-          <h3 className={`text-[13px] font-bold ${INK}`}>Response health</h3>
-          <div className="mt-5 flex items-end gap-10">
-            <div>
-              <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
-                {median !== null ? fmtDuration(median) : "—"}
-              </p>
-              <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
-                median first reply
-              </p>
-              {t.median_first_response_seconds_prev !== null && median !== null && (
-                <div className="mt-2"><Delta value={countDelta(median, t.median_first_response_seconds_prev)} /></div>
-              )}
-            </div>
-            <div>
-              <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
-                {rate !== null ? `${rate}%` : "—"}
-              </p>
-              <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
-                conversations answered
-              </p>
-              {t.response_rate_prev !== null && rate !== null && (
-                <div className="mt-2"><Delta value={Math.round(rate - t.response_rate_prev)} /></div>
-              )}
-            </div>
-          </div>
-          <p className={`mt-5 border-t border-[var(--ui-line)] pt-3 text-[11.5px] font-medium leading-relaxed ${meetsBoth ? INK : INK2}`}>
-            {meetsBoth
-              ? "✓ Very responsive — Meta's 90% / 15-min bar cleared"
-              : `Meta's very-responsive bar: ${GOAL_RATE}% answered within ${GOAL_MEDIAN_MIN} min`}
-          </p>
-        </div>
-
+      <div className="mt-5 grid gap-5 sm:gap-6 lg:grid-cols-2">
         {/* Scorecard — volume per channel, previous period beside it */}
-        <div className="ui-card p-5">
+        <div className={`ui-card p-5 ${data.by_hour_in && data.by_hour_in.some((v) => v > 0) ? "" : "lg:col-span-2"}`}>
           <h3 className={`text-[13px] font-bold ${INK}`}>By channel</h3>
           <ul className="mt-4 divide-y divide-[var(--ui-line)]">
             {data.channels.map((c) => {
@@ -206,30 +158,74 @@ export default function MessagingSection({
           </ul>
         </div>
 
-        {/* Unanswered — the lost-sales card */}
-        <div className="ui-card p-5">
-          <h3 className={`text-[13px] font-bold ${INK}`}>Waiting on a reply</h3>
-          {t.unanswered_now === 0 ? (
-            <div className="my-8 text-center">
-              <p className={`text-[26px] font-black leading-none ${INK}`} aria-hidden>✓</p>
-              <p className={`mt-3 text-[13px] font-bold ${INK}`}>All caught up</p>
-              <p className={`mt-1 text-[11.5px] ${INK2}`}>Every conversation has an answer.</p>
+        {/* Best-time heatmap — inbound volume by hour of day */}
+        {data.by_hour_in && data.by_hour_in.some((v) => v > 0) && (
+          <div className="ui-card p-5">
+            <h3 className={`text-[13px] font-bold ${INK}`}>Best time to reply</h3>
+            <p className={`mt-1 text-[11.5px] ${INK2}`}>
+              When customers message you (last {days}d, UTC). Reply fastest in these hours.
+            </p>
+            <div className="mt-4 flex items-end gap-1" style={{ height: 64 }}>
+              {data.by_hour_in.map((count, hour) => {
+                const max = Math.max(...data.by_hour_in, 1);
+                const pct = (count / max) * 100;
+                return (
+                  <div
+                    key={hour}
+                    className="flex flex-1 flex-col items-center justify-end"
+                    title={`${hour}:00 — ${count} messages`}
+                  >
+                    <div
+                      className="w-full rounded-t-[2px] bg-[var(--ui-ink)] transition-all"
+                      style={{ height: `${Math.max(2, pct)}%`, opacity: count > 0 ? 1 : 0.15 }}
+                    />
+                  </div>
+                );
+              })}
             </div>
-          ) : (
-            <div className="my-8 text-center">
-              <p className={`text-[34px] font-black leading-none tabular-nums ${INK}`}>
-                {t.unanswered_now ?? "—"}
-              </p>
-              <p className={`mt-3 text-[13px] font-semibold ${INK}`}>
-                {t.unanswered_now === 1 ? "conversation" : "conversations"} with no reply yet
-              </p>
-              {t.oldest_unanswered_seconds !== null && (
-                <p className={`mt-1 text-[11.5px] ${INK2}`}>
-                  oldest waiting {fmtDuration(t.oldest_unanswered_seconds)}
-                </p>
-              )}
+            <div className="mt-1 flex justify-between text-[9px] tabular-nums text-[var(--ui-ink-2)]">
+              <span>0h</span>
+              <span>6h</span>
+              <span>12h</span>
+              <span>18h</span>
+              <span>23h</span>
             </div>
-          )}
+          </div>
+        )}
+        {/* AI vs human — deflection framing. Reads stored ai_handled_out
+            from the daily rollup; no request-time computation. */}
+        <div className="ui-card p-5 lg:col-span-2">
+        <h3 className={`text-[13px] font-bold ${INK}`}>AI vs human</h3>
+        <div className="mt-4 grid grid-cols-2 gap-4">
+          <div>
+            <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
+              {t.ai_handled_out ?? 0}
+            </p>
+            <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
+              AI-handled
+            </p>
+          </div>
+          <div>
+            <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
+              {t.human_handled_out ?? 0}
+            </p>
+            <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
+              human-handled
+            </p>
+          </div>
+        </div>
+        {(t.messages_out ?? 0) > 0 && (
+          <p className={`mt-4 border-t border-[var(--ui-line)] pt-3 text-[11.5px] font-medium leading-relaxed ${INK2}`}>
+            AI handled {Math.round(((t.ai_handled_out ?? 0) / t.messages_out) * 100)}% of outbound replies
+            {t.ai_handled_out_prev !== null && (t.ai_handled_out_prev ?? 0) > 0
+              ? ` (was ${Math.round(((t.ai_handled_out_prev ?? 0) / Math.max(1, t.messages_out_prev)) * 100)}% last period)`
+              : ""}
+            {(() => {
+              const unknown = Math.max(0, t.messages_out - (t.ai_handled_out ?? 0) - (t.human_handled_out ?? 0));
+              return unknown > 0 ? ` · ${unknown} legacy (pre-tracking)` : "";
+            })()}
+          </p>
+        )}
         </div>
       </div>
     </section>

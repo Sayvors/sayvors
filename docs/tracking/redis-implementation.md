@@ -21,7 +21,7 @@ Redis is **not just auth** — it's auth infrastructure + cache + rate-limit inf
 | RAG cache (embeddings, chunks) | `modules/rag/cache.py` | `rag:embed:{hash}`, `rag:chunks:{id}` | ✅ `ex=EMBED_CACHE_TTL` | Fail open (recompute) |
 | Job progress | `modules/rag/cache.py` | `job:progress:{id}` | ✅ `ex=3600` — 1 hour | Fail open |
 | Profile cache | `modules/profile/service.py` | `profile:{id}` | ✅ `setex(..., ttl, ...)` | Fail open |
-| Billing budget balance | `modules/billing/budget.py` | `budget:{tenant_id}` | ✅ `setex(..., BUDGET_TTL_SECONDS, cents)` — 24h TTL | Fail open (DB is source of truth) |
+| Billing budget mirror | `modules/billing/budget.py` | `ai_balance:{tenant_id}` | ❌ No TTL by design; Postgres ledger is authoritative | Fail open (cache only; DB denies/settles) |
 | **(Planned) Job lane in-flight caps** | `docs/specs/job-processing-design.md` | `job:inflight:{tenant}:{lane}` | Planned (TTL-based) | N/A — not built yet |
 | **(Planned) Provider pacing** | `docs/specs/job-processing-design.md` | Token bucket per lane/tenant | Planned (TTL-based) | N/A — not built yet |
 
@@ -97,7 +97,7 @@ services/api/app/modules/redis/
 
 1. **Provision 6–8 GB Redis (multi-AZ, AOF, alarm)** — infra, not code
 2. **Call `mark_redis_available()` from a background prober** — currently exists but has zero callers (`redis/client.py:69-71`); a boot-time blip permanently disables Redis for the process lifetime
-3. **Add TTL to billing balance keys** — `billing/budget.py` `set()` → `setex()` with 24h TTL
+3. **Keep the billing mirror TTL-free** — `ai_balance:{tenant}` mirrors `users.ai_credit_cents`; a TTL was the original wallet-loss bug. Redis loss is repaired from Postgres.
 4. **Fail-closed for auth paths** — already default (`AUTH_RATE_LIMIT_FAIL_CLOSED=true`); keep it on in production
 5. **Job lane in-flight caps** — planned in job-queue design (`job:inflight:{tenant_id}:{lane}`), not yet built
 
@@ -119,4 +119,4 @@ services/api/app/modules/redis/
 | `rag:chunks:` | RAG chunk cache | `EMBED_CACHE_TTL` | `rag:chunks:doc123` |
 | `job:progress:` | job progress | 1 hour | `job:progress:job456` |
 | `profile:` | profile cache | configurable | `profile:uid` |
-| `budget:` | billing balance | **none** | `budget:tenant789` |
+| `ai_balance:` | billing mirror (DB is truth) | **none** | `ai_balance:tenant789` |

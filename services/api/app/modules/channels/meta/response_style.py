@@ -91,27 +91,20 @@ async def render_response(
 
 async def _ask_split(tenant_id: str, db, response_text: str) -> str:
     """One small LLM pass returning the JSON array (or raising)."""
-    from ...llm.providers.base import LLMMessage, LLMRequest
-    from ...llm.providers.registry import get_provider_for_model
-    from ...llm.service import _resolve_model, resolve_tenant_model
+    from ...llm.gateway import LLMMessage, complete, resolve_tenant_model
 
     model_id = await resolve_tenant_model(db)  # ValueError when nothing enabled
-    api_model, _provider_key = _resolve_model(model_id)
-    provider = get_provider_for_model(model_id)
-    req = LLMRequest(
-        model=api_model,
+    resp = await complete(
+        model=model_id,
         # Single user turn — no consecutive same-role turns, so the qwen3
         # empty-completion hazard that hit the reply path can't occur here.
         messages=[LLMMessage(role="user", content=response_text)],
         system_prompt=_SPLIT_SYSTEM_PROMPT,
         temperature=0.2,
         max_tokens=500,
-        stream=False,
         tenant_id=tenant_id,
-        model_id=model_id,
         purpose="whatsapp.render_style",
     )
-    resp = await provider.complete(req)
     return (resp.content or "").strip()
 
 

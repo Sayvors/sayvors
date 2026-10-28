@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
-from . import benchmark, growth, intelligence, service, summary
+from . import benchmark, competitors, growth, growth_cards, insights_cards, intelligence, pulse, service, summary
 from .models import ReviewInsight
 from .schemas import (
     AcquisitionResponse,
@@ -24,6 +24,18 @@ from .schemas import (
     OverviewResponse,
     ProblemsResponse,
     ProductsResponse,
+    PulseResponse,
+    InsightsCardsResponse,
+    GrowthCardsResponse,
+    ReviewRequestIn,
+    ReviewRequestOut,
+    ReviewRequestBulkIn,
+    ReviewRequestBulkOut,
+    ReviewTemplateIn,
+    ReviewTemplateOut,
+    ReviewRequestItemOut,
+    ReviewRequestListOut,
+    ReviewRequestRetryOut,
     ReviewInsightItem,
     ReviewInsightListResponse,
     ReviewIntelligenceResponse,
@@ -199,6 +211,23 @@ async def get_overview(
     return await service.get_overview(db, uid, channel_id, days)
 
 
+@router.get("/pulse", response_model=PulseResponse)
+async def get_pulse(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Two Overview cards in one read: reputation pulse + who is waiting.
+
+    Separate from `/overview` so the hot dashboard path does two bounded
+    aggregate passes instead of loading every KPI block.
+    """
+    uid = tenant_id_of(user)
+    return await pulse.get_pulse(db, uid, channel_id, days)
+
+
 @router.get("/messaging/overview", response_model=MessagingOverviewResponse)
 async def get_messaging_overview(
     channel_id: str | None = Query(None),
@@ -214,6 +243,77 @@ async def get_messaging_overview(
     """
     uid = tenant_id_of(user)
     return await service.get_messaging_overview(db, uid, channel_id, days)
+
+
+@router.get("/market-benchmarks")
+async def get_market_benchmarks(
+    metric: str | None = Query(None),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stored market benchmarks (cross-tenant aggregates). Reads stored rows only."""
+    from .models import MarketBenchmark
+    from sqlalchemy import select
+
+    filters = []
+    if metric:
+        filters.append(MarketBenchmark.metric == metric)
+    rows = (
+        await db.execute(
+            select(MarketBenchmark)
+            .where(*filters)
+            .order_by(MarketBenchmark.date.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    return [
+        {
+            "date": r.date.isoformat(),
+            "scope_market": r.scope_market,
+            "scope_network": r.scope_network,
+            "metric": r.metric,
+            "median": r.median,
+            "p25": r.p25,
+            "p75": r.p75,
+            "business_count": r.business_count,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/conversations/insights")
+async def get_conversation_insights(
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stored conversation insights (what customers ask). Reads stored rows only.
+
+    Returns the latest insight row for the tenant, or an empty object when no
+    insights have been computed yet (worker hasn't run or there's no data).
+    """
+    from .models import ConversationInsight
+    from sqlalchemy import select
+
+    uid = tenant_id_of(user)
+    row = (
+        await db.execute(
+            select(ConversationInsight)
+            .where(ConversationInsight.tenant_id == uid)
+            .order_by(ConversationInsight.window_end.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return {"insights": {}, "message_count": 0, "window_start": None, "window_end": None, "computed_at": None}
+    return {
+        "insights": row.insights or {},
+        "message_count": row.message_count,
+        "window_start": row.window_start.isoformat() if row.window_start else None,
+        "window_end": row.window_end.isoformat() if row.window_end else None,
+        "computed_at": row.computed_at.isoformat() if row.computed_at else None,
+    }
 
 
 @router.get("/timeseries", response_model=TimeseriesResponse)
@@ -534,6 +634,429 @@ async def get_problems(
     return await intelligence.get_problems(db, uid, channel_id, days)
 
 
+@router.get("/insights-cards", response_model=InsightsCardsResponse)
+async def get_insights_cards(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Insights tab cards in one read: themes, what changed, location sentiment,
+    a deterministic summary with counts, and the stored action plan."""
+    uid = tenant_id_of(user)
+    return await insights_cards.get_insights_cards(db, uid, channel_id, days)
+
+
+@router.get("/growth-cards", response_model=GrowthCardsResponse)
+async def get_growth_cards(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Growth tab cards: review-request funnel, new contacts, ask timing,
+    retention availability, and recommended actions."""
+    uid = tenant_id_of(user)
+    return await growth_cards.get_growth_cards(db, uid, channel_id, days)
+
+
+@router.post("/review-requests", response_model=ReviewRequestOut)
+async def record_review_request(
+    body: ReviewRequestIn,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a review request and optionally deliver it.
+
+    WhatsApp/in-person are recorded without a server send (the client opens the
+    deep link). SMS/email go through the env-gated provider and store the real
+    outcome; a provider failure is visible on the row, never hidden.
+    """
+    from .review_requests import create_and_deliver, tracked_link
+
+    allowed_channels = {"whatsapp", "email", "in_person"}
+    allowed_triggers = {"manual", "qr", "after_visit", "campaign"}
+    row = await create_and_deliver(
+        db,
+        tenant_id_of(user),
+        channel_id=body.channel_id,
+        contact=body.contact,
+        contact_name=body.contact_name,
+        channel=body.channel if body.channel in allowed_channels else "whatsapp",
+        trigger=body.trigger if body.trigger in allowed_triggers else "manual",
+        deliver=body.deliver,
+    )
+    return ReviewRequestOut(
+        id=row.id,
+        status=row.status,
+        sent_at=row.sent_at,
+        channel=row.channel,
+        sent_via=row.sent_via,
+        link=tracked_link(row.token),
+        error=row.error,
+    )
+
+
+@router.get("/review-requests/{token}/click")
+async def review_request_click(token: str, db: AsyncSession = Depends(get_db)):
+    """Public click redirect: mark the click, then send the customer to Google.
+
+    No auth by design - the token is the capability. An unknown token still
+    redirects to Google's generic review page rather than leaking whether the
+    token exists.
+    """
+    from fastapi.responses import RedirectResponse
+
+    from .review_requests import track_click
+
+    target = await track_click(db, token)
+    if target:
+        return RedirectResponse(url=target, status_code=302)
+    return RedirectResponse(url="https://www.google.com/maps", status_code=302)
+
+
+@router.post("/review-requests/bulk", response_model=ReviewRequestBulkOut)
+async def bulk_review_requests(
+    body: ReviewRequestBulkIn,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue up to 500 review asks, immediately or in staggered batches.
+
+    Rows are created as "queued" and a durable `review_request.send` job is
+    enqueued for each one. The worker sends it; the API never blocks on a
+    provider loop. WhatsApp sends consume the plan's monthly message allowance,
+    so the queue is capped at the remaining entitlement - the response reports
+    exactly how many were skipped for quota, never silently over-sending.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from ..billing.entitlements import count_messages_this_month, get_entitlements
+    from ..jobs.service import submit_job
+    from .review_requests import create_queued
+
+    if body.channel not in ("email", "whatsapp"):
+        raise HTTPException(status_code=400, detail="Bulk delivery supports email or whatsapp.")
+    if len(body.contacts) == 0:
+        raise HTTPException(status_code=400, detail="No contacts supplied.")
+
+    uid = tenant_id_of(user)
+    now = datetime.now(timezone.utc)
+    valid = []
+    for contact in body.contacts:
+        value = (contact.email if body.channel == "email" else contact.phone) or ""
+        value = value.strip()
+        if value:
+            valid.append((value, contact.name))
+    skipped_contact = len(body.contacts) - len(valid)
+
+    quota = None
+    allowed = len(valid)
+    skipped_quota = 0
+    if body.channel == "whatsapp":
+        ent = await get_entitlements(uid, db)
+        used = await count_messages_this_month(uid, db)
+        max_msgs = ent.max_messages_per_month
+        remaining = None if max_msgs is None else max(0, max_msgs - used)
+        allowed = len(valid) if remaining is None else min(len(valid), remaining)
+        skipped_quota = len(valid) - allowed
+        quota = {
+            "used": used,
+            "max": max_msgs,
+            "remaining": remaining,
+            "requested": len(valid),
+        }
+
+    queued = 0
+    for value, name in valid[:allowed]:
+        row = await create_queued(
+            db,
+            uid,
+            channel_id=body.channel_id,
+            contact=value,
+            contact_name=name,
+            channel=body.channel,
+            trigger=body.trigger,
+            subject=body.subject,
+            body=body.body,
+        )
+        delay = 0 if body.mode == "now" else (queued // body.batch_size) * body.interval_minutes
+        await submit_job(
+            db,
+            tenant_id=uid,
+            job_type="review_request.send",
+            payload={"request_id": row.id},
+            subject_type="review_request",
+            subject_id=row.id,
+            idempotency_key=f"review_request:{row.id}",
+            next_run_at=now + timedelta(minutes=delay),
+        )
+        queued += 1
+    await db.commit()
+    return ReviewRequestBulkOut(
+        queued=queued,
+        sent_now=queued if body.mode == "now" else 0,
+        scheduled=0 if body.mode == "now" else queued,
+        skipped=skipped_contact,
+        skipped_quota=skipped_quota,
+        quota=quota,
+    )
+
+
+@router.post("/review-requests/template", response_model=ReviewTemplateOut)
+async def generate_review_template(
+    body: ReviewTemplateIn,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Draft a review-ask template, with a deterministic fallback.
+
+    The customer-facing templates are short. `{name}` and `{link}` are the only
+    placeholders; the link is the tracked redirect, never the raw Google URL.
+    """
+    fallback_body = (
+        "Hi {name}, thanks for visiting! Would you mind leaving us a quick review? "
+        "It really helps us improve: {link}"
+    )
+    fallback_subject = "Would you leave us a quick review?"
+    if body.channel == "whatsapp":
+        fallback_body = "Hi {name}, thanks for visiting! Could you leave us a quick review? {link}"
+
+    try:
+        from ..llm.gateway import LLMMessage, complete, resolve_tenant_model
+
+        model = await resolve_tenant_model(db)
+        resp = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=(
+                f"Write a {body.tone} {body.channel} message asking a customer to leave a "
+                "Google review. Keep it under 45 words. Include {name} and {link} exactly "
+                "once. No emojis. Return only the message text."
+            ))],
+            purpose="review_request.template",
+            tenant_id=tenant_id_of(user),
+            max_tokens=200,
+            temperature=0.5,
+        )
+        text = (resp.content or "").strip().strip('"')
+        if text and "{link}" in text:
+            return ReviewTemplateOut(
+                subject=fallback_subject,
+                body=text[:1200],
+                source="ai",
+            )
+    except Exception as e:
+        logger.warning("review template generation failed: %s", e)
+    return ReviewTemplateOut(subject=fallback_subject, body=fallback_body, source="fallback")
+
+
+@router.get("/review-requests", response_model=ReviewRequestListOut)
+async def list_review_requests(
+    status: str | None = Query(None),
+    channel: str | None = Query(None),
+    q: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Paginated review-request log with status counts.
+
+    This is the management surface: every bulk row is stored, visible, and
+    retryable. Counts are tenant-scoped and computed in one grouped query.
+    """
+    from sqlalchemy import func, or_
+
+    from .models import ReviewRequest
+
+    uid = tenant_id_of(user)
+    filters = [ReviewRequest.user_id == uid]
+    if status:
+        filters.append(ReviewRequest.status == status)
+    if channel:
+        filters.append(ReviewRequest.channel == channel)
+    if q:
+        like = f"%{q.strip()}%"
+        filters.append(or_(
+            ReviewRequest.contact.ilike(like),
+            ReviewRequest.contact_name.ilike(like),
+        ))
+
+    total = (await db.execute(select(func.count()).where(*filters))).scalar() or 0
+    rows = (
+        await db.execute(
+            select(ReviewRequest)
+            .where(*filters)
+            .order_by(ReviewRequest.sent_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars().all()
+    count_rows = (
+        await db.execute(
+            select(ReviewRequest.status, func.count())
+            .where(ReviewRequest.user_id == uid)
+            .group_by(ReviewRequest.status)
+        )
+    ).all()
+    from .review_requests import tracked_link
+
+    return ReviewRequestListOut(
+        total=int(total),
+        counts={s or "unknown": int(n or 0) for s, n in count_rows},
+        items=[
+            ReviewRequestItemOut(
+                id=r.id,
+                contact=r.contact,
+                contact_name=r.contact_name,
+                channel=r.channel,
+                trigger=r.trigger,
+                status=r.status,
+                sent_via=r.sent_via,
+                sent_at=r.sent_at,
+                clicked_at=r.clicked_at,
+                reviewed_at=r.reviewed_at,
+                error=r.error,
+                link=tracked_link(r.token),
+            )
+            for r in rows
+        ],
+    )
+
+
+@router.post("/review-requests/{request_id}/retry", response_model=ReviewRequestRetryOut)
+async def retry_review_request(
+    request_id: str,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry one terminal-failed request by replaying its job."""
+    from ..jobs.models import Job
+    from ..jobs.service import replay_job, submit_job
+    from .models import ReviewRequest
+
+    uid = tenant_id_of(user)
+    row = await db.get(ReviewRequest, request_id)
+    if row is None or row.user_id != uid:
+        raise HTTPException(status_code=404, detail="Request not found.")
+    if row.status != "failed":
+        raise HTTPException(status_code=409, detail="Only failed requests can be retried.")
+    job = (
+        await db.execute(
+            select(Job)
+            .where(Job.tenant_id == uid, Job.subject_id == row.id, Job.job_type == "review_request.send")
+            .order_by(Job.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if job is not None and await replay_job(db, job_id=job.id, tenant_id=uid) is not None:
+        pass
+    else:
+        await submit_job(
+            db,
+            tenant_id=uid,
+            job_type="review_request.send",
+            payload={"request_id": row.id},
+            subject_type="review_request",
+            subject_id=row.id,
+            idempotency_key=f"review_request:{row.id}:retry:{row.status}",
+        )
+    row.status = "queued"
+    row.error = None
+    await db.commit()
+    return ReviewRequestRetryOut(retried=1)
+
+
+@router.post("/review-requests/retry-failed", response_model=ReviewRequestRetryOut)
+async def retry_failed_review_requests(
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replay up to 200 failed requests for this tenant. Bounded on purpose."""
+    from ..jobs.models import Job
+    from ..jobs.service import replay_job, submit_job
+    from .models import ReviewRequest
+
+    uid = tenant_id_of(user)
+    rows = (
+        await db.execute(
+            select(ReviewRequest)
+            .where(ReviewRequest.user_id == uid, ReviewRequest.status == "failed")
+            .order_by(ReviewRequest.sent_at.desc())
+            .limit(200)
+        )
+    ).scalars().all()
+    retried = 0
+    for row in rows:
+        job = (
+            await db.execute(
+                select(Job)
+                .where(Job.tenant_id == uid, Job.subject_id == row.id, Job.job_type == "review_request.send")
+                .order_by(Job.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if job is not None and await replay_job(db, job_id=job.id, tenant_id=uid) is not None:
+            pass
+        else:
+            await submit_job(
+                db,
+                tenant_id=uid,
+                job_type="review_request.send",
+                payload={"request_id": row.id},
+                subject_type="review_request",
+                subject_id=row.id,
+                idempotency_key=f"review_request:{row.id}:retry:{retried}",
+            )
+        row.status = "queued"
+        row.error = None
+        retried += 1
+    await db.commit()
+    return ReviewRequestRetryOut(retried=retried)
+
+
+@router.post("/review-requests/{request_id}/cancel", response_model=ReviewRequestRetryOut)
+async def cancel_review_request(
+    request_id: str,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a queued request before the worker sends it."""
+    from ..jobs.models import Job
+    from ..jobs.service import cancel_job
+    from .models import ReviewRequest
+
+    uid = tenant_id_of(user)
+    row = await db.get(ReviewRequest, request_id)
+    if row is None or row.user_id != uid:
+        raise HTTPException(status_code=404, detail="Request not found.")
+    if row.status != "queued":
+        raise HTTPException(status_code=409, detail="Only queued requests can be cancelled.")
+    job = (
+        await db.execute(
+            select(Job)
+            .where(Job.tenant_id == uid, Job.subject_id == row.id, Job.job_type == "review_request.send")
+            .order_by(Job.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if job is not None:
+        await cancel_job(db, job=job)
+    row.status = "cancelled"
+    row.error = "Cancelled by merchant."
+    await db.commit()
+    return ReviewRequestRetryOut(retried=1)
+
+
 @router.get("/products", response_model=ProductsResponse)
 async def get_products(
     channel_id: str | None = Query(None),
@@ -574,6 +1097,21 @@ async def get_acquisition(
     return await growth.get_acquisition(db, tenant_id_of(user), channel_id, days)
 
 
+@router.get("/messaging/growth")
+async def get_messaging_growth(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Messaging growth: new contacts, message volume, follower trends.
+
+    Reads stored `channel_daily_metrics` rows only.
+    """
+    return await growth.get_messaging_growth(db, tenant_id_of(user), channel_id, days)
+
+
 @router.get("/opportunities", response_model=OpportunitiesResponse)
 async def get_opportunities(
     channel_id: str | None = Query(None),
@@ -611,6 +1149,64 @@ async def get_benchmark_comparison(
     """Benchmark the tenant against the second demo business profile (stand-in for comparable businesses)."""
     uid = tenant_id_of(user)
     return await benchmark.get_benchmark(db, uid, channel_id, days)
+
+
+@router.get("/benchmark/external")
+async def get_external_benchmark(
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """External nearby peer set (Pro). Dormant when the Places key is unset."""
+    from ..billing.entitlements import get_entitlements
+
+    uid = tenant_id_of(user)
+    ent = await get_entitlements(uid, db)
+    if not ent.has_feature("benchmark_external"):
+        raise HTTPException(status_code=403, detail="External benchmarking is a Pro feature.")
+    return await competitors.get_external_peer_set(db, uid)
+
+
+@router.post("/benchmark/external/refresh")
+async def refresh_external_benchmark(
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch nearby competitors from Google Places and upsert the peer set.
+
+    Gated by the Pro entitlement and by the API key. The business identity is
+    taken from the tenant's first synced listing (name/address/category).
+    """
+    from ..billing.entitlements import get_entitlements
+    from ..channels.models import Channel
+    from ..localith.models import LocalithConnection
+
+    uid = tenant_id_of(user)
+    ent = await get_entitlements(uid, db)
+    if not ent.has_feature("benchmark_external"):
+        raise HTTPException(status_code=403, detail="External benchmarking is a Pro feature.")
+
+    name = address = category = None
+    conn = (
+        await db.execute(
+            select(LocalithConnection).where(LocalithConnection.user_id == uid).limit(1)
+        )
+    ).scalar_one_or_none()
+    if conn is not None:
+        name = conn.listing_name
+        address = conn.address
+    if not name:
+        channel = (
+            await db.execute(
+                select(Channel).where(Channel.user_id == uid).limit(1)
+            )
+        ).scalar_one_or_none()
+        if channel is not None:
+            name = channel.display_name
+    return await competitors.refresh_external_peers(
+        db, uid, name=name, address=address, category=category
+    )
 
 
 @router.get("/executive-summary", response_model=ExecutiveSummaryResponse)

@@ -15,10 +15,11 @@ mirroring the existing event architecture in `modules/outbox`.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
+from ...db_indexes import register_postgres_index_ddl
 from .subjects import SUBJECT_KEYS
 
 # A JSON list column with no server default is a trap: `default=list` only
@@ -37,6 +38,10 @@ class ReviewInsight(Base):
     __tablename__ = "review_insights"
     __table_args__ = (
         UniqueConstraint("channel_id", "review_id", name="uq_review_insights_channel_review"),
+        # The reviews page filters by tenant and orders by created_at desc.
+        # The single-column user_id index forces a sort of every review the
+        # tenant has; this one returns the page already ordered.
+        Index("ix_review_insights_user_created", "user_id", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -97,7 +102,9 @@ class ReviewInsight(Base):
     # /media-files, because Google's thumbnailUrl is a short-lived FIFE link
     # that stops resolving within hours. `source_url` is kept only to detect
     # a changed photo on the next sync.
-    media: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+    media: Mapped[list | None] = mapped_column(
+        JSON, default=list, server_default=_EMPTY_JSON, nullable=True
+    )
     # Per-review meaning record — the layer the intelligence report reads
     # instead of re-interpreting raw text. See analytics/subjects.py for the
     # closed vocabulary and the evidence rule that stops the model inventing
@@ -135,7 +142,9 @@ class ReviewInsight(Base):
     # breaks Google's content policies; `abuse_verdict` is the human decision
     # (None = not yet reviewed). The AI never acts on its own.
     abuse_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    abuse_labels: Mapped[list] = mapped_column(JSON, default=list, server_default=_EMPTY_JSON)
+    abuse_labels: Mapped[list | None] = mapped_column(
+        JSON, default=list, server_default=_EMPTY_JSON, nullable=True
+    )
     abuse_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     abuse_reviewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -178,6 +187,8 @@ class LocationIssue(Base):
         # One open item per subject per location. A resolved issue keeps its
         # row, so the unique index covers the pair without the status.
         UniqueConstraint("channel_id", "subject", name="uq_location_issue_channel_subject"),
+        # The list endpoint is always "my issues, worst first" within a scope.
+        Index("ix_location_issues_user_channel_status", "user_id", "channel_id", "status"),
         # The subject must be a real member of the closed vocabulary. Enforced
         # in the database as well as in code, because an invented category is
         # exactly the failure this whole layer exists to prevent.
@@ -253,6 +264,10 @@ class LocationDailyMetric(Base):
     __tablename__ = "location_daily_metrics"
     __table_args__ = (
         UniqueConstraint("channel_id", "date", name="uq_location_daily_channel_date"),
+        # Analytics reads a tenant's date range and orders by date. Two
+        # single-column indexes force Postgres to choose one and sort the
+        # result; this composite serves the filter and the ORDER BY.
+        Index("ix_location_daily_metrics_user_date", "user_id", "date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -312,6 +327,9 @@ class ChannelDailyMetric(Base):
     __tablename__ = "channel_daily_metrics"
     __table_args__ = (
         UniqueConstraint("channel_id", "date", name="uq_channel_daily_channel_date"),
+        # Same shape as location_daily_metrics: tenant + date range, ordered
+        # by date. Keeps growth/messaging analytics off a sort of every row.
+        Index("ix_channel_daily_metrics_user_date", "user_id", "date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -347,6 +365,7 @@ class ChannelDailyMetric(Base):
     # ── Future pillars (filled by later phases, columns exist so the
     #    rollup worker never needs a second migration) ──
     ai_handled_out: Mapped[int] = mapped_column(Integer, default=0)  # needs handled_by flag
+    human_handled_out: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # needs handled_by flag
     contacts_new: Mapped[int] = mapped_column(Integer, default=0)  # first-ever inbound that day
     followers_count: Mapped[int | None] = mapped_column(Integer, nullable=True)  # daily snapshot
     posts_count: Mapped[int | None] = mapped_column(Integer, nullable=True)  # daily snapshot
@@ -384,8 +403,9 @@ class ReviewIntelligenceReport(Base):
     # Rolling-window length for preset intervals; 0 for an explicit date range.
     days: Mapped[int] = mapped_column(Integer, default=90)
     # Cache identity for the interval: "7"/"30"/"90"/"365"/"all" for presets,
-    # or "2026-09-01..2026-09-30" for a custom month range.
-    scope_key: Mapped[str] = mapped_column(String(40), default="90")
+    # or "2026-09-01..2026-09-30" for a custom month range. Nullable matches
+    # the migrated table; the default still fills every ORM insert.
+    scope_key: Mapped[str | None] = mapped_column(String(40), default="90", nullable=True)
 
     source: Mapped[str] = mapped_column(String(16), default="fallback")  # ai | fallback
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -396,9 +416,9 @@ class ReviewIntelligenceReport(Base):
     actions: Mapped[list] = mapped_column(JSON, default=list)
     stats: Mapped[dict] = mapped_column(JSON, default=dict)
     # Business Health Scorecard (standard dimensions + LLM-discovered extras).
-    dimensions: Mapped[list] = mapped_column(JSON, default=list)
+    dimensions: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True)
     # Where this business leads / trails the anonymised cohort.
-    competitive: Mapped[dict] = mapped_column(JSON, default=dict)
+    competitive: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     rag_used: Mapped[bool] = mapped_column(Boolean, default=False)
     rag_chunks: Mapped[int] = mapped_column(Integer, default=0)
     rag_bank: Mapped[str | None] = mapped_column(String(36), nullable=True)
@@ -428,6 +448,9 @@ class SearchKeywordStat(Base):
     __tablename__ = "search_keyword_stats"
     __table_args__ = (
         UniqueConstraint("channel_id", "keyword", "date", name="uq_keyword_channel_day"),
+        # Keyword reports query one tenant over a date range and group by
+        # keyword; the composite keeps the range scan inside the tenant.
+        Index("ix_search_keyword_stats_user_date", "user_id", "date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -439,6 +462,196 @@ class SearchKeywordStat(Base):
     date: Mapped[datetime] = mapped_column(Date, index=True)
     impressions: Mapped[int] = mapped_column(Integer, default=0)
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class ConversationInsight(Base):
+    __tablename__ = "conversation_insights"
+    __table_args__ = (
+        # Unique index (not a UniqueConstraint) to match the migrated object
+        # name, so a models-only rebuild and the migration chain agree.
+        Index(
+            "ix_conversation_insights_tenant_window",
+            "tenant_id",
+            "window_start",
+            "window_end",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    window_start: Mapped[datetime] = mapped_column(Date, nullable=False)
+    window_end: Mapped[datetime] = mapped_column(Date, nullable=False)
+    insights: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class MarketBenchmark(Base):
+    __tablename__ = "market_benchmarks"
+    __table_args__ = (
+        # Unique index name matches the migration; see ConversationInsight.
+        Index(
+            "ix_market_benchmarks_date_scope",
+            "date",
+            "scope_market",
+            "scope_network",
+            "metric",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    date: Mapped[datetime] = mapped_column(Date, nullable=False, index=True)
+    scope_market: Mapped[str] = mapped_column(String(64), nullable=False, server_default="global")
+    scope_network: Mapped[str] = mapped_column(String(32), nullable=False, server_default="all")
+    metric: Mapped[str] = mapped_column(String(64), nullable=False)
+    median: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p25: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p75: Mapped[float | None] = mapped_column(Float, nullable=True)
+    business_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+# Expression + partial indexes over the JSON `meaning` column. PostgreSQL-only;
+# registered here so a models-only rebuild still gets them.
+register_postgres_index_ddl(
+    ReviewInsight.__table__,
+    [
+        "CREATE INDEX IF NOT EXISTS ix_review_insights_meaning_needs_human "
+        "ON review_insights (((meaning ->> 'needs_human')::boolean)) "
+        "WHERE meaning IS NOT NULL AND (meaning ->> 'needs_human') = 'true'",
+        "CREATE INDEX IF NOT EXISTS ix_review_insights_meaning_subject "
+        "ON review_insights ((meaning ->> 'subject')) "
+        "WHERE meaning IS NOT NULL",
+    ],
+    names=[
+        "ix_review_insights_meaning_needs_human",
+        "ix_review_insights_meaning_subject",
+    ],
+)
+
+
+class ReviewRequest(Base):
+    """One review-request send, recorded when a merchant asks a customer.
+
+    The Growth funnel needs a denominator: "21 reviews" is only a result when
+    it is "21 reviews from 420 requests". Delivery/click events are recorded
+    when the channel reports them; until then the UI labels the untracked
+    stages instead of inventing numbers.
+
+    `trigger` is the how: manual, qr, after_visit, campaign. `channel` is the
+    medium: whatsapp, sms, email, in_person. Keeping them separate lets the
+    ask-timing card compare "QR 12%" with "SMS 2h 6%".
+    """
+
+    __tablename__ = "review_requests"
+    __table_args__ = (
+        Index("ix_review_requests_user_sent", "user_id", "sent_at"),
+        Index("ix_review_requests_user_status", "user_id", "status"),
+        Index("ix_review_requests_user_channel", "user_id", "channel"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    channel_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Hash-safe contact identifier: phone (E.164-ish) or email. No message body.
+    contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # whatsapp | sms | email | in_person
+    channel: Mapped[str] = mapped_column(String(20), default="whatsapp", server_default="whatsapp")
+    # manual | qr | after_visit | campaign
+    trigger: Mapped[str] = mapped_column(String(30), default="manual", server_default="manual")
+    # sent | delivered | clicked | reviewed | failed | opted_out
+    status: Mapped[str] = mapped_column(String(16), default="sent", server_default="sent")
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The review this request produced, when the platform can match it.
+    review_id: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Opaque click token used by the public redirect. Unique + indexed so the
+    # click endpoint is a single lookup; null for in-person/manual asks that
+    # never get a tracked link.
+    token: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    # Where the click redirects (Google "write a review" URL for this listing).
+    review_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # How it was delivered: whatsapp_manual | sms | email | in_person.
+    sent_via: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Provider/validation failure reason. Never exposed to customers.
+    error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Rendered copy captured at queue time, so a later template edit does not
+    # change an already-scheduled send.
+    subject: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CompetitorSnapshot(Base):
+    """One external competitor listing captured for a tenant's peer set.
+
+    The source is explicit: "google_places" (Places API New) today, with room
+    for a licensed crawler/aggregator later. Snapshots are upserted per
+    (user_id, place_id, source) and stamped with fetched_at, so the benchmark
+    can disclose the peer radius, sample size, and age instead of presenting
+    a black-box median.
+
+    This table is intentionally separate from Sayvors tenants: the peer set is
+    external businesses that are not customers of the platform.
+    """
+
+    __tablename__ = "competitor_snapshots"
+    __table_args__ = (
+        UniqueConstraint("user_id", "place_id", "source", name="uq_competitor_user_place_source"),
+        Index("ix_competitor_snapshots_user_fetched", "user_id", "fetched_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    place_id: Mapped[str] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(255))
+    category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    rating: Mapped[float | None] = mapped_column(Float, nullable=True)
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
+    distance_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # google_places | crawler | manual
+    source: Mapped[str] = mapped_column(String(20), default="google_places", server_default="google_places")
+    # The query that produced the row, for provenance (radius/category text).
+    query_radius_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    query_category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

@@ -278,6 +278,7 @@ async def _process_action(db, action: LeadAction) -> None:
         content_type="text",
         status="sent",
         contact_phone=action.contact_id,
+        handled_by="ai",
     ))
     # Arm the NEXT attempt with its own gap — same durability rules as
     # attempt 1, same unique constraint, same lease machinery.

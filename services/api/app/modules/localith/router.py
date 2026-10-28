@@ -106,13 +106,15 @@ async def get_local_listings(
     """List the locations available under the configured Localith account."""
     try:
         listings = await service.list_local_listings()
-    except Exception as e:
-        # Log the cause, return an opaque message — provider errors can
-        # leak account/topology details to clients.
+    except Exception as e:  # noqa: BLE001 — upstream provider; never crash the page
+        # Log the cause with enough context to diagnose (no secrets), but
+        # return an empty list with a reason instead of a 502 so the channels
+        # page still renders the connected branches and the browser does not
+        # log a console error for a non-fatal, recoverable condition.
         import logging
 
         logging.getLogger(__name__).warning("Localith listings failed: %s", e)
-        raise HTTPException(status_code=502, detail="Localith listings request failed")
+        return {"listings": [], "unavailable": "Localith listings could not be fetched right now."}
     return {"listings": listings}
 
 

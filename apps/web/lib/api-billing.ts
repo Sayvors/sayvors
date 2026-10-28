@@ -126,3 +126,79 @@ export interface Budget {
 export async function getBudget(): Promise<Budget> {
   return apiFetch("/api/v1/billing/budget");
 }
+
+export interface BillingLedgerEntry {
+  id: string;
+  kind: string;
+  status: string;
+  amount_cents: number;
+  reserved_cents: number;
+  balance_after_cents: number | null;
+  model_id: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  idempotency_key: string | null;
+  expires_at: string | null;
+  settled_at: string | null;
+  note: string | null;
+  created_at: string | null;
+}
+
+export interface TenantBilling {
+  tenant_id: string;
+  email: string;
+  plan: string;
+  balance_cents: number;
+  held_cents: number;
+  total_cents: number;
+  status: "ok" | "low" | "empty" | "debt";
+  holds: BillingLedgerEntry[];
+  ledger: BillingLedgerEntry[];
+}
+
+export async function getLedger(): Promise<TenantBilling> {
+  return apiFetch("/api/v1/billing/ledger");
+}
+
+export interface PlanFeatureSpec {
+  key: string;
+  label: string;
+  description: string;
+  default: boolean;
+}
+
+export interface WebPlan {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  price_cents: number;
+  included_credit_cents: number;
+  max_channels: number | null;
+  max_messages_per_month: number | null;
+  features: Record<string, boolean>;
+  sort_order: number;
+}
+
+export interface Entitlements {
+  plan_slug: string;
+  plan_name: string;
+  status: string;
+  max_channels: number | null;
+  max_messages_per_month: number | null;
+  messages_used_this_month: number;
+  messages_remaining: number | null;
+  included_credit_cents: number;
+  features: Record<string, boolean>;
+  promo_active: boolean;
+  granted_by: string | null;
+  granted_until: string | null;
+}
+
+export async function getPlans(): Promise<WebPlan[]> {
+  return apiFetch("/api/v1/billing/plans");
+}
+
+export async function getEntitlements(): Promise<Entitlements> {
+  return apiFetch("/api/v1/billing/entitlements");
+}
