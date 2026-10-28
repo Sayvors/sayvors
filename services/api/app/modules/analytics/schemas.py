@@ -862,6 +862,31 @@ class ReviewRequestBulkOut(BaseModel):
     quota: BulkQuotaOut | None = None
 
 
+class ReviewRequestItemOut(BaseModel):
+    id: str
+    contact: str | None = None
+    contact_name: str | None = None
+    channel: str
+    trigger: str
+    status: str
+    sent_via: str | None = None
+    sent_at: datetime
+    clicked_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    error: str | None = None
+    link: str | None = None
+
+
+class ReviewRequestListOut(BaseModel):
+    items: list[ReviewRequestItemOut] = []
+    total: int
+    counts: dict[str, int] = {}
+
+
+class ReviewRequestRetryOut(BaseModel):
+    retried: int
+
+
 class ReviewTemplateIn(BaseModel):
     # email | whatsapp
     channel: str = "email"

@@ -15,6 +15,7 @@ import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict }
 import MeaningInspector from "@/components/reviews/MeaningInspector";
 import AskForReview from "@/components/dashboard/AskForReview";
 import BulkReviewRequests from "@/components/dashboard/BulkReviewRequests";
+import ReviewRequestLog from "@/components/dashboard/ReviewRequestLog";
 import QRCodeGenerator from "@/components/dashboard/QRCodeGenerator";
 import { ALL_BRANCHES, groupValue, parseGroupValue, useLocationGroups } from "@/lib/location-groups";
 
@@ -2002,6 +2003,9 @@ function ReviewsInner() {
               </div>
               <div className="mt-4">
                 <BulkReviewRequests />
+              </div>
+              <div className="mt-4">
+                <ReviewRequestLog />
               </div>
             </>
           )}

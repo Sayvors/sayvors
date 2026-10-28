@@ -33,6 +33,9 @@ from .schemas import (
     ReviewRequestBulkOut,
     ReviewTemplateIn,
     ReviewTemplateOut,
+    ReviewRequestItemOut,
+    ReviewRequestListOut,
+    ReviewRequestRetryOut,
     ReviewInsightItem,
     ReviewInsightListResponse,
     ReviewIntelligenceResponse,
@@ -850,6 +853,208 @@ async def generate_review_template(
     except Exception as e:
         logger.warning("review template generation failed: %s", e)
     return ReviewTemplateOut(subject=fallback_subject, body=fallback_body, source="fallback")
+
+
+@router.get("/review-requests", response_model=ReviewRequestListOut)
+async def list_review_requests(
+    status: str | None = Query(None),
+    channel: str | None = Query(None),
+    q: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Paginated review-request log with status counts.
+
+    This is the management surface: every bulk row is stored, visible, and
+    retryable. Counts are tenant-scoped and computed in one grouped query.
+    """
+    from sqlalchemy import func, or_
+
+    from .models import ReviewRequest
+
+    uid = tenant_id_of(user)
+    filters = [ReviewRequest.user_id == uid]
+    if status:
+        filters.append(ReviewRequest.status == status)
+    if channel:
+        filters.append(ReviewRequest.channel == channel)
+    if q:
+        like = f"%{q.strip()}%"
+        filters.append(or_(
+            ReviewRequest.contact.ilike(like),
+            ReviewRequest.contact_name.ilike(like),
+        ))
+
+    total = (await db.execute(select(func.count()).where(*filters))).scalar() or 0
+    rows = (
+        await db.execute(
+            select(ReviewRequest)
+            .where(*filters)
+            .order_by(ReviewRequest.sent_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars().all()
+    count_rows = (
+        await db.execute(
+            select(ReviewRequest.status, func.count())
+            .where(ReviewRequest.user_id == uid)
+            .group_by(ReviewRequest.status)
+        )
+    ).all()
+    from .review_requests import tracked_link
+
+    return ReviewRequestListOut(
+        total=int(total),
+        counts={s or "unknown": int(n or 0) for s, n in count_rows},
+        items=[
+            ReviewRequestItemOut(
+                id=r.id,
+                contact=r.contact,
+                contact_name=r.contact_name,
+                channel=r.channel,
+                trigger=r.trigger,
+                status=r.status,
+                sent_via=r.sent_via,
+                sent_at=r.sent_at,
+                clicked_at=r.clicked_at,
+                reviewed_at=r.reviewed_at,
+                error=r.error,
+                link=tracked_link(r.token),
+            )
+            for r in rows
+        ],
+    )
+
+
+@router.post("/review-requests/{request_id}/retry", response_model=ReviewRequestRetryOut)
+async def retry_review_request(
+    request_id: str,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry one terminal-failed request by replaying its job."""
+    from ..jobs.models import Job
+    from ..jobs.service import replay_job, submit_job
+    from .models import ReviewRequest
+
+    uid = tenant_id_of(user)
+    row = await db.get(ReviewRequest, request_id)
+    if row is None or row.user_id != uid:
+        raise HTTPException(status_code=404, detail="Request not found.")
+    if row.status != "failed":
+        raise HTTPException(status_code=409, detail="Only failed requests can be retried.")
+    job = (
+        await db.execute(
+            select(Job)
+            .where(Job.tenant_id == uid, Job.subject_id == row.id, Job.job_type == "review_request.send")
+            .order_by(Job.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if job is not None and await replay_job(db, job_id=job.id, tenant_id=uid) is not None:
+        pass
+    else:
+        await submit_job(
+            db,
+            tenant_id=uid,
+            job_type="review_request.send",
+            payload={"request_id": row.id},
+            subject_type="review_request",
+            subject_id=row.id,
+            idempotency_key=f"review_request:{row.id}:retry:{row.status}",
+        )
+    row.status = "queued"
+    row.error = None
+    await db.commit()
+    return ReviewRequestRetryOut(retried=1)
+
+
+@router.post("/review-requests/retry-failed", response_model=ReviewRequestRetryOut)
+async def retry_failed_review_requests(
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replay up to 200 failed requests for this tenant. Bounded on purpose."""
+    from ..jobs.models import Job
+    from ..jobs.service import replay_job, submit_job
+    from .models import ReviewRequest
+
+    uid = tenant_id_of(user)
+    rows = (
+        await db.execute(
+            select(ReviewRequest)
+            .where(ReviewRequest.user_id == uid, ReviewRequest.status == "failed")
+            .order_by(ReviewRequest.sent_at.desc())
+            .limit(200)
+        )
+    ).scalars().all()
+    retried = 0
+    for row in rows:
+        job = (
+            await db.execute(
+                select(Job)
+                .where(Job.tenant_id == uid, Job.subject_id == row.id, Job.job_type == "review_request.send")
+                .order_by(Job.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if job is not None and await replay_job(db, job_id=job.id, tenant_id=uid) is not None:
+            pass
+        else:
+            await submit_job(
+                db,
+                tenant_id=uid,
+                job_type="review_request.send",
+                payload={"request_id": row.id},
+                subject_type="review_request",
+                subject_id=row.id,
+                idempotency_key=f"review_request:{row.id}:retry:{retried}",
+            )
+        row.status = "queued"
+        row.error = None
+        retried += 1
+    await db.commit()
+    return ReviewRequestRetryOut(retried=retried)
+
+
+@router.post("/review-requests/{request_id}/cancel", response_model=ReviewRequestRetryOut)
+async def cancel_review_request(
+    request_id: str,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a queued request before the worker sends it."""
+    from ..jobs.models import Job
+    from ..jobs.service import cancel_job
+    from .models import ReviewRequest
+
+    uid = tenant_id_of(user)
+    row = await db.get(ReviewRequest, request_id)
+    if row is None or row.user_id != uid:
+        raise HTTPException(status_code=404, detail="Request not found.")
+    if row.status != "queued":
+        raise HTTPException(status_code=409, detail="Only queued requests can be cancelled.")
+    job = (
+        await db.execute(
+            select(Job)
+            .where(Job.tenant_id == uid, Job.subject_id == row.id, Job.job_type == "review_request.send")
+            .order_by(Job.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if job is not None:
+        await cancel_job(db, job=job)
+    row.status = "cancelled"
+    row.error = "Cancelled by merchant."
+    await db.commit()
+    return ReviewRequestRetryOut(retried=1)
 
 
 @router.get("/products", response_model=ProductsResponse)

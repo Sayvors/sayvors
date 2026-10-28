@@ -489,6 +489,55 @@ export async function generateReviewTemplate(input: {
   });
 }
 
+export interface ReviewRequestItem {
+  id: string;
+  contact: string | null;
+  contact_name: string | null;
+  channel: string;
+  trigger: string;
+  status: string;
+  sent_via: string | null;
+  sent_at: string;
+  clicked_at: string | null;
+  reviewed_at: string | null;
+  error: string | null;
+  link: string | null;
+}
+
+export interface ReviewRequestList {
+  items: ReviewRequestItem[];
+  total: number;
+  counts: Record<string, number>;
+}
+
+export async function fetchReviewRequests(params: {
+  status?: string;
+  channel?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<ReviewRequestList> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.channel) qs.set("channel", params.channel);
+  if (params.q) qs.set("q", params.q);
+  qs.set("limit", String(params.limit ?? 50));
+  qs.set("offset", String(params.offset ?? 0));
+  return apiFetch(`/api/v1/analytics/review-requests?${qs.toString()}`);
+}
+
+export async function retryReviewRequest(id: string): Promise<{ retried: number }> {
+  return apiFetch(`/api/v1/analytics/review-requests/${encodeURIComponent(id)}/retry`, { method: "POST" });
+}
+
+export async function retryFailedReviewRequests(): Promise<{ retried: number }> {
+  return apiFetch("/api/v1/analytics/review-requests/retry-failed", { method: "POST" });
+}
+
+export async function cancelReviewRequest(id: string): Promise<{ retried: number }> {
+  return apiFetch(`/api/v1/analytics/review-requests/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+}
+
 export async function fetchTimeseries(
   days: number,
   channelId?: string | null

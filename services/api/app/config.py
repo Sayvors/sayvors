@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     # lanes. Lets a single lane be scaled independently (e.g. JOB_LANES=realtime
     # on a dedicated replica) without running every lane. Unknown names fail fast.
     JOB_LANES: str = ""
+    # Per-lane in-flight caps. Bulk carries review-request sends (provider
+    # I/O), so it defaults above the old serialized value; raise it on a
+    # dedicated worker replica, not on the latency-critical API process.
+    JOBS_REALTIME_CONCURRENCY: int = 8
+    JOBS_PUBLISHING_CONCURRENCY: int = 4
+    JOBS_MEDIA_CONCURRENCY: int = 2
+    JOBS_BULK_CONCURRENCY: int = 4
     REDIS_URL: str = "redis://localhost:6379/0"
     # Optional TLS for managed Redis (Memorystore with in-transit encryption,
     # ElastiCache with TLS). Only consulted when REDIS_URL uses the rediss://

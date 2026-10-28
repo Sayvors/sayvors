@@ -17,17 +17,20 @@ from ..outbox.service import enqueue_event_in
 from .handlers import HANDLERS
 from .models import Job, JobStatus
 from .service import block_job, cancel_job, complete_job, claim_due_jobs, fail_job, retry_job
+from ...config import settings
 from ...database import async_session
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-# Per-lane concurrency cap so one lane can't starve others.
+# Per-lane concurrency cap so one lane can't starve others. Env-driven so a
+# dedicated worker replica can raise bulk (review-request sends) without
+# touching the latency-critical API process.
 LANE_CONCURRENCY: dict[str, int] = {
-    "realtime": 8,
-    "publishing": 4,
-    "media": 2,
-    "bulk": 1,
+    "realtime": max(1, settings.JOBS_REALTIME_CONCURRENCY),
+    "publishing": max(1, settings.JOBS_PUBLISHING_CONCURRENCY),
+    "media": max(1, settings.JOBS_MEDIA_CONCURRENCY),
+    "bulk": max(1, settings.JOBS_BULK_CONCURRENCY),
 }
 
 # How long a claimed job's lease holds before the reaper can reclaim it.
