@@ -222,6 +222,50 @@ export async function fetchOverview(
   return apiFetch(`/api/v1/analytics/overview?${params.toString()}`);
 }
 
+export interface PulseSource {
+  platform: string;
+  count: number;
+}
+
+export interface ReputationPulse {
+  avg_rating: number;
+  rating_delta: number | null;
+  new_reviews: number;
+  new_reviews_delta_pct: number | null;
+  response_rate: number;
+  awaiting_reply: number;
+  oldest_wait_days: number | null;
+  sources: PulseSource[];
+  last_synced_at: string | null;
+}
+
+export interface WaitingPulse {
+  unanswered_texts: number;
+  missed_calls: number | null;
+  missed_calls_available: boolean;
+  median_first_response_seconds: number | null;
+  waiting_over_1h: number;
+  oldest_unanswered_seconds: number | null;
+  business_hours: Record<string, unknown> | null;
+  as_of: string | null;
+}
+
+export interface PulseResponse {
+  as_of: string;
+  period_days: number;
+  reputation: ReputationPulse;
+  waiting: WaitingPulse;
+}
+
+export async function fetchPulse(
+  days: number,
+  channelId?: string | null
+): Promise<PulseResponse> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (channelId) params.set("channel_id", channelId);
+  return apiFetch(`/api/v1/analytics/pulse?${params.toString()}`);
+}
+
 export async function fetchTimeseries(
   days: number,
   channelId?: string | null

@@ -13,6 +13,7 @@ import {
 import { StatCard } from "@/components/analytics/StatCard";
 import MessagingSection from "@/components/analytics/MessagingSection";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
+import PulseCards from "@/components/analytics/PulseCards";
 import { ReviewInbox } from "@/components/analytics/ReviewInbox";
 import PresenceSection, {
   presenceFromProfile,
@@ -221,6 +222,9 @@ export default function OverviewPanel() {
         </div>
       ) : (
         <div className="space-y-6">
+          {/* Reputation pulse + who is waiting: the two decision cards. */}
+          <PulseCards days={days} channelId={channelId} />
+
           {/* Google presence — daily trends charted, window totals as tiles */}
           {presence && (
             <PresenceSection

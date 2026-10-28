@@ -51,6 +51,8 @@ export const queryKeys = {
     channels: () => ["analytics", "channels"] as const,
     overview: (days: number, channelId: string | null) =>
       ["analytics", "overview", days, channelId ?? "all"] as const,
+    pulse: (days: number, channelId: string | null) =>
+      ["analytics", "pulse", days, channelId ?? "all"] as const,
     presence: (channelId: string | null) => ["analytics", "presence", channelId ?? "all"] as const,
   },
   growth: {

@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
-from . import benchmark, growth, intelligence, service, summary
+from . import benchmark, growth, intelligence, pulse, service, summary
 from .models import ReviewInsight
 from .schemas import (
     AcquisitionResponse,
@@ -24,6 +24,7 @@ from .schemas import (
     OverviewResponse,
     ProblemsResponse,
     ProductsResponse,
+    PulseResponse,
     ReviewInsightItem,
     ReviewInsightListResponse,
     ReviewIntelligenceResponse,
@@ -197,6 +198,23 @@ async def get_overview(
     """KPI block: ratings, sentiment, response metrics, scores, Google performance."""
     uid = tenant_id_of(user)
     return await service.get_overview(db, uid, channel_id, days)
+
+
+@router.get("/pulse", response_model=PulseResponse)
+async def get_pulse(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Two Overview cards in one read: reputation pulse + who is waiting.
+
+    Separate from `/overview` so the hot dashboard path does two bounded
+    aggregate passes instead of loading every KPI block.
+    """
+    uid = tenant_id_of(user)
+    return await pulse.get_pulse(db, uid, channel_id, days)
 
 
 @router.get("/messaging/overview", response_model=MessagingOverviewResponse)

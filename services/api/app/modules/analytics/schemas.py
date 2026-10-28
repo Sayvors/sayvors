@@ -604,3 +604,39 @@ class MessagingOverviewResponse(BaseModel):
     totals: MessagingTotals
     channels: list[MessagingChannelRow]
     by_hour_in: list[int] = []  # 24-int heatmap feed, summed across the window
+
+
+
+class PulseSource(BaseModel):
+    platform: str
+    count: int
+
+
+class ReputationPulse(BaseModel):
+    avg_rating: float
+    rating_delta: float | None = None
+    new_reviews: int
+    new_reviews_delta_pct: float | None = None
+    response_rate: float
+    awaiting_reply: int
+    oldest_wait_days: int | None = None
+    sources: list[PulseSource] = []
+    last_synced_at: datetime | None = None
+
+
+class WaitingPulse(BaseModel):
+    unanswered_texts: int
+    missed_calls: int | None = None
+    missed_calls_available: bool = False
+    median_first_response_seconds: int | None = None
+    waiting_over_1h: int
+    oldest_unanswered_seconds: int | None = None
+    business_hours: dict | None = None
+    as_of: datetime | None = None
+
+
+class PulseResponse(BaseModel):
+    as_of: datetime
+    period_days: int
+    reputation: ReputationPulse
+    waiting: WaitingPulse
