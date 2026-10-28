@@ -544,3 +544,57 @@ register_postgres_index_ddl(
         "ix_review_insights_meaning_subject",
     ],
 )
+
+
+class ReviewRequest(Base):
+    """One review-request send, recorded when a merchant asks a customer.
+
+    The Growth funnel needs a denominator: "21 reviews" is only a result when
+    it is "21 reviews from 420 requests". Delivery/click events are recorded
+    when the channel reports them; until then the UI labels the untracked
+    stages instead of inventing numbers.
+
+    `trigger` is the how: manual, qr, after_visit, campaign. `channel` is the
+    medium: whatsapp, sms, email, in_person. Keeping them separate lets the
+    ask-timing card compare "QR 12%" with "SMS 2h 6%".
+    """
+
+    __tablename__ = "review_requests"
+    __table_args__ = (
+        Index("ix_review_requests_user_sent", "user_id", "sent_at"),
+        Index("ix_review_requests_user_status", "user_id", "status"),
+        Index("ix_review_requests_user_channel", "user_id", "channel"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    channel_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Hash-safe contact identifier: phone (E.164-ish) or email. No message body.
+    contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # whatsapp | sms | email | in_person
+    channel: Mapped[str] = mapped_column(String(20), default="whatsapp", server_default="whatsapp")
+    # manual | qr | after_visit | campaign
+    trigger: Mapped[str] = mapped_column(String(30), default="manual", server_default="manual")
+    # sent | delivered | clicked | reviewed | failed | opted_out
+    status: Mapped[str] = mapped_column(String(16), default="sent", server_default="sent")
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The review this request produced, when the platform can match it.
+    review_id: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

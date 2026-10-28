@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
+import { recordReviewRequest } from "@/lib/api-analytics";
 
 type ReviewChannel = "whatsapp" | "contacts" | "email";
 type PlatformTab = "all" | "whatsapp" | "instagram" | "facebook";
@@ -219,6 +220,9 @@ export default function AskForReview() {
   const handleWhatsAppSend = (number?: string) => {
     const cleaned = (number ?? phoneNumber).replace(/[^\d]/g, "");
     if (!cleaned) return;
+    // Record the ask before opening WhatsApp. Fire-and-forget: a failed record
+    // must never block the customer-facing action.
+    void recordReviewRequest({ channel: "whatsapp", trigger: "manual", contact: cleaned }).catch(() => {});
     const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(REVIEW_MESSAGE)}`;
     window.open(url, "_blank", "noopener,noreferrer");
   };

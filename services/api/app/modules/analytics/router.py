@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
-from . import benchmark, growth, insights_cards, intelligence, pulse, service, summary
+from . import benchmark, growth, growth_cards, insights_cards, intelligence, pulse, service, summary
 from .models import ReviewInsight
 from .schemas import (
     AcquisitionResponse,
@@ -26,6 +26,9 @@ from .schemas import (
     ProductsResponse,
     PulseResponse,
     InsightsCardsResponse,
+    GrowthCardsResponse,
+    ReviewRequestIn,
+    ReviewRequestOut,
     ReviewInsightItem,
     ReviewInsightListResponse,
     ReviewIntelligenceResponse,
@@ -636,6 +639,57 @@ async def get_insights_cards(
     a deterministic summary with counts, and the stored action plan."""
     uid = tenant_id_of(user)
     return await insights_cards.get_insights_cards(db, uid, channel_id, days)
+
+
+@router.get("/growth-cards", response_model=GrowthCardsResponse)
+async def get_growth_cards(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Growth tab cards: review-request funnel, new contacts, ask timing,
+    retention availability, and recommended actions."""
+    uid = tenant_id_of(user)
+    return await growth_cards.get_growth_cards(db, uid, channel_id, days)
+
+
+@router.post("/review-requests", response_model=ReviewRequestOut)
+async def record_review_request(
+    body: ReviewRequestIn,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a review request the merchant just sent.
+
+    Called by the Ask-for-review flow when it opens WhatsApp/email. Fire-and-
+    forget on the client: a failed record must never block the customer ask.
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    from .models import ReviewRequest
+
+    allowed_channels = {"whatsapp", "sms", "email", "in_person"}
+    allowed_triggers = {"manual", "qr", "after_visit", "campaign"}
+    allowed_statuses = {"sent", "delivered", "clicked", "reviewed", "failed", "opted_out"}
+    row = ReviewRequest(
+        id=str(uuid.uuid4()),
+        user_id=tenant_id_of(user),
+        channel_id=body.channel_id if body.channel_id else None,
+        contact=(body.contact or "")[:255] or None,
+        contact_name=(body.contact_name or "")[:120] or None,
+        channel=body.channel if body.channel in allowed_channels else "whatsapp",
+        trigger=body.trigger if body.trigger in allowed_triggers else "manual",
+        status=body.status if body.status in allowed_statuses else "sent",
+        sent_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return ReviewRequestOut(id=row.id, status=row.status, sent_at=row.sent_at)
 
 
 @router.get("/products", response_model=ProductsResponse)

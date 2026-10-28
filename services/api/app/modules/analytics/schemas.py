@@ -736,3 +736,78 @@ class InsightsCardsResponse(BaseModel):
     sentiment_by_location: list[LocationSentimentOut] = []
     summary: InsightsSummaryOut
     action_plan: list[ActionCardOut] = []
+
+
+class FunnelChannelOut(BaseModel):
+    channel: str
+    requests: int
+
+
+class FunnelTriggerOut(BaseModel):
+    trigger: str
+    requests: int
+
+
+class ReviewFunnelOut(BaseModel):
+    requests_sent: int
+    delivered: int
+    clicked: int
+    reviews: int
+    reviews_via_request: int
+    conversion_rate: float | None = None
+    avg_rating: float | None = None
+    delivery_tracked: bool
+    click_tracked: bool
+    by_channel: list[FunnelChannelOut] = []
+    by_trigger: list[FunnelTriggerOut] = []
+
+
+class ContactPlatformOut(BaseModel):
+    platform: str
+    contacts: int
+
+
+class GrowthContactsOut(BaseModel):
+    new_contacts: int
+    prior_contacts: int
+    delta_pct: float | None = None
+    by_platform: list[ContactPlatformOut] = []
+    attribution: str = "unknown"
+
+
+class GrowthActionOut(BaseModel):
+    kind: str
+    title: str
+    detail: str
+    expected: str | None = None
+    href: str | None = None
+
+
+class RetentionOut(BaseModel):
+    available: bool
+    reason: str | None = None
+
+
+class GrowthCardsResponse(BaseModel):
+    days: int
+    funnel: ReviewFunnelOut
+    contacts: GrowthContactsOut
+    retention: RetentionOut
+    actions: list[GrowthActionOut] = []
+
+
+class ReviewRequestIn(BaseModel):
+    channel_id: str | None = None
+    contact: str | None = None
+    contact_name: str | None = None
+    # whatsapp | sms | email | in_person
+    channel: str = "whatsapp"
+    # manual | qr | after_visit | campaign
+    trigger: str = "manual"
+    status: str = "sent"
+
+
+class ReviewRequestOut(BaseModel):
+    id: str
+    status: str
+    sent_at: datetime

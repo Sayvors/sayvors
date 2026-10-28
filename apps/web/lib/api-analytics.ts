@@ -372,6 +372,76 @@ export async function fetchInsightsCards(
   return apiFetch(`/api/v1/analytics/insights-cards?${params.toString()}`);
 }
 
+export interface FunnelChannel {
+  channel: string;
+  requests: number;
+}
+
+export interface FunnelTrigger {
+  trigger: string;
+  requests: number;
+}
+
+export interface ReviewFunnel {
+  requests_sent: number;
+  delivered: number;
+  clicked: number;
+  reviews: number;
+  reviews_via_request: number;
+  conversion_rate: number | null;
+  avg_rating: number | null;
+  delivery_tracked: boolean;
+  click_tracked: boolean;
+  by_channel: FunnelChannel[];
+  by_trigger: FunnelTrigger[];
+}
+
+export interface GrowthContacts {
+  new_contacts: number;
+  prior_contacts: number;
+  delta_pct: number | null;
+  by_platform: { platform: string; contacts: number }[];
+  attribution: string;
+}
+
+export interface GrowthAction {
+  kind: string;
+  title: string;
+  detail: string;
+  expected: string | null;
+  href: string | null;
+}
+
+export interface GrowthCards {
+  days: number;
+  funnel: ReviewFunnel;
+  contacts: GrowthContacts;
+  retention: { available: boolean; reason: string | null };
+  actions: GrowthAction[];
+}
+
+export async function fetchGrowthCards(
+  days: number,
+  channelId?: string | null
+): Promise<GrowthCards> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (channelId) params.set("channel_id", channelId);
+  return apiFetch(`/api/v1/analytics/growth-cards?${params.toString()}`);
+}
+
+export async function recordReviewRequest(input: {
+  channel_id?: string | null;
+  contact?: string | null;
+  contact_name?: string | null;
+  channel?: "whatsapp" | "sms" | "email" | "in_person";
+  trigger?: "manual" | "qr" | "after_visit" | "campaign";
+}): Promise<void> {
+  await apiFetch("/api/v1/analytics/review-requests", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function fetchTimeseries(
   days: number,
   channelId?: string | null

@@ -11,11 +11,13 @@ import {
   fetchOverview,
   fetchTimeseries,
   fetchVisibility,
+  fetchGrowthCards,
   type TimeseriesPoint,
 } from "@/lib/api-analytics";
 import { apiFetch } from "@/lib/api-rag";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import { StatCard } from "@/components/analytics/StatCard";
+import GrowthCardsSection from "@/components/analytics/GrowthCards";
 
 function num(v: unknown): number {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
@@ -185,7 +187,7 @@ export default function GrowthPage() {
   const growthQuery = useQuery({
     queryKey: queryKeys.growth.all(days, channelId),
     queryFn: async () => {
-      const [v, a, o, t, k, ov, mg, prof] = await Promise.all([
+      const [v, a, o, t, k, ov, mg, prof, gc] = await Promise.all([
         fetchVisibility(days, channelId),
         fetchAcquisition(days, channelId),
         fetchOpportunities(days, channelId),
@@ -194,6 +196,7 @@ export default function GrowthPage() {
         fetchOverview(days, channelId).catch(() => null),
         fetchMessagingGrowth(days, channelId).catch(() => null),
         apiFetch("/api/v1/integrations/localith/profile").catch(() => null),
+        fetchGrowthCards(days, channelId).catch(() => null),
       ]);
       return {
         visibility: v,
@@ -204,6 +207,7 @@ export default function GrowthPage() {
         overview: ov,
         messagingGrowth: mg,
         presence: presencePerf(prof),
+        growthCards: gc,
       };
     },
     staleTime: 30 * 1000,
@@ -216,6 +220,7 @@ export default function GrowthPage() {
   const overview = growthQuery.data?.overview ?? null;
   const messagingGrowth = growthQuery.data?.messagingGrowth ?? null;
   const presence = growthQuery.data?.presence ?? null;
+  const growthCards = growthQuery.data?.growthCards ?? null;
   const loading = growthQuery.isPending;
   const error = growthQuery.isError && !growthQuery.data;
 
@@ -266,6 +271,10 @@ export default function GrowthPage() {
           }}
           channels={channels}
         />
+      </div>
+
+      <div className="mb-5">
+        <GrowthCardsSection cards={growthCards} loading={loading} />
       </div>
 
       {error && !loading ? (
