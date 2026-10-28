@@ -211,13 +211,26 @@ async def generate_response(
                 "code-switching. If the review is Roman Urdu, reply in Roman Urdu; "
                 "otherwise reply in Urdu script. Keep the same warm, simple tone."
             )
-        # Dialect instructions apply to Arabic only.
+        # Dialect instructions apply to Arabic only. When no explicit dialect
+        # is configured ("auto"), bias Modern Standard Arabic reviews toward
+        # natural Saudi (Najdi/Gulf) phrasing: Repma's wedge is Saudi dialect
+        # out of the box, and MSA replies read stiff to KSA customers. An
+        # explicit dialect (najdi, hejazi, egyptian, ...) always wins, and a
+        # review already written in a specific dialect is mirrored instead.
         if eff == "ar" and dialect:
             examples = " / ".join(dialect.get("examples", [])[:4])
             user_parts.append(
                 f"DIALECT (binding): write in {dialect.get('dialect_en')} "
                 f"({dialect.get('dialect_ar')}). Copy this flavor: {examples}. "
                 f"Do not mix dialects."
+            )
+        elif eff == "ar":
+            user_parts.append(
+                "DIALECT (binding): mirror the review's own Arabic dialect when it "
+                "is clearly present (Egyptian, Levantine, Gulf, etc.). When the "
+                "review is Modern Standard Arabic or the dialect is unclear, reply "
+                "in natural Saudi (Najdi/Gulf) Arabic, not stiff formal MSA. "
+                "Keep it respectful and warm; do not mix dialects."
             )
     elif detected != "en":
         user_parts.append(

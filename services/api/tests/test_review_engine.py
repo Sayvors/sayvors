@@ -1916,6 +1916,50 @@ def test_generator_adds_binding_language_instruction():
     assert "Arabic" in captured["user_msg"]
 
 
+def test_generator_defaults_arabic_to_saudi_dialect_when_auto():
+    """With no explicit dialect, Arabic (esp. MSA) reviews get a Saudi bias.
+
+    Repma's wedge is Saudi dialect out of the box; an MSA-only instruction
+    reads stiff to KSA customers. Explicit dialects still win (covered by
+    the dialect-catalog tests).
+    """
+    import asyncio
+    from app.modules.review_engine import generator as gen
+
+    captured = {}
+
+    class _FakeProvider:
+        async def __call__(self, **kwargs):
+            captured["user_msg"] = kwargs["messages"][0].content
+            from app.modules.llm.providers.base import LLMResponse, LLMUsage
+            return LLMResponse(
+                content='{"response_text": "شكراً لك!"}',
+                provider="test", model="test/m",
+                usage=LLMUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                finish_reason="stop",
+            )
+
+    orig_complete = gen.complete
+    gen.complete = _FakeProvider()
+    try:
+        asyncio.run(gen.generate_response(
+            analysis=_ar_analysis(),
+            strategies=[_match("show_appreciation", "Show appreciation", 80)],
+            channel_policy={"max_length": 500, "public": True},
+            brand_voice={},
+            business_context=None,
+            model="test:m",
+            review_text="الطعام رائع والمكان جميل",
+        ))
+    finally:
+        gen.complete = orig_complete
+
+    msg = captured["user_msg"]
+    assert "DIALECT (binding)" in msg
+    assert "Saudi" in msg
+    assert "Najdi" in msg
+
+
 # ── localization + marketing prefs ───────
 
 def _seed_dialects(db):

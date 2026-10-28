@@ -863,6 +863,54 @@
   </table></div>
 </section>
 
+<section id="competitive-gaps">
+  <div class="eyebrow">New - Competitive gaps</div>
+  <h2>Competitive gaps vs Repma / Birdeye</h2>
+  <p>Identified from a market comparison (Google-first + WhatsApp launch). Three items to close to beat Repma on Google and own WhatsApp.</p>
+  <div class="scroll"><table>
+    <tr><th>#</th><th>Gap</th><th>Competitor strength</th><th>Sayvors today</th><th>Status</th><th>Effort</th></tr>
+    <tr>
+      <td class="num">G1</td>
+      <td><strong>Saudi dialect Arabic replies</strong></td>
+      <td>Repma replies in Saudi dialect natively (Badr)</td>
+      <td>Arabic UI strings exist; no dialect-aware reply prompt</td>
+      <td><span class="chip ok">Fixed</span> dialect catalog already DB-backed (najdi/hejazi/eastern-saudi/saudi); auto-mode prompt now biases MSA reviews to natural Saudi dialect</td>
+      <td>Done</td>
+    </tr>
+    <tr>
+      <td class="num">G2</td>
+      <td><strong>Complaint aggregation by area</strong></td>
+      <td>Repma surfaces "waiting time 18, staff 11" with trends</td>
+      <td>Per-review enrichment exists; not aggregated into complaint areas</td>
+      <td><span class="chip buy">Planned</span></td>
+      <td>Medium (half day)</td>
+    </tr>
+    <tr>
+      <td class="num">G3</td>
+      <td><strong>Review generation (ask loop)</strong></td>
+      <td>Birdeye's moat (128% volume lift)</td>
+      <td>Not built</td>
+      <td><span class="chip buy">Planned (Phase 1)</span></td>
+      <td>Large (separate project)</td>
+    </tr>
+  </table></div>
+  <h3>G1 implementation steps</h3>
+  <ol>
+    <li><code>detect_language()</code> helper (Arabic unicode range) in <code>channels/review_reply.py</code>.</li>
+    <li>Alembic migration: <code>ADD COLUMN language VARCHAR(8) DEFAULT 'en'</code> on the insight model.</li>
+    <li>Inject dialect instruction into <code>generate_auto_reply</code> prompt (Saudi dialect when Arabic, English when English; tone by stars; sign with location; &lt;60 words).</li>
+    <li>(Optional) <code>reply_dialect</code> override on <code>AutoReplyConfig</code>.</li>
+  </ol>
+  <h3>G2 implementation steps</h3>
+  <ol>
+    <li>Complaint categories: waiting_time, staff_service, order_accuracy, cleanliness, price_value, other.</li>
+    <li>Extract category + staff_named + is_serious_incident during enrichment.</li>
+    <li>Aggregation query: per location, last 30d vs prior 30d, trend arrow.</li>
+    <li>"Complaints by area" section on reviews/issues dashboard.</li>
+  </ol>
+  <p class="note"><strong>Order:</strong> G1 first (smallest win, KSA/MENA differentiation), then G2, then scope G3 as its own project.</p>
+</section>
+
 <section id="good">
   <div class="eyebrow">§§ 9</div>
   <h2>What the audit found solid</h2>

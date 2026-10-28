@@ -35,6 +35,7 @@ DIALECTS: list[dict] = [
     {"code": "iraqi-southern", "dialect_en": "Southern Iraqi Arabic", "dialect_ar": "اللهجة العراقية الجنوبية", "examples": ["هلا بيك", "شلونك؟"]},
     {"code": "najdi", "dialect_en": "Najdi Arabic", "dialect_ar": "اللهجة النجدية", "examples": ["هلا", "وشلونك؟"]},
     {"code": "hejazi", "dialect_en": "Hejazi Arabic", "dialect_ar": "اللهجة الحجازية", "examples": ["أهلاً", "كيفك؟"]},
+    {"code": "saudi", "dialect_en": "Saudi Arabic (Najdi/Gulf)", "dialect_ar": "اللهجة السعودية", "examples": ["هلا", "وشلونك؟"]},
     {"code": "eastern-saudi", "dialect_en": "Eastern Saudi Arabic", "dialect_ar": "اللهجة السعودية الشرقية", "examples": ["هلا", "شلونك؟"]},
     {"code": "kuwaiti", "dialect_en": "Kuwaiti Arabic", "dialect_ar": "اللهجة الكويتية", "examples": ["هلا", "شلونك؟"]},
     {"code": "bahraini", "dialect_en": "Bahraini Arabic", "dialect_ar": "اللهجة البحرينية", "examples": ["هلا", "شلونك؟"]},
