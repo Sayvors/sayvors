@@ -115,7 +115,7 @@ export default function MessagingSection({
 
       <div className="mt-5 grid gap-5 sm:gap-6 lg:grid-cols-2">
         {/* Scorecard — volume per channel, previous period beside it */}
-        <div className="ui-card p-5">
+        <div className={`ui-card p-5 ${data.by_hour_in && data.by_hour_in.some((v) => v > 0) ? "" : "lg:col-span-2"}`}>
           <h3 className={`text-[13px] font-bold ${INK}`}>By channel</h3>
           <ul className="mt-4 divide-y divide-[var(--ui-line)]">
             {data.channels.map((c) => {
@@ -192,11 +192,9 @@ export default function MessagingSection({
             </div>
           </div>
         )}
-      </div>
-
-      {/* AI vs human — deflection framing. Reads stored ai_handled_out
-          from the daily rollup; no request-time computation. */}
-      <div className="ui-card p-5">
+        {/* AI vs human — deflection framing. Reads stored ai_handled_out
+            from the daily rollup; no request-time computation. */}
+        <div className="ui-card p-5 lg:col-span-2">
         <h3 className={`text-[13px] font-bold ${INK}`}>AI vs human</h3>
         <div className="mt-4 grid grid-cols-2 gap-4">
           <div>
@@ -228,6 +226,7 @@ export default function MessagingSection({
             })()}
           </p>
         )}
+        </div>
       </div>
     </section>
   );
