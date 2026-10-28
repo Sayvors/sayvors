@@ -57,6 +57,19 @@ export default function BulkReviewRequests({
   const usedMessages = entitlements?.messages_used_this_month ?? 0;
   const quotaShort = channel === "whatsapp" && remaining !== null && valid.length > remaining;
 
+  // First non-empty value in a column, for the "is this the right column?"
+  // check next to each mapping dropdown.
+  const sampleFor = (idx: number | null): string | null => {
+    if (idx === null || !parsed) return null;
+    for (const row of parsed.rows) {
+      const v = (row[idx] ?? "").trim();
+      if (v) return v.length > 42 ? `${v.slice(0, 42)}…` : v;
+    }
+    return null;
+  };
+  const missingContactColumn =
+    channel === "email" ? mapping.email === null : mapping.phone === null;
+
   const onFile = async (file: File | null) => {
     if (!file) return;
     const text = await file.text();
@@ -167,6 +180,9 @@ export default function BulkReviewRequests({
                 <option value="">Not mapped</option>
                 {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
               </select>
+              <p className="mt-0.5 truncate text-[9px] text-ink/40 dark:text-fog/40">
+                {sampleFor(channel === "email" ? mapping.email : mapping.phone) ?? "No sample value"}
+              </p>
             </label>
             <label className="block">
               <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">Name column (optional)</span>
@@ -178,6 +194,9 @@ export default function BulkReviewRequests({
                 <option value="">Not mapped</option>
                 {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
               </select>
+              <p className="mt-0.5 truncate text-[9px] text-ink/40 dark:text-fog/40">
+                {sampleFor(mapping.name) ?? "No sample value"}
+              </p>
             </label>
             <label className="block">
               <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">Last name (optional)</span>
@@ -189,8 +208,16 @@ export default function BulkReviewRequests({
                 <option value="">Not mapped</option>
                 {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
               </select>
+              <p className="mt-0.5 truncate text-[9px] text-ink/40 dark:text-fog/40">
+                {sampleFor(mapping.lastName) ?? "No sample value"}
+              </p>
             </label>
           </div>
+          {missingContactColumn && (
+            <p className="mt-2 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+              No {channel === "email" ? "email" : "phone"} column detected. Pick the right column above - nothing will be sent until it is mapped.
+            </p>
+          )}
           {invalidCount > 0 && (
             <p className="mt-2 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
               {invalidCount} row{invalidCount === 1 ? "" : "s"} skipped: the mapped {channel === "email" ? "email" : "phone"} cell is missing or invalid.
