@@ -231,6 +231,19 @@ export default function BulkReviewRequests({
         </div>
       )}
 
+      {channel === "whatsapp" && (
+        <div className="mt-3 rounded-xl border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+          <p className="text-[11px] font-bold text-amber-800 dark:text-amber-300">
+            24-hour window warning
+          </p>
+          <p className="mt-0.5 text-[10px] leading-relaxed text-amber-800/80 dark:text-amber-200/80">
+            WhatsApp only allows free-form messages within 24 hours of the customer&apos;s last message.
+            Contacts outside that window will be rejected by Meta and shown as <strong>failed</strong>.
+            An approved WhatsApp template is required for cold sends - do not promise delivery until it is configured.
+          </p>
+        </div>
+      )}
+
       {channel === "whatsapp" && entitlements && (
         <div className="mt-3 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-3 dark:border-fog/[0.08] dark:bg-fog/[0.03]">
           <p className="text-[11px] font-semibold text-ink dark:text-fog">

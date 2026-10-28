@@ -143,6 +143,15 @@ export default function ReviewRequestLog() {
 
       {message && <p className="mt-2 text-[11px] text-ink/60 dark:text-fog/60">{message}</p>}
 
+      {data?.items.some(
+        (r) => r.status === "failed" && r.channel === "whatsapp" && /24|template|window/i.test(r.error ?? "")
+      ) && (
+        <p className="mt-2 rounded-lg border border-amber-300/60 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          Some WhatsApp sends were rejected because the customer was outside the 24-hour window.
+          Free-form WhatsApp asks only work inside that window; an approved template is required for cold sends.
+        </p>
+      )}
+
       <div className="mt-3 overflow-x-auto">
         <table className="w-full text-left text-[11px]">
           <thead className="border-b border-ink/[0.06] text-[10px] uppercase tracking-wide text-ink/45 dark:border-fog/[0.08] dark:text-fog/45">

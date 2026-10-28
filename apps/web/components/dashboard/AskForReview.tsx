@@ -479,6 +479,10 @@ export default function AskForReview() {
           <p className="mt-1 text-[11px] text-ink/50">
             Opens WhatsApp with a pre-filled message asking for a review.
           </p>
+          <p className="mt-2 rounded-lg border border-amber-300/60 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            WhatsApp only allows free-form messages within 24 hours of the customer&apos;s last message.
+            Bulk WhatsApp sends outside that window are rejected by Meta and marked failed until an approved template is configured.
+          </p>
 
           <div className="mt-3">
             <div className="mb-1.5 flex items-center justify-between">
