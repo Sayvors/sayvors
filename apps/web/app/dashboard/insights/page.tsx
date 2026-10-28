@@ -10,8 +10,10 @@ import {
   fetchTopics,
   fetchMessagingOverview,
   fetchConversationInsights,
+  fetchInsightsCards,
 } from "@/lib/api-analytics";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
+import InsightsCardsSection from "@/components/analytics/InsightsCards";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 
 type InsightsCopy = ReturnType<typeof useI18n>["t"]["analytics"]["insights"];
@@ -42,27 +44,6 @@ function TrendChip({ trend, copy }: { trend: number | null; copy: InsightsCopy }
   );
 }
 
-const SEVERITY_BADGE: Record<string, string> = {
-  high: "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]",
-  medium: "bg-[var(--ui-sunken)] text-[var(--ui-ink)]",
-  low: "bg-[var(--ui-sunken)] text-[var(--ui-ink-2)]",
-};
-
-/** Severity / status arrive from the API as English slugs — label them here. */
-function severityLabel(severity: string, copy: InsightsCopy): string {
-  if (severity === "high") return copy.severityHigh;
-  if (severity === "medium") return copy.severityMedium;
-  if (severity === "low") return copy.severityLow;
-  return severity;
-}
-
-function statusLabel(status: string, copy: InsightsCopy): string {
-  if (status === "emerging") return copy.statusEmerging;
-  if (status === "increasing") return copy.statusIncreasing;
-  if (status === "decreasing") return copy.statusDecreasing;
-  if (status === "recurring") return copy.statusRecurring;
-  return status;
-}
 
 function SkeletonList({ rows = 5 }: { rows?: number }) {
   return (
@@ -249,14 +230,15 @@ export default function InsightsPage() {
   const insightsQuery = useQuery({
     queryKey: queryKeys.insights.all(days, channelId),
     queryFn: async () => {
-      const [t, p, pr, m, ci] = await Promise.all([
+      const [t, p, pr, m, ci, cards] = await Promise.all([
         fetchTopics(days, channelId),
         fetchProblems(days, channelId),
         fetchProducts(days, channelId),
         fetchMessagingOverview(days, channelId),
         fetchConversationInsights(),
+        fetchInsightsCards(days, channelId).catch(() => null),
       ]);
-      return { topics: t, problems: p, products: pr, messaging: m, conversationInsights: ci };
+      return { topics: t, problems: p, products: pr, messaging: m, conversationInsights: ci, cards };
     },
     staleTime: 30 * 1000,
   });
@@ -265,6 +247,7 @@ export default function InsightsPage() {
   const products = insightsQuery.data?.products ?? null;
   const messaging = insightsQuery.data?.messaging ?? null;
   const conversationInsights = insightsQuery.data?.conversationInsights ?? null;
+  const cards = insightsQuery.data?.cards ?? null;
   const loading = insightsQuery.isPending;
   const error = insightsQuery.isError && !insightsQuery.data;
 
@@ -352,6 +335,9 @@ export default function InsightsPage() {
               copy={copy}
             />
           </div>
+          <div className="mb-6">
+            <InsightsCardsSection cards={cards} loading={loading} />
+          </div>
           <div className="mb-3 mt-2 flex items-end justify-between">
             <div>
               <h2 className="text-[15px] font-bold text-[var(--ui-ink)]">Conversations</h2>
@@ -423,128 +409,6 @@ export default function InsightsPage() {
               )}
             </div>
           )}
-          <div className="mb-3 mt-2 flex items-end justify-between">
-            <div>
-              <h2 className="text-[15px] font-bold text-[var(--ui-ink)]">Themes</h2>
-              <p className="text-[11px] text-[var(--ui-ink-2)]">What customers talk about, what breaks, and which products stand out.</p>
-            </div>
-          </div>
-          <div className="grid gap-5 sm:gap-6 lg:grid-cols-3">
-          {/* Topics */}
-          <section aria-label={copy.topics} className="ui-card p-5">
-            <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">{copy.topics}</h3>
-            {loading || !topics ? (
-              <SkeletonList />
-            ) : topics.topics.length === 0 ? (
-              <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">{copy.noTopics}</p>
-            ) : (
-              <ul className="space-y-3">
-                {topics.topics.slice(0, 8).map((t) => {
-                  const total = Math.max(1, t.positive + t.neutral + t.negative);
-                  return (
-                    <li key={t.name} className="flex items-center gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold capitalize text-[var(--ui-ink)]">
-                          {t.name}
-                          {t.emerging && (
-                            <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeNew}</span>
-                          )}
-                        </p>
-                        <div
-                          className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-[var(--ui-sunken)]"
-                          role="img"
-                          aria-label={copy.sentimentSplit
-                            .replace("{positive}", String(t.positive))
-                            .replace("{neutral}", String(t.neutral))
-                            .replace("{negative}", String(t.negative))}
-                        >
-                          <div className="h-full bg-[var(--ui-ink)]" style={{ width: `${(t.positive / total) * 100}%` }} />
-                          <div className="h-full bg-[var(--ui-ink-2)]" style={{ width: `${(t.neutral / total) * 100}%` }} />
-                          <div className="h-full bg-[var(--ui-line-strong)]" style={{ width: `${(t.negative / total) * 100}%` }} />
-                        </div>
-                      </div>
-                      <span className="text-[11px] tabular-nums text-[var(--ui-ink-2)]">{t.mentions}</span>
-                      <TrendChip trend={t.trend_pct} copy={copy} />
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
-
-          {/* Problems */}
-          <section aria-label={copy.problems} className="ui-card p-5">
-            <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">{copy.problems}</h3>
-            {loading || !problems ? (
-              <SkeletonList />
-            ) : problems.problems.length === 0 ? (
-              <div className="py-6 text-center">
-                <p className="text-[12px] font-semibold text-[var(--ui-ink)]">{copy.noProblemsTitle}</p>
-                <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{copy.noProblemsBody}</p>
-              </div>
-            ) : (
-              <ul className="space-y-3">
-                {problems.problems.slice(0, 8).map((p) => (
-                  <li key={p.name} className="flex items-center gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold capitalize text-[var(--ui-ink)]">
-                        {p.name}
-                        <span className={`rounded px-1 py-px text-[9px] font-bold uppercase ${SEVERITY_BADGE[p.severity]}`}>
-                          {severityLabel(p.severity, copy)}
-                        </span>
-                      </p>
-                      <p className="text-[10px] text-[var(--ui-ink-2)]">
-                        {statusLabel(p.status, copy)} · {copy.impactMentions
-                          .replace("{impact}", String(p.impact_score))
-                          .replace("{mentions}", String(p.mentions))}
-                      </p>
-                    </div>
-                    <span className="text-[11px] tabular-nums text-[var(--ui-ink-2)]">{p.mentions}</span>
-                    <TrendChip trend={p.trend_pct} copy={copy} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          {/* Products */}
-          <section aria-label={copy.productsServices} className="ui-card p-5">
-            <h3 className="mb-4 text-[14px] font-bold text-[var(--ui-ink)]">{copy.productsServices}</h3>
-            {loading || !products ? (
-              <SkeletonList />
-            ) : products.products.length === 0 ? (
-              <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">{copy.noProducts}</p>
-            ) : (
-              <ul className="space-y-3">
-                {products.products.slice(0, 8).map((p) => {
-                  const loved = p.name === products.most_loved;
-                  const criticized = p.name === products.most_criticized;
-                  const growing = p.name === products.fastest_growing;
-                  return (
-                    <li key={p.name} className="flex items-center gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="flex flex-wrap items-center gap-1.5 text-[12px] font-semibold capitalize text-[var(--ui-ink)]">
-                          {p.name}
-                          {loved && <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeLoved}</span>}
-                          {criticized && <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeCriticized}</span>}
-                          {growing && <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeRising}</span>}
-                          {p.emerging && <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1 py-px text-[9px] font-bold uppercase text-[var(--ui-ink)]">{copy.badgeNew}</span>}
-                        </p>
-                        <p className="text-[10px] text-[var(--ui-ink-2)]">
-                          {copy.positiveMentions
-                            .replace("{percent}", String(p.positive_pct))
-                            .replace("{mentions}", String(p.mentions))}
-                          {p.avg_rating !== null && ` · ${copy.avgRating.replace("{rating}", String(p.avg_rating))}`}
-                        </p>
-                      </div>
-                      <TrendChip trend={p.trend_pct} copy={copy} />
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
-        </div>
         {!loading && (topics || products) && (
           <div className="mt-6">
             <MomentumBars

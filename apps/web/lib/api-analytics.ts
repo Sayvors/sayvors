@@ -302,6 +302,76 @@ export async function fetchPulse(
   return apiFetch(`/api/v1/analytics/pulse?${params.toString()}`);
 }
 
+export interface ThemeCard {
+  name: string;
+  mentions: number;
+  negative: number;
+  negative_pct: number;
+  trend_pct: number | null;
+  top_location: string | null;
+  quote: string | null;
+}
+
+export interface WhatChanged {
+  low_reviews: number;
+  prior_low_reviews: number;
+  theme: string | null;
+  location: string | null;
+  example: string | null;
+  period_days: number;
+}
+
+export interface LocationSentiment {
+  channel_id: string;
+  name: string;
+  avg_rating: number | null;
+  rating_trend: number | null;
+  top_negative_theme: string | null;
+  response_rate: number;
+  unanswered: number;
+}
+
+export interface InsightsSummaryBullet {
+  text: string;
+  n: number;
+}
+
+export interface InsightsSummary {
+  bullets: InsightsSummaryBullet[];
+  review_count: number;
+  confidence: string;
+  source: string;
+  analyzed_at: string;
+}
+
+export interface ActionCard {
+  id: string;
+  subject: string;
+  title: string;
+  detail: string;
+  status: string;
+  negative_count: number;
+  review_count: number;
+}
+
+export interface InsightsCards {
+  days: number;
+  top_themes: ThemeCard[];
+  what_changed: WhatChanged;
+  sentiment_by_location: LocationSentiment[];
+  summary: InsightsSummary;
+  action_plan: ActionCard[];
+}
+
+export async function fetchInsightsCards(
+  days: number,
+  channelId?: string | null
+): Promise<InsightsCards> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (channelId) params.set("channel_id", channelId);
+  return apiFetch(`/api/v1/analytics/insights-cards?${params.toString()}`);
+}
+
 export async function fetchTimeseries(
   days: number,
   channelId?: string | null

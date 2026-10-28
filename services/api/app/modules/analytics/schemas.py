@@ -674,3 +674,65 @@ class PulseResponse(BaseModel):
     locations: list[LocationPulse] = []
     one_thing: OneThingPulse | None = None
     attention: list[AttentionItem] = []
+
+
+
+class ThemeCardOut(BaseModel):
+    name: str
+    mentions: int
+    negative: int
+    negative_pct: float
+    trend_pct: float | None = None
+    top_location: str | None = None
+    quote: str | None = None
+
+
+class WhatChangedOut(BaseModel):
+    low_reviews: int
+    prior_low_reviews: int
+    theme: str | None = None
+    location: str | None = None
+    example: str | None = None
+    period_days: int = 7
+
+
+class LocationSentimentOut(BaseModel):
+    channel_id: str
+    name: str
+    avg_rating: float | None = None
+    rating_trend: float | None = None
+    top_negative_theme: str | None = None
+    response_rate: float
+    unanswered: int
+
+
+class SummaryBulletOut(BaseModel):
+    text: str
+    n: int
+
+
+class InsightsSummaryOut(BaseModel):
+    bullets: list[SummaryBulletOut] = []
+    review_count: int
+    confidence: str
+    source: str
+    analyzed_at: datetime
+
+
+class ActionCardOut(BaseModel):
+    id: str
+    subject: str
+    title: str
+    detail: str
+    status: str
+    negative_count: int
+    review_count: int
+
+
+class InsightsCardsResponse(BaseModel):
+    days: int
+    top_themes: list[ThemeCardOut] = []
+    what_changed: WhatChangedOut
+    sentiment_by_location: list[LocationSentimentOut] = []
+    summary: InsightsSummaryOut
+    action_plan: list[ActionCardOut] = []

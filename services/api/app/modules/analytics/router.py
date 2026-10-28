@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
-from . import benchmark, growth, intelligence, pulse, service, summary
+from . import benchmark, growth, insights_cards, intelligence, pulse, service, summary
 from .models import ReviewInsight
 from .schemas import (
     AcquisitionResponse,
@@ -25,6 +25,7 @@ from .schemas import (
     ProblemsResponse,
     ProductsResponse,
     PulseResponse,
+    InsightsCardsResponse,
     ReviewInsightItem,
     ReviewInsightListResponse,
     ReviewIntelligenceResponse,
@@ -621,6 +622,20 @@ async def get_problems(
     """Most common problems, AI-prioritized by impact (volume x severity x growth)."""
     uid = tenant_id_of(user)
     return await intelligence.get_problems(db, uid, channel_id, days)
+
+
+@router.get("/insights-cards", response_model=InsightsCardsResponse)
+async def get_insights_cards(
+    channel_id: str | None = Query(None),
+    days: int = Query(30, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Insights tab cards in one read: themes, what changed, location sentiment,
+    a deterministic summary with counts, and the stored action plan."""
+    uid = tenant_id_of(user)
+    return await insights_cards.get_insights_cards(db, uid, channel_id, days)
 
 
 @router.get("/products", response_model=ProductsResponse)
