@@ -993,6 +993,10 @@
   <p class="note"><strong>Crawler options to evaluate (owner to test price/quality):</strong> <strong>BrightLocal</strong> (local citation/competitor data, good for multi-location), <strong>DataForSEO</strong> (Google Maps + SERP endpoints, developer-friendly), <strong>SerpApi</strong> (SERP/Maps, simple API), <strong>Outscraper / Apify actors</strong> (cheap, but scraping-based - check terms before shipping). Recommendation: start with Google Places for the benchmark peer set, then add a licensed crawler behind the same <code>fetch_peers</code> interface only where Places lacks data (e.g. deeper competitor page content for AI search).</p>
   <p class="note"><strong>Guardrails for AI search + crawlers:</strong> Pro entitlement check server-side; per-tenant rate limit and monthly query budget; allow-list of domains; no credentials or PII in crawl targets; SSRF guard for any user-supplied URL; cite every source; log the query plan and tool calls for audit; fail closed when the provider/key is unavailable.</p>
 
+  <h3>Locations map (tenant location view)</h3>
+  <p><span class="chip ok">Built</span> The Locations page now has a collapsible Business Details form (collapsed by default) and a Google Maps JavaScript API view below it. It shows Sayvors HQ in Riyadh as a distinct marker, one marker per tenant listing (initials badge, brand colors), curved arcs from HQ to each listing, and a click popup with listing name, address, rating, and review count. Pan, scroll-zoom, reset view, and right-drag rotate are enabled; ungeocoded addresses fall back to a labelled approximate position rather than disappearing.</p>
+  <p class="note"><strong>Config:</strong> <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> (restrict by HTTP referrer in Google Cloud; enable Maps JavaScript API + Advanced Markers). Empty key renders a "Map not connected" state, not a blank map. Geocoded addresses are cached per browser session; a production geocode cache table is a follow-up if address volume grows.</p>
+
   <h3>Cross-cutting rules</h3>
   <ol>
     <li><strong>One card, one decision.</strong> Name the decision, the threshold, and the owner.</li>

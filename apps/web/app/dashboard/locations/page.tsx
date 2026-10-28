@@ -6,6 +6,7 @@ import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import BulkEditSheet from "@/components/locations/BulkEditSheet";
+import LocationsMap from "@/components/locations/LocationsMap";
 import ServicesPanel from "@/app/dashboard/services/page";
 
 /* ---------------------------------------------------------------------------------------*/
@@ -649,6 +650,23 @@ const bulk: BulkScope | null = isBulk
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Stable identity for the map: a fresh array every render would re-run the
+  // map effect (and re-geocode) on every parent update.
+  const mapLocations = useMemo(
+    () =>
+      locations.map((l) => {
+        const conn = localithConns[l.id];
+        return {
+          id: l.id,
+          name: l.name,
+          address: l.address,
+          rating: conn?.average_rating ?? null,
+          reviews: conn?.total_reviews ?? null,
+        };
+      }),
+    [locations, localithConns]
+  );
+
   return (
     <div className="h-full space-y-5 overflow-y-auto p-4 sm:p-6">
       {/* Header */}
@@ -1050,6 +1068,13 @@ const bulk: BulkScope | null = isBulk
             {activeTab === "services" && <ServicesPanel embedded />}
           </div>
 
+          <div className="mt-6">
+            <LocationsMap
+              apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? ""}
+              locations={mapLocations}
+            />
+          </div>
+
         </>
       )}
     </div>
@@ -1083,6 +1108,9 @@ function DetailsTab({
   const [phone, setPhone] = useState(profile?.phone_number ?? "");
   const [website, setWebsite] = useState(profile?.website_url ?? "");
   const [saving, setSaving] = useState(false);
+  // Details is a long form; collapsed by default so the map and the other
+  // tabs stay reachable without scrolling past every field.
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     setName(fullProfile?.name ?? location?.name ?? "");
@@ -1123,9 +1151,23 @@ function DetailsTab({
   return (
     <div className="space-y-5">
       <div className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-        <SectionTitle title={copy.tabDetails} subtitle={copy.detailsSubtitle} />
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex items-center gap-2 text-left"
+        >
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink/[0.06] text-[13px] font-bold text-ink/60 dark:bg-fog/[0.08] dark:text-fog/60">
+            <svg viewBox="0 0 12 12" className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M2 4l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+          <SectionTitle title={copy.tabDetails} subtitle={copy.detailsSubtitle} />
+        </button>
         <SourceBadge google={!!profile} copy={copy} />
       </div>
+      {open && (
+      <>
       {profile && (
         <p className="-mt-2 text-[11px] text-ink/45 dark:text-fog/45">
           {copy.syncedViaLocalith}
@@ -1193,6 +1235,8 @@ function DetailsTab({
               : copy.saveChanges}
         </button>
       </div>
+      </>
+      )}
     </div>
   );
 }
