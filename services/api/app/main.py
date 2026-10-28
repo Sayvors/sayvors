@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from uuid import uuid4
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -351,7 +352,7 @@ async def lifespan(app: FastAPI):
                     if bootstrap_pw:
                         pw_hash = hash_password(bootstrap_pw)
                     else:
-                        pw_hash = settings.ADMIN_PASSWORD_HASH or hash_password(secrets.token_urlsafe(32))
+                        pw_hash = settings.ADMIN_PASSWORD_HASH or hash_password(_secrets.token_urlsafe(32))
                     db.add(PlatformOperator(
                         id=str(_uuid.uuid4()),
                         username=bootstrap_user,

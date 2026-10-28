@@ -29,10 +29,12 @@ from ....core.deps import get_current_user, get_db
 from ....database import async_session
 from ....modules.kafka.client import get_kafka_producer
 from ...users.models import User
+from ...jobs.handlers.post_publish import _provider_for
 from ...jobs.models import Job, JobStatus
 from ...jobs.service import submit_job
 from ...jobs.types import JobType
 from ...team.context import tenant_id_of
+from ..meta.providers.google_publish import GoogleBusinessPublisher
 from ..models import Channel
 from ..service import channel_location_ids, encrypt_token, decrypt_token
 

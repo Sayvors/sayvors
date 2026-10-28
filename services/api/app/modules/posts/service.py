@@ -21,6 +21,7 @@ from pathlib import Path
 from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..jobs.models import Job
 from ..localith.models import LocalithConnection
 from ..notifications.service import notify
 from .models import LocationPost

@@ -241,7 +241,7 @@ async def stream_message(
             conversation_id=conv_id,
             role="assistant",
             content=final_text,
-            provider_model=api_model,
+            provider_model=resolved.api_model,
         )
         write_db.add(assistant_msg)
         conv_db = await get_conversation(conv_id, user, write_db)

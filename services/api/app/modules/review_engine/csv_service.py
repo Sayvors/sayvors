@@ -9,7 +9,7 @@ from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .csv_models import CSVRow, CSVUpload
-from .csv_schemas import CSVSearchResult, CSVUploadResponse
+from .csv_schemas import CSVRowOut, CSVSearchResult, CSVUploadResponse
 
 logger = logging.getLogger(__name__)
 

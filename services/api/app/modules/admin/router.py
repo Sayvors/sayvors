@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ...core.deps import get_db, require_admin
-from ...security import create_admin_token, verify_password
+from ...security import create_admin_token, hash_password, verify_password
 from ..auth.rate_limit import rate_limit
 from ..auth.router import get_client_ip
 from . import service as admin_service
