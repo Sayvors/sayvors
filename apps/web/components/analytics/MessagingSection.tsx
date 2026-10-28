@@ -25,15 +25,6 @@ import {
 
 const INK = "text-[var(--ui-ink)]";
 const INK2 = "text-[var(--ui-ink-2)]";
-const GOAL_RATE = 90; // Meta's "Very responsive" bar, mirrored by the API
-const GOAL_MEDIAN_MIN = 15;
-
-function fmtDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-  if (seconds < 86_400) return `${(seconds / 3600).toFixed(1)} h`;
-  return `${(seconds / 86_400).toFixed(1)} d`;
-}
 
 function Delta({ value }: { value: number | null }) {
   if (value === null) return null;
@@ -108,11 +99,6 @@ export default function MessagingSection({
   }
 
   const t = data.totals;
-  const median = t.median_first_response_seconds;
-  const rate = t.response_rate;
-  const meetsRate = rate !== null && rate >= GOAL_RATE;
-  const meetsMedian = median !== null && median < GOAL_MEDIAN_MIN * 60;
-  const meetsBoth = meetsRate && meetsMedian;
 
   return (
     /* .team-ui scopes the --ui-* variables and paints the #F5F5F5 page, so
@@ -127,41 +113,7 @@ export default function MessagingSection({
         )}
       </div>
 
-      <div className="mt-5 grid gap-5 sm:gap-6 lg:grid-cols-3">
-        {/* Response health — the two numbers Meta's badge is made of */}
-        <div className="ui-card p-5">
-          <h3 className={`text-[13px] font-bold ${INK}`}>Response health</h3>
-          <div className="mt-5 flex items-end gap-10">
-            <div>
-              <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
-                {median !== null ? fmtDuration(median) : "—"}
-              </p>
-              <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
-                median first reply
-              </p>
-              {t.median_first_response_seconds_prev !== null && median !== null && (
-                <div className="mt-2"><Delta value={countDelta(median, t.median_first_response_seconds_prev)} /></div>
-              )}
-            </div>
-            <div>
-              <p className={`text-[28px] font-black leading-none tabular-nums ${INK}`}>
-                {rate !== null ? `${rate}%` : "—"}
-              </p>
-              <p className={`mt-2 text-[11px] font-semibold uppercase tracking-wide ${INK2}`}>
-                conversations answered
-              </p>
-              {t.response_rate_prev !== null && rate !== null && (
-                <div className="mt-2"><Delta value={Math.round(rate - t.response_rate_prev)} /></div>
-              )}
-            </div>
-          </div>
-          <p className={`mt-5 border-t border-[var(--ui-line)] pt-3 text-[11.5px] font-medium leading-relaxed ${meetsBoth ? INK : INK2}`}>
-            {meetsBoth
-              ? "✓ Very responsive — Meta's 90% / 15-min bar cleared"
-              : `Meta's very-responsive bar: ${GOAL_RATE}% answered within ${GOAL_MEDIAN_MIN} min`}
-          </p>
-        </div>
-
+      <div className="mt-5 grid gap-5 sm:gap-6 lg:grid-cols-2">
         {/* Scorecard — volume per channel, previous period beside it */}
         <div className="ui-card p-5">
           <h3 className={`text-[13px] font-bold ${INK}`}>By channel</h3>
@@ -204,32 +156,6 @@ export default function MessagingSection({
               );
             })}
           </ul>
-        </div>
-
-        {/* Unanswered — the lost-sales card */}
-        <div className="ui-card p-5">
-          <h3 className={`text-[13px] font-bold ${INK}`}>Waiting on a reply</h3>
-          {t.unanswered_now === 0 ? (
-            <div className="my-8 text-center">
-              <p className={`text-[26px] font-black leading-none ${INK}`} aria-hidden>✓</p>
-              <p className={`mt-3 text-[13px] font-bold ${INK}`}>All caught up</p>
-              <p className={`mt-1 text-[11.5px] ${INK2}`}>Every conversation has an answer.</p>
-            </div>
-          ) : (
-            <div className="my-8 text-center">
-              <p className={`text-[34px] font-black leading-none tabular-nums ${INK}`}>
-                {t.unanswered_now ?? "—"}
-              </p>
-              <p className={`mt-3 text-[13px] font-semibold ${INK}`}>
-                {t.unanswered_now === 1 ? "conversation" : "conversations"} with no reply yet
-              </p>
-              {t.oldest_unanswered_seconds !== null && (
-                <p className={`mt-1 text-[11.5px] ${INK2}`}>
-                  oldest waiting {fmtDuration(t.oldest_unanswered_seconds)}
-                </p>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Best-time heatmap — inbound volume by hour of day */}

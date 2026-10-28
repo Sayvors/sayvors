@@ -13,7 +13,6 @@ import {
 import MessagingSection from "@/components/analytics/MessagingSection";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
 import PulseCards from "@/components/analytics/PulseCards";
-import { ReviewInbox } from "@/components/analytics/ReviewInbox";
 import PresenceSection, {
   presenceFromProfile,
   type PresenceData,
@@ -266,9 +265,6 @@ export default function OverviewPanel() {
               </div>
             </div>
           </div>
-
-          {/* Review inbox */}
-          <ReviewInbox channelId={channelId} refreshToken={refreshToken} />
           </>
           )}
         </div>
