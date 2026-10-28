@@ -250,11 +250,45 @@ export interface WaitingPulse {
   as_of: string | null;
 }
 
+export interface LocationPulse {
+  channel_id: string;
+  name: string;
+  platform: string;
+  new_reviews: number;
+  avg_rating: number | null;
+  response_rate: number;
+  unanswered: number;
+  below_threshold: boolean;
+}
+
+export interface OneThingPulse {
+  kind: string;
+  category: string;
+  mentions: number;
+  trend_pct: number | null;
+  status: string | null;
+  staff_named: number;
+  serious: number;
+  top_terms: { name: string; mentions: number }[];
+  period_days: number;
+}
+
+export interface AttentionItem {
+  kind: string;
+  severity: string;
+  title: string;
+  detail: string | null;
+  href: string | null;
+}
+
 export interface PulseResponse {
   as_of: string;
   period_days: number;
   reputation: ReputationPulse;
   waiting: WaitingPulse;
+  locations: LocationPulse[];
+  one_thing: OneThingPulse | null;
+  attention: AttentionItem[];
 }
 
 export async function fetchPulse(

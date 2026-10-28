@@ -10,7 +10,6 @@ import {
   fetchOverview,
   fetchTimeseries,
 } from "@/lib/api-analytics";
-import { StatCard } from "@/components/analytics/StatCard";
 import MessagingSection from "@/components/analytics/MessagingSection";
 import { MetricChart, RatingDistribution, SentimentSplitBar } from "@/components/analytics/Charts";
 import PulseCards from "@/components/analytics/PulseCards";
@@ -33,17 +32,8 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 
 const RANGES = [7, 30, 90] as const;
 
-function fmtDuration(seconds: number | null, locale: string, labels: { minutes: string; hours: string; days: string }) {
-  if (seconds === null) return "—";
-  const number = (value: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
-  if (seconds < 3600) return labels.minutes.replace("{value}", number(Math.round(seconds / 60)));
-  if (seconds < 86_400) return labels.hours.replace("{value}", number(Number((seconds / 3600).toFixed(1))));
-  return labels.days.replace("{value}", number(Number((seconds / 86_400).toFixed(1))));
-}
-
 export default function OverviewPanel() {
   const { t, locale } = useI18n();
-  const copy = t.analytics.kpis;
   const queryClient = useQueryClient();
   const [days, setDays] = useState<number>(30);
   const [channelId, setChannelId] = useState<string | null>(null);
@@ -238,66 +228,6 @@ export default function OverviewPanel() {
           )}
           {hasData && (
           <>
-          {/* KPI cards */}
-          <div className="grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-4">
-            <StatCard
-              loading={loading}
-              label={copy.avgRating}
-              value={overview ? new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(overview.avg_rating) : "0"}
-              sub={copy.outOfFiveStars}
-              noPriorData={copy.noPriorData}
-              delta={overview?.period.rating_delta}
-              deltaSuffix=""
-              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
-              icon={
-                <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5" aria-hidden>
-                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
-                </svg>
-              }
-            />
-            <StatCard
-              loading={loading}
-              label={copy.reviews}
-              value={overview ? new Intl.NumberFormat(locale).format(overview.period.reviews) : "0"}
-              sub={copy.lastDays.replace("{days}", new Intl.NumberFormat(locale).format(days))}
-              noPriorData={copy.noPriorData}
-              delta={overview?.period.reviews_delta_pct}
-              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
-              icon={
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5" aria-hidden>
-                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              }
-            />
-            <StatCard
-              loading={loading}
-              label={copy.responseRate}
-              value={overview ? `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(overview.response_rate)}%` : "0%"}
-              sub={overview && overview.avg_response_seconds !== null ? copy.avgDuration.replace("{duration}", fmtDuration(overview.avg_response_seconds, locale, copy)) : copy.noRepliesYet}
-              noPriorData={copy.noPriorData}
-              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
-              icon={
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5" aria-hidden>
-                  <polyline points="20 6 9 17 4 12" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              }
-            />
-            <StatCard
-              loading={loading}
-              label={copy.customerActions}
-              value={overview ? new Intl.NumberFormat(locale).format(overview.google_performance.customer_actions) : "0"}
-              sub={copy.actionBreakdown}
-              noPriorData={copy.noPriorData}
-              accent="bg-[var(--ui-sunken)] text-[var(--ui-ink)]"
-              icon={
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5" aria-hidden>
-                  <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M15 3h6v6M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              }
-            />
-          </div>
-
           {/* Charts row */}
           <div className="grid grid-cols-1 gap-5 sm:gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">

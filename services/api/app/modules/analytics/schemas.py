@@ -635,8 +635,42 @@ class WaitingPulse(BaseModel):
     as_of: datetime | None = None
 
 
+class LocationPulse(BaseModel):
+    channel_id: str
+    name: str
+    platform: str
+    new_reviews: int
+    avg_rating: float | None = None
+    response_rate: float
+    unanswered: int
+    below_threshold: bool
+
+
+class OneThingPulse(BaseModel):
+    kind: str
+    category: str
+    mentions: int
+    trend_pct: float | None = None
+    status: str | None = None
+    staff_named: int = 0
+    serious: int = 0
+    top_terms: list[dict] = []
+    period_days: int
+
+
+class AttentionItem(BaseModel):
+    kind: str
+    severity: str
+    title: str
+    detail: str | None = None
+    href: str | None = None
+
+
 class PulseResponse(BaseModel):
     as_of: datetime
     period_days: int
     reputation: ReputationPulse
     waiting: WaitingPulse
+    locations: list[LocationPulse] = []
+    one_thing: OneThingPulse | None = None
+    attention: list[AttentionItem] = []

@@ -76,6 +76,22 @@ async def test_pulse_reputation_and_waiting(db, user_id):
     assert waiting["missed_calls"] is None
     assert waiting["missed_calls_available"] is False
 
+    # Location league: one channel, plus a below-threshold flag.
+    assert len(out["locations"]) == 1
+    loc = out["locations"][0]
+    assert loc["channel_id"] == "ch-pulse"
+    assert loc["new_reviews"] == 4
+    assert loc["avg_rating"] == 4.5
+    assert loc["response_rate"] == 75.0
+    assert loc["unanswered"] == 1
+    assert loc["below_threshold"] is False
+
+    # Needs attention: outstanding reviews (oldest 4d -> high) + waiting >1h.
+    kinds = {a["kind"] for a in out["attention"]}
+    assert "reviews" in kinds
+    assert "messages" in kinds
+    assert out["one_thing"] is None  # no problem data seeded
+
 
 @pytest.mark.asyncio
 async def test_pulse_channel_scope(db, user_id):
@@ -89,6 +105,34 @@ async def test_pulse_channel_scope(db, user_id):
     assert out["reputation"]["new_reviews"] == 1
     assert out["reputation"]["awaiting_reply"] == 0
     assert out["reputation"]["sources"] == [{"platform": "google_reviews", "count": 1}]
+
+
+@pytest.mark.asyncio
+async def test_pulse_one_thing_and_low_rating_location(db, user_id):
+    await _seed_channel(db, user_id, "ch-low")
+    now = datetime.now(timezone.utc)
+    # Current period: two "waiting time" complaints; prior: one.
+    for i, days_ago in enumerate((1, 2, 40)):
+        db.add(ReviewInsight(
+            id=f"ch-low-ins-{i}", user_id=user_id, channel_id="ch-low",
+            review_id=f"ch-low-r{i}", rating=2, review_text="long wait",
+            reviewer_name=f"Guest {i}", sentiment="negative", sentiment_score=-0.8,
+            topics=[], products=[],
+            problems=[{"name": "long waiting time", "severity": "high"}],
+            enrichment_status="done", replied=False,
+            review_updated_at=now - timedelta(days=days_ago),
+        ))
+    await db.commit()
+
+    out = await get_pulse(db, user_id, None, 30)
+    loc = out["locations"][0]
+    assert loc["avg_rating"] == 2.0
+    assert loc["below_threshold"] is True
+
+    assert out["one_thing"] is not None
+    assert out["one_thing"]["category"] == "waiting_time"
+    assert out["one_thing"]["mentions"] == 2
+    assert out["one_thing"]["trend_pct"] == 100.0
 
 
 @pytest.mark.asyncio

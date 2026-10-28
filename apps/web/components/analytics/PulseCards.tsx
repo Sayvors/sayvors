@@ -39,6 +39,25 @@ function fmtAgo(iso: string | null): string | null {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+const COMPLAINT_AREA_LABEL: Record<string, string> = {
+  waiting_time: "Waiting time",
+  staff_service: "Staff & service",
+  order_accuracy: "Order accuracy",
+  cleanliness: "Cleanliness",
+  price_value: "Price & value",
+  quality: "Food / product quality",
+  other: "Other",
+};
+
+function areaLabel(category: string): string {
+  return COMPLAINT_AREA_LABEL[category] ?? category.replace(/_/g, " ");
+}
+
+function severityStyle(severity: string): string {
+  if (severity === "high") return "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]";
+  return "bg-[var(--ui-sunken)] text-[var(--ui-ink)]";
+}
+
 function DeltaChip({ value, suffix = "" }: { value: number | null; suffix?: string }) {
   if (value === null || value === undefined) {
     return <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--ui-ink-2)]">no prior data</span>;
@@ -119,7 +138,8 @@ export default function PulseCards({
     : "No reviews in this period";
 
   return (
-    <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
+    <div className="space-y-4 sm:space-y-5">
+      <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
       {/* Reputation pulse */}
       <section aria-label="Reputation pulse" className="ui-card p-5">
         <div className="flex items-start justify-between gap-2">
@@ -202,6 +222,114 @@ export default function PulseCards({
             : "Nothing waiting"}
           {waitingAsOf ? ` · as of ${waitingAsOf}` : ""}
         </p>
+      </section>
+      </div>
+
+      <div className="grid gap-4 sm:gap-5 lg:grid-cols-3">
+        {/* Location league */}
+        <section aria-label="Location league" className="ui-card p-5 lg:col-span-2">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Location league</h3>
+              <p className="text-[11px] text-[var(--ui-ink-2)]">Worst first, so the location that needs a conversation leads.</p>
+            </div>
+            <Link
+              href="/dashboard/analytics?tab=insights"
+              className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)]"
+            >
+              View insights
+            </Link>
+          </div>
+          {data.locations.length === 0 ? (
+            <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">No location data in this period.</p>
+          ) : (
+            <ul className="mt-4 divide-y divide-[var(--ui-line)]">
+              {data.locations.slice(0, 6).map((loc) => (
+                <li key={loc.channel_id} className="flex flex-wrap items-center gap-2 py-2.5 first:pt-0 last:pb-0">
+                  <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{loc.name}</span>
+                  <span className={`shrink-0 rounded-[2px] px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${loc.below_threshold ? "bg-[var(--ui-ink)] text-[var(--ui-on-ink)]" : "bg-[var(--ui-sunken)] text-[var(--ui-ink)]"}`}>
+                    {loc.avg_rating !== null ? loc.avg_rating.toFixed(1) : "-"}&#9733;
+                  </span>
+                  <span className="w-16 shrink-0 text-right text-[11px] tabular-nums text-[var(--ui-ink-2)]">{loc.new_reviews} new</span>
+                  <span className="w-16 shrink-0 text-right text-[11px] tabular-nums text-[var(--ui-ink-2)]">{loc.response_rate}%</span>
+                  <span className={`w-20 shrink-0 text-right text-[11px] tabular-nums ${loc.unanswered > 0 ? "font-bold text-[var(--ui-ink)]" : "text-[var(--ui-ink-2)]"}`}>
+                    {loc.unanswered} waiting
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {data.locations.some((l) => l.below_threshold) && (
+            <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
+              {data.locations.filter((l) => l.below_threshold).length} of {data.locations.length} below 4.5&#9733;.
+            </p>
+          )}
+        </section>
+
+        {/* One thing that changed */}
+        <section aria-label="One thing that changed" className="ui-card p-5">
+          <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">One thing that changed</h3>
+          <p className="text-[11px] text-[var(--ui-ink-2)]">The complaint area with the biggest move this period.</p>
+          {!data.one_thing ? (
+            <p className="py-6 text-center text-[12px] text-[var(--ui-ink-2)]">No complaint movement yet.</p>
+          ) : (
+            <>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="text-[14px] font-bold text-[var(--ui-ink)]">{areaLabel(data.one_thing.category)}</span>
+                <DeltaChip value={data.one_thing.trend_pct} suffix="%" />
+              </div>
+              <p className="mt-2 text-[12px] text-[var(--ui-ink)]">
+                {data.one_thing.mentions} mention{data.one_thing.mentions === 1 ? "" : "s"} in the last {data.one_thing.period_days} days
+                {data.one_thing.serious > 0 ? ` · ${data.one_thing.serious} serious` : ""}
+                {data.one_thing.staff_named > 0 ? ` · ${data.one_thing.staff_named} staff named` : ""}.
+              </p>
+              {data.one_thing.top_terms.length > 0 && (
+                <p className="mt-2 truncate text-[10px] text-[var(--ui-ink-2)]">
+                  {data.one_thing.top_terms.map((t) => t.name).join(" · ")}
+                </p>
+              )}
+              <Link
+                href="/dashboard/analytics?tab=insights"
+                className="mt-3 inline-block text-[11px] font-bold text-[var(--ui-ink)] underline underline-offset-2"
+              >
+                See the reviews
+              </Link>
+            </>
+          )}
+        </section>
+      </div>
+
+      {/* Needs attention */}
+      <section aria-label="Needs attention" className="ui-card p-5">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Needs attention</h3>
+            <p className="text-[11px] text-[var(--ui-ink-2)]">Prioritized by revenue at risk, then age.</p>
+          </div>
+          {data.attention.length === 0 && (
+            <span className="rounded-[2px] bg-[var(--ui-sunken)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
+              All clear
+            </span>
+          )}
+        </div>
+        {data.attention.length > 0 && (
+          <ul className="mt-3 divide-y divide-[var(--ui-line)]">
+            {data.attention.map((item, i) => (
+              <li key={`${item.kind}-${i}`} className="flex items-center gap-2 py-2.5 first:pt-0 last:pb-0">
+                <span className={`shrink-0 rounded-[2px] px-1.5 py-0.5 text-[9px] font-bold uppercase ${severityStyle(item.severity)}`}>
+                  {item.severity}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[var(--ui-ink)]">{item.title}</span>
+                {item.detail && <span className="shrink-0 text-[10px] text-[var(--ui-ink-2)]">{item.detail}</span>}
+                {item.href && (
+                  <Link href={item.href} className="shrink-0 text-[11px] font-bold text-[var(--ui-ink)] underline underline-offset-2">
+                    Open
+                  </Link>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   );

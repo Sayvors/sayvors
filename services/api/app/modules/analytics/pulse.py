@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from statistics import median
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
@@ -139,6 +139,41 @@ async def get_pulse(
         await db.execute(select(func.max(bucket)).where(*base))
     ).scalar()
 
+    # ── Location league: one aggregate, grouped by channel ────────────────
+    in_period = bucket >= start
+    loc_rows = (
+        await db.execute(
+            select(
+                Channel.id,
+                Channel.display_name,
+                Channel.platform,
+                func.count(case((in_period, 1), else_=None)),
+                func.avg(case((in_period, ReviewInsight.rating), else_=None)),
+                func.sum(case((and_(in_period, ReviewInsight.replied.is_(True)), 1), else_=0)),
+                func.sum(case((ReviewInsight.replied.is_(False), 1), else_=0)),
+            )
+            .join(ReviewInsight, ReviewInsight.channel_id == Channel.id)
+            .where(*base)
+            .group_by(Channel.id, Channel.display_name, Channel.platform)
+        )
+    ).all()
+    locations = []
+    for cid, display_name, platform, n, avg, replied, unanswered in loc_rows:
+        n = int(n or 0)
+        rating = round(float(avg), 2) if avg is not None else None
+        locations.append({
+            "channel_id": cid,
+            "name": display_name or platform or "Location",
+            "platform": platform or "unknown",
+            "new_reviews": n,
+            "avg_rating": rating,
+            "response_rate": round((int(replied or 0) / n) * 100.0, 1) if n else 0.0,
+            "unanswered": int(unanswered or 0),
+            "below_threshold": rating is not None and rating < 4.5 and n > 0,
+        })
+    # Worst-first: the location that needs a conversation leads the league.
+    locations.sort(key=lambda x: (x["avg_rating"] is None, x["avg_rating"] or 0))
+
     # ── Messaging: current wait + period response time ────────────────────
     today = now.date()
     lookback_start = today - timedelta(days=max(days, 2) - 1)
@@ -178,6 +213,68 @@ async def get_pulse(
         default=None,
     )
 
+    # ── One thing that changed: the complaint area with the biggest move ──
+    one_thing = None
+    try:
+        from . import intelligence
+
+        problems = await intelligence.get_problems(db, user_id, channel_id, days)
+        areas = problems.get("by_area") or []
+        movers = [a for a in areas if a.get("trend_pct") is not None]
+        top = max(movers, key=lambda a: abs(a["trend_pct"])) if movers else (max(areas, key=lambda a: a["mentions"]) if areas else None)
+        if top is not None:
+            one_thing = {
+                "kind": "complaint_area",
+                "category": top["category"],
+                "mentions": top["mentions"],
+                "trend_pct": top.get("trend_pct"),
+                "status": top.get("status"),
+                "staff_named": top.get("staff_named", 0),
+                "serious": top.get("serious", 0),
+                "top_terms": top.get("top_terms", []),
+                "period_days": days,
+            }
+    except Exception as e:  # secondary card: log and omit, never fail the pulse
+        logger.warning("pulse one_thing aggregation failed: %s", e)
+
+    # ── Needs attention: built from the numbers already in hand ───────────
+    attention: list[dict] = []
+    if awaiting_reply > 0:
+        attention.append({
+            "kind": "reviews",
+            "severity": "high" if (oldest_wait_days or 0) >= 2 else "medium",
+            "title": f"{awaiting_reply} review{'s' if awaiting_reply != 1 else ''} awaiting reply",
+            "detail": f"oldest {oldest_wait_days}d" if oldest_wait_days is not None else None,
+            "href": "/dashboard/reviews?status=unanswered",
+        })
+    if waiting_over_1h > 0:
+        attention.append({
+            "kind": "messages",
+            "severity": "high",
+            "title": f"{waiting_over_1h} channel{'s' if waiting_over_1h != 1 else ''} with a customer waiting >1h",
+            "detail": f"oldest {oldest_unanswered_seconds // 60} min" if oldest_unanswered_seconds is not None else None,
+            "href": "/dashboard/channels/inbox",
+        })
+    for loc in [l for l in locations if l["below_threshold"]][:3]:
+        attention.append({
+            "kind": "location",
+            "severity": "medium",
+            "title": f"{loc['name']} at {loc['avg_rating']:.1f}\u2605",
+            "detail": f"{loc['unanswered']} unanswered" if loc["unanswered"] else None,
+            "href": "/dashboard/analytics?tab=insights",
+        })
+    if last_synced is not None:
+        synced_at = last_synced if last_synced.tzinfo else last_synced.replace(tzinfo=timezone.utc)
+        if (now - synced_at).total_seconds() > 86400:
+            attention.append({
+                "kind": "sync",
+                "severity": "medium",
+                "title": "Review sync is stale",
+                "detail": "last success >24h ago",
+                "href": "/dashboard/channels",
+            })
+    attention = attention[:5]
+
     return {
         "as_of": now,
         "period_days": days,
@@ -206,4 +303,7 @@ async def get_pulse(
             "business_hours": None,
             "as_of": messaging_as_of,
         },
+        "locations": locations,
+        "one_thing": one_thing,
+        "attention": attention,
     }
