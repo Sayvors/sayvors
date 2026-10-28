@@ -3,9 +3,10 @@
 The ask loop has three stages the Growth funnel needs to be honest about:
 
 1. Record  - a request row exists with a unique click token.
-2. Deliver - WhatsApp is a client-side deep link; SMS/email are server-side
-             sends through an env-gated provider. A provider failure is stored
-             on the row (status "failed", error text), never hidden.
+2. Deliver - email goes through Resend; WhatsApp goes through the tenant's
+             connected Cloud API number and consumes the plan's monthly
+             message allowance. A provider failure is stored on the row
+             (status "failed", error text), never hidden.
 3. Click   - the public redirect marks clicked_at and forwards to the listing's
              Google review composer.
 
@@ -20,11 +21,13 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
+from ..channels.meta.credentials import decrypt_connection_token
+from ..channels.meta.models import MetaAsset
+from ..channels.meta.service import get_adapter
 from ..channels.models import Channel
 from ..email.service import send_email
 from ..localith.models import LocalithConnection
@@ -33,7 +36,6 @@ from .models import ReviewInsight, ReviewRequest
 logger = logging.getLogger(__name__)
 
 ATTRIBUTION_WINDOW_DAYS = 7
-TWILIO_TIMEOUT_SECONDS = 10.0
 
 
 def _review_url_from_place(place_id: str | None, maps_url: str | None) -> str | None:
@@ -71,36 +73,6 @@ async def resolve_review_url(db: AsyncSession, user_id: str, channel_id: str | N
     return None
 
 
-def sms_configured() -> bool:
-    return bool(
-        settings.TWILIO_ACCOUNT_SID.strip()
-        and settings.TWILIO_AUTH_TOKEN.strip()
-        and settings.TWILIO_FROM_NUMBER.strip()
-    )
-
-
-async def send_sms(to: str, body: str) -> None:
-    """Twilio REST send. Raises on failure so the caller records it."""
-    if not sms_configured():
-        raise RuntimeError("SMS provider is not configured (TWILIO_* missing).")
-    url = (
-        f"https://api.twilio.com/2010-04-01/Accounts/"
-        f"{settings.TWILIO_ACCOUNT_SID}/Messages.json"
-    )
-    async with httpx.AsyncClient(timeout=TWILIO_TIMEOUT_SECONDS) as client:
-        resp = await client.post(
-            url,
-            auth=(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN),
-            data={
-                "From": settings.TWILIO_FROM_NUMBER,
-                "To": to,
-                "Body": body[:320],
-            },
-        )
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Twilio rejected SMS ({resp.status_code}): {resp.text[:180]}")
-
-
 def tracked_link(token: str | None) -> str | None:
     """The public click URL that records the click then redirects to Google."""
     if not token:
@@ -119,6 +91,91 @@ def _message(name: str | None, link: str | None) -> str:
     return f"{greeting} Thanks for visiting. Would you mind leaving us a quick review? It really helps."
 
 
+def render_template(body: str | None, name: str | None, link: str | None) -> str | None:
+    """Replace {name} / {link} in a saved template. Missing values are safe."""
+    if not body:
+        return None
+    return body.replace("{name}", name or "there").replace("{link}", link or "")
+
+
+async def send_whatsapp_text(db: AsyncSession, user_id: str, to: str, text: str) -> str:
+    """Send through the tenant's connected WhatsApp Cloud API number.
+
+    Raises when no number is connected or Meta rejects the send. The caller
+    stores the failure on the request row; it is never silent. A message
+    outside the 24-hour customer window will be rejected by Meta unless an
+    approved template is used - that limitation is surfaced as the error.
+    """
+    asset = (
+        await db.execute(
+            select(MetaAsset)
+            .where(
+                MetaAsset.tenant_id == user_id,
+                MetaAsset.provider == "whatsapp",
+                MetaAsset.asset_type == "phone_number",
+                MetaAsset.status == "connected",
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise RuntimeError("No connected WhatsApp number.")
+    token = decrypt_connection_token(asset.connection) if asset.connection else None
+    if not token:
+        raise RuntimeError("WhatsApp credentials are not available.")
+    adapter = get_adapter("whatsapp")
+    return await adapter.send_text_message(asset.external_asset_id, token, to, text)
+
+
+async def deliver_request(db: AsyncSession, row: ReviewRequest) -> ReviewRequest:
+    """Send one request through its channel and persist the real outcome."""
+    if row.status in ("sent", "delivered", "clicked", "reviewed"):
+        return row
+
+    tracked = tracked_link(row.token)
+    message = render_template(row.body, row.contact_name, tracked) or _message(row.contact_name, tracked)
+    subject = row.subject or "Would you leave us a quick review?"
+
+    if row.channel == "whatsapp":
+        try:
+            if not row.contact:
+                raise RuntimeError("Missing WhatsApp number.")
+            await send_whatsapp_text(db, row.user_id, row.contact, message)
+            row.status = "sent"
+            row.sent_via = "whatsapp"
+            row.error = None
+        except Exception as e:
+            row.status = "failed"
+            row.sent_via = "whatsapp"
+            row.error = str(e)[:300]
+            logger.warning("WhatsApp review request failed for %s: %s", row.user_id, e)
+    elif row.channel == "email":
+        try:
+            if not row.contact:
+                raise RuntimeError("Missing email address.")
+            await send_email(
+                to=row.contact,
+                subject=subject,
+                html=f"<p>{message}</p>",
+                text=message,
+            )
+            row.status = "sent"
+            row.sent_via = "email"
+            row.error = None
+        except Exception as e:
+            row.status = "failed"
+            row.sent_via = "email"
+            row.error = str(e)[:300]
+            logger.warning("Email review request failed for %s: %s", row.user_id, e)
+    else:
+        row.status = "sent"
+        row.sent_via = "in_person" if row.channel == "in_person" else None
+
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
 async def create_and_deliver(
     db: AsyncSession,
     user_id: str,
@@ -129,15 +186,12 @@ async def create_and_deliver(
     channel: str,
     trigger: str,
     deliver: bool,
+    subject: str | None = None,
+    body: str | None = None,
 ) -> ReviewRequest:
-    """Create the request, optionally deliver it, and commit once.
-
-    WhatsApp/in-person are recorded without a server send (the client opens the
-    deep link). SMS/email go through the provider and store the real outcome.
-    """
+    """Create the request, optionally deliver it, and commit once."""
     token = secrets.token_urlsafe(24)
     review_url = await resolve_review_url(db, user_id, channel_id)
-    tracked = tracked_link(token)
     row = ReviewRequest(
         user_id=user_id,
         channel_id=channel_id or None,
@@ -145,54 +199,55 @@ async def create_and_deliver(
         contact_name=(contact_name or "")[:120] or None,
         channel=channel,
         trigger=trigger,
-        status="sent",
+        status="queued",
         token=token,
         review_url=review_url,
+        subject=(subject or "")[:200] or None,
+        body=(body or "")[:8000] or None,
         sent_at=datetime.now(timezone.utc),
     )
     db.add(row)
-
-    if deliver and channel in ("sms", "email"):
-        if not row.contact:
-            row.status = "failed"
-            row.error = "Missing contact for delivery."
-        elif channel == "sms":
-            try:
-                await send_sms(row.contact, _message(row.contact_name, tracked))
-                row.sent_via = "sms"
-            except Exception as e:
-                row.status = "failed"
-                row.sent_via = "sms"
-                row.error = str(e)[:300]
-                logger.warning("SMS review request failed for %s: %s", user_id, e)
-        else:
-            try:
-                await send_email(
-                    to=row.contact,
-                    subject="Would you leave us a quick review?",
-                    html=(
-                        f"<p>{_message(row.contact_name, None)}</p>"
-                        + (
-                            f"<p><a href=\"{tracked}\">Leave a review</a></p>"
-                            if tracked
-                            else ""
-                        )
-                    ),
-                    text=_message(row.contact_name, tracked),
-                )
-                row.sent_via = "email"
-            except Exception as e:
-                row.status = "failed"
-                row.sent_via = "email"
-                row.error = str(e)[:300]
-                logger.warning("Email review request failed for %s: %s", user_id, e)
-    else:
-        row.sent_via = "whatsapp_manual" if channel == "whatsapp" else (
-            "in_person" if channel == "in_person" else None
-        )
-
+    if deliver:
+        await db.flush()
+        return await deliver_request(db, row)
+    row.status = "sent"
+    row.sent_via = "in_person" if channel == "in_person" else None
     await db.commit()
     await db.refresh(row)
+    return row
+
+
+async def create_queued(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    channel_id: str | None,
+    contact: str | None,
+    contact_name: str | None,
+    channel: str,
+    trigger: str,
+    subject: str | None,
+    body: str | None,
+) -> ReviewRequest:
+    """Create a queued row for the scheduled job, without sending."""
+    token = secrets.token_urlsafe(24)
+    review_url = await resolve_review_url(db, user_id, channel_id)
+    row = ReviewRequest(
+        user_id=user_id,
+        channel_id=channel_id or None,
+        contact=(contact or "")[:255] or None,
+        contact_name=(contact_name or "")[:120] or None,
+        channel=channel,
+        trigger=trigger,
+        status="queued",
+        token=token,
+        review_url=review_url,
+        subject=(subject or "")[:200] or None,
+        body=(body or "")[:8000] or None,
+        sent_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    await db.flush()
     return row
 
 
@@ -234,7 +289,6 @@ def attribute_reviews(
     used = [False] * len(clicks)
     attributed = 0
     for when in sorted(t for t in (_aware(r) for r in review_times) if t is not None):
-        # Newest click that could explain this review and is still unused.
         for i in range(len(clicks) - 1, -1, -1):
             click = clicks[i]
             if click > when:

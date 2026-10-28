@@ -201,16 +201,20 @@ async def list_public_plans(db: AsyncSession = Depends(get_db)):
 async def read_entitlements(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """The tenant's effective plan + entitlements (base plan + promo overrides)."""
     from ...core.deps import tenant_id_of
-    from .entitlements import get_entitlements
+    from .entitlements import count_messages_this_month, get_entitlements
 
     tid = tenant_id_of(user)
     ent = await get_entitlements(tid, db)
+    used = await count_messages_this_month(tid, db)
+    remaining = None if ent.max_messages_per_month is None else max(0, ent.max_messages_per_month - used)
     return {
         "plan_slug": ent.plan_slug,
         "plan_name": ent.plan_name,
         "status": ent.status,
         "max_channels": ent.max_channels,
         "max_messages_per_month": ent.max_messages_per_month,
+        "messages_used_this_month": used,
+        "messages_remaining": remaining,
         "included_credit_cents": ent.included_credit_cents,
         "features": ent.features,
         "promo_active": ent.promo_active,

@@ -186,6 +186,8 @@ export interface Entitlements {
   status: string;
   max_channels: number | null;
   max_messages_per_month: number | null;
+  messages_used_this_month: number;
+  messages_remaining: number | null;
   included_credit_cents: number;
   features: Record<string, boolean>;
   promo_active: boolean;

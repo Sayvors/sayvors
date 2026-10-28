@@ -14,6 +14,7 @@ import { approveReply, dismissReviewEdit, editReply, generateReply, regenerateRe
 import { clearAbuseFlag, flagReviewAbusive, markAbuseReported, setAbuseVerdict } from "@/lib/api-abuse";
 import MeaningInspector from "@/components/reviews/MeaningInspector";
 import AskForReview from "@/components/dashboard/AskForReview";
+import BulkReviewRequests from "@/components/dashboard/BulkReviewRequests";
 import QRCodeGenerator from "@/components/dashboard/QRCodeGenerator";
 import { ALL_BRANCHES, groupValue, parseGroupValue, useLocationGroups } from "@/lib/location-groups";
 
@@ -1998,6 +1999,9 @@ function ReviewsInner() {
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <AskForReview />
                 <QRCodeGenerator />
+              </div>
+              <div className="mt-4">
+                <BulkReviewRequests />
               </div>
             </>
           )}

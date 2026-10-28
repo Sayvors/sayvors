@@ -7,6 +7,9 @@ from app.modules.analytics.models import ReviewRequest
 from app.modules.analytics.review_requests import (
     attribute_reviews,
     create_and_deliver,
+    create_queued,
+    deliver_request,
+    render_template,
     track_click,
 )
 
@@ -31,20 +34,36 @@ def test_attribute_reviews_no_clicks():
 
 
 @pytest.mark.asyncio
-async def test_sms_failure_is_visible_when_provider_missing(db, user_id, monkeypatch):
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "")
-    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "")
-    monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "")
-
+async def test_whatsapp_failure_is_visible_when_no_number_connected(db, user_id):
     row = await create_and_deliver(
         db, user_id, channel_id=None, contact="+966500000000",
-        contact_name="Sara", channel="sms", trigger="manual", deliver=True,
+        contact_name="Sara", channel="whatsapp", trigger="manual", deliver=True,
     )
     assert row.status == "failed"
-    assert row.sent_via == "sms"
-    assert "not configured" in (row.error or "").lower()
+    assert row.sent_via == "whatsapp"
+    assert "no connected whatsapp" in (row.error or "").lower()
+
+
+def test_render_template_placeholders():
+    assert render_template("Hi {name}, review: {link}", "Sara", "https://x") == "Hi Sara, review: https://x"
+    assert render_template("Hi {name}", None, None) == "Hi there"
+    assert render_template(None, "Sara", "x") is None
+
+
+@pytest.mark.asyncio
+async def test_queued_request_uses_template_and_fails_visibly(db, user_id):
+    row = await create_queued(
+        db, user_id, channel_id=None, contact="+966500000000",
+        contact_name="Sara", channel="whatsapp", trigger="campaign",
+        subject="Leave a review", body="Hi {name}, please review: {link}",
+    )
+    assert row.status == "queued"
+    await db.commit()
+
+    await deliver_request(db, row)
+    assert row.status == "failed"
+    assert row.sent_via == "whatsapp"
+    assert "no connected whatsapp" in (row.error or "").lower()
 
 
 @pytest.mark.asyncio

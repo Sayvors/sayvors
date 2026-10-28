@@ -28,6 +28,7 @@ class JobType(str, Enum):
     media_process = "media.process"          # image resize / convert
 
     # ── bulk lane ── best-effort, yielding
+    review_request_send = "review_request.send"  # scheduled review ask (bulk)
     rag_ingest = "rag.ingest"                # RAG document ingest (unified)
     databank_ingest = "databank.ingest"      # RAG document ingest (legacy)
     scrape_url = "scrape.url"                # URL scraping
@@ -49,6 +50,7 @@ _LANE_MAP: dict[JobType, JobLane] = {
     JobType.post_delete: JobLane.publishing,
     JobType.media_publish: JobLane.publishing,
     JobType.media_process: JobLane.media,
+    JobType.review_request_send: JobLane.bulk,
     JobType.rag_ingest: JobLane.bulk,
     JobType.databank_ingest: JobLane.bulk,
     JobType.scrape_url: JobLane.bulk,

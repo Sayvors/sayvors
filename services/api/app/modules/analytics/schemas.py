@@ -824,3 +824,51 @@ class ReviewRequestOut(BaseModel):
     sent_via: str | None = None
     link: str | None = None
     error: str | None = None
+
+
+class BulkContactIn(BaseModel):
+    email: str | None = None
+    phone: str | None = None
+    name: str | None = None
+
+
+class ReviewRequestBulkIn(BaseModel):
+    channel_id: str | None = None
+    # email | whatsapp
+    channel: str = "email"
+    contacts: list[BulkContactIn] = Field(default_factory=list, max_length=500)
+    # now | batched
+    mode: str = "now"
+    batch_size: int = Field(10, ge=1, le=500)
+    interval_minutes: int = Field(60, ge=1, le=10080)
+    trigger: str = "campaign"
+    subject: str | None = None
+    body: str | None = None
+
+
+class BulkQuotaOut(BaseModel):
+    used: int
+    max: int | None = None
+    remaining: int | None = None
+    requested: int
+
+
+class ReviewRequestBulkOut(BaseModel):
+    queued: int
+    sent_now: int
+    scheduled: int
+    skipped: int
+    skipped_quota: int = 0
+    quota: BulkQuotaOut | None = None
+
+
+class ReviewTemplateIn(BaseModel):
+    # email | whatsapp
+    channel: str = "email"
+    tone: str = "friendly"
+
+
+class ReviewTemplateOut(BaseModel):
+    subject: str
+    body: str
+    source: str  # ai | fallback

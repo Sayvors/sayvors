@@ -455,6 +455,40 @@ export async function recordReviewRequest(input: {
   });
 }
 
+export async function bulkReviewRequests(input: {
+  channel_id?: string | null;
+  channel: "email" | "whatsapp";
+  contacts: { email?: string | null; phone?: string | null; name?: string | null }[];
+  mode: "now" | "batched";
+  batch_size: number;
+  interval_minutes: number;
+  trigger?: string;
+  subject?: string | null;
+  body?: string | null;
+}): Promise<{
+  queued: number;
+  sent_now: number;
+  scheduled: number;
+  skipped: number;
+  skipped_quota: number;
+  quota: { used: number; max: number | null; remaining: number | null; requested: number } | null;
+}> {
+  return apiFetch("/api/v1/analytics/review-requests/bulk", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function generateReviewTemplate(input: {
+  channel: "email" | "whatsapp";
+  tone?: string;
+}): Promise<{ subject: string; body: string; source: string }> {
+  return apiFetch("/api/v1/analytics/review-requests/template", {
+    method: "POST",
+    body: JSON.stringify({ ...input, tone: input.tone ?? "friendly" }),
+  });
+}
+
 export async function fetchTimeseries(
   days: number,
   channelId?: string | null

@@ -29,6 +29,10 @@ from .schemas import (
     GrowthCardsResponse,
     ReviewRequestIn,
     ReviewRequestOut,
+    ReviewRequestBulkIn,
+    ReviewRequestBulkOut,
+    ReviewTemplateIn,
+    ReviewTemplateOut,
     ReviewInsightItem,
     ReviewInsightListResponse,
     ReviewIntelligenceResponse,
@@ -670,7 +674,7 @@ async def record_review_request(
     """
     from .review_requests import create_and_deliver, tracked_link
 
-    allowed_channels = {"whatsapp", "sms", "email", "in_person"}
+    allowed_channels = {"whatsapp", "email", "in_person"}
     allowed_triggers = {"manual", "qr", "after_visit", "campaign"}
     row = await create_and_deliver(
         db,
@@ -709,6 +713,143 @@ async def review_request_click(token: str, db: AsyncSession = Depends(get_db)):
     if target:
         return RedirectResponse(url=target, status_code=302)
     return RedirectResponse(url="https://www.google.com/maps", status_code=302)
+
+
+@router.post("/review-requests/bulk", response_model=ReviewRequestBulkOut)
+async def bulk_review_requests(
+    body: ReviewRequestBulkIn,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue up to 500 review asks, immediately or in staggered batches.
+
+    Rows are created as "queued" and a durable `review_request.send` job is
+    enqueued for each one. The worker sends it; the API never blocks on a
+    provider loop. WhatsApp sends consume the plan's monthly message allowance,
+    so the queue is capped at the remaining entitlement - the response reports
+    exactly how many were skipped for quota, never silently over-sending.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from ..billing.entitlements import count_messages_this_month, get_entitlements
+    from ..jobs.service import submit_job
+    from .review_requests import create_queued
+
+    if body.channel not in ("email", "whatsapp"):
+        raise HTTPException(status_code=400, detail="Bulk delivery supports email or whatsapp.")
+    if len(body.contacts) == 0:
+        raise HTTPException(status_code=400, detail="No contacts supplied.")
+
+    uid = tenant_id_of(user)
+    now = datetime.now(timezone.utc)
+    valid = []
+    for contact in body.contacts:
+        value = (contact.email if body.channel == "email" else contact.phone) or ""
+        value = value.strip()
+        if value:
+            valid.append((value, contact.name))
+    skipped_contact = len(body.contacts) - len(valid)
+
+    quota = None
+    allowed = len(valid)
+    skipped_quota = 0
+    if body.channel == "whatsapp":
+        ent = await get_entitlements(uid, db)
+        used = await count_messages_this_month(uid, db)
+        max_msgs = ent.max_messages_per_month
+        remaining = None if max_msgs is None else max(0, max_msgs - used)
+        allowed = len(valid) if remaining is None else min(len(valid), remaining)
+        skipped_quota = len(valid) - allowed
+        quota = {
+            "used": used,
+            "max": max_msgs,
+            "remaining": remaining,
+            "requested": len(valid),
+        }
+
+    queued = 0
+    for value, name in valid[:allowed]:
+        row = await create_queued(
+            db,
+            uid,
+            channel_id=body.channel_id,
+            contact=value,
+            contact_name=name,
+            channel=body.channel,
+            trigger=body.trigger,
+            subject=body.subject,
+            body=body.body,
+        )
+        delay = 0 if body.mode == "now" else (queued // body.batch_size) * body.interval_minutes
+        await submit_job(
+            db,
+            tenant_id=uid,
+            job_type="review_request.send",
+            payload={"request_id": row.id},
+            subject_type="review_request",
+            subject_id=row.id,
+            idempotency_key=f"review_request:{row.id}",
+            next_run_at=now + timedelta(minutes=delay),
+        )
+        queued += 1
+    await db.commit()
+    return ReviewRequestBulkOut(
+        queued=queued,
+        sent_now=queued if body.mode == "now" else 0,
+        scheduled=0 if body.mode == "now" else queued,
+        skipped=skipped_contact,
+        skipped_quota=skipped_quota,
+        quota=quota,
+    )
+
+
+@router.post("/review-requests/template", response_model=ReviewTemplateOut)
+async def generate_review_template(
+    body: ReviewTemplateIn,
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("reviews.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Draft a review-ask template, with a deterministic fallback.
+
+    The customer-facing templates are short. `{name}` and `{link}` are the only
+    placeholders; the link is the tracked redirect, never the raw Google URL.
+    """
+    fallback_body = (
+        "Hi {name}, thanks for visiting! Would you mind leaving us a quick review? "
+        "It really helps us improve: {link}"
+    )
+    fallback_subject = "Would you leave us a quick review?"
+    if body.channel == "whatsapp":
+        fallback_body = "Hi {name}, thanks for visiting! Could you leave us a quick review? {link}"
+
+    try:
+        from ..llm.gateway import LLMMessage, complete, resolve_tenant_model
+
+        model = await resolve_tenant_model(db)
+        resp = await complete(
+            model=model,
+            messages=[LLMMessage(role="user", content=(
+                f"Write a {body.tone} {body.channel} message asking a customer to leave a "
+                "Google review. Keep it under 45 words. Include {name} and {link} exactly "
+                "once. No emojis. Return only the message text."
+            ))],
+            purpose="review_request.template",
+            tenant_id=tenant_id_of(user),
+            max_tokens=200,
+            temperature=0.5,
+        )
+        text = (resp.content or "").strip().strip('"')
+        if text and "{link}" in text:
+            return ReviewTemplateOut(
+                subject=fallback_subject,
+                body=text[:1200],
+                source="ai",
+            )
+    except Exception as e:
+        logger.warning("review template generation failed: %s", e)
+    return ReviewTemplateOut(subject=fallback_subject, body=fallback_body, source="fallback")
 
 
 @router.get("/products", response_model=ProductsResponse)

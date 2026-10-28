@@ -600,6 +600,10 @@ class ReviewRequest(Base):
     sent_via: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Provider/validation failure reason. Never exposed to customers.
     error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Rendered copy captured at queue time, so a later template edit does not
+    # change an already-scheduled send.
+    subject: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

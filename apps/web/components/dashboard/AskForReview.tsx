@@ -5,7 +5,7 @@ import Image from "next/image";
 import { apiFetch } from "@/lib/api-rag";
 import { recordReviewRequest } from "@/lib/api-analytics";
 
-type ReviewChannel = "whatsapp" | "contacts" | "email" | "sms";
+type ReviewChannel = "whatsapp" | "contacts" | "email";
 type PlatformTab = "all" | "whatsapp" | "instagram" | "facebook";
 
 interface PlatformContact {
@@ -65,10 +65,6 @@ export default function AskForReview() {
   const [emailName, setEmailName] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMsg, setEmailMsg] = useState<string | null>(null);
-  const [smsNumber, setSmsNumber] = useState("");
-  const [smsName, setSmsName] = useState("");
-  const [smsBusy, setSmsBusy] = useState(false);
-  const [smsMsg, setSmsMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -280,32 +276,6 @@ export default function AskForReview() {
     }
   };
 
-  const sendSmsRequest = async () => {
-    const cleaned = smsNumber.replace(/[^\d+]/g, "");
-    if (!cleaned) return;
-    setSmsBusy(true);
-    setSmsMsg(null);
-    try {
-      const res = await recordReviewRequest({
-        channel: "sms",
-        contact: cleaned,
-        contact_name: smsName.trim() || null,
-        deliver: true,
-      });
-      if (res.status === "failed") {
-        setSmsMsg(res.error ?? "SMS could not be sent.");
-      } else {
-        setSmsMsg("SMS request sent with a tracked review link.");
-        setSmsNumber("");
-        setSmsName("");
-      }
-    } catch (e) {
-      setSmsMsg(e instanceof Error ? e.message.slice(0, 160) : "SMS could not be sent.");
-    } finally {
-      setSmsBusy(false);
-    }
-  };
-
   const handleSendSelected = () => {
     const selected = contacts.filter((c) => selectedContactIds.has(c.id));
     for (const c of selected) {
@@ -501,25 +471,6 @@ export default function AskForReview() {
           </div>
         </button>
 
-        <button
-          onClick={() => setActiveChannel(activeChannel === "sms" ? null : "sms")}
-          className={`group flex flex-row items-center gap-3 rounded-xl border-2 p-3 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:flex-col sm:gap-2 sm:p-4 sm:text-center ${
-            activeChannel === "sms"
-              ? "border-deep-violet/40 bg-deep-violet/[0.06]"
-              : "border-ink/[0.06] bg-white hover:border-deep-violet/20 hover:bg-deep-violet/[0.03]"
-          }`}
-        >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600 transition group-hover:scale-105">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden>
-              <rect x="7" y="2.5" width="10" height="19" rx="2" />
-              <path d="M10 18.5h4" />
-            </svg>
-          </span>
-          <div>
-            <p className="text-[12px] font-bold text-ink">SMS</p>
-            <p className="text-[10px] text-ink/45">Send request</p>
-          </div>
-        </button>
       </div>
 
       {activeChannel === "whatsapp" && (
@@ -721,37 +672,6 @@ export default function AskForReview() {
         </div>
       )}
 
-      {activeChannel === "sms" && (
-        <div className="mt-4 rounded-xl border border-ink/[0.06] bg-ink/[0.02] p-4">
-          <p className="text-[12px] font-semibold text-ink">Send SMS review request</p>
-          <p className="mt-1 text-[11px] text-ink/50">
-            Sent through Twilio with a tracked review link. A missing provider or invalid number is shown as a failure, never as sent.
-          </p>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <input
-              type="tel"
-              value={smsNumber}
-              onChange={(e) => setSmsNumber(e.target.value)}
-              placeholder="+966 55 000 0000"
-              className="input-field flex-1"
-            />
-            <input
-              value={smsName}
-              onChange={(e) => setSmsName(e.target.value)}
-              placeholder="Name (optional)"
-              className="input-field sm:w-40"
-            />
-            <button
-              onClick={() => void sendSmsRequest()}
-              disabled={smsBusy || !smsNumber.trim()}
-              className="rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-sky-600/25 outline-none transition hover:bg-sky-700 focus-visible:ring-2 focus-visible:ring-sky-600/40 active:scale-[0.98] disabled:opacity-50"
-            >
-              {smsBusy ? "Sending…" : "Send"}
-            </button>
-          </div>
-          {smsMsg && <p className="mt-2 text-[11px] text-ink/60">{smsMsg}</p>}
-        </div>
-      )}
     </section>
   );
 }
