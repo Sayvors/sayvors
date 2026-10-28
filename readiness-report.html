@@ -911,6 +911,30 @@
   <p class="note"><strong>Order:</strong> G1 first (smallest win, KSA/MENA differentiation), then G2, then scope G3 as its own project.</p>
 </section>
 
+<section id="analytics-redesign">
+  <div class="eyebrow">New - Analytics redesign</div>
+  <h2>Analytics redesign - Overview, Insights, Growth, Benchmark</h2>
+  <p>Based on a 46-source voice-of-customer review (27 Reddit threads, 5 G2/Capterra review pages, 6 Local Search Forum threads, 3 vendor docs, 5 surveys). Full plan: <code>docs/tracking/analytics-redesign-plan.md</code>; raw evidence: <code>research-smb-analytics-dashboard-2026-10-28.md</code>.</p>
+  <p><strong>Core finding:</strong> owners do not want more charts. They want 5-10 numbers they trust, with provenance (source, period, comparison, denominator, last sync) and a clear next action. Absolute numbers first, percentage second, trend third. AI is a labelled draft, not an analyst. Benchmarks are trusted only when local, peer-based, recent, and transparent.</p>
+  <div class="scroll"><table>
+    <tr><th>Page</th><th>What owners want</th><th>What we show today / gap</th></tr>
+    <tr><td><strong>Overview</strong></td><td>6 KPI tiles, reputation pulse, who is waiting, location league, one thing that changed, action queue</td><td>Rating/reviews/response/messaging/presence; missing absolute-first cards, action queue, provenance, location roll-up</td></tr>
+    <tr><td><strong>Insights</strong></td><td>Themes with counts, quotes, location/staff attribution, trend vs prior period, owners/actions, AI with receipts</td><td>Topics/problems/products + momentum + messaging; complaint card shipped but no quotes/location split, no owner/action</td></tr>
+    <tr><td><strong>Growth</strong></td><td>Review-request funnel (sent &rarr; delivered &rarr; clicked &rarr; reviews &rarr; rating), realistic conversion (3-10%, never 83%), source attribution with "Unknown", retention cohort, ask timing</td><td>Acquisition/keywords/visibility/opportunities; funnel and denominators missing</td></tr>
+    <tr><td><strong>Benchmark</strong></td><td>Editable local peer set, similar size/model, recency + response, own history first, gap math, <code>n</code> + date + confidence</td><td>Opaque 0-100 composite, fixed peer set, no gap-to-4.5 math, no low-sample warnings</td></tr>
+  </table></div>
+  <h3>Phased delivery</h3>
+  <ol>
+    <li><strong>Phase 0 - Trust layer (1w):</strong> provenance envelope on every response, "Data delayed" state, shared popover, absolute + delta + comparison label.</li>
+    <li><strong>Phase 1 - Overview rebuild (1-2w):</strong> 6 KPI cap, reputation pulse, who is waiting, location league, one thing changed, needs attention; mobile console.</li>
+    <li><strong>Phase 2 - Insights (1w):</strong> quotes/location split + sample warnings, "What changed this week", "Action plan / close the loop", source drill-down.</li>
+    <li><strong>Phase 3 - Growth funnel (2w):</strong> request funnel, source attribution with Unknown, retention cohort, ask timing, growth actions.</li>
+    <li><strong>Phase 4 - Benchmark (1-2w):</strong> replace composite with sub-scores + weights, editable peer group, gap math, `n`/date/confidence.</li>
+    <li><strong>Phase 5 - Alerts + mobile (1w):</strong> severity tiers, quiet hours, escalation, deep links.</li>
+  </ol>
+  <p class="note"><strong>Acceptance:</strong> every number has provenance + drill-down; no failed sync renders as <code>0</code>; every claim shows <code>n</code> and a comparison; Growth shows every denominator; Benchmark shows peer definition and confidence; mobile above the fold is 3 KPIs + "who's waiting" + "needs attention".</p>
+</section>
+
 <section id="good">
   <div class="eyebrow">§§ 9</div>
   <h2>What the audit found solid</h2>
