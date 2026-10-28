@@ -9,9 +9,10 @@ Two comparison layers, both real:
    ARE the competitor set — no manual entry, no synthetic aggregates.
 """
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
@@ -203,7 +204,8 @@ async def _tenant_cohort(
                 "user_ids": [],
                 "median_rating": None, "median_reviews": None,
                 "top3_median_rating": None, "median_response_rate": None,
-                "median_positive_pct": None, "median_reputation": None}
+                "median_positive_pct": None, "median_reputation": None,
+                "median_recency_pct": None}
 
     other_ids = list({c.user_id for c in other})
     users = {
@@ -271,6 +273,11 @@ async def _tenant_cohort(
         response_rate = round(replied / total * 100, 1) if total else None
         positive_pct = positives / total if total else None
         velocity = round(sum(1 for r in rows if _recent(r.created_at, cutoff)) * (30 / days), 1) if days else 0
+        recent_90 = sum(
+            1 for r in rows
+            if _recent(r.review_updated_at or r.created_at, now - timedelta(days=90))
+        )
+        recency_pct = round(recent_90 / total * 100, 1) if total else None
         competitors.append({
             "name": c.listing_name or "Nearby business",
             "city": _parse_city(c.address),
@@ -278,6 +285,7 @@ async def _tenant_cohort(
             "reviews_total": c.total_reviews or 0,
             "response_rate": response_rate,
             "velocity_per_month": velocity,
+            "recency_pct": recency_pct,
             "positive_pct": round(positive_pct * 100, 1) if positive_pct is not None else None,
             "reputation_score": reputation_score(
                 c.average_rating or 0.0,
@@ -292,6 +300,7 @@ async def _tenant_cohort(
     reviews = [e["reviews_total"] for e in competitors]
     responses = [e["response_rate"] for e in competitors if e["response_rate"] is not None]
     positives = [e["positive_pct"] for e in competitors if e["positive_pct"] is not None]
+    recencies = [e["recency_pct"] for e in competitors if e["recency_pct"] is not None]
     reputations = [e["reputation_score"] for e in competitors]
     top3 = sorted(ratings, reverse=True)[:3]
     city_label = (my_city or "").title() if scope != "network" else ""
@@ -315,6 +324,7 @@ async def _tenant_cohort(
         "median_response_rate": round(_median(responses) or 0.0, 1) if responses else None,
         "median_positive_pct": round(_median(positives) or 0.0, 1) if positives else None,
         "median_reputation": int(_median(reputations) or 0) if reputations else None,
+        "median_recency_pct": round(_median(recencies) or 0.0, 1) if recencies else None,
     }
 
 
@@ -492,6 +502,33 @@ async def get_benchmark(
     cur = await get_overview(db, user_id, channel_id, days)
     branches = await _branch_breakdown(db, user_id, days)
 
+    # Recency: how much of the visible review base is fresh (last 90 days).
+    now = datetime.now(timezone.utc)
+    live = [
+        ReviewInsight.user_id == user_id,
+        ReviewInsight.removed_at.is_(None),
+        ReviewInsight.skipped.is_(False),
+    ]
+    if channel_id:
+        live.append(ReviewInsight.channel_id == channel_id)
+    recent_cutoff = now - timedelta(days=90)
+    rec_row = (
+        await db.execute(
+            select(
+                func.count(),
+                func.sum(ReviewInsight.rating),
+                func.sum(case((
+                    func.coalesce(ReviewInsight.review_updated_at, ReviewInsight.created_at) >= recent_cutoff,
+                    1,
+                ), else_=0)),
+            ).where(*live)
+        )
+    ).one()
+    my_reviews = int(rec_row[0] or 0)
+    my_rating_sum = int(rec_row[1] or 0)
+    my_recent_90 = int(rec_row[2] or 0)
+    my_recency_pct = round(my_recent_90 / my_reviews * 100, 1) if my_reviews else None
+
     # Market table: my branches vs tenant cohort, one ranking.
     mine = [{
         "name": b["name"],
@@ -587,6 +624,44 @@ async def get_benchmark(
     total_actions = cur["google_performance"]["customer_actions"]
     portfolio_action_rate = round(total_actions / total_impr * 100, 1) if total_impr > 0 else None
     portfolio_velocity_pm = round((cur["period"]["reviews"] or 0) * (30 / days), 1) if days else 0
+
+    # Gap to 4.5: how many 5-star reviews close it, and how long at the current
+    # pace. Math: (4.5*(N+X) - sum) / (N+X) = 4.5, solve for X.
+    five_star_needed = 0
+    if my_reviews and cur["avg_rating"] < 4.5:
+        five_star_needed = max(0, math.ceil(my_reviews * (9 - 2 * cur["avg_rating"])))
+    months_to_target = (
+        math.ceil(five_star_needed / portfolio_velocity_pm)
+        if five_star_needed and portfolio_velocity_pm and portfolio_velocity_pm > 0
+        else None
+    )
+    gap_to_target = {
+        "target": 4.5,
+        "current_rating": cur["avg_rating"],
+        "current_reviews": my_reviews,
+        "five_star_needed": five_star_needed,
+        "pace_per_month": portfolio_velocity_pm,
+        "months": months_to_target,
+        "math": (
+            f"({4.5} x {my_reviews + five_star_needed} - {my_rating_sum}) / "
+            f"{my_reviews + five_star_needed} = 4.5"
+        ) if my_reviews else None,
+    }
+    recency = {
+        "recent_90": my_recent_90,
+        "total": my_reviews,
+        "my_pct": my_recency_pct,
+        "peer_median_pct": cohort.get("median_recency_pct"),
+        "rank": None,
+        "cohort_count": cohort.get("count") or 0,
+    }
+    if my_recency_pct is not None and cohort.get("median_recency_pct") is not None:
+        peers = [
+            c.get("recency_pct") for c in cohort.get("competitors", [])
+            if c.get("recency_pct") is not None
+        ]
+        if peers:
+            recency["rank"] = 1 + sum(1 for p in peers if p > my_recency_pct)
     plain_summary = _plain_summary(branches, cur, dist)
     if cohort["count"] and my_rank:
         plain_summary += (
@@ -633,4 +708,6 @@ async def get_benchmark(
         "cohort": {k: v for k, v in cohort.items() if k != "user_ids"},
         "market": market,
         "my_rank": my_rank,
+        "recency": recency,
+        "gap_to_target": gap_to_target,
     }

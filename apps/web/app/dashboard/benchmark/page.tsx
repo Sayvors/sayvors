@@ -9,6 +9,7 @@ import {
   type BranchBenchmark,
 } from "@/lib/api-analytics";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
+import BenchmarkCards from "@/components/analytics/BenchmarkCards";
 
 type MetricFocus = "reputation" | "rating" | "sentiment" | "response" | "volume";
 
@@ -129,6 +130,10 @@ export default function BenchmarkPage() {
           setChannelId={(c) => { setChannelId(c); setLoading(true); }}
           channels={channels}
         />
+      </div>
+
+      <div className="mb-5">
+        <BenchmarkCards benchmark={benchmark} loading={loading} />
       </div>
 
       {error && !loading ? (

@@ -542,6 +542,10 @@ class BenchmarkResponse(BaseModel):
     cohort: dict | None = None
     market: list[dict] = []
     my_rank: int | None = None
+    # Recency + gap-to-4.5 cards. dicts keep the response stable while the
+    # card copy evolves (same convention as `cohort`/`distribution`).
+    recency: dict | None = None
+    gap_to_target: dict | None = None
 
 
 class ExecutiveSummaryResponse(BaseModel):

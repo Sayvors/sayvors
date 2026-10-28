@@ -31,6 +31,26 @@ async def _seed_branch(db, user_id, channel_id, name, reviews):
 
 
 @pytest.mark.asyncio
+async def test_benchmark_gap_to_45_and_recency(db, user_id):
+    # Three live reviews at 4 stars: avg 4.0. X = ceil(3*(9-8)) = 3.
+    await _seed_branch(db, user_id, "ch-gap", "Gap Branch",
+                       [(4, "positive", True), (4, "positive", True), (4, "positive", True)])
+    out = await benchmark.get_benchmark(db, user_id, None, 30)
+
+    gap = out["gap_to_target"]
+    assert gap["target"] == 4.5
+    assert gap["current_rating"] == 4.0
+    assert gap["current_reviews"] == 3
+    assert gap["five_star_needed"] == 3
+    assert "4.5" in gap["math"]
+
+    rec = out["recency"]
+    assert rec["total"] == 3
+    assert rec["recent_90"] == 3
+    assert rec["my_pct"] == 100.0
+
+
+@pytest.mark.asyncio
 async def test_branch_ranking_leader_and_attention(db, user_id):
     await _seed_branch(db, user_id, "ch-good", "Al Malqa",
                        [(5, "positive", True), (5, "positive", True), (4, "positive", True)])

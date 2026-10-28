@@ -775,6 +775,23 @@ export interface BenchmarkResponse {
   } | null;
   market?: MarketEntry[];
   my_rank?: number | null;
+  recency?: {
+    recent_90: number;
+    total: number;
+    my_pct: number | null;
+    peer_median_pct: number | null;
+    rank: number | null;
+    cohort_count: number;
+  } | null;
+  gap_to_target?: {
+    target: number;
+    current_rating: number;
+    current_reviews: number;
+    five_star_needed: number;
+    pace_per_month: number;
+    months: number | null;
+    math: string | null;
+  } | null;
 }
 
 export interface MarketEntry {
