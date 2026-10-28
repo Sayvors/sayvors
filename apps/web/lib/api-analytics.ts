@@ -792,6 +792,27 @@ export interface BenchmarkResponse {
     months: number | null;
     math: string | null;
   } | null;
+  external?: {
+    configured: boolean;
+    available: boolean;
+    count: number;
+    source?: string;
+    radius_m?: number | null;
+    category?: string | null;
+    fetched_at?: string | null;
+    stale?: boolean;
+    median_rating?: number | null;
+    median_reviews?: number | null;
+    peers?: { place_id: string; name: string; category: string | null; rating: number | null; review_count: number }[];
+  } | null;
+}
+
+export async function refreshExternalBenchmark(): Promise<{
+  configured: boolean;
+  inserted: number;
+  reason: string | null;
+}> {
+  return apiFetch("/api/v1/analytics/benchmark/external/refresh", { method: "POST" });
 }
 
 export interface MarketEntry {

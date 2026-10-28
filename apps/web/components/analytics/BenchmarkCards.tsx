@@ -35,9 +35,13 @@ function Row({
 export default function BenchmarkCards({
   benchmark,
   loading,
+  onRefreshExternal,
+  refreshingExternal,
 }: {
   benchmark: BenchmarkResponse | null;
   loading: boolean;
+  onRefreshExternal?: () => void;
+  refreshingExternal?: boolean;
 }) {
   if (loading || !benchmark) {
     return (
@@ -169,6 +173,77 @@ export default function BenchmarkCards({
           Median is the middle business in this peer set, not a national average. Sayvors-connected businesses only — not every competitor on Google. Treat small cohorts as directional.
         </p>
       </section>
+
+      {benchmark.external && (
+        <section aria-label="External peer set" className="ui-card p-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">External peer set <span className="ml-1 rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">Pro</span></h3>
+              <p className="text-[11px] text-[var(--ui-ink-2)]">
+                Nearby listings from Google Places, not just Sayvors businesses.
+              </p>
+            </div>
+            {onRefreshExternal && (
+              <button
+                onClick={onRefreshExternal}
+                disabled={refreshingExternal}
+                className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-2.5 py-1.5 text-[10px] font-bold text-[var(--ui-on-ink)] disabled:opacity-50"
+              >
+                {refreshingExternal ? "Refreshing…" : "Refresh peers"}
+              </button>
+            )}
+          </div>
+
+          {!benchmark.external.configured ? (
+            <p className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink)]">
+              Not connected. Add <code>GOOGLE_PLACES_API_KEY</code> to enable the external peer set. Until then we show the Sayvors cohort above, clearly labelled.
+            </p>
+          ) : !benchmark.external.available ? (
+            <p className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink)]">
+              {benchmark.external.count === 0
+                ? "No external peers captured yet. Refresh to fetch nearby listings."
+                : `Only ${benchmark.external.count} external peers captured. At least 3 are needed for a median.`}
+            </p>
+          ) : (
+            <>
+              <div className="mt-3 flex flex-wrap items-baseline gap-4">
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Peer median rating</p>
+                  <p className="text-[22px] font-black tabular-nums text-[var(--ui-ink)]">
+                    {benchmark.external.median_rating !== null && benchmark.external.median_rating !== undefined ? benchmark.external.median_rating.toFixed(1) + "★" : "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Peer median reviews</p>
+                  <p className="text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{benchmark.external.median_reviews ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">Peers</p>
+                  <p className="text-[22px] font-black tabular-nums text-[var(--ui-ink)]">{benchmark.external.count}</p>
+                </div>
+              </div>
+              <p className="mt-2 text-[10px] text-[var(--ui-ink-2)]">
+                {benchmark.external.radius_m ? `Within ${benchmark.external.radius_m}m` : "Radius not recorded"}
+                {benchmark.external.category ? ` · ${benchmark.external.category}` : ""}
+                {benchmark.external.fetched_at ? ` · fetched ${new Date(benchmark.external.fetched_at).toLocaleDateString()}` : ""}
+                {benchmark.external.stale ? " · stale" : ""}
+              </p>
+              {benchmark.external.peers && benchmark.external.peers.length > 0 && (
+                <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+                  {benchmark.external.peers.slice(0, 6).map((p) => (
+                    <li key={p.place_id} className="flex items-center gap-2 text-[11px]">
+                      <span className="min-w-0 flex-1 truncate text-[var(--ui-ink)]">{p.name}</span>
+                      <span className="shrink-0 tabular-nums text-[var(--ui-ink-2)]">
+                        {p.rating !== null ? p.rating.toFixed(1) + "★" : "—"} · {p.review_count}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </section>
+      )}
     </div>
   );
 }

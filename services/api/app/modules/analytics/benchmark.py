@@ -668,6 +668,20 @@ async def get_benchmark(
             f" You're #{my_rank} of {market_total} {market_label} on Sayvors."
         )
 
+    # External peer set (Pro): nearby listings from Places/crawlers. Dormant
+    # when the key is unset or the plan lacks the entitlement, so the benchmark
+    # still works with the Sayvors cohort.
+    external = None
+    try:
+        from ..billing.entitlements import get_entitlements
+        from .competitors import get_external_peer_set
+
+        ent = await get_entitlements(user_id, db)
+        if ent.has_feature("benchmark_external"):
+            external = await get_external_peer_set(db, user_id)
+    except Exception as e:  # secondary card: log and fall back to the cohort
+        logger.warning("external peer set unavailable: %s", e)
+
     # similar_* now read off the tenant cohort medians — real businesses,
     # never a synthetic account.
     median_reviews = cohort.get("median_reviews")
@@ -710,4 +724,5 @@ async def get_benchmark(
         "my_rank": my_rank,
         "recency": recency,
         "gap_to_target": gap_to_target,
+        "external": external,
     }

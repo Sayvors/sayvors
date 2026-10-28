@@ -40,6 +40,8 @@ FEATURE_CATALOG: list[FeatureSpec] = [
     FeatureSpec("social_response_style", "Social response style", "Customise AI tone/style for social replies.", True),
     FeatureSpec("bulk_edit_csv", "Bulk edit CSV", "Bulk-edit locations/posts via CSV upload.", False),
     FeatureSpec("benchmarking", "Benchmarking", "Competitor benchmarking dashboards.", False),
+    FeatureSpec("benchmark_external", "External benchmark peers", "Nearby competitor data from Google Places / licensed crawlers (Pro).", False),
+    FeatureSpec("ai_search", "AI search", "AI-powered search across reviews, conversations and the web (Pro).", False),
     FeatureSpec("verifications", "Verifications", "Verification workflows.", True),
     FeatureSpec("growth", "Growth insights", "Growth & conversion insights.", False),
     FeatureSpec("ticket_assignment", "Ticket assignment", "Assign tickets to team members.", False),

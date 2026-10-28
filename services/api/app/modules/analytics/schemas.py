@@ -546,6 +546,9 @@ class BenchmarkResponse(BaseModel):
     # card copy evolves (same convention as `cohort`/`distribution`).
     recency: dict | None = None
     gap_to_target: dict | None = None
+    # Pro: external nearby peer set (Places/crawler). None when not entitled
+    # or when the provider is not configured.
+    external: dict | None = None
 
 
 class ExecutiveSummaryResponse(BaseModel):

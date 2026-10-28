@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 
 from ...core.deps import get_current_user, get_db
 from ..users.models import User
-from . import benchmark, growth, growth_cards, insights_cards, intelligence, pulse, service, summary
+from . import benchmark, competitors, growth, growth_cards, insights_cards, intelligence, pulse, service, summary
 from .models import ReviewInsight
 from .schemas import (
     AcquisitionResponse,
@@ -784,6 +784,64 @@ async def get_benchmark_comparison(
     """Benchmark the tenant against the second demo business profile (stand-in for comparable businesses)."""
     uid = tenant_id_of(user)
     return await benchmark.get_benchmark(db, uid, channel_id, days)
+
+
+@router.get("/benchmark/external")
+async def get_external_benchmark(
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """External nearby peer set (Pro). Dormant when the Places key is unset."""
+    from ..billing.entitlements import get_entitlements
+
+    uid = tenant_id_of(user)
+    ent = await get_entitlements(uid, db)
+    if not ent.has_feature("benchmark_external"):
+        raise HTTPException(status_code=403, detail="External benchmarking is a Pro feature.")
+    return await competitors.get_external_peer_set(db, uid)
+
+
+@router.post("/benchmark/external/refresh")
+async def refresh_external_benchmark(
+    user: User = Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch nearby competitors from Google Places and upsert the peer set.
+
+    Gated by the Pro entitlement and by the API key. The business identity is
+    taken from the tenant's first synced listing (name/address/category).
+    """
+    from ..billing.entitlements import get_entitlements
+    from ..channels.models import Channel
+    from ..localith.models import LocalithConnection
+
+    uid = tenant_id_of(user)
+    ent = await get_entitlements(uid, db)
+    if not ent.has_feature("benchmark_external"):
+        raise HTTPException(status_code=403, detail="External benchmarking is a Pro feature.")
+
+    name = address = category = None
+    conn = (
+        await db.execute(
+            select(LocalithConnection).where(LocalithConnection.user_id == uid).limit(1)
+        )
+    ).scalar_one_or_none()
+    if conn is not None:
+        name = conn.listing_name
+        address = conn.address
+    if not name:
+        channel = (
+            await db.execute(
+                select(Channel).where(Channel.user_id == uid).limit(1)
+            )
+        ).scalar_one_or_none()
+        if channel is not None:
+            name = channel.display_name
+    return await competitors.refresh_external_peers(
+        db, uid, name=name, address=address, category=category
+    )
 
 
 @router.get("/executive-summary", response_model=ExecutiveSummaryResponse)

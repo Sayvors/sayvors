@@ -10,6 +10,7 @@ import {
 } from "@/lib/api-analytics";
 import { RangeChannelControls, useGoogleChannels } from "@/components/analytics/Controls";
 import BenchmarkCards from "@/components/analytics/BenchmarkCards";
+import { refreshExternalBenchmark } from "@/lib/api-analytics";
 
 type MetricFocus = "reputation" | "rating" | "sentiment" | "response" | "volume";
 
@@ -53,6 +54,21 @@ export default function BenchmarkPage() {
   const [error, setError] = useState(false);
   const hasLoaded = useRef(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [refreshingExternal, setRefreshingExternal] = useState(false);
+
+  const handleRefreshExternal = async () => {
+    setRefreshingExternal(true);
+    try {
+      await refreshExternalBenchmark();
+      setLoading(true);
+      setRetryCount((c) => c + 1);
+    } catch {
+      // Entitlement/key errors are surfaced by the API; the card keeps its
+      // previous state rather than pretending a refresh happened.
+    } finally {
+      setRefreshingExternal(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -141,7 +157,12 @@ export default function BenchmarkPage() {
       </div>
 
       <div className="mb-5">
-        <BenchmarkCards benchmark={benchmark} loading={loading} />
+        <BenchmarkCards
+          benchmark={benchmark}
+          loading={loading}
+          onRefreshExternal={() => void handleRefreshExternal()}
+          refreshingExternal={refreshingExternal}
+        />
       </div>
 
       {error && !loading ? (
@@ -258,10 +279,10 @@ export default function BenchmarkPage() {
                 </p>
               )}
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {marketBenchmarks.map((mb) => {
+                {marketBenchmarks.map((mb, idx) => {
                   const enough = (mb.business_count ?? 0) >= 3 && mb.median !== null;
                   return (
-                    <div key={mb.metric} className="rounded-[2px] bg-[var(--ui-sunken)] p-3">
+                    <div key={`${mb.metric}:${idx}`} className="rounded-[2px] bg-[var(--ui-sunken)] p-3">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{mb.metric.replace(/_/g, " ")}</p>
                       <p className="mt-1 text-[18px] font-black tabular-nums text-[var(--ui-ink)]">
                         {enough ? (mb.metric.includes("seconds") ? Math.round(mb.median as number) + "s" : (mb.median as number).toFixed(1)) : "-"}

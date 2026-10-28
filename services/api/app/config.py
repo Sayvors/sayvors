@@ -192,6 +192,16 @@ class Settings(BaseSettings):
     # Dev/test mode for Google Reviews: fabricate sample reviews.
     GOOGLE_REVIEWS_MOCK: bool = False
 
+    # ── External benchmarking (Pro feature) ──────────────────────────────
+    # Google Places API (New) key for the nearby-competitor peer set. Empty
+    # means the feature is dormant: the UI shows "not connected" rather than
+    # a fabricated peer set. Never log or return this value.
+    GOOGLE_PLACES_API_KEY: str = ""
+    # Radius for the nearby search and how long a snapshot stays fresh.
+    BENCHMARK_PEER_RADIUS_METERS: int = 5000
+    BENCHMARK_PEER_MAX_RESULTS: int = 20
+    BENCHMARK_SNAPSHOT_TTL_HOURS: int = 24
+
     # ── Analytics / business intelligence ────────────────────────────────
     # How often the Google Business Profile performance sync runs (impressions,
     # website clicks, calls, direction requests -> location_daily_metrics).

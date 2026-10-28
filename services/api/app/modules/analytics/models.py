@@ -598,3 +598,51 @@ class ReviewRequest(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class CompetitorSnapshot(Base):
+    """One external competitor listing captured for a tenant's peer set.
+
+    The source is explicit: "google_places" (Places API New) today, with room
+    for a licensed crawler/aggregator later. Snapshots are upserted per
+    (user_id, place_id, source) and stamped with fetched_at, so the benchmark
+    can disclose the peer radius, sample size, and age instead of presenting
+    a black-box median.
+
+    This table is intentionally separate from Sayvors tenants: the peer set is
+    external businesses that are not customers of the platform.
+    """
+
+    __tablename__ = "competitor_snapshots"
+    __table_args__ = (
+        UniqueConstraint("user_id", "place_id", "source", name="uq_competitor_user_place_source"),
+        Index("ix_competitor_snapshots_user_fetched", "user_id", "fetched_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    place_id: Mapped[str] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(255))
+    category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    rating: Mapped[float | None] = mapped_column(Float, nullable=True)
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
+    distance_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # google_places | crawler | manual
+    source: Mapped[str] = mapped_column(String(20), default="google_places", server_default="google_places")
+    # The query that produced the row, for provenance (radius/category text).
+    query_radius_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    query_category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

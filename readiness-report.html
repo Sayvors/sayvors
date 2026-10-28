@@ -973,6 +973,26 @@
   <p class="note"><strong>External peer data options (recommended):</strong> use the <strong>Google Places API (New)</strong> <code>searchNearby</code>/<code>searchText</code> for real nearby listings (rating, review count, distance, category), cached daily in a <code>competitor_snapshots</code> table with the query radius/category and fetch date disclosed. Paid alternatives: BrightLocal (local citation/competitor data), DataForSEO (Google Maps endpoints). <strong>Avoid scraping/crawling Google Maps directly</strong> - it violates Google's terms, breaks on markup changes, and cannot be represented as reliable provenance. The Places API is the only option that gives a defensible peer set at a known cost.</p>
   <p class="note"><strong>Small-cohort guard:</strong> a median from fewer than 3 peers is not a market. The Benchmark UI shows the user's own numbers, labels the peer side "not enough peers", and suppresses rank/median until <code>n &ge; 3</code>.</p>
 
+  <h3>Pro features - external peers + AI search</h3>
+  <p>Both are plan-gated and ship dormant until the provider key is set. The entitlement flags are already in the feature catalog: <code>benchmark_external</code> and <code>ai_search</code> (default off; enable on Pro/Growth/Enterprise in the admin Plans page).</p>
+  <div class="scroll"><table>
+    <tr><th>Feature</th><th>Status</th><th>What it does</th><th>Provider / cost</th></tr>
+    <tr>
+      <td><strong>External benchmark peers</strong> <code>benchmark_external</code></td>
+      <td><span class="chip ok">Built (dormant)</span></td>
+      <td>Nearby competitor rating/review counts from Google Places, cached in <code>competitor_snapshots</code> with radius, category, source, and fetch date. Refresh endpoint + "Refresh peers" button. Falls back to the Sayvors cohort when unset or &lt;3 peers.</td>
+      <td>Google Places API (New) <code>searchText</code>; key from <code>GOOGLE_PLACES_API_KEY</code>. Pay-per-request; cache TTL 24h.</td>
+    </tr>
+    <tr>
+      <td><strong>AI search</strong> <code>ai_search</code></td>
+      <td><span class="chip buy">Planned</span></td>
+      <td>Pro-only AI search across reviews, conversations, the databank, and the web. Can call crawler/agent tools; every answer must cite sources and show the query plan. Human approval before any outbound action.</td>
+      <td>Pluggable: Places for local facts; a licensed crawler/aggregator for web pages. Never scrape Google Maps directly.</td>
+    </tr>
+  </table></div>
+  <p class="note"><strong>Crawler options to evaluate (owner to test price/quality):</strong> <strong>BrightLocal</strong> (local citation/competitor data, good for multi-location), <strong>DataForSEO</strong> (Google Maps + SERP endpoints, developer-friendly), <strong>SerpApi</strong> (SERP/Maps, simple API), <strong>Outscraper / Apify actors</strong> (cheap, but scraping-based - check terms before shipping). Recommendation: start with Google Places for the benchmark peer set, then add a licensed crawler behind the same <code>fetch_peers</code> interface only where Places lacks data (e.g. deeper competitor page content for AI search).</p>
+  <p class="note"><strong>Guardrails for AI search + crawlers:</strong> Pro entitlement check server-side; per-tenant rate limit and monthly query budget; allow-list of domains; no credentials or PII in crawl targets; SSRF guard for any user-supplied URL; cite every source; log the query plan and tool calls for audit; fail closed when the provider/key is unavailable.</p>
+
   <h3>Cross-cutting rules</h3>
   <ol>
     <li><strong>One card, one decision.</strong> Name the decision, the threshold, and the owner.</li>
