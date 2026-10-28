@@ -132,10 +132,13 @@ function AttentionCard({
   return (
     <Link
       href={href}
-      className="flex items-center gap-3 rounded-[2px] border border-red-200 bg-red-50 px-4 py-3.5 transition hover:bg-red-100/50"
+      className="flex items-center gap-3 rounded-[2px] border border-red-500/80 bg-red-50 px-4 py-3.5 transition hover:bg-red-100/50 shadow-[0_0_22px_-2px_rgba(239,68,68,0.7)] animate-pulse"
     >
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-500 text-white text-[10px]">
-        !
+      <span className="relative flex h-6 w-6 shrink-0 items-center justify-center">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60" />
+        <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white text-[10px]">
+          !
+        </span>
       </span>
       <div className="flex-1 min-w-0">
         <p className="text-[12px] font-bold leading-none text-red-800">{service.name}</p>

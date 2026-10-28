@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import PlatformMark from "@/components/channels/PlatformMark";
@@ -190,6 +191,7 @@ export default function CustomersTable() {
                   <th className="px-3 py-2">Priority</th>
                   <th className="px-3 py-2">Last contact</th>
                   <th className="px-3 py-2 text-right">Msgs</th>
+                  <th className="px-3 py-2 text-center">Inbox</th>
                   <th className="px-3 py-2 text-right">Unread</th>
                 </tr>
               </thead>
@@ -238,6 +240,18 @@ export default function CustomersTable() {
                       {c.last_message_at ? new Date(c.last_message_at).toLocaleString() : "—"}
                     </td>
                     <td className="px-3 py-2 text-right text-ink/60 dark:text-fog/60">{c.message_count}</td>
+                    <td className="px-3 py-2 text-center">
+                      <Link
+                        href={`/dashboard/channels/inbox?channel=${encodeURIComponent(c.channel_id)}&key=${encodeURIComponent(c.key)}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 rounded-md border border-ink/[0.08] bg-white px-2 py-1 text-[10px] font-semibold text-deep-violet transition hover:bg-deep-violet/5 dark:border-fog/[0.1] dark:bg-ink dark:hover:bg-deep-violet/10"
+                      >
+                        Open
+                        <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M4 2h6v6M10 2L4 8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </Link>
+                    </td>
                     <td className="px-3 py-2 text-right">
                       {c.unread > 0 && (
                         <span className="rounded-full bg-deep-violet px-1.5 text-[10px] font-bold text-white">
@@ -268,6 +282,12 @@ export default function CustomersTable() {
             <h2 className="truncate text-[14px] font-bold text-ink dark:text-fog">
               {selected.display_name || "Unknown sender"}
             </h2>
+            <Link
+              href={`/dashboard/channels/inbox?channel=${encodeURIComponent(selected.channel_id)}&key=${encodeURIComponent(selected.key)}`}
+              className="ml-2 inline-flex shrink-0 items-center gap-1 rounded-md bg-deep-violet px-2.5 py-1 text-[10px] font-bold text-white transition hover:bg-deep-violet/90"
+            >
+              Open in inbox
+            </Link>
             <button
               onClick={() => setSelected(null)}
               aria-label="Close profile"
