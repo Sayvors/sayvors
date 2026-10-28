@@ -67,6 +67,18 @@ function detectBrand(digits: string): string {
   return digits.length >= 6 ? "other" : "unknown";
 }
 
+function expectedCardLength(brand: string): number {
+  switch (brand.toLowerCase()) {
+    case "amex":
+      return 15;
+    case "diners":
+    case "carteblanche":
+      return 14;
+    default:
+      return 16;
+  }
+}
+
 function luhnValid(digits: string): boolean {
   if (digits.length < 13 || digits.length > 19) return false;
   let sum = 0;
@@ -282,10 +294,12 @@ export default function BillingPage() {
     digits.length === 0
       ? null
       : digits.length < 13
-        ? `Too short — card numbers have 13–19 digits (${digits.length} typed).`
-        : !luhnValid(digits)
-          ? "This number doesn't pass the checksum — check and retry."
-          : null;
+        ? `Too short - keep typing (${digits.length} typed).`
+        : detected !== "unknown" && detected !== "other" && digits.length !== expectedCardLength(detected)
+          ? `${brandLabel(detected)} cards use ${expectedCardLength(detected)} digits (${digits.length} typed).`
+          : !luhnValid(digits)
+            ? "This number doesn't pass the checksum - check and retry."
+            : null;
   const expiryErr = expiry ? expiryError(expiry) : null;
   const holderError: string | null =
     holder === "" ? null : holder.trim().length < 2 ? "Enter the name printed on the card." : null;
@@ -691,7 +705,15 @@ export default function BillingPage() {
                       <Field
                         label="Card number"
                         required
-                        hint={detected !== "unknown" && detected !== "other" ? `Detected: ${brandLabel(detected)}` : undefined}
+                        hint={
+                          digits.length === 0
+                            ? undefined
+                            : numberError
+                              ? undefined
+                              : detected !== "unknown" && detected !== "other"
+                                ? `Detected: ${brandLabel(detected)} - valid`
+                                : "Valid card number"
+                        }
                         error={cardTouched ? numberError : null}
                       >
                         <input
