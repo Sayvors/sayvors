@@ -6,32 +6,13 @@ import {
   generateReviewTemplate,
 } from "@/lib/api-analytics";
 import { getEntitlements, type Entitlements } from "@/lib/api-billing";
-
-interface Row {
-  email?: string | null;
-  phone?: string | null;
-  name?: string | null;
-}
-
-function parseCsv(text: string): Row[] {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) return [];
-  const first = lines[0].toLowerCase();
-  const hasHeader = first.includes("email") || first.includes("phone") || first.includes("name");
-  const body = hasHeader ? lines.slice(1) : lines;
-  return body
-    .map((line) => {
-      const cells = line
-        .split(",")
-        .map((c) => c.trim().replace(/^"|"$/g, ""))
-        .filter((c) => c.length > 0);
-      const email = cells.find((c) => c.includes("@")) ?? null;
-      const phone = cells.find((c) => /^\+?\d[\d\s()-]{6,}$/.test(c)) ?? null;
-      const name = cells.find((c) => c !== email && c !== phone) ?? null;
-      return { email, phone, name };
-    })
-    .filter((r) => r.email || r.phone);
-}
+import {
+  extractContacts,
+  guessColumns,
+  parseCsv,
+  type ColumnGuess,
+  type ParsedCsv,
+} from "@/lib/csv";
 
 export default function BulkReviewRequests({
   channelId,
@@ -41,7 +22,8 @@ export default function BulkReviewRequests({
   onDone?: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const [rows, setRows] = useState<Row[]>([]);
+  const [parsed, setParsed] = useState<ParsedCsv | null>(null);
+  const [mapping, setMapping] = useState<ColumnGuess>({ email: null, phone: null, name: null, lastName: null });
   const [fileName, setFileName] = useState("");
   const [channel, setChannel] = useState<"email" | "whatsapp">("email");
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
@@ -64,10 +46,12 @@ export default function BulkReviewRequests({
     return () => { cancelled = true; };
   }, []);
 
-  const valid = useMemo(
-    () => rows.filter((r) => (channel === "email" ? r.email : r.phone)),
-    [rows, channel]
+  const extraction = useMemo(
+    () => (parsed ? extractContacts(parsed, mapping, channel) : { contacts: [], invalid: 0 }),
+    [parsed, mapping, channel]
   );
+  const valid = extraction.contacts;
+  const invalidCount = extraction.invalid;
   const remaining = entitlements?.messages_remaining ?? null;
   const maxMessages = entitlements?.max_messages_per_month ?? null;
   const usedMessages = entitlements?.messages_used_this_month ?? 0;
@@ -76,7 +60,9 @@ export default function BulkReviewRequests({
   const onFile = async (file: File | null) => {
     if (!file) return;
     const text = await file.text();
-    setRows(parseCsv(text));
+    const p = parseCsv(text);
+    setParsed(p);
+    setMapping(guessColumns(p));
     setFileName(file.name);
     setMessage(null);
   };
@@ -119,7 +105,7 @@ export default function BulkReviewRequests({
           (res.skipped ? ` · ${res.skipped} skipped (missing contact)` : "") +
           (res.skipped_quota ? ` · ${res.skipped_quota} skipped for plan quota` : "")
       );
-      setRows([]);
+      setParsed(null);
       setFileName("");
       if (fileRef.current) fileRef.current.value = "";
       onDone?.();
@@ -156,6 +142,62 @@ export default function BulkReviewRequests({
         />
         {fileName && <span className="text-[11px] text-ink/50 dark:text-fog/50">{fileName}</span>}
       </div>
+
+      {parsed && (
+        <div className="mt-3 rounded-xl border border-ink/[0.06] p-3 dark:border-fog/[0.08]">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:text-fog/45">
+            Column mapping · {parsed.headers.length} columns found
+          </p>
+          <p className="mt-0.5 text-[10px] text-ink/45 dark:text-fog/45">
+            Only the mapped columns are read. Everything else in the sheet is ignored.
+          </p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">
+                {channel === "email" ? "Email column" : "Phone / WhatsApp column"}
+              </span>
+              <select
+                value={channel === "email" ? mapping.email ?? "" : mapping.phone ?? ""}
+                onChange={(e) => {
+                  const idx = e.target.value === "" ? null : Number(e.target.value);
+                  setMapping((m) => (channel === "email" ? { ...m, email: idx } : { ...m, phone: idx }));
+                }}
+                className="w-full rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              >
+                <option value="">Not mapped</option>
+                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">Name column (optional)</span>
+              <select
+                value={mapping.name ?? ""}
+                onChange={(e) => setMapping((m) => ({ ...m, name: e.target.value === "" ? null : Number(e.target.value) }))}
+                className="w-full rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              >
+                <option value="">Not mapped</option>
+                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-semibold text-ink/60 dark:text-fog/60">Last name (optional)</span>
+              <select
+                value={mapping.lastName ?? ""}
+                onChange={(e) => setMapping((m) => ({ ...m, lastName: e.target.value === "" ? null : Number(e.target.value) }))}
+                className="w-full rounded-lg border border-ink/[0.08] bg-white px-2 py-1.5 text-[11px] text-ink dark:border-fog/[0.1] dark:bg-ink dark:text-fog"
+              >
+                <option value="">Not mapped</option>
+                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `Column ${i + 1}`}</option>)}
+              </select>
+            </label>
+          </div>
+          {invalidCount > 0 && (
+            <p className="mt-2 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+              {invalidCount} row{invalidCount === 1 ? "" : "s"} skipped: the mapped {channel === "email" ? "email" : "phone"} cell is missing or invalid.
+            </p>
+          )}
+        </div>
+      )}
 
       {valid.length > 0 && (
         <div className="mt-3 max-h-28 overflow-y-auto rounded-xl border border-ink/[0.06] dark:border-fog/[0.08]">
