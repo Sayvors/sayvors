@@ -14,8 +14,23 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from app.config import settings
 from app.modules.rag.embeddings import CANONICAL_DIMENSIONS
 from app.modules.rag.search import hybrid_search
+
+
+@pytest.fixture(autouse=True)
+def _embeddings_enabled(monkeypatch):
+    """Force the pgvector path on for this module's schema.
+
+    ``hybrid_search`` only uses the vector column when embeddings are enabled,
+    because an embeddings-off deployment stores that column as TEXT. CI runs
+    with ``ENVIRONMENT=test``, where embeddings default to off, so the ANN
+    path was skipped and the search returned nothing. This fixture's table is
+    always a real ``vector`` column, so the test opts in explicitly.
+    """
+    monkeypatch.setattr(settings, "EMBEDDINGS_ENABLED", True)
+
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 _SCHEMA = "pgvector_test"
