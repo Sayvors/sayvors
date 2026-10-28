@@ -16,8 +16,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -136,7 +134,7 @@ async def count_messages_this_month(tenant_id: str, db: AsyncSession) -> int:
 
     from sqlalchemy import func, select
 
-    from ...channels.models import Channel, ChannelMessage
+    from ..channels.models import Channel, ChannelMessage
 
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)

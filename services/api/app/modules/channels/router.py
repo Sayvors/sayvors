@@ -13,7 +13,16 @@ from ...database import async_session as _async_session
 from ...config import settings
 from ..auth.rate_limit import rate_limit
 from ..users.models import User
-from .models import BusinessService, Channel, ReviewReply, AutoReplyConfig, VerificationRecord, ReviewIssue
+from .models import (
+    AutoReplyConfig,
+    BusinessService,
+    Channel,
+    ChannelMessage,
+    ChannelThread,
+    ReviewIssue,
+    ReviewReply,
+    VerificationRecord,
+)
 from .schemas import (
     AutoReplyConfigResponse,
     AutoReplyConfigUpdate,
@@ -45,6 +54,7 @@ from .service import (
     delete_channel,
     get_channel,
     handle_webhook,
+    hash_contact_phone,
     list_channels,
     list_inbox_threads,
     list_messages,
@@ -105,8 +115,8 @@ async def connect_channel(
     ctx: TenantContext = Depends(require_perm("channels.connect")),
     db: AsyncSession = Depends(get_db),
 ):
-    from ...billing.entitlements import get_entitlements
-    from ...core.deps import tenant_id_of
+    from ..billing.entitlements import get_entitlements
+    from ..team.context import tenant_id_of
 
     tid = tenant_id_of(ctx.user)
     ent = await get_entitlements(tid, db)
@@ -779,8 +789,8 @@ async def inbox_send(
     if not ctx.can_edit_channel(body.channel_id):
         raise HTTPException(status_code=403, detail="No edit access to this channel")
     # Plan entitlements: feature gate + monthly message cap (fail closed).
-    from ...billing.entitlements import get_entitlements
-    from ...core.deps import tenant_id_of
+    from ..billing.entitlements import count_messages_this_month, get_entitlements
+    from ..team.context import tenant_id_of
 
     tid = tenant_id_of(ctx.user)
     ent = await get_entitlements(tid, db)

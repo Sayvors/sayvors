@@ -6,7 +6,6 @@ See docs/specs/2026-10-10-unified-job-processing-design.md §C.4 / §D.5
 """
 
 import asyncio
-import json
 import logging
 import os
 import socket
@@ -16,7 +15,7 @@ from ..kafka.client import create_consumer, get_kafka_producer, mark_kafka_unava
 from ..outbox.service import enqueue_event_in
 from .handlers import HANDLERS
 from .models import Job, JobStatus
-from .service import block_job, cancel_job, complete_job, claim_due_jobs, fail_job, retry_job
+from .service import block_job, complete_job, claim_due_jobs, fail_job, retry_job
 from ...config import settings
 from ...database import async_session
 from sqlalchemy.ext.asyncio import AsyncSession

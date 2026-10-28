@@ -31,7 +31,7 @@ from ..channels.meta.service import get_adapter
 from ..channels.models import Channel
 from ..email.service import send_email
 from ..localith.models import LocalithConnection
-from .models import ReviewInsight, ReviewRequest
+from .models import ReviewRequest
 
 logger = logging.getLogger(__name__)
 
