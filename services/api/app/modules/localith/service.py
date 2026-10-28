@@ -15,6 +15,7 @@ import asyncio
 import json
 import importlib.util
 import logging
+import os
 import sys
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -47,8 +48,20 @@ if str(_REPO_ROOT) not in sys.path:
 embedsocial = importlib.import_module("integrations.channels.embedsocial")  # type: ignore[arg-type]
 
 
+def _shared_api_key() -> str:
+    """Account-wide Localith key: settings (from .env) then the process env.
+
+    A whitespace-only value counts as absent so a placeholder in .env cannot
+    turn into an "Authorization: Bearer  " header sent to the provider.
+    """
+    key = (settings.LOCALITH_API_KEY or "").strip()
+    if key:
+        return key
+    return (os.environ.get("LOCALITH_API_KEY") or "").strip()
+
+
 def _key_present() -> bool:
-    return bool(settings.LOCALITH_API_KEY.strip())
+    return bool(_shared_api_key())
 
 
 def _connection_api_key(connection) -> str | None:
@@ -703,6 +716,21 @@ async def _sync_single_connection(
 
     from ..channels.service import find_channel_by_key as _find_by_key
 
+    # Resolve the key before touching any state: a tenant with no key must not
+    # get a Channel row (or a failure notification) on every sync pass.
+    # Fallback chain: per-connection key (decrypted) -> settings/.env -> env.
+    api_key = _connection_api_key(connection) or _shared_api_key()
+    if not api_key:
+        logger.warning(
+            "Localith sync skipped for %s: no API key configured "
+            "(set LOCALITH_API_KEY in .env or add a per-connection key)",
+            connection.listing_id,
+        )
+        # Callers aggregate each branch with `result.get(...)`, so a skipped
+        # branch must still return a result. A missing key is a configuration
+        # state, not a failed sync: it must not raise or notify the tenant.
+        return {"fetched": 0, "new_reviews": 0, "skipped": "no_api_key"}
+
     # Get-or-create on the indexed listing key: parallel syncs (two workers,
     # double-clicks, auto-sync colliding with a manual one) can never twin
     # the row. The unique index admits one winner; losers reuse that row.
@@ -749,26 +777,6 @@ async def _sync_single_connection(
                 raise RuntimeError("Channel vanished mid-sync — retry the sync.")
 
     # 1. Profile snapshot — every field the detail endpoint returns.
-    # Resolve the API key with a proper fallback chain: per-connection key
-    # (decrypted) -> shared env key -> settings. If none is available, skip
-    # the sync rather than crashing.
-    api_key = _connection_api_key(connection)
-    if not api_key:
-        try:
-            from ...config import settings as _s
-            api_key = _s.LOCALITH_API_KEY
-        except Exception:
-            pass
-    if not api_key:
-        import os
-        api_key = os.environ.get("LOCALITH_API_KEY")
-    if not api_key:
-        logger.warning(
-            "Localith sync skipped for %s: no API key configured "
-            "(set LOCALITH_API_KEY in .env or add a per-connection key)",
-            connection.listing_id,
-        )
-        return
     detail = await get_listing_detail(connection.listing_id, api_key=api_key)
     if detail:
         apply_listing_snapshot(connection, detail)

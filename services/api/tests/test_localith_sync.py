@@ -24,6 +24,18 @@ from app.modules.localith import worker as localith_worker
 from app.modules.outbox import service as outbox_service
 
 
+@pytest.fixture(autouse=True)
+def _configured_api_key(monkeypatch):
+    """Pin a key so the sync never depends on the developer's ``.env``.
+
+    ``sync_connection`` returns early when no key is configured. Locally that
+    return was invisible because ``.env`` holds a real key; on CI there is no
+    ``.env`` and eight sync tests silently synced nothing. The no-key test
+    overrides this fixture explicitly.
+    """
+    monkeypatch.setattr(service.settings, "LOCALITH_API_KEY", "test-key")
+
+
 def _listing_payload():
     return {
         "id": "abc123",
@@ -389,6 +401,25 @@ async def test_sync_all_once_skips_without_key(monkeypatch):
         session_factory=_make_factory([SimpleNamespace(user_id="u1", listing_id="a")], {})
     )
     assert totals == {"connections": 0, "fetched": 0, "new_reviews": 0, "errors": 0, "skipped": 0}
+
+
+@pytest.mark.asyncio
+async def test_sync_connection_without_key_is_a_noop_result(db, user_id, monkeypatch):
+    """No key is a skipped branch, not a crash: callers read ``result.get``."""
+    from app.modules.localith.models import LocalithConnection
+
+    monkeypatch.setattr(service.settings, "LOCALITH_API_KEY", "")
+    monkeypatch.delenv("LOCALITH_API_KEY", raising=False)
+    db.add(LocalithConnection(
+        id="lc-nokey-1", user_id=user_id, listing_id="demo-loc-nokey",
+        listing_name="No Key Branch",
+    ))
+    await db.commit()
+
+    result = await service.sync_connection(
+        SimpleNamespace(id=user_id), db, listing_id="demo-loc-nokey"
+    )
+    assert result == {"fetched": 0, "new_reviews": 0, "skipped": "no_api_key"}
 
 
 @pytest.mark.asyncio
