@@ -1433,18 +1433,32 @@ async def update_operator(operator_id: str, body: OperatorUpdate, _admin=Depends
 async def list_audit_log(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None, description="Search action/path/operator/ip"),
+    method: str | None = Query(default=None, description="Filter by HTTP method"),
+    status: int | None = Query(default=None, description="Filter by exact status code"),
     _admin=Depends(require_admin),
 ):
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     from ...database import async_session
     from .models import AdminAuditLog
 
     async with async_session() as db:
-        rows = (await db.execute(
-            select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc())
-            .offset(offset).limit(limit)
-        )).scalars().all()
+        stmt = select(AdminAuditLog)
+        if q:
+            like = f"%{q}%"
+            stmt = stmt.where(or_(
+                AdminAuditLog.action.ilike(like),
+                AdminAuditLog.path.ilike(like),
+                AdminAuditLog.operator_username.ilike(like),
+                AdminAuditLog.ip.ilike(like),
+            ))
+        if method:
+            stmt = stmt.where(AdminAuditLog.method == method.upper())
+        if status is not None:
+            stmt = stmt.where(AdminAuditLog.status_code == status)
+        stmt = stmt.order_by(AdminAuditLog.created_at.desc()).offset(offset).limit(limit)
+        rows = (await db.execute(stmt)).scalars().all()
         return [
             AuditLogOut(
                 id=r.id, operator_id=r.operator_id, operator_username=r.operator_username,
