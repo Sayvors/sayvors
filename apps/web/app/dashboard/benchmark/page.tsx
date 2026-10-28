@@ -58,12 +58,20 @@ export default function BenchmarkPage() {
     let cancelled = false;
     Promise.all([
       fetchBenchmark(days, channelId),
-      fetchMarketBenchmarks("median_first_response_seconds").catch(() => []),
+      fetchMarketBenchmarks().catch(() => []),
     ])
       .then(([b, mb]) => {
         if (cancelled) return;
         setBenchmark(b);
-        setMarketBenchmarks(mb ?? []);
+        // The endpoint returns up to 50 stored rows (one per scope/date). The
+        // card is a current snapshot, so keep the latest row per metric
+        // instead of rendering the same metric five times.
+        const latest = new Map<string, (typeof mb)[number]>();
+        for (const row of mb ?? []) {
+          const prev = latest.get(row.metric);
+          if (!prev || row.date > prev.date) latest.set(row.metric, row);
+        }
+        setMarketBenchmarks([...latest.values()]);
         setError(false);
         hasLoaded.current = true;
       })
@@ -241,28 +249,36 @@ export default function BenchmarkPage() {
            {marketBenchmarks.length > 0 ? (
              <section aria-label="Market response ranking" className="ui-card p-5">
                <h3 className="text-[13px] font-bold text-[var(--ui-ink)]">Your response speed vs. the market</h3>
-               <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
-                 Median first reply across {marketBenchmarks[0]?.business_count ?? 0} businesses on Sayvors. Aggregates only.
-               </p>
-               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                 {marketBenchmarks.map((mb) => (
-                   <div key={mb.metric} className="rounded-[2px] bg-[var(--ui-sunken)] p-3">
-                     <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{mb.metric.replace(/_/g, " ")}</p>
-                     <p className="mt-1 text-[18px] font-black tabular-nums text-[var(--ui-ink)]">
-                       {mb.median !== null ? (mb.metric.includes("seconds") ? Math.round(mb.median) + "s" : mb.median.toFixed(1)) : "—"}
-                     </p>
-                     {mb.p25 !== null && mb.p75 !== null && (
-                       <p className="mt-1 text-[10.5px] text-[var(--ui-ink-2)]">
-                         p25: {mb.metric.includes("seconds") ? Math.round(mb.p25) + "s" : mb.p25.toFixed(1)} · p75: {mb.metric.includes("seconds") ? Math.round(mb.p75) + "s" : mb.p75.toFixed(1)}
-                       </p>
-                     )}
-                     <p className="mt-1 text-[10px] text-[var(--ui-ink-2)]">{mb.business_count} businesses</p>
-                   </div>
-                 ))}
-               </div>
+              <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">
+                Median first reply across {Math.max(...marketBenchmarks.map((m) => m.business_count || 0))} businesses on Sayvors. Aggregates only.
+              </p>
+              {Math.max(...marketBenchmarks.map((m) => m.business_count || 0)) < 3 && (
+                <p className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-3 text-[12px] text-[var(--ui-ink)]">
+                  Not enough peers for a market median. At least 3 businesses are needed - a median from one business is just that business.
+                </p>
+              )}
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {marketBenchmarks.map((mb) => {
+                  const enough = (mb.business_count ?? 0) >= 3 && mb.median !== null;
+                  return (
+                    <div key={mb.metric} className="rounded-[2px] bg-[var(--ui-sunken)] p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink-2)]">{mb.metric.replace(/_/g, " ")}</p>
+                      <p className="mt-1 text-[18px] font-black tabular-nums text-[var(--ui-ink)]">
+                        {enough ? (mb.metric.includes("seconds") ? Math.round(mb.median as number) + "s" : (mb.median as number).toFixed(1)) : "-"}
+                      </p>
+                      {enough && mb.p25 !== null && mb.p75 !== null && (
+                        <p className="mt-1 text-[10.5px] text-[var(--ui-ink-2)]">
+                          p25: {mb.metric.includes("seconds") ? Math.round(mb.p25) + "s" : mb.p25.toFixed(1)} - p75: {mb.metric.includes("seconds") ? Math.round(mb.p75) + "s" : mb.p75.toFixed(1)}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[10px] text-[var(--ui-ink-2)]">{mb.business_count} businesses</p>
+                    </div>
+                  );
+                })}
+              </div>
                {benchmark && marketBenchmarks.some((mb) => mb.metric === "median_first_response_seconds" && mb.median !== null) && (() => {
                  const mb = marketBenchmarks.find((m) => m.metric === "median_first_response_seconds");
-                 if (!mb?.median) return null;
+                 if (!mb?.median || (mb.business_count ?? 0) < 3) return null;
                  return (
                    <div className="mt-4 rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-3">
                      <p className="text-[12px] font-semibold text-[var(--ui-ink)]">

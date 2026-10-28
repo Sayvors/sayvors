@@ -51,8 +51,13 @@ export default function BenchmarkCards({
   const rec = benchmark.recency;
   const gap = benchmark.gap_to_target;
   const cohort = benchmark.cohort;
-  const peerLabel = cohort?.count
-    ? `${cohort.label} (${cohort.count} businesses)`
+  const peerCount = cohort?.count ?? 0;
+  // A median from fewer than three peers is not a benchmark. Show the user's
+  // own numbers, but label the peer side "not enough peers" instead of
+  // presenting a one-business median as a market.
+  const peerWeak = peerCount < 3;
+  const peerLabel = peerCount
+    ? `${cohort?.label} (${peerCount} business${peerCount === 1 ? "" : "es"})`
     : "No peer set yet";
   const ratingDelta = benchmark.current_avg_rating - benchmark.similar_avg_rating;
   const reviewsDelta = benchmark.current_reviews_total - benchmark.similar_reviews_total;
@@ -70,7 +75,7 @@ export default function BenchmarkCards({
                 {peerLabel} · {cohort?.scope === "network" ? "Sayvors network" : "same city/category"} · Google reviews only.
               </p>
             </div>
-            {benchmark.my_rank && (
+            {!peerWeak && benchmark.my_rank && (
               <span className="rounded-[2px] bg-[var(--ui-sunken)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
                 Rank #{benchmark.my_rank} of {(benchmark.market?.length ?? cohort?.count ?? 0) + 1}
               </span>
@@ -83,12 +88,17 @@ export default function BenchmarkCards({
             <span className="w-16 text-right">Peers</span>
             <span className="w-14 text-right">Gap</span>
           </div>
-          <ul className="divide-y divide-[var(--ui-line)]">
-            <Row label="Average rating" yours={benchmark.current_avg_rating.toFixed(1) + "★"} peers={benchmark.similar_avg_rating.toFixed(1) + "★"} delta={ratingDelta} suffix="★" />
-            <Row label="Total reviews" yours={String(benchmark.current_reviews_total)} peers={String(benchmark.similar_reviews_total)} delta={reviewsDelta} />
-            <Row label="Response rate" yours={benchmark.current_response_rate.toFixed(0) + "%"} peers={benchmark.similar_response_rate.toFixed(0) + "%"} delta={responseDelta} suffix="%" />
+          {peerWeak && (
+            <p className="mt-3 rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-sunken)] p-2.5 text-[11px] text-[var(--ui-ink)]">
+              Not enough peers for a median ({peerCount} business{peerCount === 1 ? "" : "es"}). We need at least 3 before showing a peer comparison.
+            </p>
+          )}
+          <ul className="mt-2 divide-y divide-[var(--ui-line)]">
+            <Row label="Average rating" yours={benchmark.current_avg_rating.toFixed(1) + "★"} peers={peerWeak ? "—" : benchmark.similar_avg_rating.toFixed(1) + "★"} delta={peerWeak ? null : ratingDelta} suffix="★" />
+            <Row label="Total reviews" yours={String(benchmark.current_reviews_total)} peers={peerWeak ? "—" : String(benchmark.similar_reviews_total)} delta={peerWeak ? null : reviewsDelta} />
+            <Row label="Response rate" yours={benchmark.current_response_rate.toFixed(0) + "%"} peers={peerWeak ? "—" : benchmark.similar_response_rate.toFixed(0) + "%"} delta={peerWeak ? null : responseDelta} suffix="%" />
             {rec && rec.my_pct !== null ? (
-              <Row label="Reviews last 90d" yours={rec.my_pct.toFixed(0) + "%"} peers={rec.peer_median_pct !== null ? rec.peer_median_pct.toFixed(0) + "%" : "—"} delta={rec.peer_median_pct !== null ? rec.my_pct - rec.peer_median_pct : null} suffix="%" />
+              <Row label="Reviews last 90d" yours={rec.my_pct.toFixed(0) + "%"} peers={peerWeak || rec.peer_median_pct === null ? "—" : rec.peer_median_pct.toFixed(0) + "%"} delta={peerWeak || rec.peer_median_pct === null ? null : rec.my_pct - rec.peer_median_pct} suffix="%" />
             ) : (
               <Row label="Reviews last 90d" yours="—" peers="—" />
             )}
@@ -150,6 +160,11 @@ export default function BenchmarkCards({
             <dd className="mt-0.5 text-[12px] font-semibold text-[var(--ui-ink)]">Sayvors-connected listings</dd>
           </div>
         </dl>
+        {peerWeak && (
+          <p className="mt-2 text-[11px] font-semibold text-[var(--ui-ink)]">
+            This cohort is too small for a median. At least 3 businesses are required before we show a peer comparison.
+          </p>
+        )}
         <p className="mt-3 text-[10px] text-[var(--ui-ink-2)]">
           Median is the middle business in this peer set, not a national average. Sayvors-connected businesses only — not every competitor on Google. Treat small cohorts as directional.
         </p>

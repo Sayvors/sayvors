@@ -970,6 +970,8 @@
     <tr><td>Industry context <span class="chip buy">Blocked</span></td><td>category_avg_rating, listing_count, date</td><td>No external industry dataset is wired. The peer set is Sayvors-connected businesses in the same city/category - labelled as such, not a national average.</td><td>Connect dataset</td></tr>
     <tr><td>Peer group builder <span class="chip buy">Blocked</span></td><td>category, radius, size_band, sources</td><td>Scope is auto: city+category &rarr; city &rarr; network. An editable peer set needs a local competitor data source; the card discloses the current definition instead of pretending it is editable.</td><td>Future</td></tr>
   </table></div>
+  <p class="note"><strong>External peer data options (recommended):</strong> use the <strong>Google Places API (New)</strong> <code>searchNearby</code>/<code>searchText</code> for real nearby listings (rating, review count, distance, category), cached daily in a <code>competitor_snapshots</code> table with the query radius/category and fetch date disclosed. Paid alternatives: BrightLocal (local citation/competitor data), DataForSEO (Google Maps endpoints). <strong>Avoid scraping/crawling Google Maps directly</strong> - it violates Google's terms, breaks on markup changes, and cannot be represented as reliable provenance. The Places API is the only option that gives a defensible peer set at a known cost.</p>
+  <p class="note"><strong>Small-cohort guard:</strong> a median from fewer than 3 peers is not a market. The Benchmark UI shows the user's own numbers, labels the peer side "not enough peers", and suppresses rank/median until <code>n &ge; 3</code>.</p>
 
   <h3>Cross-cutting rules</h3>
   <ol>
