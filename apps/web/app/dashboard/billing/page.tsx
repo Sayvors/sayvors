@@ -718,7 +718,12 @@ export default function BillingPage() {
                       >
                         <input
                           value={cardNumber}
-                          onChange={(e) => setCardNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 19).replace(/(\d{4})(?=\d)/g, "$1 "))}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/[^0-9]/g, "");
+                            const brand = detectBrand(raw);
+                            const cap = brand !== "unknown" && brand !== "other" ? expectedCardLength(brand) : 19;
+                            setCardNumber(raw.slice(0, cap).replace(/(\d{4})(?=\d)/g, "$1 "));
+                          }}
                           disabled={busy !== null}
                           placeholder="4242 4242 4242 4242"
                           inputMode="numeric"
