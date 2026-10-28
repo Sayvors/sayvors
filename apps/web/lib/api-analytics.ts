@@ -286,9 +286,11 @@ export interface PulseResponse {
   period_days: number;
   reputation: ReputationPulse;
   waiting: WaitingPulse;
-  locations: LocationPulse[];
-  one_thing: OneThingPulse | null;
-  attention: AttentionItem[];
+  // Optional so a frontend deploy can land before the API restart that adds
+  // them; the cards default to an empty list / null rather than crashing.
+  locations?: LocationPulse[];
+  one_thing?: OneThingPulse | null;
+  attention?: AttentionItem[];
 }
 
 export async function fetchPulse(
