@@ -174,6 +174,9 @@ class Settings(BaseSettings):
     # this is explicitly enabled (self-hosted relay use only).
     EMAIL_SEND_ALLOW_ANY_RECIPIENT: bool = False
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public base URL of THIS API, used to build tracked links that customers
+    # click from SMS/email/WhatsApp (e.g. https://api.sayvors.com).
+    PUBLIC_API_URL: str = "http://localhost:8000"
 
     # Set by the test suite (conftest). Gates the rate-limit/LLM test bypasses
     # so prod code paths can never be disarmed by an import accident.

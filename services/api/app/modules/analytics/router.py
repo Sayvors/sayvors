@@ -668,7 +668,7 @@ async def record_review_request(
     deep link). SMS/email go through the env-gated provider and store the real
     outcome; a provider failure is visible on the row, never hidden.
     """
-    from .review_requests import create_and_deliver
+    from .review_requests import create_and_deliver, tracked_link
 
     allowed_channels = {"whatsapp", "sms", "email", "in_person"}
     allowed_triggers = {"manual", "qr", "after_visit", "campaign"}
@@ -688,7 +688,7 @@ async def record_review_request(
         sent_at=row.sent_at,
         channel=row.channel,
         sent_via=row.sent_via,
-        link=row.review_url,
+        link=tracked_link(row.token),
         error=row.error,
     )
 

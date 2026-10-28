@@ -101,12 +101,20 @@ async def send_sms(to: str, body: str) -> None:
             raise RuntimeError(f"Twilio rejected SMS ({resp.status_code}): {resp.text[:180]}")
 
 
-def _message(name: str | None, review_url: str | None) -> str:
+def tracked_link(token: str | None) -> str | None:
+    """The public click URL that records the click then redirects to Google."""
+    if not token:
+        return None
+    base = settings.PUBLIC_API_URL.rstrip("/")
+    return f"{base}/api/v1/analytics/review-requests/{token}/click"
+
+
+def _message(name: str | None, link: str | None) -> str:
     greeting = f"Hi {name}!" if name else "Hi!"
-    if review_url:
+    if link:
         return (
             f"{greeting} Thanks for visiting. Would you mind leaving us a quick review? "
-            f"It really helps: {review_url}"
+            f"It really helps: {link}"
         )
     return f"{greeting} Thanks for visiting. Would you mind leaving us a quick review? It really helps."
 
@@ -129,6 +137,7 @@ async def create_and_deliver(
     """
     token = secrets.token_urlsafe(24)
     review_url = await resolve_review_url(db, user_id, channel_id)
+    tracked = tracked_link(token)
     row = ReviewRequest(
         user_id=user_id,
         channel_id=channel_id or None,
@@ -149,7 +158,7 @@ async def create_and_deliver(
             row.error = "Missing contact for delivery."
         elif channel == "sms":
             try:
-                await send_sms(row.contact, _message(row.contact_name, review_url))
+                await send_sms(row.contact, _message(row.contact_name, tracked))
                 row.sent_via = "sms"
             except Exception as e:
                 row.status = "failed"
@@ -164,12 +173,12 @@ async def create_and_deliver(
                     html=(
                         f"<p>{_message(row.contact_name, None)}</p>"
                         + (
-                            f"<p><a href=\"{review_url}\">Leave a review</a></p>"
-                            if review_url
+                            f"<p><a href=\"{tracked}\">Leave a review</a></p>"
+                            if tracked
                             else ""
                         )
                     ),
-                    text=_message(row.contact_name, review_url),
+                    text=_message(row.contact_name, tracked),
                 )
                 row.sent_via = "email"
             except Exception as e:
