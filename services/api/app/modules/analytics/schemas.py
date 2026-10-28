@@ -359,16 +359,35 @@ class TopicsResponse(BaseModel):
 
 class ProblemStat(BaseModel):
     name: str
+    category: str = "other"
     mentions: int
     severity: str
     trend_pct: float | None = None
     status: str
     impact_score: float
+    staff_named: int = 0
+    serious: int = 0
+
+
+class ComplaintTerm(BaseModel):
+    name: str
+    mentions: int
+
+
+class ComplaintArea(BaseModel):
+    category: str
+    mentions: int
+    staff_named: int = 0
+    serious: int = 0
+    trend_pct: float | None = None
+    status: str
+    top_terms: list[ComplaintTerm] = []
 
 
 class ProblemsResponse(BaseModel):
     days: int
     problems: list[ProblemStat]
+    by_area: list[ComplaintArea] = []
 
 
 class ProductStat(BaseModel):

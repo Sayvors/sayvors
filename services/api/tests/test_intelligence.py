@@ -38,9 +38,9 @@ def test_period_bounds_equal_length():
 
 def test_agg_entities_counts_sentiment():
     rows = [
-        ("positive", 5, [{"name": "service", "sentiment": "positive"}], [], []),
-        ("negative", 1, [{"name": "service", "sentiment": "negative"}], [], []),
-        ("neutral", 3, [{"name": "service", "sentiment": "neutral"}], [], []),
+        ("positive", 5, [{"name": "service", "sentiment": "positive"}], [], [], None, "ch-1"),
+        ("negative", 1, [{"name": "service", "sentiment": "negative"}], [], [], None, "ch-1"),
+        ("neutral", 3, [{"name": "service", "sentiment": "neutral"}], [], [], None, "ch-1"),
     ]
     agg = _agg_entities(rows, "topics")
     assert agg["service"]["mentions"] == 3
@@ -51,13 +51,44 @@ def test_agg_entities_counts_sentiment():
 
 def test_agg_entities_problems_severity():
     rows = [
-        ("negative", 1, [], [], [{"name": "slow service", "severity": "high"}]),
-        ("negative", 1, [], [], [{"name": "slow service", "severity": "medium"}]),
+        ("negative", 1, [], [], [{"name": "slow service", "severity": "high"}], {"entities": {"staff": ["Sara"]}}, "ch-1"),
+        ("negative", 1, [], [], [{"name": "slow service", "severity": "medium"}], None, "ch-1"),
     ]
     agg = _agg_entities(rows, "problems")
     assert agg["slow service"]["mentions"] == 2
     assert agg["slow service"]["severity"]["high"] == 1
     assert agg["slow service"]["severity"]["medium"] == 1
+    # Meaning layer: staff named on one review; high severity counts as serious.
+    assert agg["slow service"]["staff_named"] == 1
+    assert agg["slow service"]["serious"] == 1
+
+
+def test_canonical_complaint_areas():
+    from app.modules.analytics.intelligence import _canonical_complaint
+
+    assert _canonical_complaint("long waiting time") == "waiting_time"
+    assert _canonical_complaint("rude staff") == "staff_service"
+    assert _canonical_complaint("wrong order") == "order_accuracy"
+    assert _canonical_complaint("dirty tables") == "cleanliness"
+    assert _canonical_complaint("too expensive") == "price_value"
+    assert _canonical_complaint("cold food") == "quality"
+    assert _canonical_complaint("parking") == "other"
+
+
+def test_agg_areas_rolls_terms_and_trends():
+    from app.modules.analytics.intelligence import _agg_areas
+
+    cur = {
+        "long waiting time": {"mentions": 3, "staff_named": 0, "serious": 1},
+        "rude staff": {"mentions": 2, "staff_named": 1, "serious": 0},
+    }
+    prev = {"long waiting time": {"mentions": 1, "staff_named": 0, "serious": 0}}
+    areas = _agg_areas(cur, prev)
+    by_cat = {a["category"]: a for a in areas}
+    assert by_cat["waiting_time"]["mentions"] == 3
+    assert by_cat["waiting_time"]["trend_pct"] == 200.0
+    assert by_cat["waiting_time"]["status"] == "increasing"
+    assert by_cat["staff_service"]["staff_named"] == 1
 
 
 def test_reputation_score_range():

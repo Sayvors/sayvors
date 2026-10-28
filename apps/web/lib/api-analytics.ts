@@ -274,11 +274,29 @@ export interface TopicStat {
 
 export interface ProblemStat {
   name: string;
+  category: string;
   mentions: number;
   severity: string;
   trend_pct: number | null;
   status: string;
   impact_score: number;
+  staff_named: number;
+  serious: number;
+}
+
+export interface ComplaintTerm {
+  name: string;
+  mentions: number;
+}
+
+export interface ComplaintArea {
+  category: string;
+  mentions: number;
+  staff_named: number;
+  serious: number;
+  trend_pct: number | null;
+  status: string;
+  top_terms: ComplaintTerm[];
 }
 
 export interface ProductStat {
@@ -302,6 +320,7 @@ export interface TopicsResponse {
 export interface ProblemsResponse {
   days: number;
   problems: ProblemStat[];
+  by_area: ComplaintArea[];
 }
 
 export interface ProductsResponse {

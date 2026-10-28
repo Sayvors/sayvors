@@ -130,6 +130,114 @@ function MomentumBars({
   );
 }
 
+const COMPLAINT_AREAS: { key: string; label: string }[] = [
+  { key: "waiting_time", label: "Waiting time" },
+  { key: "staff_service", label: "Staff & service" },
+  { key: "order_accuracy", label: "Order accuracy" },
+  { key: "cleanliness", label: "Cleanliness" },
+  { key: "price_value", label: "Price & value" },
+  { key: "quality", label: "Food / product quality" },
+  { key: "other", label: "Other" },
+];
+
+function areaLabel(category: string): string {
+  return COMPLAINT_AREAS.find((a) => a.key === category)?.label ?? category.replace(/_/g, " ");
+}
+
+function ComplaintsByArea({
+  areas,
+  days,
+  loading,
+  copy,
+}: {
+  areas: import("@/lib/api-analytics").ComplaintArea[];
+  days: number;
+  loading: boolean;
+  copy: InsightsCopy;
+}) {
+  if (loading) {
+    return (
+      <section aria-label="Complaints by area" className="ui-card p-5">
+        <SkeletonList rows={4} />
+      </section>
+    );
+  }
+  const top = areas[0];
+  return (
+    <section aria-label="Complaints by area" className="ui-card p-5">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-[14px] font-bold text-[var(--ui-ink)]">Complaints by area</h3>
+          <p className="text-[11px] text-[var(--ui-ink-2)]">
+            Last {days} days vs the prior {days}. Ranked by serious incidents, then volume.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {top && (
+            <span className="rounded-[2px] bg-[var(--ui-sunken)] px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
+              Main complaint: {areaLabel(top.category)}
+            </span>
+          )}
+          <Link
+            href="/dashboard/reviews"
+            className="ui-btn rounded-[2px] bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-bold text-[var(--ui-on-ink)]"
+          >
+            Read reviews
+          </Link>
+        </div>
+      </div>
+      {areas.length === 0 ? (
+        <div className="py-6 text-center">
+          <p className="text-[12px] font-semibold text-[var(--ui-ink)]">{copy.noProblemsTitle}</p>
+          <p className="mt-1 text-[11px] text-[var(--ui-ink-2)]">{copy.noProblemsBody}</p>
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {areas.map((a) => {
+            const max = Math.max(...areas.map((x) => x.mentions), 1);
+            return (
+              <li key={a.category}>
+                <div className="flex items-center gap-2">
+                  <span className="w-36 shrink-0 truncate text-[12px] font-semibold text-[var(--ui-ink)]">
+                    {areaLabel(a.category)}
+                  </span>
+                  <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-[var(--ui-sunken)]">
+                    <span
+                      className="absolute inset-y-0 left-0 rounded-full bg-[var(--ui-ink)]"
+                      style={{ width: `${Math.max(3, (a.mentions / max) * 100)}%` }}
+                    />
+                  </span>
+                  <span className="w-8 shrink-0 text-right text-[12px] font-bold tabular-nums text-[var(--ui-ink)]">
+                    {a.mentions}
+                  </span>
+                  <TrendChip trend={a.trend_pct} copy={copy} />
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-[152px] text-[10px] text-[var(--ui-ink-2)]">
+                  {a.staff_named > 0 && (
+                    <span className="rounded-[2px] bg-[var(--ui-sunken)] px-1.5 py-px font-semibold text-[var(--ui-ink)]">
+                      {a.staff_named} staff named
+                    </span>
+                  )}
+                  {a.serious > 0 && (
+                    <span className="rounded-[2px] border border-[var(--ui-line-strong)] px-1.5 py-px font-bold text-[var(--ui-ink)]">
+                      {a.serious} serious
+                    </span>
+                  )}
+                  {a.top_terms.length > 0 && (
+                    <span className="truncate">
+                      {a.top_terms.map((t) => t.name).join(" · ")}
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function InsightsPage() {
   const { t } = useI18n();
   const copy = t.analytics.insights;
@@ -236,6 +344,20 @@ export default function InsightsPage() {
               </div>
             );
           })()}
+          <div className="mb-6">
+            <ComplaintsByArea
+              areas={problems?.by_area ?? []}
+              days={days}
+              loading={loading}
+              copy={copy}
+            />
+          </div>
+          <div className="mb-3 mt-2 flex items-end justify-between">
+            <div>
+              <h2 className="text-[15px] font-bold text-[var(--ui-ink)]">Conversations</h2>
+              <p className="text-[11px] text-[var(--ui-ink-2)]">How your team and the AI handled inbound messages.</p>
+            </div>
+          </div>
           {messaging && (messaging.totals.messages_out ?? 0) > 0 && (
             <div className="mb-6 grid gap-3 sm:grid-cols-4">
               <div className="ui-card p-4">
@@ -301,31 +423,12 @@ export default function InsightsPage() {
               )}
             </div>
           )}
-          {(() => {
-            const topProblem = [...(problems?.problems ?? [])].sort((a, b) => b.impact_score - a.impact_score)[0];
-            if (loading || !topProblem) return null;
-            return (
-              <div className="mb-6 flex flex-wrap items-center gap-3 rounded-[2px] border border-[var(--ui-ink)] bg-[var(--ui-sunken)] p-4">
-                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${SEVERITY_BADGE[topProblem.severity]}`}>
-                  {severityLabel(topProblem.severity, copy)}
-                </span>
-                <p className="min-w-0 flex-1 text-[12.5px] text-[var(--ui-ink)]">
-                  <strong className="capitalize">{topProblem.name}</strong>
-                  <span className="text-[var(--ui-ink-2)]">
-                    {" — "}
-                    {copy.mentionsShort.replace("{mentions}", String(topProblem.mentions))}
-                    {" · "}
-                    {statusLabel(topProblem.status, copy)}
-                    {" · "}
-                  </span>
-                  <TrendChip trend={topProblem.trend_pct} copy={copy} />
-                </p>
-                <Link href="/dashboard/reviews" className="ui-btn shrink-0 rounded-[2px] bg-[var(--ui-ink)] px-3 py-1.5 text-[11px] font-bold text-[var(--ui-on-ink)]">
-                  {copy.readReviews}
-                </Link>
-              </div>
-            );
-          })()}
+          <div className="mb-3 mt-2 flex items-end justify-between">
+            <div>
+              <h2 className="text-[15px] font-bold text-[var(--ui-ink)]">Themes</h2>
+              <p className="text-[11px] text-[var(--ui-ink-2)]">What customers talk about, what breaks, and which products stand out.</p>
+            </div>
+          </div>
           <div className="grid gap-5 sm:gap-6 lg:grid-cols-3">
           {/* Topics */}
           <section aria-label={copy.topics} className="ui-card p-5">
