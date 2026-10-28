@@ -110,7 +110,10 @@ async def engine():
                 included_credit_cents=5000,
                 max_channels=None,
                 max_messages_per_month=1000,
-                features={"ai_replies": True, "posts": True, "media": True, "reviews": True},
+                features={
+                    "channels": True, "messaging": True,
+                    "ai_replies": True, "posts": True, "media": True, "reviews": True,
+                },
                 is_active=True,
                 sort_order=0,
             )

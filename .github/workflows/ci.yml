@@ -62,6 +62,11 @@ jobs:
 
       - name: Verify single alembic head
         working-directory: services/api
+        # env.py imports app.database -> app.config, whose production gate
+        # refuses to start without a real JWT_SECRET. This step only reads the
+        # migration graph, so a throwaway value is enough.
+        env:
+          JWT_SECRET: migration-guard-static-analysis-not-a-real-secret
         run: |
           set -e
           HEADS=$(alembic heads | wc -l)
