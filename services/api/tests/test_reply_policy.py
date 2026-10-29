@@ -49,3 +49,18 @@ def test_instagram_prompt_asks_for_the_number_at_most_once():
     prompt = _system_prompt(_user(), platform="Instagram")
     assert "Ask for it at most once" in prompt
     assert "NEVER ask for their phone number" not in prompt
+
+
+def test_instagram_prompt_only_promises_the_link_when_one_exists():
+    """A link promise without a WhatsApp number is the same lie as a voice
+    offer on a text-only account."""
+    off = _system_prompt(_user(), platform="Instagram", bridge_enabled=False)
+    assert "no WhatsApp number connected" in off
+    assert "sending the WhatsApp link now" not in off
+
+    on = _system_prompt(_user(), platform="Instagram", bridge_enabled=True)
+    assert "sending the WhatsApp link now" in on
+    assert "no WhatsApp number connected" not in on
+    assert "they have to tap the link" in on, (
+        "the model must not promise that we message them first"
+    )

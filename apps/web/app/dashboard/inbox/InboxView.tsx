@@ -164,6 +164,8 @@ function contextReasonLabel(reason: string): string {
       return "when it was escalated";
     case "periodic":
       return "mid-conversation";
+    case "cross_channel":
+      return "when they moved from Instagram";
     default:
       return "manually";
   }

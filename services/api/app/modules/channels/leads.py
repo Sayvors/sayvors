@@ -128,7 +128,7 @@ async def list_leads(
     ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ) -> LeadListResponse:
-    conds = [Lead.tenant_id == ctx.tenant_id]
+    conds = [Lead.tenant_id == ctx.tenant_id, Lead.merged_into_id.is_(None)]
     if platform:
         conds.append(Lead.platform == platform)
     if stage_filter:

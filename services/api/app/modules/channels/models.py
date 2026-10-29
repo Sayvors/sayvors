@@ -242,6 +242,62 @@ class ChannelThread(Base):
     channel = relationship("Channel", back_populates="threads")
 
 
+class ChannelBridge(Base):
+    """A one-time link from an Instagram DM to the tenant's WhatsApp number.
+
+    WhatsApp will not let a business message a number it picked up in an
+    Instagram chat before the customer writes first, so the move has to be
+    customer-initiated: the DM replies with ``https://wa.me/<our number>?text=<token>``,
+    the customer taps it, and the first WhatsApp inbound from that number is
+    matched back to the Instagram lead.
+
+    The token is the fallback identity — it survives the customer writing from
+    a different phone than the one they typed. ``phone_e164`` is the primary
+    match, because it needs no cooperation from the text at all.
+
+    Single use: ``used_at`` is set when a WhatsApp inbound consumes it, so a
+    forwarded link cannot merge a second stranger into the same lead.
+    """
+
+    __tablename__ = "channel_bridges"
+    __table_args__ = (
+        # Token lookup is the inbound hot path and must not scan.
+        Index("uq_channel_bridges_token", "token", unique=True),
+        Index("ix_channel_bridges_tenant_phone", "tenant_id", "phone_e164"),
+        Index("ix_channel_bridges_source", "channel_id", "contact_id"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    # The source thread: the Instagram channel and the IGSID that asked.
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE")
+    )
+    contact_id: Mapped[str] = mapped_column(String(64))
+    # The number the customer typed, already E.164.
+    phone_e164: Mapped[str] = mapped_column(String(32))
+    token: Mapped[str] = mapped_column(String(16))
+    # The WhatsApp number the link points at. Kept so the merge can tell which
+    # of several numbers the customer was sent to.
+    target_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # NULL until a DM with the link was actually delivered. A failed send must
+    # retry on the next turn, and a delivered one must not repeat.
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The WhatsApp lead this bridge was merged into.
+    used_by_lead_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+
 class ConversationContext(Base):
     """A stored, human-readable summary of one conversation.
 
@@ -502,6 +558,14 @@ class Lead(Base):
     handover_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Unified-inbox thread key, for the lead -> conversation deep link.
     thread_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Set on a lead that was consolidated into another channel's lead. An
+    # Instagram lead that moves to WhatsApp keeps its row and its thread, but
+    # the WhatsApp lead becomes the one the pipeline works — this pointer lets
+    # the list, the digest and the merge code tell the two apart without
+    # deleting history.
+    merged_into_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
