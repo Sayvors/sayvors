@@ -144,6 +144,55 @@ async def test_the_block_respects_its_budget(db):
     assert sum(len(line) for line in item_lines) <= catalog.CATALOG_MAX_CHARS
 
 
+@pytest.mark.asyncio
+async def test_a_small_catalog_is_always_in_the_prompt(db):
+    """A shop with two items must never answer as if it sold nothing.
+
+    Regression guard: "do you deliver beans?" matched neither "bean" in the
+    description nor anything else, so the assistant replied with no idea the
+    catalog existed.
+    """
+    uid, _ = await _seed(db)
+    block = await catalog.catalog_block(
+        db, tenant_id=uid, query="hello there, are you open?",
+    )
+    assert "Ethiopia Guji 1kg" in block
+    assert "Colombia Huila 1kg" in block
+
+
+@pytest.mark.asyncio
+async def test_a_large_catalog_stays_out_when_nothing_matches(db):
+    """Above the always-include size, the prompt narrows to the question."""
+    uid = f"cat-large-{uuid.uuid4().hex[:8]}"
+    db.add(User(
+        id=uid, first_name="L", last_name="G",
+        email=f"{uid}@example.com", password_hash="x",
+    ))
+    await db.commit()
+    for i in range(catalog.ALWAYS_INCLUDE_MAX_ITEMS + 1):
+        await catalog.create_item(db, uid, {
+            "name": f"Widget {i}", "price": "10.00", "currency": "SAR",
+        })
+
+    assert await catalog.catalog_block(
+        db, tenant_id=uid, query="hello there, are you open?",
+    ) == ""
+    matched = await catalog.catalog_block(
+        db, tenant_id=uid, query="how much is Widget 4?",
+    )
+    assert "Widget 4" in matched
+
+
+@pytest.mark.asyncio
+async def test_plurals_still_match_the_item(db):
+    """'beans' must find 'bean' — the naive stem is the point."""
+    uid, _ = await _seed(db)
+    block = await catalog.catalog_block(
+        db, tenant_id=uid, query="do you deliver beans?",
+    )
+    assert "Ethiopia Guji 1kg" in block
+
+
 def test_the_marker_is_stripped_and_returned():
     reply = "It's 85 SAR per bag.\nSEND_ITEM: abc-123"
     text, item_id = catalog.split_catalog_request(reply)

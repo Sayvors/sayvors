@@ -206,15 +206,50 @@ _BROWSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A small catalog fits in the prompt whole. Sending it on every message beats
+# keyword roulette: "do you deliver beans?" failed to match "bean" and the
+# assistant then answered as if the shop sold nothing. Above this size the
+# per-message match is what keeps the prompt bounded.
+ALWAYS_INCLUDE_MAX_ITEMS = 10
+
+# Words that appear in every greeting and match nothing useful. Without this
+# "hi, do you deliver 20kg of beans this week?" spent its term budget on
+# "deliver/this/you" and dropped the word that mattered.
+_STOPWORDS = {
+    "the", "and", "for", "you", "your", "are", "can", "could", "would", "have",
+    "has", "had", "this", "that", "these", "those", "with", "from", "about",
+    "what", "when", "where", "which", "who", "how", "why", "does", "did", "was",
+    "were", "will", "shall", "should", "may", "might", "must", "not", "but",
+    "any", "all", "some", "there", "here", "they", "them", "our", "out", "get",
+    "got", "please", "thanks", "thank", "hello", "hey", "want", "need", "like",
+}
+
+
+def _query_terms(query: str) -> list[str]:
+    terms = [
+        t for t in re.split(r"\W+", (query or "").lower())
+        if len(t) >= 3 and t not in _STOPWORDS
+    ]
+    # Longest first: "ethiopia" says more than "guji", and the cap is small.
+    terms.sort(key=len, reverse=True)
+    return terms[:8]
+
+
+def _term_hits(term: str, haystack: str) -> bool:
+    """Containment, plus a naive singular form so "beans" matches "bean"."""
+    if term in haystack:
+        return True
+    stem = term[:-1] if term.endswith("s") else term
+    return len(stem) >= 4 and stem in haystack
+
 
 async def _matches(db, tenant_id: str, query: str) -> list[CatalogItem]:
     """Items whose name/sku/description overlap the question.
 
-    ILIKE on every term is deliberate: the customer writes "how much is the
-    guji", and the item is "Ethiopia Guji 1kg". Vector search over a dozen
-    rows would cost more than it returns; the catalog is meant to stay small.
+    Deliberately lexical: the catalog is small and human-maintained, and a
+    vector search over a dozen rows would cost more than it returns.
     """
-    terms = [t for t in re.split(r"\W+", query.lower()) if len(t) >= 3][:6]
+    terms = _query_terms(query)
     rows = (await db.execute(
         select(CatalogItem)
         .where(
@@ -233,7 +268,7 @@ async def _matches(db, tenant_id: str, query: str) -> list[CatalogItem]:
             (item.sku or "").lower(),
             (item.description or "").lower(),
         ]))
-        score = sum(1 for term in terms if term in haystack)
+        score = sum(1 for term in terms if _term_hits(term, haystack))
         if score:
             scored.append((score, item))
     if not scored:
@@ -278,10 +313,31 @@ async def catalog_block(
     this pass), so the model is not told to request a photo the pipeline will
     silently drop.
 
+    A small catalog is always included — a shop with six items should never
+    answer "do you have beans?" as if it sold nothing. Only above
+    ``ALWAYS_INCLUDE_MAX_ITEMS`` does the block narrow to the message's terms.
+
     Never raises: a catalog read failure must not cost the customer a reply.
     """
     try:
         items = await _matches(db, tenant_id, (query or "").strip())
+        if not items:
+            total = int((await db.execute(
+                select(func.count()).select_from(CatalogItem).where(
+                    CatalogItem.tenant_id == tenant_id,
+                    CatalogItem.active.is_(True),
+                )
+            )).scalar() or 0)
+            if 0 < total <= ALWAYS_INCLUDE_MAX_ITEMS:
+                items = list((await db.execute(
+                    select(CatalogItem)
+                    .where(
+                        CatalogItem.tenant_id == tenant_id,
+                        CatalogItem.active.is_(True),
+                    )
+                    .order_by(CatalogItem.sort_order.asc(), CatalogItem.name.asc())
+                    .limit(ALWAYS_INCLUDE_MAX_ITEMS)
+                )).scalars().all())
         return _render(items, allow_image=allow_image)
     except Exception as e:  # noqa: BLE001 - enhancement, not a dependency
         logger.warning(
