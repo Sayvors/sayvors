@@ -246,6 +246,22 @@ export default function WhatsAppHub() {
               {t === "profile" ? "Profile" : t === "numbers" ? "Numbers" : "Settings"}
             </button>
           ))}
+          {/* The two surfaces that only exist for WhatsApp live under this
+              dashboard rather than in the product-wide sidebar. */}
+          <span className="ml-auto flex items-center gap-1.5 pl-2">
+            <Link
+              href="/dashboard/channels/whatsapp/catalog"
+              className="rounded-full border border-[var(--wa-accent)]/30 px-2.5 py-1 text-[11px] font-bold text-[var(--wa-accent-deep)] transition hover:bg-[var(--wa-accent)]/10"
+            >
+              Catalog
+            </Link>
+            <Link
+              href="/dashboard/channels/whatsapp/templates"
+              className="rounded-full border border-[var(--wa-accent)]/30 px-2.5 py-1 text-[11px] font-bold text-[var(--wa-accent-deep)] transition hover:bg-[var(--wa-accent)]/10"
+            >
+              Templates
+            </Link>
+          </span>
         </nav>
 
         <div className="wa-chat-canvas wa-scroll min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">

@@ -16,8 +16,6 @@ const ar: Dict = {
     insights: "الرؤى",
     growth: "النمو",
     databank: "بنك المعرفة",
-    catalog: "الكتالوج",
-    templates: "القوالب",
     connect: "القنوات",
     channels: "القنوات",
     manage: "إدارة",

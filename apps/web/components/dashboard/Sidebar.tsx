@@ -25,8 +25,6 @@ const MAIN_ITEMS: NavItem[] = [
   { key: "customers", icon: <UsersIcon />, href: "/dashboard/customers" },
   { key: "reviews", icon: <StarIcon />, href: "/dashboard/reviews" },
   { key: "databank", icon: <DatabaseIcon />, href: "/dashboard/databank" },
-  { key: "catalog", icon: <CatalogIcon />, href: "/dashboard/catalog" },
-  { key: "templates", icon: <TemplatesIcon />, href: "/dashboard/templates" },
 ];
 
 const ADVANCED_ITEMS: NavItem[] = [
@@ -646,24 +644,6 @@ function DatabaseIcon() {
       <ellipse cx="12" cy="5.5" rx="8" ry="3" />
       <path d="M4 5.5v13c0 1.66 3.58 3 8 3s8-1.34 8-3v-13" />
       <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
-    </svg>
-  );
-}
-
-function TemplatesIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-      <path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9 9 0 0 1-3.6-.7L3 21l1.7-4.8A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5Z" />
-      <path d="M8 10h8M8 14h5" />
-    </svg>
-  );
-}
-
-function CatalogIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
-      <path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z" />
-      <path d="M4 7.5 12 12l8-4.5M12 12v9" />
     </svg>
   );
 }
