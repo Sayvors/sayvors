@@ -558,6 +558,21 @@ class Lead(Base):
     handover_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Unified-inbox thread key, for the lead -> conversation deep link.
     thread_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # ── WhatsApp opt-in (Meta requires a recorded basis before any template) ──
+    # Set when the customer explicitly agrees to WhatsApp messages: the
+    # Instagram bridge (they tapped and wrote), or an operator recording a
+    # verbal/other agreement. NULL means "no basis" — templates are refused.
+    whatsapp_opt_in_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # instagram_bridge | operator | import
+    whatsapp_opt_in_source: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    # The inbound/template message that evidenced the consent, for an audit.
+    whatsapp_opt_in_message_id: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )
     # Set on a lead that was consolidated into another channel's lead. An
     # Instagram lead that moves to WhatsApp keeps its row and its thread, but
     # the WhatsApp lead becomes the one the pipeline works — this pointer lets

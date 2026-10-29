@@ -188,6 +188,53 @@ class WhatsAppAdapter(MetaProviderAdapter):
         msgs = data.get("messages", [])
         return msgs[0].get("id", "") if msgs else ""
 
+    async def send_template_message(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        name: str,
+        language: str,
+        variables: list[str] | None = None,
+    ) -> str:
+        """Send a pre-approved template. The only legal send outside 24h.
+
+        ``variables`` fill the body's {{1}}..{{n}} placeholders in order.
+        Meta rejects a parameter count that does not match the approved body,
+        so the caller validates against the stored template first.
+        """
+        template: dict = {
+            "name": name,
+            "language": {"code": language},
+        }
+        params = [{"type": "text", "text": str(v)} for v in (variables or [])]
+        if params:
+            template["components"] = [{"type": "body", "parameters": params}]
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "template",
+                "template": template,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def list_templates(self, waba_id: str, token: str) -> list[dict]:
+        """The WABA's templates as Meta sees them (approved, pending, rejected)."""
+        resp = await self._graph(
+            "GET",
+            f"/{waba_id}/message_templates",
+            token,
+            params={"limit": 200, "fields": "id,name,language,category,status,components"},
+        )
+        return resp.json().get("data", [])
+
     async def upload_media(
         self, phone_number_id: str, token: str, data: bytes, mime_type: str
     ) -> str:

@@ -31,6 +31,12 @@ import {
 import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import TypingIndicator from "@/components/inbox/TypingIndicator";
+import {
+  listWhatsAppTemplates,
+  recordWhatsAppConsent,
+  sendWhatsAppTemplate,
+  type WhatsAppTemplate,
+} from "@/lib/api-whatsapp-templates";
 
 type Filter = "all" | "unread" | "important" | "unknown";
 
@@ -237,6 +243,14 @@ export default function InboxView() {
   const [threadState, setThreadState] = useState<ThreadState | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  // Templates: the only legal send once Meta's 24h window has closed.
+  const [templates, setTemplates] = useState<WhatsAppTemplate[] | null>(null);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateId, setTemplateId] = useState<string>("");
+  const [templateVars, setTemplateVars] = useState<string[]>([]);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const templateKeyRef = useRef<string>("");
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -353,6 +367,97 @@ export default function InboxView() {
     }
   };
 
+  const reloadThread = async (thread: InboxThread) => {
+    const data = await fetchThreadMessages(thread.channel_id, thread.contact_phone);
+    setMessages(data.messages);
+    if (data.thread) setThreadState(data.thread);
+  };
+
+  const openTemplatePicker = async (thread: InboxThread) => {
+    setTemplateError(null);
+    setTemplateOpen(true);
+    if (!templateKeyRef.current) {
+      templateKeyRef.current =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${thread.channel_id}:${thread.key}:${Date.now()}`;
+    }
+    if (templates !== null) return;
+    try {
+      setTemplates(await listWhatsAppTemplates());
+    } catch (e) {
+      setTemplateError(
+        e instanceof Error ? e.message : "Could not load templates.",
+      );
+    }
+  };
+
+  const chooseTemplate = (template: WhatsAppTemplate) => {
+    setTemplateId(template.id);
+    setTemplateVars(Array.from({ length: template.variables }, () => ""));
+    setTemplateError(null);
+  };
+
+  const handleSendTemplate = async (thread: InboxThread) => {
+    if (!selectedTemplate || templateBusy) return;
+    if (
+      selectedTemplate.variables > 0 &&
+      templateVars.some((v) => !v.trim())
+    ) {
+      setTemplateError("Fill every variable before sending.");
+      return;
+    }
+    setTemplateBusy(true);
+    setTemplateError(null);
+    try {
+      const result = await sendWhatsAppTemplate({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone ?? "",
+        templateId: selectedTemplate.id,
+        variables: templateVars,
+        // One key per picker session: a double click retries the same send
+        // instead of billing two messages.
+        idempotencyKey: templateKeyRef.current,
+      });
+      if (result.status === "sent") {
+        setTemplateOpen(false);
+        setTemplateId("");
+        setTemplateVars([]);
+        setTemplates(null);
+        templateKeyRef.current = "";
+        await reloadThread(thread);
+      } else {
+        setTemplateError(result.error ?? "Meta rejected the template.");
+      }
+    } catch (e) {
+      setTemplateError(
+        e instanceof Error ? e.message : "Could not send the template.",
+      );
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
+
+  const handleRecordConsent = async (thread: InboxThread) => {
+    setTemplateError(null);
+    try {
+      const res = await recordWhatsAppConsent({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone ?? "",
+        source: "operator",
+      });
+      setThreadState((prev) =>
+        prev
+          ? { ...prev, opt_in_at: res.opt_in_at, opt_in_source: res.opt_in_source }
+          : prev,
+      );
+    } catch (e) {
+      setTemplateError(
+        e instanceof Error ? e.message : "Could not record consent.",
+      );
+    }
+  };
+
   // Debounce the search input so we don't refetch on every keystroke.
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   useEffect(() => {
@@ -418,6 +523,19 @@ export default function InboxView() {
   // one; the list row is the fallback before the messages call returns.
   const activeMode: "ai" | "human" =
     threadState?.mode ?? target?.mode ?? "ai";
+  // Meta's window is per conversation. Once it closes a free-form reply is
+  // rejected, so the composer steps aside for the template picker.
+  const windowClosed =
+    (target?.platform ?? "").toLowerCase() === "whatsapp" &&
+    loadedKey === targetKey &&
+    threadState?.reply_window_open === false;  const approvedTemplates = useMemo(
+    () =>
+      (templates ?? []).filter(
+        (t) => t.status === "approved" && t.category === "utility",
+      ),
+    [templates],
+  );
+  const selectedTemplate = approvedTemplates.find((t) => t.id === templateId) ?? null;
   const targetKeyRef = useRef<string | null>(null);
   useEffect(() => {
     targetKeyRef.current = targetKey;
@@ -1100,10 +1218,118 @@ export default function InboxView() {
                   </p>
                 ) : (
                   <>
-                    {!replyWindowOpen(target) && (
-                      <p className="mb-2 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-                        Reply window closed — Meta only allows free-form replies within 24 hours of the customer&apos;s last message. Use a template message instead.
-                      </p>
+                    {(!replyWindowOpen(target) || windowClosed) && (
+                      <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
+                        <p className="text-[12px] font-medium text-amber-800 dark:text-amber-300">
+                          Reply window closed — Meta only allows free-form replies within 24 hours of the customer&apos;s last message.
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void openTemplatePicker(target)}
+                            className="rounded-full bg-deep-violet px-3 py-1 text-[11px] font-bold text-white transition active:translate-y-[1px] active:scale-[0.98]"
+                          >
+                            {templateOpen ? "Hide templates" : "Send a template"}
+                          </button>
+                          {threadState?.opt_in_at ? (
+                            <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-ink/40 dark:text-amber-200">
+                              Opt-in on record
+                              {threadState.opt_in_source
+                                ? ` · ${threadState.opt_in_source.replace(/_/g, " ")}`
+                                : ""}
+                            </span>
+                          ) : (
+                            <>
+                              <span className="text-[11px] font-medium text-amber-800/80 dark:text-amber-300/80">
+                                No opt-in on record — templates need one.
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleRecordConsent(target)}
+                                className="rounded-full border border-amber-400/60 px-2.5 py-0.5 text-[10px] font-bold text-amber-800 transition hover:bg-amber-100 dark:border-amber-400/40 dark:text-amber-200"
+                              >
+                                Record consent
+                              </button>
+                            </>
+                          )}
+                        </div>
+
+                        {templateOpen && (
+                          <div className="mt-3 rounded-xl bg-white/80 p-3 dark:bg-ink/40">
+                            {templateError && (
+                              <p className="mb-2 text-[11px] font-medium text-[#C4304B] dark:text-[#FF8FA3]">
+                                {templateError}
+                              </p>
+                            )}
+                            {templates === null ? (
+                              <p className="text-[11px] text-ink/45 dark:text-fog/45">
+                                Loading templates…
+                              </p>
+                            ) : approvedTemplates.length === 0 ? (
+                              <p className="text-[11px] text-ink/45 dark:text-fog/45">
+                                No approved utility template yet. Create one in
+                                WhatsApp Manager, then sync on the Templates page.
+                              </p>
+                            ) : (
+                              <>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {approvedTemplates.map((t) => (
+                                    <button
+                                      key={t.id}
+                                      type="button"
+                                      onClick={() => chooseTemplate(t)}
+                                      aria-pressed={templateId === t.id}
+                                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                                        templateId === t.id
+                                          ? "bg-deep-violet text-white"
+                                          : "border border-ink/[0.1] text-ink/60 hover:border-deep-violet/40 dark:border-fog/[0.15] dark:text-fog/60"
+                                      }`}
+                                    >
+                                      {t.name}
+                                      <span className="ml-1 font-normal opacity-60">
+                                        {t.language}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                                {selectedTemplate && selectedTemplate.variables > 0 && (
+                                  <div className="mt-2 grid gap-1.5">
+                                    {templateVars.map((value, index) => (
+                                      <input
+                                        key={index}
+                                        value={value}
+                                        onChange={(e) => {
+                                          const next = [...templateVars];
+                                          next[index] = e.target.value;
+                                          setTemplateVars(next);
+                                        }}
+                                        placeholder={`Variable ${index + 1}`}
+                                        aria-label={`Template variable ${index + 1}`}
+                                        className="input-field"
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                                {selectedTemplate && (
+                                  <p className="mt-2 whitespace-pre-line text-[11px] leading-4 text-ink/50 dark:text-fog/50">
+                                    {selectedTemplate.body}
+                                  </p>
+                                )}
+                                <div className="mt-2 flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSendTemplate(target)}
+                                    disabled={!selectedTemplate || templateBusy}
+                                    className="rounded-full bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white transition disabled:opacity-40 active:translate-y-[1px] active:scale-[0.98]"
+                                  >
+                                    {templateBusy ? "Sending…" : "Send template"}
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )}
                     <div className="flex items-end gap-2">
                       <textarea
@@ -1116,9 +1342,13 @@ export default function InboxView() {
                           }
                         }}
                         rows={2}
-                        placeholder={replyWindowOpen(target) ? "Write a reply…" : "Reply window closed"}
+                        placeholder={
+                          !replyWindowOpen(target) || windowClosed
+                            ? "Reply window closed"
+                            : "Write a reply…"
+                        }
                         aria-label="Write a reply"
-                        disabled={!replyWindowOpen(target)}
+                        disabled={!replyWindowOpen(target) || windowClosed}
                         className="input-field flex-1 resize-none disabled:opacity-50"
                       />
                       <button onClick={() => void send()} disabled={!canSend} className="btn-primary disabled:opacity-40">
@@ -1126,7 +1356,7 @@ export default function InboxView() {
                       </button>
                     </div>
                     <p className="mt-1.5 text-[11px] text-ink/35 dark:text-fog/35">
-                      {replyWindowOpen(target)
+                      {replyWindowOpen(target) && !windowClosed
                         ? `Reply window open — closes ${replyWindowExpiresAt(target)?.toLocaleString() ?? ""}.`
                         : "WhatsApp/Instagram only allow replies within 24 hours of the customer’s last message."}
                     </p>

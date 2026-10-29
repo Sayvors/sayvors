@@ -344,6 +344,13 @@ async def link_bridge(db, *, bridge: ChannelBridge, lead: Lead,
 
     await _carry_context(db, bridge, ig_lead, lead)
 
+    # Tapping the WhatsApp link and writing to us is the customer's explicit
+    # choice to be messaged on WhatsApp — that is the consent basis Meta asks
+    # for before any template. Recorded once; the first evidence wins.
+    from ...whatsapp_templates.service import record_opt_in
+
+    await record_opt_in(db, lead, source="instagram_bridge", message_id=None)
+
     bridge.used_at = _now()
     bridge.used_by_lead_id = lead.id
     logger.info(

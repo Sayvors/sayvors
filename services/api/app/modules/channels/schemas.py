@@ -113,6 +113,13 @@ class ThreadStateOut(BaseModel):
     # "human_reply". The UI uses it to say why the AI stopped.
     mode_changed_by: str | None = None
     context: ThreadContextOut | None = None
+    # Meta's 24h customer-service window. False means a free-form reply will be
+    # rejected and only an approved template can reach the customer.
+    reply_window_open: bool = False
+    # Consent basis for templates (NULL = none recorded).
+    opt_in_at: str | None = None
+    opt_in_source: str | None = None
+    opted_out: bool = False
 
 
 class ChannelMessageListResponse(BaseModel):

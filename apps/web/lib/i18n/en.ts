@@ -15,6 +15,7 @@ const en = {
     growth: "Growth",
     databank: "Databank",
     catalog: "Catalog",
+    templates: "Templates",
     connect: "Connect",
     channels: "Channels",
     manage: "Manage",

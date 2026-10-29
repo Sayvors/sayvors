@@ -152,6 +152,56 @@ def _clear_claim(action: LeadAction) -> None:
     action.claimed_at = action.claimed_until = action.claimed_by = None
 
 
+async def _send_window_template(db, action: LeadAction) -> bool:
+    """Send an approved zero-variable utility template for a closed window.
+
+    Zero variables on purpose: a follow-up nudge has no per-customer values to
+    fill, and inventing arguments for a template Meta approved with different
+    placeholders is how templates get rejected and numbers get flagged.
+
+    Returns True only when the template actually went out, so the caller keeps
+    the honest ``window_closed`` state otherwise.
+    """
+    from ...whatsapp_templates import service as templates
+
+    try:
+        eligible = await templates.eligible_templates(db, action.tenant_id)
+    except Exception as e:  # noqa: BLE001 - never break the batch
+        logger.warning("template lookup failed for action %s: %s", action.id, e)
+        return False
+
+    template = next((t for t in eligible if int(t.variables or 0) == 0), None)
+    if template is None:
+        return False
+
+    try:
+        row, _created = await templates.send_template(
+            db,
+            tenant_id=action.tenant_id,
+            channel_id=action.channel_id,
+            contact_phone=action.contact_id,
+            template_id=template.id,
+            variables=[],
+            sent_by=None,
+            idempotency_key=f"followup:{action.id}",
+        )
+    except ValueError as e:
+        # No consent / opted out / number gone: the follow-up is not allowed,
+        # and the caller records window_closed.
+        logger.info("follow-up template blocked for action %s: %s", action.id, e)
+        return False
+
+    if row.status != "sent":
+        action.last_error = (row.error or "")[:500]
+        return False
+
+    action.status = "sent"
+    action.sent_at = datetime.now(timezone.utc)
+    action.provider_message_id = (row.provider_message_id or "")[:200] or None
+    action.error_category = None
+    return True
+
+
 async def _process_action(db, action: LeadAction) -> None:
     """All decisions here are deterministic — this function contains no
     model/LLM imports and must never gain any."""
@@ -221,6 +271,11 @@ async def _process_action(db, action: LeadAction) -> None:
     # Meta free-form messaging window (24h from the customer's last
     # message) — centralized at the outbound send layer, never bypassed.
     if not window_open(guard[1] if guard else None):
+        # Outside the window only an approved template may be sent. If the
+        # tenant has one and the customer's consent is on record, the follow-up
+        # still reaches them instead of being dropped as ineligible.
+        if await _send_window_template(db, action):
+            return
         action.status = "ineligible"
         action.ineligible_reason = "window_closed"
         return

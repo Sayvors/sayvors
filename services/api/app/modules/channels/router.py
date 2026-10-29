@@ -639,13 +639,18 @@ async def inbox_thread_messages(
 
 
 async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> ThreadStateOut:
-    """Mode + newest summary for one thread.
+    """Mode, newest summary, window and consent for one thread.
 
     Both reads are indexed and bounded; a read failure degrades to the safe
     default (AI owns) rather than failing the whole thread view.
     """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import func
+
     from .conversation_context import latest
     from .conversation_mode import get_state
+    from .models import ChannelMessage, Lead
 
     state = await get_state(db, channel_id, phone)
     context = None
@@ -664,7 +669,57 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
         logger.warning(
             "thread context read failed channel=%s: %s", channel_id, e
         )
-    return ThreadStateOut(**state, context=context)
+
+    # Meta's window and the template consent basis. A failure here must not
+    # hide the thread: the fields simply read as "closed / no consent", which
+    # is the safe side for a send.
+    window_open = False
+    opt_in_at = opt_in_source = None
+    opted_out = False
+    try:
+        last_inbound = (
+            await db.execute(
+                select(func.max(ChannelMessage.created_at)).where(
+                    ChannelMessage.channel_id == channel_id,
+                    ChannelMessage.contact_phone_hash == hash_contact_phone(phone),
+                    ChannelMessage.direction == "inbound",
+                )
+            )
+        ).scalar()
+        if last_inbound is not None:
+            if last_inbound.tzinfo is None:
+                last_inbound = last_inbound.replace(tzinfo=timezone.utc)
+            window_open = (
+                datetime.now(timezone.utc) - last_inbound
+            ) < timedelta(hours=24)
+
+        lead = (
+            await db.execute(
+                select(Lead)
+                .where(Lead.channel_id == channel_id, Lead.contact_id == phone)
+                .order_by(Lead.created_at.asc())
+                .limit(1)
+            )
+        ).scalars().first()
+        if lead is not None:
+            opt_in_at = (
+                lead.whatsapp_opt_in_at.isoformat()
+                if lead.whatsapp_opt_in_at
+                else None
+            )
+            opt_in_source = lead.whatsapp_opt_in_source
+            opted_out = bool(lead.opt_out)
+    except Exception as e:  # noqa: BLE001 - see above
+        logger.warning("thread window/consent read failed channel=%s: %s", channel_id, e)
+
+    return ThreadStateOut(
+        **state,
+        context=context,
+        reply_window_open=window_open,
+        opt_in_at=opt_in_at,
+        opt_in_source=opt_in_source,
+        opted_out=opted_out,
+    )
 
 
 class ThreadModeUpdate(BaseModel):

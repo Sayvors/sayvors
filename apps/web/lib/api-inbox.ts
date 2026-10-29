@@ -61,6 +61,12 @@ export interface ThreadState {
   mode_changed_at: string | null;
   mode_changed_by: string | null;
   context: ThreadContext | null;
+  /** Meta's 24h customer-service window. False = only a template can be sent. */
+  reply_window_open?: boolean;
+  /** Consent basis for templates. Null means none recorded. */
+  opt_in_at?: string | null;
+  opt_in_source?: string | null;
+  opted_out?: boolean;
 }
 
 export interface InboxMessage {
