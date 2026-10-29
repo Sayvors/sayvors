@@ -261,6 +261,17 @@ async def test_profile_patch_roundtrip(client, db, user_id):
     assert body["business_doesnt_sell"] == "shampoo"
     assert body["business_description"] == "Charcoal grill spot"
 
+    # "Not set" must actually clear the column, not be dropped as "no change".
+    r = client.patch("/api/v1/profile", json={
+        "business_type": None,
+        "business_sells": None,
+    }, headers={"host": "localhost"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["business_type"] is None
+    assert body["business_sells"] is None
+    assert body["business_doesnt_sell"] == "shampoo"  # untouched by the patch
+
 
 async def _make_service(db, channel_id, name, category="Custom", offered=True):
     from app.modules.channels.models import BusinessService

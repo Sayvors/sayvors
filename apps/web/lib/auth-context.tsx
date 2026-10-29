@@ -13,6 +13,8 @@ interface User {
   email: string;
   email_verified: boolean;
   onboarded: boolean;
+  /** Effective profile picture; null when the user has none. */
+  avatar_url?: string | null;
   theme?: string;
   language?: string;
 }

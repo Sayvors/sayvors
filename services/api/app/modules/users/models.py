@@ -62,7 +62,27 @@ class User(Base):
     # Google identity (sign-in with Google). Non-NULL google_sub ⇒ the account
     # authenticates via Google; password_hash stays a random unusable value.
     google_sub: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
-    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # The effective avatar every surface renders. It mirrors the provider or
+    # upload URL selected in avatar_source; keeping it as one column means
+    # existing consumers (auth/me, admin, future email templates) never have
+    # to know where the picture came from.
+    avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Where the effective avatar comes from: google | facebook | upload | none.
+    # NULL means "never chosen" - the next provider sign-in may adopt its
+    # picture. An explicit choice (including "none") is never overwritten by a
+    # later sign-in, so a device upload survives Google/Facebook logins.
+    avatar_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Per-source snapshots. Provider URLs are refreshed on every sign-in;
+    # upload URLs are written by POST /profile/avatar. The source switcher
+    # reads these without a network round-trip to Google or Meta.
+    google_avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    facebook_avatar_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    avatar_upload_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Storage keys let a replacement delete the object it supersedes. They are
+    # internal only - never serialized.
+    avatar_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    cover_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Facebook identity (Continue with Facebook). Mirrors google_sub.
     facebook_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     # Account-wide country (ISO code) — display/defaults only, never listings.

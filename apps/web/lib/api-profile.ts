@@ -2,6 +2,8 @@
 
 import { apiFetch } from "./api-rag";
 
+export type AvatarSource = "google" | "facebook" | "upload" | "none";
+
 export interface Profile {
   id: string;
   first_name: string;
@@ -9,6 +11,16 @@ export interface Profile {
   email: string;
   email_verified: boolean;
   onboarded: boolean;
+  /** The effective picture rendered everywhere. */
+  avatar_url: string | null;
+  /** Where the effective picture comes from; null = never chosen. */
+  avatar_source: AvatarSource | null;
+  google_avatar_url: string | null;
+  facebook_avatar_url: string | null;
+  avatar_upload_url: string | null;
+  cover_url: string | null;
+  google_connected: boolean;
+  facebook_connected: boolean;
   bio: string | null;
   business_name: string | null;
   business_type: string | null;
@@ -62,6 +74,36 @@ export async function updateProfile(data: {
   country?: string | null;
 }): Promise<Profile> {
   return apiFetch("/api/v1/profile", { method: "PATCH", body: JSON.stringify(data) });
+}
+
+/**
+ * Upload a device photo. The API validates the bytes, stores it on the public
+ * media backend and makes it the effective avatar/cover in one round-trip.
+ */
+export async function uploadProfileImage(
+  kind: "avatar" | "cover",
+  file: File,
+): Promise<Profile> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch(`/api/v1/profile/${kind}`, { method: "POST", body: form });
+}
+
+/** Switch the effective avatar to one of the stored sources. */
+export async function setAvatarSource(source: AvatarSource): Promise<Profile> {
+  return apiFetch("/api/v1/profile/avatar-source", {
+    method: "PUT",
+    body: JSON.stringify({ source }),
+  });
+}
+
+/** Remove the current picture but keep the source snapshots for re-selection. */
+export async function removeAvatar(): Promise<Profile> {
+  return apiFetch("/api/v1/profile/avatar", { method: "DELETE" });
+}
+
+export async function removeCover(): Promise<Profile> {
+  return apiFetch("/api/v1/profile/cover", { method: "DELETE" });
 }
 
 export async function updatePreferences(theme: string, language: string): Promise<Profile> {

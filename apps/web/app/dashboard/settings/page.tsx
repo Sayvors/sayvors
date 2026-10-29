@@ -6,6 +6,8 @@ import Breadcrumbs from "@/components/Breadcrumbs";
 import LogoLoader from "@/components/LogoLoader";
 import { apiFetch } from "@/lib/api-rag";
 import { getProfile, updateProfile } from "@/lib/api-profile";
+import { COUNTRIES } from "@/lib/countries";
+import { BUSINESS_TYPES } from "@/lib/business-types";
 import LeadSettingsSection from "@/components/leads/LeadSettingsSection";
 import { disconnectMeta, fetchMetaConnections, type MetaConnection } from "@/lib/api-meta";
 
@@ -54,37 +56,6 @@ const FALLBACK_TONES: ToneOpt[] = [
   { code: "professional", label: "Professional", description: "formal and polished" },
   { code: "apologetic", label: "Apologetic", description: "extra empathetic" },
   { code: "playful", label: "Playful", description: "light and fun" },
-];
-
-const COUNTRIES: { code: string; name: string }[] = [
-  { code: "SA", name: "Saudi Arabia" },
-  { code: "AE", name: "United Arab Emirates" },
-  { code: "QA", name: "Qatar" },
-  { code: "KW", name: "Kuwait" },
-  { code: "BH", name: "Bahrain" },
-  { code: "OM", name: "Oman" },
-  { code: "EG", name: "Egypt" },
-  { code: "JO", name: "Jordan" },
-  { code: "LB", name: "Lebanon" },
-  { code: "SY", name: "Syria" },
-  { code: "IQ", name: "Iraq" },
-  { code: "YE", name: "Yemen" },
-  { code: "SD", name: "Sudan" },
-  { code: "LY", name: "Libya" },
-  { code: "TN", name: "Tunisia" },
-  { code: "DZ", name: "Algeria" },
-  { code: "MA", name: "Morocco" },
-  { code: "MR", name: "Mauritania" },
-  { code: "PS", name: "Palestine" },
-  { code: "US", name: "United States" },
-  { code: "GB", name: "United Kingdom" },
-  { code: "CA", name: "Canada" },
-  { code: "AU", name: "Australia" },
-  { code: "FR", name: "France" },
-  { code: "DE", name: "Germany" },
-  { code: "IN", name: "India" },
-  { code: "PK", name: "Pakistan" },
-  { code: "TR", name: "Türkiye" },
 ];
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -183,25 +154,6 @@ const inputCls = controlCls;
 // Tenant's own domain — what the company IS. The AI reads this (plus what
 // they sell / don't sell below) to answer "do you sell X?" factually and to
 // decline off-topic questions instead of hallucinating.
-const BUSINESS_TYPES = [
-  "Food & Restaurant",
-  "Cafe & Bakery",
-  "Retail & Shops",
-  "E-commerce",
-  "Pharmacy",
-  "Bank / Finance",
-  "AI / SaaS / Software",
-  "Agency",
-  "Healthcare & Clinics",
-  "Beauty & Salon",
-  "Gym & Fitness",
-  "Education",
-  "Media / Content",
-  "Professional Services",
-  "Non-profit",
-  "Other",
-];
-
 const ALL = "__all__";
 
 interface BulkFailed {

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db
 from . import business_profile, service
 from .schemas import (
+    AvatarSourceUpdateRequest,
     BusinessProfileResponse,
     BusinessProfileUpdateRequest,
     FeedbackRequest,
@@ -37,6 +38,93 @@ async def patch_profile(
         return await service.update_profile(
             user.id, body.model_dump(exclude_unset=True), db
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/avatar", response_model=ProfileResponse)
+async def upload_avatar(
+    request: Request,
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a device photo and make it the effective avatar.
+
+    The upload is stored on the same public media backend as post photos, so
+    the URL works from the web app, email and any future native client.
+    """
+    try:
+        # Read one byte past the limit: a 1 GB body must never be buffered in
+        # memory just to be rejected afterwards.
+        data = await file.read(service.AVATAR_MAX_BYTES + 1)
+        return await service.save_profile_image(
+            user.id,
+            "avatar",
+            file.filename or "avatar",
+            file.content_type,
+            data,
+            str(request.base_url),
+            db,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/cover", response_model=ProfileResponse)
+async def upload_cover(
+    request: Request,
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a device photo as the profile cover image."""
+    try:
+        data = await file.read(service.COVER_MAX_BYTES + 1)
+        return await service.save_profile_image(
+            user.id,
+            "cover",
+            file.filename or "cover",
+            file.content_type,
+            data,
+            str(request.base_url),
+            db,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/avatar-source", response_model=ProfileResponse)
+async def put_avatar_source(
+    body: AvatarSourceUpdateRequest,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch between the Google, Facebook and device profile pictures."""
+    try:
+        return await service.update_avatar_source(user.id, body.source, db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/avatar", response_model=ProfileResponse)
+async def delete_avatar(
+    user=Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    """Remove the current picture; provider/upload snapshots stay available."""
+    try:
+        return await service.update_avatar_source(user.id, "none", db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/cover", response_model=ProfileResponse)
+async def delete_cover(
+    user=Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    """Remove the cover image and delete the stored object."""
+    try:
+        return await service.remove_cover(user.id, db)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
