@@ -301,11 +301,19 @@ def _handoff_context(match) -> str | None:
         return None
 
 
-def _system_prompt(user, platform: str = "WhatsApp") -> str:
-    """Assistant prompt grounded in the tenant's business profile."""
+def _system_prompt(
+    user, platform: str = "WhatsApp", voice_enabled: bool = False
+) -> str:
+    """Assistant prompt grounded in the tenant's business profile.
+
+    ``voice_enabled`` is the WhatsApp voice tier, already resolved by the
+    caller. The model may only offer a voice note when the pipeline can
+    actually send one; promising it on a text-only account is a lie the
+    customer discovers immediately.
+    """
     name = (user.business_name or f"{user.first_name} {user.last_name}").strip()
     lines = [
-        f"You are the AI customer assistant for {name}, replying on {platform}.",
+        f"You are the customer assistant for {name}, replying on {platform}.",
     ]
     if user.business_description:
         lines.append(f"About the business: {user.business_description}")
@@ -317,6 +325,18 @@ def _system_prompt(user, platform: str = "WhatsApp") -> str:
         f"Style: you are a real human agent chatting on {platform} — warm, "
         "brief, 1 to 3 short sentences, plain text, no markdown. Vary your "
         "wording; never repeat the same explanation twice.",
+        # Identity: the customer is talking to the business, not to a
+        # product. The model must never volunteer that it is software, and
+        # must never describe the channel as text-only — the WhatsApp
+        # pipeline sends voice notes whenever the tenant's voice tier
+        # allows it, so "I can only send text" is both false and off-brand.
+        "Never describe yourself as a bot, chatbot, AI, virtual assistant, "
+        "automation, or a text-based system, and never say you can only "
+        "send text or cannot send voice notes. You are a member of the "
+        "team chatting on this channel.",
+        "If the customer asks directly whether you are a bot or an AI, "
+        "answer honestly in one short sentence, then return to helping "
+        "them. Never volunteer it.",
         "Every reply moves the chat forward: after answering, ask ONE short "
         "question that helps the customer — e.g. 'What are you looking to "
         "build?', 'What's your budget?', 'What features do you need?'. A "
@@ -350,16 +370,24 @@ def _system_prompt(user, platform: str = "WhatsApp") -> str:
         "If the request is outside what we offer: acknowledge it kindly in "
         "one short sentence, then pivot to what we CAN do and ask what "
         "they need. Do not lecture about what the company is.",
-        "If the customer seems frustrated or confused: acknowledge it, "
-        "simplify, and offer to explain by voice note.",
         "If the customer is clearly saying goodbye, a short warm sign-off "
         "is fine without a question.",
         "Language: reply in the language the customer wrote in "
         "(Arabic or English; match their script exactly).",
         "Never invent prices, stock, opening hours or policies you were "
         "not given — say you will confirm with the team and follow up here.",
-        "Do not mention that you are an AI unless the customer asks directly.",
     ]
+    if voice_enabled:
+        lines.append(
+            "If the customer seems frustrated or confused: acknowledge it, "
+            "simplify, and offer to explain by voice note."
+        )
+    else:
+        lines.append(
+            "If the customer seems frustrated or confused: acknowledge it "
+            "and simplify. Do not offer a voice note — voice replies are "
+            "not enabled on this account."
+        )
     # Platform ground truth about contact details.
     if platform == "WhatsApp":
         lines.append(
@@ -462,10 +490,21 @@ async def _generate_reply(
     # without a second LLM request.
     from .lead_engine import LEAD_PROMPT_BLOCK
 
+    # Voice is a WhatsApp capability only: the Instagram adapter has text
+    # and typing, so offering a voice note there would be a dead promise.
+    from .voice import normalize_voice_tier
+
+    voice_enabled = (
+        platform == "WhatsApp"
+        and normalize_voice_tier(user.voice_replies) != "off"
+    )
+
     resp = await complete(
         model=model_id,
         messages=history,
-        system_prompt=_system_prompt(user, platform=platform)
+        system_prompt=_system_prompt(
+            user, platform=platform, voice_enabled=voice_enabled
+        )
         + (f"\n\n{business_card}" if business_card else "")
         + (f"\n\n{context}" if context else "")
         + f"\n\n{LEAD_PROMPT_BLOCK}",
@@ -699,21 +738,15 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             stats.get("confused"), stats.get("awaiting_user"),
         )
 
-        # Handover: if the counter above just promoted this thread to
-        # 'important', the AI stops answering it. The holding line goes out
-        # once (guarded by handover_sent_at) and any queued nudges are
-        # cancelled, so nothing fires into a silent thread. The 24h resume
-        # sweep hands it back if no human picks it up.
-        from .lead_escalation import escalate_to_human, should_ai_reply
-
-        if inbound_lead is not None and not should_ai_reply(inbound_lead):
-            await escalate_to_human(db, inbound_lead, adapter, phone_number_id, token)
-            await db.commit()
-            logger.info(
-                "WhatsApp AI handover: thread escalated to a human wamid=%s from=+%s",
-                wamid[:32], from_wa[-6:],
-            )
-            return
+        # Escalation and the review handoff both decide whether the AI may
+        # speak. Resolve a quoted handoff code FIRST: it is an explicit
+        # request about an existing ticket, and the escalation mute used to
+        # swallow it before this lookup ever ran (BUG-2).
+        from .lead_escalation import (
+            escalate_to_human,
+            resume_lead,
+            should_ai_reply,
+        )
 
         # Review -> WhatsApp handoff. A returning customer who quotes a code we
         # put in a public review reply should NOT be re-interviewed about
@@ -749,6 +782,14 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             handoff_match = None
 
         if handoff_match is not None:
+            # A code is the customer asking about a known ticket, not another
+            # repeat question. Return the thread to the AI before replying so
+            # neither this answer nor the next inbound is muted by a stale
+            # escalation (BUG-2).
+            if inbound_lead is not None and not should_ai_reply(inbound_lead):
+                resume_lead(inbound_lead, reason="handoff_code")
+                await db.commit()
+
             from ...review_engine.handoff import (
                 is_status_check,
                 short_circuit_reply,
@@ -813,6 +854,22 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 })
                 await _publish_typing(tenant_id, channel.id, from_wa, False)
                 return
+
+        # Handover: if the counter above promoted this thread to 'important',
+        # the AI stops answering it. The holding line goes out once (guarded
+        # by handover_sent_at) and any queued nudges are cancelled, so nothing
+        # fires into a silent thread. A matched handoff code never reaches
+        # here muted — the branch above resumed the thread.
+        if inbound_lead is not None and not should_ai_reply(inbound_lead):
+            await escalate_to_human(
+                db, inbound_lead, adapter, phone_number_id, token
+            )
+            await db.commit()
+            logger.info(
+                "WhatsApp AI handover: thread escalated to a human "
+                "wamid=%s from=+%s", wamid[:32], from_wa[-6:],
+            )
+            return
 
         try:
             raw_reply = await _generate_reply(

@@ -140,12 +140,12 @@ class ChannelMessage(Base):
     is_ai: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0", nullable=False
     )
-    # Who handled this message: human / ai / unknown (old rows). Drives the
-    # AI-performance split in analytics (deflection framing). Set at write
-    # time by the consumer (ai) and inbox reply endpoints (human); never
-    # inferred from text.
+    # Who handled this message: human / ai / system / unknown (old rows).
+    # Drives the AI-performance split in analytics (deflection framing). Set
+    # at write time by the consumer (ai), inbox reply endpoints (human) and
+    # the escalation handover line (system); never inferred from text.
     handled_by: Mapped[str] = mapped_column(
-        Enum("human", "ai", "unknown", name="message_handled_by"),
+        Enum("human", "ai", "system", "unknown", name="message_handled_by"),
         default="unknown",
         server_default="unknown",
         nullable=False,
