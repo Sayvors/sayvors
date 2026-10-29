@@ -93,6 +93,11 @@
     word-break: break-all;
   }
   .path { color: var(--fg2); }
+  pre {
+    margin: 10px 0 14px; padding: 12px 14px; background: var(--sunken);
+    border: 1px solid var(--line); border-radius: 10px; overflow-x: auto;
+  }
+  pre code { background: none; padding: 0; }
 
   /* Sticky header */
   .top {
@@ -181,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn">5 findings open (2 audit · 3 INS) · 2 server CVEs · 36 resolved · billing new · gcp new</span> <span class="chip ok">deps: 55/55 closed</span>
+  <span class="chip warn">5 findings open (2 audit · 3 INS) · 2 server CVEs · 36 resolved · billing new · gcp new · handoff ledger 15 (11 fixed, 4 open)</span> <span class="chip ok">deps: 55/55 closed</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -191,6 +196,7 @@
     <a href="#dependencies">Deps</a>
     <a href="#sec-audit-2026-10-26">Sec audit</a>
     <a href="#gcp-mvp">GCP</a>
+    <a href="#handoff">Handoff</a>
     <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
@@ -203,14 +209,15 @@
 
 <div class="verdict">
   <p><strong>Most of the audit is closed — 32 of the 34 findings in the original ledger are resolved; 2 remain open (OPS-1, OPS-4).</strong> Counting the Oct 25 INS pass, 36 of 41 code findings are closed and 5 remain; the two server-image CVEs (Redis 7, Kafka 3.8) are separate and still open. Multi-tenant isolation held up under an adversarial pass — not one missing tenant filter was found across every router. Auth internals are genuinely solid. The unified job-processing design in the repo is enterprise-grade and approved after four review rounds. What still stands between here and 1M users is a short list: no rehearsed backup, one box carrying everything, and a production host that has not been stood up.</p>
-  <p>A separate <strong>billing &amp; plans</strong> workstream is now tracked in <a href="#billing">§6b</a>. The wallet hotfix and the durable spend ledger are on <code>development</code> (<code>390ee95</code>); plan entitlements are the next build. It is not counted in the 32/2 audit ledger.</p>
+  <p>A separate <strong>billing &amp; plans</strong> workstream is now tracked in <a href="#billing">§6b</a>. The wallet hotfix, durable spend ledger, five plans, admin plan CRUD, entitlements service and enforcement at channel-connect / message-send / LLM are deployed to staging (<code>d82d800</code>, 2026-10-28). It is not counted in the 32/2 audit ledger.</p>
+  <p>A third workstream opened on 2026-10-29: <a href="#handoff">conversation control &amp; Instagram &rarr; WhatsApp handoff</a>. It carries 15 items plus a deferred calling decision (WebRTC-based, not started). It is product work, not an audit finding, and is not counted in the 32/2 ledger either. <strong>11 of the 15 are fixed on <code>development</code></strong>: BUG-1/2/3, HAND-1, HAND-2, HAND-3, HAND-4, HAND-6, HAND-7, HAND-8 and HAND-9. The escalated-thread mute no longer re-arms, a quoted handoff code reaches the AI, the handover line is persisted and visible in the inbox, the Instagram DM hands over a real <code>wa.me</code> link that merges the two identities and carries the context, the prompt no longer presents itself as a text-based bot, the conversation has a real AI/human mode with a switch and a resolve path, the thread keeps a stored context that both sides read, the assistant quotes catalog prices/stock and sends item photos with a public catalog page, customer replies are grounded in the databank per message, and the 24h window is covered by synced templates with a recorded consent basis. 4 items remain open.</p>
 </div>
 
 <div class="stats">
   <div class="stat"><div class="n calm">32</div><div class="l">of 34 original audit findings <strong>resolved</strong> — SEC 11 · SCALE 6 · OPS 3 · ANL 12; ML-1/BULK-1 are §4 work items, not ledger rows</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), OPS-4 (prod host + SHA-pinned deploys)</div></div>
-  <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM in <code>development</code> (not on <code>staging</code> yet); plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
-  <div class="stat"><div class="n calm">1,619</div><div class="l">backend tests passing locally (4 skipped) — CI gates every staging deploy on them</div></div>
+  <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
+  <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3, INS-4, INS-5 (INS-1, INS-2, INS-6, INS-7 fixed)</div></div>
 </div>
 
@@ -298,7 +305,7 @@
     <tr><td class="num">SEC-H3</td><td><span class="chip ok">Fixed</span></td><td><strong>WebSocket auth skips revocation.</strong> <strong>Fixed:</strong> on-connect blacklist + <code>token_version</code> + suspension checks. Periodic re-check in heartbeat (every 25s). One-time ticket endpoint (<code>POST /api/v1/inbox/ws-ticket</code>) moves token off URL. See <code>docs/security/websocket-auth.md</code>.</td><td class="path">channels/router.py:383-520</td><td>Done — on-connect + periodic + one-time ticket. Token no longer rides URL.</td><td class="num"><span class="chip ok">Done</span></td></tr>
     <tr><td class="num">SCALE-2</td><td><span class="chip ok">Fixed</span></td><td><strong>Unindexed <code>platform_message_id</code>.</strong> <strong>Fixed:</strong> added <code>index=True</code> to model + migration <code>c1d2e3f4a5b6</code> creating partial unique index <code>ix_channel_messages_platform_message_id ON channel_messages (platform_message_id) WHERE platform_message_id IS NOT NULL</code>. Dedupe query goes from O(N) full scan to O(log N) index lookup.</td><td class="path">channels/models.py:87; channels/meta/consumer.py:546, 1093, 1159, 1266, 1318, 1583, 1692</td><td>Done — partial unique index created. NULL values allowed (multiple NULLs OK in Postgres).</td><td class="num"><span class="chip ok">Done</span></td></tr>
     <tr class="good"><td class="num">SCALE-3</td><td><span class="chip ok">Fixed</span></td><td><strong>Inbox N+1: up to ~1,500 queries per dashboard load.</strong> <strong>Fixed:</strong> (1) composite index <code>ix_channel_messages_inbox</code>; (2) batched per-thread queries (2 queries instead of 1+4N); (3) cursor pagination; (4) denormalized <code>channel_threads</code> summary table maintained by SQLAlchemy event listeners on <code>ChannelMessage</code> — non-search inbox now reads in a single query. Migration includes a backfill from existing messages.</td><td class="path">channels/models.py (ChannelThread); channels/service.py (list_inbox_threads); channels/thread_maintenance.py; alembic j5k6l7m8n9o0</td><td>Done — denormalized thread table + event listeners + inbox rewrite. Search is a bounded newest-first scan (5,000 messages, <code>ix_channel_messages_channel_created</code>) because bodies are encrypted at rest — never a full-history load. A late or backfilled outbound message no longer clears newer unread messages. <code>scripts/rebuild_channel_threads.py</code> repairs summary drift.</td><td class="num"><span class="chip ok">Done</span></td></tr>
-    <tr><td class="num">OPS-3</td><td><span class="chip ok">Fixed</span></td><td><strong>CI runs no tests.</strong> <strong>Fixed:</strong> <code>ci.yml</code> runs pytest (real Postgres + Redis), tsc, ESLint before image builds. <code>deploy-staging.yml</code> gated on CI pass via ci-gate (GH_TOKEN + checks:read + multi-check jq). 1,619 tests pass (4 skipped). Deploys still manual SSH (compose/Caddyfile changes need manual git pull).</td><td class="path">.github/workflows/ci.yml, deploy-staging.yml</td><td>Done — CI test gating + deploy gate in place.</td><td class="num"><span class="chip ok">Done</span></td></tr>
+    <tr><td class="num">OPS-3</td><td><span class="chip ok">Fixed</span></td><td><strong>CI runs no tests.</strong> <strong>Fixed:</strong> <code>ci.yml</code> runs pytest (real Postgres + Redis), tsc, ESLint before image builds. <code>deploy-staging.yml</code> gated on CI pass via ci-gate (GH_TOKEN + checks:read + multi-check jq). 1,645 tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres). CI runs Python 3.11, which evaluates annotations eagerly; the resulting NameErrors and the tests that silently read the developer's <code>.env</code> are fixed in <code>e18aeee</code>. Deploys still manual SSH (compose/Caddyfile changes need manual git pull).</td><td class="path">.github/workflows/ci.yml, deploy-staging.yml</td><td>Done — CI test gating + deploy gate in place.</td><td class="num"><span class="chip ok">Done</span></td></tr>
     <tr><td class="num">OPS-4</td><td><span class="chip warn">Med</span></td><td><strong>Deployed topology is stale.</strong> <strong>Partially resolved:</strong> staging merged forward regularly. <code>RUN_BACKGROUND_WORKERS=false</code> set. Worker split deployed. <strong>Fixed:</strong> extended <code>validate_production_settings()</code> to reject localhost in <code>FRONTEND_URL</code>, <code>GOOGLE_REVIEWS_REDIRECT_URI</code>, <code>META_OAUTH_REDIRECT_URI</code>, <code>CORS_ORIGINS</code>, and <code>CORS_ORIGIN_REGEX</code>. <strong>Fixed:</strong> <code>run_lead_action_worker</code> now registered in API lifespan (was worker-only). Remaining: pin deploy images to commit SHA tags (not mutable <code>:staging</code>), stand up prod host in Caddy.</td><td class="path">config.py:248-285; main.py lifespan</td><td>Startup gate now rejects localhost redirect URIs. Lead action worker runs in dev mode. Remaining: prod host + pinned SHA deploy tags.</td><td class="num">~half day remaining</td></tr>
      <tr class="good"><td class="num">OPS-5</td><td><span class="chip ok">Fixed</span></td><td><strong>Fresh provision was missing three live tables.</strong> Migration <code>62cb82f2dc52</code> ("add api_url to llm_model_configs") carried autogenerated <code>drop_table</code> calls for <code>location_profiles</code>, <code>localith_connections</code> and <code>location_posts</code>. A database provisioned from migrations alone returned 500 for locations, Localith sync and the posts feed; the development database masked it because its tables were created out of band. A head repair migration (<code>d5e6f7a8b9c0d1</code>) recreates any missing table from the current models; the historical migration is untouched.</td><td class="path">alembic/versions/62cb82f2dc52_add_api_url_to_llm_model_configs.py; alembic/versions/d5e6f7a8b9c0d1_restore_dropped_location_tables.py</td><td>Done — repair migration is idempotent; a full <code>alembic upgrade head</code> on an empty Postgres now completes and the three routers have their tables.</td><td class="num"><span class="chip ok">Done</span></td></tr>
   </table></div>
@@ -671,7 +678,7 @@
     <tr><td><code>plans</code></td><td>Catalog the sellable plans (admin-managed).</td><td><code>id</code>, <code>slug</code> (unique), <code>name</code>, <code>price_cents</code>, <code>included_credit_cents</code>, <code>max_channels</code> (nullable = unlimited), <code>max_messages_per_month</code> (nullable), <code>features</code> (JSONB), <code>is_active</code>, <code>sort_order</code></td></tr>
     <tr><td><code>tenant_subscriptions</code></td><td>One active subscription per tenant; history retained via status.</td><td><code>tenant_id</code> (unique), <code>plan_id</code> (FK), <code>status</code> (active/trialing/canceled/expired), <code>period_start</code>, <code>period_end</code>, <code>granted_by</code>, <code>granted_until</code> (promo override expiry)</td></tr>
   </table></div>
-  <p>The request path must never branch on a plan string. A single <strong>entitlements service</strong> resolves the active subscription to a plan, then exposes <code>get_entitlements(tenant_id) -&gt; Entitlements</code>. <em>Entitlements enforcement at the write paths (AI reply, channel connect, message send) is the next build step.</em></p>
+  <p>The request path must never branch on a plan string. A single <strong>entitlements service</strong> resolves the active subscription to a plan, then exposes <code>get_entitlements(tenant_id) -&gt; Entitlements</code>. <em>Entitlements enforcement is implemented at channel connect, message send and LLM calls, and is live on staging.</em></p>
 
   <h3>Plans (implemented, 2026-10-27)</h3>
   <div class="scroll"><table>
@@ -1553,8 +1560,196 @@
   <p class="note">The owner’s sizing choice trades peak headroom for cost — the correct lever is <strong>plan-level daily message quotas</strong> (load capped by billing, not by infra) plus a queue-depth alert so “workers saturated” is seen before tenants feel it. Two honest caveats. (1) At full 1M saturation the <strong>LLM API bill dwarfs this entire table</strong>; negotiate model pricing before infra. (2) These are planning figures; §11 fix-queue row 13 (k6 load test) is what converts them from estimates to facts. Path from MVP to here is strictly: resize DB → split worker lanes → flip on replicas/HA — the order the outgrow-list already implies.</p>
 </section>
 
+<section id="handoff">
+  <div class="eyebrow">&sect;&sect; 17 - Conversation control &amp; handoff - 2026-10-29</div>
+  <h2>Instagram &rarr; WhatsApp, conversation modes, catalog/databank, named agents</h2>
+  <p>This section exists because a demo reel showed a flow we do not run: Instagram DM &rarr; ask for WhatsApp &rarr; send the catalog &rarr; voice notes in Arabic &rarr; a call &rarr; handoff to a named agent. The messaging half is real. The bridge, the catalog send, the call and the named handoff are not. Below is the honest beat-by-beat, then the ledger we work from.</p>
+
+  <h3>What the reel shows vs what the code does</h3>
+  <div class="scroll"><table>
+    <tr><th>Reel beat</th><th>Sayvors today</th><th>Status</th></tr>
+    <tr><td>IG DM arrives, AI replies in seconds</td><td><code>_handle_instagram_message</code> persists the DM, sends typing dots, generates a reply through the parent Page token, supports multi-part rendering.</td><td><span class="chip ok">Works</span></td></tr>
+    <tr><td>"What's your WhatsApp number?"</td><td>The AI asks once and <code>lead_engine</code> extracts the number deterministically and via the LLM, validating E.164.</td><td><span class="chip ok">Works</span></td></tr>
+    <tr><td>"Catalog is on its way to your WhatsApp"</td><td>The customer moves over on a <code>wa.me</code> link, the assistant quotes catalog items/prices/stock in-chat, sends an item photo on request, and the tenant can share a public catalog page. A bulk "send the whole catalog" drop is still not implemented.</td><td><span class="chip warn">Partial</span></td></tr>
+    <tr><td>Contact created, context carried over</td><td>The bridge merges the Instagram lead into the WhatsApp lead and writes a <code>cross_channel</code> context, so the WhatsApp prompt opens with the Instagram request and summary.</td><td><span class="chip ok">Works</span></td></tr>
+    <tr><td>Arabic WhatsApp voice note &rarr; transcribed</td><td><code>stt</code> module (faster-whisper) downloads the audio, transcribes, replies.</td><td><span class="chip ok">Works</span></td></tr>
+    <tr><td>Arabic voice reply</td><td><code>send_voice_note</code> + TTS, gated by the per-user voice tier (<code>off|simple|advanced</code>).</td><td><span class="chip ok">Works</span></td></tr>
+    <tr><td>IG voice notes</td><td>Any IG message without <code>text</code> is stored as <code>[non-text message]</code> - no download, no STT.</td><td><span class="chip crit">Missing</span></td></tr>
+    <tr><td>"Qualified: wholesale"</td><td>Intent enum is <code>buying|booking|quote|info</code>; "wholesale" has no home, and <code>stage</code> flips to <code>qualified</code> on any intent.</td><td><span class="chip warn">Partial</span></td></tr>
+    <tr><td>Call answered by Astra, summary logged</td><td>No call code at all - no Calling API, no media stack, no call object.</td><td><span class="chip crit">Missing</span></td></tr>
+    <tr><td>Handed to Emma</td><td>Escalation exists (holding line, AI silence, reminder sweep, resume window) but it is a flag, not an assignment: <code>handled_by</code> is <code>human|ai|unknown</code>, no assignee, no routing.</td><td><span class="chip warn">Partial</span></td></tr>
+  </table></div>
+
+  <h3>The ledger</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Sev</th><th>Finding</th><th>Fix</th><th>Effort</th></tr>
+    <tr><td class="num">HAND-1 <span class="chip ok">Fixed</span></td><td><span class="chip crit">Crit</span></td><td><strong>No Instagram &rarr; WhatsApp move.</strong> A captured <code>lead.phone_number</code> went nowhere; the <code>wa.me</code> helpers were wired only to review handoff.</td><td>Done (Route A): a validated number in an IG DM mints a single-use <code>channel_bridges</code> row and the bot DMs <code>https://wa.me/&lt;our number&gt;?text=SV-XXXXXX</code> once. The first WhatsApp inbound is matched by the token or by the captured phone, the bridge is consumed, and the two leads merge. Nothing is sent business-initiated, so no template and no 24h-window problem.</td><td class="num">2 days</td></tr>
+    <tr><td class="num">HAND-2 <span class="chip ok">Fixed</span></td><td><span class="chip high">High</span></td><td><strong>No business-initiated WhatsApp.</strong> Outside the 24h window nothing could be sent; there was no <code>type: template</code> path and no consent record, so a follow-up after a quiet day simply failed.</td><td>Done: <code>whatsapp_templates</code> mirrors the WABA's templates (sync from Meta, status/variables/body), <code>template_sends</code> records every attempt with its consent basis and an idempotency key, and <code>leads.whatsapp_opt_in_*</code> stores the basis (the Instagram handoff records it automatically; an operator can record or revoke it). Sends are gated on approved status, exact variable count and consent; a closed-window follow-up now falls back to an approved zero-variable utility template instead of being marked ineligible. Dashboard <b>Templates</b> page syncs and shows status; the inbox replaces the dead composer with a template picker when the window is closed. Approval itself happens in WhatsApp Manager — that part is Meta's review, not code.</td><td class="num">3 days + Meta review</td></tr>
+    <tr><td class="num">HAND-3 <span class="chip ok">Fixed</span></td><td><span class="chip crit">Crit</span></td><td><strong>No cross-channel identity.</strong> IG lead keyed by IGSID, WhatsApp lead keyed by phone: two rows, two threads, no shared history.</td><td>Done: consuming a bridge copies the Instagram lead's known fields into the WhatsApp lead (never overwriting), marks the Instagram row <code>merged_into_id</code> and stops it escalating, and writes a <code>cross_channel</code> context for the WhatsApp thread (Instagram request + stored summary). The list and digest exclude merged rows. Both threads stay readable.</td><td class="num">1 day</td></tr>
+    <tr><td class="num">HAND-4 <span class="chip ok">Fixed</span></td><td><span class="chip crit">Crit</span></td><td><strong>AI identity and channel policy.</strong> The prompt introduced the model as an "AI customer assistant" and offered a voice note on accounts where voice is off - both read as a bot and the second promises a capability the pipeline does not have.</td><td>Done: the prompt opens as "the customer assistant for &lt;business&gt;", forbids describing itself as a bot/AI/automation/text-based system, and only offers a voice note when the WhatsApp voice tier is not <code>off</code>; Instagram gets the explicit "do not offer voice" line because that adapter has text and typing only. The off-platform "I'll send it to your WhatsApp" promise stays forbidden until HAND-1 can actually deliver.</td><td class="num">0.5 day</td></tr>
+    <tr><td class="num">HAND-5</td><td><span class="chip med">Med</span></td><td><strong>Lead labels are not canonical.</strong> "Wholesale" cannot be expressed; <code>qualified</code> means "said something", not "sales-qualified".</td><td>Taxonomy <code>wholesale|retail|booking|quote|support|info</code>, per-tenant stage rules, and the same label in inbox, lead card, digest and escalation email.</td><td class="num">1 day</td></tr>
+    <tr><td class="num">HAND-6 <span class="chip ok">Fixed</span></td><td><span class="chip crit">Crit</span></td><td><strong>No catalog.</strong> The AI could not quote a price, check stock, or send an item.</td><td>Done: <code>catalog_items</code> + tenant-scoped CRUD, a per-message catalog block in the reply prompt (price, currency, stock, availability note, id), a <code>SEND_ITEM</code> marker that makes WhatsApp send the item photo, and a public share page at <code>/catalog/&lt;token&gt;</code> (32-char token, create/rotate/revoke, active items only, no ids). The WhatsApp hub's <b>Catalog</b> tab manages items, the link and the grounding switch.</td><td class="num">3-4 days</td></tr>
+    <tr><td class="num">HAND-7 <span class="chip ok">Fixed</span></td><td><span class="chip high">High</span></td><td><strong>The databank was owner-only.</strong> <code>rag.Databank</code> was read by the owner assistant; customer-facing replies only got the distilled profile card, never a retrieval for the question asked.</td><td>Done: <code>rag/grounding.py</code> retrieves the matching chunks per inbound (tenant-scoped, optional linked databank, 4 passages / 1400 chars) under a 2.5s timeout, injects them as DATA with a cite-or-say-unknown rule, and never raises into the reply. The switch is on the WhatsApp hub's Catalog tab and applies to every connected messaging number (<code>auto_reply_configs.databank_grounding</code>).</td><td class="num">2-3 days</td></tr>
+    <tr><td class="num">HAND-8 <span class="chip ok">Fixed</span></td><td><span class="chip crit">Crit</span></td><td><strong>No conversation mode.</strong> No <code>ai|human</code> column. <code>priority=important</code> was the only "a human owns this" signal, and it was a one-way mute with no control in the UI.</td><td>Done: <code>channel_threads.conversation_mode</code> (<code>ai|human</code>) plus <code>mode_changed_at/by</code> is the single mute, and <code>should_ai_reply()</code> reads it. The inbox has an AI/Human switch at the top of the thread, a Resolve action, and auto-switch to human on any human outbound or automatic escalation. Every explicit transition zeroes <code>ai_miss_count</code> and clears the escalation clock; the resume sweep only reverses mutes it armed itself (<code>mode_changed_by="system"</code>) and leaves a person's takeover alone. Instagram reads the same flag.</td><td class="num">2 days</td></tr>
+    <tr><td class="num">HAND-9 <span class="chip ok">Fixed</span></td><td><span class="chip high">High</span></td><td><strong>No stored conversation context.</strong> The AI rebuilt from the raw message window every turn; humans got no summary and a long or resumed thread re-asked answered questions.</td><td>Done: <code>conversation_contexts</code> stores an encrypted summary, written on mode change, resolve, escalation and every 12 new messages. The newest row is injected into the reply prompt as data (never instructions) and shown as a collapsible card in the thread with its reason, age and message count. Deleting a thread deletes its summaries.</td><td class="num">2 days</td></tr>
+    <tr><td class="num">HAND-10</td><td><span class="chip med">Med</span></td><td><strong>Handoff is not an assignment.</strong> No assignee, no routing, no presence, no "mine" filter.</td><td><code>assigned_to</code> + team-member picker + notify the assignee + inbox filter "mine"; optional round-robin by channel.</td><td class="num">2 days</td></tr>
+    <tr><td class="num">HAND-11</td><td><span class="chip med">Med</span></td><td><strong>No cumulative memory.</strong> Nothing writes a resolved conversation back into the databank, so the AI does not get smarter from outcomes.</td><td>On resolve, store summary + outcome + approved facts; PII-scrub; make them retrievable; tenant toggle and a review queue.</td><td class="num">2 days</td></tr>
+    <tr><td class="num">BUG-1 <span class="chip ok">Fixed</span></td><td><span class="chip crit">Crit</span></td><td><strong>An escalated thread never came back to the AI.</strong> <code>should_ai_reply</code> is False while <code>priority=important</code>; resume needs <code>priority_since</code> + <code>escalation_resume_hours</code>; and <code>ai_miss_count</code> was <em>never reset on resume</em>, so the next inbound re-escalated instantly.</td><td>Done: <code>resume_lead()</code> is the single exit path back to AI - it zeroes <code>ai_miss_count</code>, clears <code>priority_since</code>/<code>escalation_reminder_at</code>/<code>handover_sent_at</code> and logs the reason. The resume sweep and the de-escalation branch both go through it. Regression tests cover "escalate &rarr; resume &rarr; inbound &rarr; normal miss" and the handoff-code path.</td><td class="num">0.5 day</td></tr>
+    <tr><td class="num">BUG-2 <span class="chip ok">Fixed</span></td><td><span class="chip high">High</span></td><td><strong>A handoff code was ignored while escalated.</strong> The escalation gate returned before <code>resolve_and_advance</code>, so quoting a code from a public review reply hit the mute.</td><td>Done: handoff resolution runs before the escalation gate. A matched code calls <code>resume_lead(reason="handoff_code")</code> and answers normally; the gate only fires when no code matched. Integration test drives the real consumer with an escalated lead and a quoted code.</td><td class="num">0.5 day</td></tr>
+    <tr><td class="num">BUG-3 <span class="chip ok">Fixed</span></td><td><span class="chip high">High</span></td><td><strong>The handover line was invisible.</strong> <code>send_handover</code> sent through the adapter without persisting a <code>ChannelMessage</code>, so the inbox, digest and counter never saw it.</td><td>Done: <code>_persist_handover()</code> stores it as an outbound row with <code>is_ai=False</code> and <code>handled_by="system"</code> (migration <code>29fc7b3bb4ae</code>) and publishes the realtime inbox event. A persistence failure is logged but does not reopen the send - the customer already has the message.</td><td class="num">0.5 day</td></tr>
+    <tr class="warn"><td class="num">BUG-4</td><td><span class="chip high">High</span></td><td><strong>No escalation clock in the UI.</strong> <code>priority_since</code>, <code>escalation_reminder_at</code> and the resume window are stored but never surfaced; there is no "hand back to AI".</td><td>Countdown chip on the thread + "resume now" action with a reason.</td><td class="num">1 day</td></tr>
+    <tr><td class="num">CALL-1</td><td><span class="chip low">Deferred</span></td><td><strong>WhatsApp calling.</strong> No call code, no media stack.</td><td>Buy, do not build. See the calling note below.</td><td class="num">3-6 weeks</td></tr>
+  </table></div>
+
+  <h3>How the Instagram &rarr; WhatsApp move works</h3>
+  <p>The constraint that decides the design: WhatsApp Cloud API will not let you send a free-form message to a number you picked up in an Instagram chat. Business-initiated messages need an approved template plus recorded opt-in. So there are two compliant routes, and they ship in order.</p>
+  <div class="cards2">
+    <div class="card">
+      <h3>Route A - click-to-chat (ship first)</h3>
+      <ol>
+        <li>In the IG DM the AI asks for the number and explicit consent: "Want the catalog on WhatsApp? Send your number and I'll message you there."</li>
+        <li><code>lead_engine</code> captures it as <code>lead.phone_number</code> (already E.164).</li>
+        <li>The bot replies with <code>https://wa.me/&lt;tenant business number&gt;?text=&lt;token&gt;</code>. The link must point at <strong>our</strong> number, not the customer's - <code>wa.me/&lt;customer number&gt;</code> opens a chat with themselves.</li>
+        <li>The customer taps and sends. That inbound opens the 24h customer-service window.</li>
+        <li>The token identifies the IG lead; the worker links the two rows and hands the AI the IG summary.</li>
+      </ol>
+      <p class="note">No template review. One extra tap. Reuses the review-handoff pattern already in <code>review_engine/handoff.py</code> and <code>tickets.py</code>.</p>
+    </div>
+    <div class="card">
+      <h3>Route B - business-initiated template</h3>
+      <ol>
+        <li>Capture opt-in in the IG DM and store the evidence: time, source, message id.</li>
+        <li>Add <code>send_template_message()</code> to <code>WhatsAppAdapter</code> (<code>type: template</code>, name, language, components).</li>
+        <li>Get a <code>utility</code> template approved, e.g. <code>catalog_handoff</code> with a <code>{{1}}</code> name parameter - one per language.</li>
+        <li>A worker sends it once, idempotently, keyed on the lead.</li>
+        <li>The reply opens the 24h window and normal AI/voice takes over.</li>
+      </ol>
+      <p class="note">This is what makes "the catalog is on its way" true. Until it ships, the AI must not say it.</p>
+    </div>
+  </div>
+
+  <h3>Conversation modes and context snapshots</h3>
+  <p>Target state machine, replacing the current one-way mute. The invariant that fixes the silent thread: <strong>every entry into AI mode zeroes <code>ai_miss_count</code> and clears the escalation clock</strong>, and every transition writes a context snapshot.</p>
+  <div class="scroll"><table>
+    <tr><th>From</th><th>Trigger</th><th>To</th><th>Side effects</th></tr>
+    <tr><td><code>AI</code></td><td><code>ai_miss_count &gt;= escalation_threshold</code></td><td><code>HUMAN_NEEDED</code></td><td>Holding line persisted, nudges cancelled, owner email + in-app notification, resume timer armed, snapshot written.</td></tr>
+    <tr><td><code>HUMAN_NEEDED</code></td><td>a human sends a message, or an agent flips the switch</td><td><code>HUMAN_ACTIVE</code></td><td>Timer cleared, assignee recorded, snapshot written. The customer is no longer waiting on a bot.</td></tr>
+    <tr><td><code>HUMAN_ACTIVE</code></td><td>agent resolves, or flips back to AI</td><td><code>AI</code></td><td><code>ai_miss_count = 0</code>, all escalation fields cleared, snapshot written. The next inbound gets a fresh AI reply with the stored context.</td></tr>
+    <tr><td><code>HUMAN_NEEDED</code></td><td>resume window expires with no human action</td><td><code>AI</code></td><td><code>ai_miss_count = 0</code>, snapshot written, log line "handed back to the AI".</td></tr>
+    <tr><td><code>AI</code></td><td>customer sends a message</td><td><code>AI</code></td><td>Normal reply. A human outbound at any time flips to <code>HUMAN_ACTIVE</code> automatically.</td></tr>
+  </table></div>
+  <p>Snapshots are written on every transition, on resolve, and every N messages (N=20 suggested) - not on every message, because each one is an LLM call. The latest snapshot is injected into the AI prompt and shown to the human as a card at the top of the thread. The customer never sees it.</p>
+
+  <h3>The silent thread: 15 Oct &rarr; 26 Oct</h3>
+  <p>The pasted WhatsApp export shows the AI sending the holding line once ("Let me get my colleague to help you with this."), then nothing for 11 days while the customer kept writing, including a handoff code <code>GFW8XH</code>. That is not a provider outage. Three defects in our own code produce exactly this:</p>
+  <ol>
+    <li><strong>The mute is one-way.</strong> <code>should_ai_reply()</code> returns False while <code>priority == "important"</code> (<code>lead_escalation.py:139-141</code>), and the consumer returns at <code>consumer.py:709-716</code>. Nothing in the inbound path can lift it.</li>
+    <li><strong>The resume loop re-escalates instantly.</strong> <code>run_resume_sweep</code> sets priority back to <code>normal</code> but <code>_clear_escalation_state</code> does not touch <code>ai_miss_count</code>. On the next inbound, <code>update_escalation_state</code> increments from a value already above the threshold, so it re-enters <code>important</code> and mutes again. The customer gets a holding line per cycle at best.</li>
+    <li><strong>The resume window may simply be long.</strong> <code>escalation_resume_hours</code> is tenant-configurable up to <strong>336 hours (14 days)</strong>. If this tenant is set near the maximum, 11 days of silence is the configured behaviour, not a bug - and nothing in the UI shows the countdown, so it looks like a hang.</li>
+  </ol>
+  <p>The handoff code never resolved because the escalation gate returns before <code>resolve_and_advance</code> (BUG-2), and the holding line never appears in the dashboard because it is not persisted (BUG-3).</p>
+  <p class="note"><strong>Verify on staging before changing code.</strong> Run this against the tenant and the customer number:</p>
+  <pre><code>select id, contact_name, priority, ai_miss_count, priority_since,
+       escalated_at, escalation_reminder_at, handover_sent_at
+from leads
+where contact_id = '&lt;customer phone in E.164&gt;';
+
+select lead_settings-&gt;&gt;'escalation_resume_hours' as resume_hours,
+       lead_settings-&gt;&gt;'escalation_threshold'    as threshold
+from users where id = '&lt;tenant id&gt;';</code></pre>
+  <p class="note">Then grep the worker log for <code>WhatsApp AI handover</code>, <code>handed back to the AI</code> and <code>escalation sweep failed</code>. If <code>ai_miss_count</code> is 3+ and <code>priority_since</code> is old, BUG-1 is confirmed. If <code>priority_since</code> is NULL, the row was muted by a path that never armed a resume - a fourth defect worth finding before shipping the fix.</p>
+
+  <h3>WhatsApp calling - deferred, and what it would need</h3>
+  <p><strong>Short answer: yes, third-party integration is needed beyond STT and TTS.</strong> The WhatsApp Business Calling API gives you call signalling and media between a business and a customer; it does not give you a voice agent. To answer a call and talk, you still need a realtime media/orchestration layer, streaming ASR, streaming TTS, voice-activity detection with barge-in, and recording consent.</p>
+  <p>Our current pieces do not fit a live call: STT is file-based (faster-whisper over a downloaded file) and TTS is request/response. Both would have to be replaced with streaming providers. Two viable shapes:</p>
+  <ul>
+    <li><strong>Buy a voice-agent platform</strong> (LiveKit Agents, Pipecat, Vapi, Retell, Bland) and bridge WhatsApp calls over SIP where supported. Fastest path, per-minute cost, least control.</li>
+    <li><strong>Build on a CPaaS media stream</strong> (Twilio, Telnyx, Vonage) plus streaming STT/TTS (Deepgram, AssemblyAI, Azure, Google; ElevenLabs, Cartesia). More control, more work.</li>
+  </ul>
+  <p class="note">Availability, call-permission rules and opt-in vary by country and are changing; verify against Meta's current Calling API docs before scoping. Budget 3-6 weeks of integration even when buying, plus per-minute cost. Not in this ledger's critical path.</p>
+</section>
+
+<section id="wa-solution-partner-credit">
+  <div class="eyebrow">&sect;&sect; 18 - WhatsApp Solution Partner &amp; credit-line billing readiness - 2026-10-29</div>
+  <h2>WhatsApp Solution Partner &amp; credit-line billing readiness</h2>
+  <p>Read-only audit. Compares the in-repo WhatsApp integration against official Meta/WhatsApp documentation for sharing Sayvors' own credit line with independently owned tenant WABAs. No code changed. Official sources: <a href="https://developers.facebook.com/documentation/business-messaging/whatsapp/solution-providers/multi-partner-solutions">Multi-Partner Solutions</a>, <a href="https://developers.facebook.com/documentation/business-messaging/whatsapp/solution-providers/share-and-revoke-credit-lines">Share &amp; revoke credit lines</a>, <a href="https://developers.facebook.com/documentation/business-messaging/whatsapp/solution-providers/upgrade-to-tech-partner/">Upgrade to Tech Partner</a>, <a href="https://whatsappbusiness.com/partners/become-a-partner/">Become a Partner</a>.</p>
+
+  <h3>Verdict</h3>
+  <p>Sayvors is a <strong>Tech Provider-style</strong> WhatsApp Cloud API integration (Embedded Signup v4). It can onboard tenants' own WABAs/numbers and bill its own SaaS plans, but it has <strong>no implementation of Solution-Partner credit-line sharing</strong>. To share Sayvors' own credit line, Sayvors must first be an approved <strong>Solution Partner</strong> (Meta-side status) and then implement the credit-sharing API flow + webhook listeners. None of that exists today. Implementation guarantees neither Meta approval nor partner acceptance.</p>
+
+  <h3>Implemented</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Finding</th><th>Evidence</th></tr>
+    <tr><td class="num">SP-1</td><td>WhatsApp Embedded Signup v4 adapter: code exchange, WABA + phone discovery, app subscribe, number registration.</td><td><code>services/api/app/modules/channels/meta/providers/whatsapp.py</code>; <code>router.py:529</code> <code>whatsapp_session</code></td></tr>
+    <tr><td class="num">SP-2</td><td><code>solution_id</code> injected into <code>extras.setup.solutionID</code> when configured (app_only_install).</td><td><code>apps/web/components/channels/connect/metaSignup.ts</code>; <code>config.py:301</code> <code>META_SOLUTION_ID</code>; <code>whatsapp.py:42</code></td></tr>
+    <tr><td class="num">SP-3</td><td>Coexistence flow + PARTNER_REMOVED handling.</td><td><code>webhooks/parser.py:78-79</code>; <code>consumer.py:1578</code> <code>_handle_connection_disconnect</code></td></tr>
+    <tr><td class="num">SP-4</td><td>Per-tenant WABA/phone assets, tenant isolation, encrypted tokens.</td><td><code>meta/models.py</code>; <code>meta/service.py</code>; <code>meta/credentials.py</code>; <code>tests/test_meta_isolation.py</code></td></tr>
+    <tr><td class="num">SP-5</td><td>Inbound WhatsApp &rarr; AI reply &rarr; Cloud API send, idempotent replay.</td><td><code>consumer.py:720</code> <code>_handle_message_received</code>; <code>whatsapp.py</code> <code>send_text_message</code></td></tr>
+    <tr><td class="num">SP-6</td><td>Outbound WhatsApp send (inbox, review requests).</td><td><code>channels/service.py:339</code> <code>send_message</code> &rarr; <code>_dispatch_whatsapp</code>; <code>analytics/review_requests.py:127</code> <code>send_whatsapp_text</code></td></tr>
+    <tr><td class="num">SP-7</td><td>Webhook ingress (verify &rarr; persist raw &rarr; enqueue) + outbox/Kafka fallback.</td><td><code>webhooks/router.py</code>, <code>webhooks/verifier.py</code>, <code>meta_events_worker.py</code></td></tr>
+    <tr><td class="num">SP-8</td><td>Page-level webhook subscription (messages/feed/mention).</td><td><code>service.py:379</code> <code>_subscribe_messaging_webhooks</code></td></tr>
+  </table></div>
+
+  <h3>Partial</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Finding</th><th>Gap</th></tr>
+    <tr><td class="num">SP-9</td><td>Multi-partner solution onboarding: <code>solution_id</code> wired in frontend only.</td><td>No backend handling of <code>account_update</code>/<code>partner_solutions</code> webhooks; no <code>PARTNER_ADDED</code> parse. <code>webhooks/parser.py</code> only parses message/status/account events; <code>meta_events_worker.py</code> <code>HANDLED_EVENT_TYPES</code> has no such types.</td></tr>
+    <tr><td class="num">SP-10</td><td>Customer business token retrieval for non-hosted signup.</td><td>Not implemented: <code>GET /{solution_id}/access_token?business_id=...</code>.</td></tr>
+    <tr><td class="num">SP-11</td><td>Messaging-account billing attribution.</td><td>Sends use <code>phone_number_id</code> only; no <code>messaging_account_id</code> on Messages API calls (needed when one token has messaging access to multiple Messaging accounts on the same number).</td></tr>
+  </table></div>
+
+  <h3>Missing (code) - to share Sayvors' credit line with tenant WABAs</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Missing capability</th><th>Target / official API</th></tr>
+    <tr><td class="num">M1</td><td>Get Sayvors' own extended credit line ID.</td><td>New service fn + business ID config. API: <code>GET /{business_id}/extendedcredits</code>.</td></tr>
+    <tr><td class="num">M2</td><td>Share credit line with a newly onboarded tenant WABA.</td><td>Post-onboarding hook in <code>whatsapp_session</code> or webhook handler. API: <code>POST /{extended_credit_id}/whatsapp_credit_sharing_and_attach?waba_currency=...&amp;waba_id=...</code> (or alternate 3-step: <code>whatsapp_credit_sharing</code> then <code>whatsapp_credit_attach</code>).</td></tr>
+    <tr><td class="num">M3</td><td>Get customer business portfolio ID from WABA.</td><td>Service fn. API: <code>GET /{waba_id}?fields=owner_business_info</code>.</td></tr>
+    <tr><td class="num">M4</td><td>Verify shared status (receiving credential vs primary funding ID).</td><td>Service fn + admin. APIs: <code>GET /{allocation_config_id}?fields=receiving_credential</code>; <code>GET /{waba_id}?fields=primary_funding_id</code>.</td></tr>
+    <tr><td class="num">M5</td><td>Revoke shared credit line on unshare/disconnect.</td><td>Handler on <code>PARTNER_REMOVED</code>/unshare. APIs: lookup <code>owning_credit_allocation_configs</code>, then <code>DELETE /{allocation_config_id}</code>.</td></tr>
+    <tr><td class="num">M6</td><td>Listen for onboarded clients via <code>account_update</code> (PARTNER_ADDED) and <code>partner_solutions</code> webhooks.</td><td>Parser + consumer + worker handled types + router subscription. Doc: "Step 6: Listen for onboarded clients".</td></tr>
+    <tr><td class="num">M7</td><td>Subscribe WABA-level fields <code>account_update</code> and <code>partner_solutions</code> at app level.</td><td>App dashboard config + possibly <code>subscribe_app</code> call. Doc: "Step 2: Subscribe to Webhooks".</td></tr>
+    <tr><td class="num">M8</td><td>Track <code>allocation_config_id</code> per tenant WABA in DB.</td><td>Migration + model column on <code>meta_assets</code>/connection. Responses include <code>allocation_config_id</code>.</td></tr>
+    <tr><td class="num">M9</td><td>Add <code>messaging_account_id</code> to send calls where applicable.</td><td><code>whatsapp.py</code> <code>send_text_message</code> signature + callers. Doc: Multi-Partner Solutions "Billing".</td></tr>
+    <tr><td class="num">M10</td><td>Admin/ops runbook for credit-line sharing failures.</td><td><code>docs/operations/</code>.</td></tr>
+  </table></div>
+
+  <h3>Meta-side requirements / approvals / eligibility (not code)</h3>
+  <ul>
+    <li><strong>Sayvors must be an approved Solution Partner</strong> (not just Tech Provider/Tech Partner). Credit-line sharing is "Solution Partners only" (share-and-revoke doc, "Step 7"; multi-partner solutions doc eligibility). Required for sharing <em>its own</em> credit line.</li>
+    <li>Solution Partner upgrade criteria: completed Tech Provider get-started; &ge;2,500 avg daily messages (sent or received) over last 7 days <em>or</em> &ge;200 avg daily calls; &ge;10 active clients (used app to send &ge;1 message in last 30 days); business phone number quality rating &ge;90% (upgrade-to-tech-partner doc).</li>
+    <li>Verified Business Manager + compliance with programme policies/terms (user's pasted criteria).</li>
+    <li>App Review approval for <code>whatsapp_business_management</code> and <code>whatsapp_business_messaging</code> (multi-partner solutions "Requirements").</li>
+    <li>App subscribed to <code>account_updates</code> webhook field and able to digest webhooks for onboarded clients.</li>
+    <li>System user with <code>business_management</code> permission and Admin or Financial Editor role on the business portfolio, for credit-line endpoints (share-and-revoke doc "Authentication and authorization").</li>
+    <li>Extended credit line granted by Meta to Sayvors' business portfolio, in a supported currency (AUD/EUR/GBP/IDR/INR/USD).</li>
+    <li>Partner solution created &amp; accepted (Active) with a Solution Partner (or Sayvors itself if approved as Solution Partner), and Embedded Signup configured with that <code>solution_id</code> (multi-partner solutions steps 1-5).</li>
+    <li>Billing liability: Sayvors becomes "Bill To Party" - liable to Meta for all client WhatsApp spend on shared credit lines; clients pay Sayvors; Sayvors pays Meta an aggregated invoice (share-and-revoke doc "Billing Liability Disclosure").</li>
+    <li>Onboarding limit: Tech Providers in a solution can onboard up to 200 new clients per rolling week (only new-to-platform clients count).</li>
+    <li>Embedded Signup v2/v3 deprecated Oct 15, 2026 - must be on v4 (already are).</li>
+  </ul>
+
+  <h3>Can we retain existing Cloud API / webhooks / inbox / AI / storage?</h3>
+  <p><strong>Yes - all retained.</strong> Credit-line sharing is an onboarding-time side effect layered on top of the existing stack; nothing requires replacing the messaging pipeline:</p>
+  <ul>
+    <li>Cloud API send path (<code>whatsapp.py</code> <code>send_text_message</code>, <code>channels/service.py</code>) stays; only add optional <code>messaging_account_id</code> for billing attribution in multi-account cases.</li>
+    <li>Webhook ingress (verify &rarr; persist &rarr; enqueue) stays; add two new field types (<code>account_update</code>, <code>partner_solutions</code>) to parser + worker + subscription.</li>
+    <li>Inbox, AI reply, storage (<code>channel_messages</code>, <code>meta_webhook_events</code>, <code>meta_assets</code>) stay; add one column for <code>allocation_config_id</code> (and possibly customer business portfolio ID).</li>
+  </ul>
+
+  <h3>Unverified</h3>
+  <ul>
+    <li>Whether Sayvors is currently an approved Solution Partner (Meta-side; code cannot determine) - required for sharing <em>its own</em> credit line.</li>
+    <li>Whether the app has Advanced Access for <code>whatsapp_business_management</code>/<code>whatsapp_business_messaging</code> in production.</li>
+    <li>Whether <code>META_SOLUTION_ID</code> / partner solution is Active in the dashboard.</li>
+    <li>Whether Meta has granted Sayvors an extended credit line.</li>
+    <li>Whether <code>messaging_account_id</code> is needed for Sayvors' single-number-per-tenant model (likely no; verify when multi-account arises).</li>
+  </ul>
+
+  <p class="note">Bottom line: retain the existing messaging stack unchanged. The work is (a) Meta-side approval (Solution Partner status + credit line + app review) and (b) a focused onboarding-time credit-sharing module (M1-M9) layered on the existing Embedded Signup + webhook ingress. Implementation guarantees neither Meta approval nor partner acceptance.</p>
+</section>
+
 <footer>
-  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-26; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land.
+  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-29; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land. The 2026-10-29 pass added the conversation-control and Instagram &rarr; WhatsApp ledger (&sect;17, 15 open items plus a deferred calling decision), including the silent-thread root cause (BUG-1 to BUG-4) found in the escalation code. BUG-1/2/3, HAND-1 (the wa.me bridge), HAND-2 (templates + consent), HAND-3 (identity merge + carried context), HAND-4, HAND-6 (catalog + public page), HAND-7 (databank grounding), HAND-8 (conversation mode) and HAND-9 (stored context) were fixed in the same pass; 4 items remain open.
 </footer>
 
 </div>

@@ -8,6 +8,18 @@ class ProfileResponse(BaseModel):
     email: str
     email_verified: bool
     onboarded: bool
+    # Effective avatar + where it came from. `avatar_source` is one of
+    # google | facebook | upload | none, or null when the user never chose.
+    avatar_url: str | None = None
+    avatar_source: str | None = None
+    google_avatar_url: str | None = None
+    facebook_avatar_url: str | None = None
+    avatar_upload_url: str | None = None
+    cover_url: str | None = None
+    # Whether the account can offer that provider's snapshot. A connected
+    # provider with no cached picture still shows the chip, disabled.
+    google_connected: bool = False
+    facebook_connected: bool = False
     bio: str | None = None
     business_name: str | None = None
     business_type: str | None = None
@@ -40,6 +52,16 @@ class ProfileUpdateRequest(BaseModel):
     business_description: str | None = Field(default=None, max_length=500)
     phone: str | None = Field(default=None, max_length=50)
     country: str | None = Field(default=None, max_length=8, description="Account-wide ISO country code, e.g. SA")
+
+
+class AvatarSourceUpdateRequest(BaseModel):
+    """Select which stored picture is the effective avatar.
+
+    "none" clears the avatar without discarding the provider/upload snapshots,
+    so switching back later needs no re-upload or re-login.
+    """
+
+    source: str = Field(..., pattern="^(google|facebook|upload|none)$")
 
 
 class PreferencesUpdateRequest(BaseModel):

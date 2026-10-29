@@ -111,3 +111,6 @@ is implemented now, so the document stays true when the method changes.
 `readiness-report.html` is the consolidated audit of what is broken and what is
 fixed, with per-item status. Check it before picking up an item so you do not
 re-do finished work, and update it when you finish something.
+
+
+## 8. Do not use gh, do not create PR yourself.

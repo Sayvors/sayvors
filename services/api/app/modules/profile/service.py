@@ -9,6 +9,7 @@ Write path: PATCH             -> DB commit -> Redis invalidate -> outbox enqueue
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,27 @@ PROFILE_TTL = 300
 USAGE_TTL = 60
 
 FEEDBACK_CATEGORIES = {"overall", "ai", "ui", "support", "value"}
+
+# A profile picture is rendered at 96-160 CSS px; 8 MB is already generous
+# for a phone photo and keeps a public object from becoming a bandwidth sink.
+AVATAR_MAX_BYTES = 8 * 1024 * 1024
+COVER_MAX_BYTES = 12 * 1024 * 1024
+
+# SVG is deliberately absent: it is an executable document, and these objects
+# are served from a public URL. Raster formats only.
+_IMAGE_TYPES: dict[str, str] = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+
+AVATAR_SOURCES = {"google", "facebook", "upload", "none"}
+_AVATAR_FIELDS = {
+    "google": "google_avatar_url",
+    "facebook": "facebook_avatar_url",
+    "upload": "avatar_upload_url",
+}
 
 
 def _profile_key(user_id: str) -> str:
@@ -114,6 +136,14 @@ def _serialize(user: User, feedback: dict[str, int]) -> dict:
         "email": user.email,
         "email_verified": user.email_verified,
         "onboarded": user.onboarded,
+        "avatar_url": user.avatar_url,
+        "avatar_source": user.avatar_source,
+        "google_avatar_url": user.google_avatar_url,
+        "facebook_avatar_url": user.facebook_avatar_url,
+        "avatar_upload_url": user.avatar_upload_url,
+        "cover_url": user.cover_url,
+        "google_connected": bool(user.google_sub),
+        "facebook_connected": bool(user.facebook_id),
         "bio": user.bio,
         "business_name": user.business_name,
         "business_type": user.business_type,
@@ -158,10 +188,19 @@ async def get_profile(user_id: str, db: AsyncSession) -> dict:
 
 
 async def update_profile(user_id: str, data: dict, db: AsyncSession) -> dict:
-    allowed = {"first_name", "last_name", "bio", "business_name", "business_type",
-               "business_sells", "business_doesnt_sell", "business_description",
-               "phone", "country"}
-    patch = {k: v for k, v in data.items() if k in allowed and v is not None}
+    # A PATCH may clear a nullable field by sending an explicit null ("Not set"
+    # in the account form). Names are required, so a null there is dropped
+    # rather than reaching a NOT NULL column.
+    clearable = {
+        "bio", "business_name", "business_type", "business_sells",
+        "business_doesnt_sell", "business_description", "phone", "country",
+    }
+    allowed = {"first_name", "last_name"} | clearable
+    patch = {
+        k: v
+        for k, v in data.items()
+        if k in allowed and (v is not None or k in clearable)
+    }
     if not patch:
         raise ValueError("No valid fields to update")
 
@@ -183,6 +222,175 @@ async def update_profile(user_id: str, data: dict, db: AsyncSession) -> dict:
         metadata={"fields": sorted(patch.keys())},
     )
 
+    return await get_profile(user_id, db)
+
+
+async def _locked_user(user_id: str, db: AsyncSession) -> User:
+    """Load the user with a row lock so two uploads cannot race.
+
+    Without the lock two concurrent requests both read the previous storage
+    key and both commit; the object superseded by the second write is then
+    leaked forever. SQLite (tests) has no row locks and ignores the clause,
+    which is correct for a single-writer test database.
+    """
+    user = (
+        await db.execute(select(User).where(User.id == user_id).with_for_update())
+    ).scalar_one_or_none()
+    if not user:
+        raise ValueError("User not found")
+    return user
+
+
+def _image_extension(filename: str, content_type: str | None) -> tuple[str, str]:
+    ext = Path(filename or "").suffix.lower()
+    expected = _IMAGE_TYPES.get(ext)
+    if expected is None:
+        raise ValueError("Use a JPG, PNG or WEBP image.")
+    if content_type and not content_type.startswith("image/"):
+        raise ValueError("Only image files are accepted.")
+    return ext, expected
+
+
+def _looks_like_image(ext: str, data: bytes) -> bool:
+    """Reject a renamed non-image before it reaches a public bucket.
+
+    The client's Content-Type is attacker-controlled; the bytes are not.
+    """
+    if ext in (".jpg", ".jpeg"):
+        return data.startswith(b"\xff\xd8\xff")
+    if ext == ".png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if ext == ".webp":
+        return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    return False
+
+
+def _delete_media_best_effort(user_id: str, storage_key: str) -> None:
+    """Delete a superseded object without failing the user's save.
+
+    The row already points at the replacement; a storage hiccup here costs one
+    orphaned object, not a broken profile.
+    """
+    try:
+        from ...core.storage import delete_media
+
+        delete_media(user_id, storage_key)
+    except Exception:
+        logger.warning(
+            "Could not delete superseded profile media %s for user %s",
+            storage_key,
+            user_id,
+            exc_info=True,
+        )
+
+
+async def save_profile_image(
+    user_id: str,
+    kind: str,
+    filename: str,
+    content_type: str | None,
+    data: bytes,
+    base_url: str,
+    db: AsyncSession,
+) -> dict:
+    """Store an uploaded avatar or cover and make it the effective image.
+
+    `kind` is "avatar" or "cover". The stored content type is derived from the
+    validated extension, never from the request header.
+    """
+    if kind not in {"avatar", "cover"}:
+        raise ValueError("Unknown profile image kind.")
+    max_bytes = AVATAR_MAX_BYTES if kind == "avatar" else COVER_MAX_BYTES
+    if not data:
+        raise ValueError("Empty file.")
+    if len(data) > max_bytes:
+        raise ValueError(f"File is too big — max {max_bytes // (1024 * 1024)}MB.")
+    ext, expected_type = _image_extension(filename, content_type)
+    if not _looks_like_image(ext, data):
+        raise ValueError("File content doesn't look like the image type it claims.")
+
+    from ...core.storage import local_media_url, put_media
+
+    user = await _locked_user(user_id, db)
+    storage_key, public_url = put_media(user_id, filename, data, expected_type)
+    if not public_url:
+        # Local backend has no origin of its own; the request supplies it so
+        # the browser and the API resolve the same public URL.
+        public_url = local_media_url(base_url, user_id, storage_key)
+
+    if kind == "avatar":
+        old_key = user.avatar_storage_key
+        user.avatar_upload_url = public_url[:1000]
+        user.avatar_storage_key = storage_key[:500]
+        user.avatar_source = "upload"
+        user.avatar_url = public_url[:1000]
+        event = "avatar.updated"
+    else:
+        old_key = user.cover_storage_key
+        user.cover_url = public_url[:1000]
+        user.cover_storage_key = storage_key[:500]
+        event = "cover.updated"
+
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    await db.commit()
+
+    if old_key and old_key != storage_key:
+        _delete_media_best_effort(user_id, old_key)
+
+    await _cache_delete(_profile_key(user_id))
+    await _emit(event, user_id, email=user.email, metadata={"kind": kind})
+    return await get_profile(user_id, db)
+
+
+async def update_avatar_source(user_id: str, source: str, db: AsyncSession) -> dict:
+    """Switch the effective avatar to a stored Google/Facebook/upload URL.
+
+    "none" clears the picture but keeps every snapshot, so switching back is
+    one click and never requires another OAuth round-trip.
+    """
+    if source not in AVATAR_SOURCES:
+        raise ValueError("Unknown avatar source.")
+    user = await _locked_user(user_id, db)
+
+    if source == "none":
+        user.avatar_source = "none"
+        user.avatar_url = None
+    else:
+        url = getattr(user, _AVATAR_FIELDS[source])
+        if not url:
+            raise ValueError(
+                "That picture is not available yet — sign in with the provider "
+                "or upload one from your device."
+            )
+        user.avatar_source = source
+        user.avatar_url = url[:1000]
+
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    await db.commit()
+
+    await _cache_delete(_profile_key(user_id))
+    await _emit("avatar.source_updated", user_id, email=user.email,
+                metadata={"source": source})
+    return await get_profile(user_id, db)
+
+
+async def remove_cover(user_id: str, db: AsyncSession) -> dict:
+    """Clear the cover image and delete its stored object."""
+    user = await _locked_user(user_id, db)
+    old_key = user.cover_storage_key
+    user.cover_url = None
+    user.cover_storage_key = None
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    await db.commit()
+
+    if old_key:
+        _delete_media_best_effort(user_id, old_key)
+
+    await _cache_delete(_profile_key(user_id))
+    await _emit("cover.removed", user_id, email=user.email)
     return await get_profile(user_id, db)
 
 

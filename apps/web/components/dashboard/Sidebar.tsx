@@ -648,8 +648,7 @@ function DatabaseIcon() {
   );
 }
 
-function ChannelsIcon() {
-  return (
+function ChannelsIcon() {  return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <path d="M9 2v6M15 2v6" />
       <path d="M6 8h12v2a6 6 0 01-12 0V8Z" />

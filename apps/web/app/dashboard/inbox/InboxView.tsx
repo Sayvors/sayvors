@@ -12,10 +12,13 @@ import {
   archiveInboxThread,
   deleteInboxThread,
   pinInboxThread,
+  resolveInboxThread,
   sendInboxMessage,
+  setInboxThreadMode,
   UNKNOWN_THREAD_KEY,
   type InboxMessage,
   type InboxThread,
+  type ThreadState,
 } from "@/lib/api-inbox";
 import { platformMeta } from "@/lib/platform";
 import { setActiveThread } from "@/lib/active-thread";
@@ -28,6 +31,12 @@ import {
 import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import TypingIndicator from "@/components/inbox/TypingIndicator";
+import {
+  listWhatsAppTemplates,
+  recordWhatsAppConsent,
+  sendWhatsAppTemplate,
+  type WhatsAppTemplate,
+} from "@/lib/api-whatsapp-templates";
 
 type Filter = "all" | "unread" | "important" | "unknown";
 
@@ -150,6 +159,24 @@ function dayLabel(iso: string): string {
   return d.toLocaleDateString("en", { month: "short", day: "numeric" });
 }
 
+/** Why a context snapshot was written, in the reader's language. */
+function contextReasonLabel(reason: string): string {
+  switch (reason) {
+    case "mode_change":
+      return "when the mode changed";
+    case "resolve":
+      return "when the thread was resolved";
+    case "escalation":
+      return "when it was escalated";
+    case "periodic":
+      return "mid-conversation";
+    case "cross_channel":
+      return "when they moved from Instagram";
+    default:
+      return "manually";
+  }
+}
+
 function PlatformBadge({ platform }: { platform: string | null }) {
   const meta = platformMeta(platform);
   if (!meta.icon) return null;
@@ -213,6 +240,17 @@ export default function InboxView() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [threadQuery, setThreadQuery] = useState("");
   const [showInfo, setShowInfo] = useState(false);
+  const [threadState, setThreadState] = useState<ThreadState | null>(null);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [modeError, setModeError] = useState<string | null>(null);
+  // Templates: the only legal send once Meta's 24h window has closed.
+  const [templates, setTemplates] = useState<WhatsAppTemplate[] | null>(null);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateId, setTemplateId] = useState<string>("");
+  const [templateVars, setTemplateVars] = useState<string[]>([]);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const templateKeyRef = useRef<string>("");
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -276,6 +314,150 @@ export default function InboxView() {
     setDeleteTarget(null);
   };
 
+  /** Apply a server-returned thread state to the open thread and its row. */
+  const applyThreadState = (thread: InboxThread, state: ThreadState) => {
+    setThreadState(state);
+    setThreads((prev) =>
+      prev.map((t) =>
+        `${t.channel_id}:${t.key}` === `${thread.channel_id}:${thread.key}`
+          ? {
+              ...t,
+              mode: state.mode,
+              mode_changed_at: state.mode_changed_at,
+              mode_changed_by: state.mode_changed_by,
+            }
+          : t,
+      ),
+    );
+  };
+
+  const handleModeChange = async (thread: InboxThread, next: "ai" | "human") => {
+    if (modeBusy) return;
+    setModeBusy(true);
+    setModeError(null);
+    try {
+      const state = await setInboxThreadMode(
+        thread.channel_id,
+        thread.contact_phone,
+        next,
+      );
+      applyThreadState(thread, state);
+    } catch (e) {
+      setModeError(
+        e instanceof Error ? e.message : "Could not switch this conversation.",
+      );
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
+  const handleResolve = async (thread: InboxThread) => {
+    if (modeBusy) return;
+    setModeBusy(true);
+    setModeError(null);
+    try {
+      const state = await resolveInboxThread(thread.channel_id, thread.contact_phone);
+      applyThreadState(thread, state);
+    } catch (e) {
+      setModeError(
+        e instanceof Error ? e.message : "Could not resolve this conversation.",
+      );
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
+  const reloadThread = async (thread: InboxThread) => {
+    const data = await fetchThreadMessages(thread.channel_id, thread.contact_phone);
+    setMessages(data.messages);
+    if (data.thread) setThreadState(data.thread);
+  };
+
+  const openTemplatePicker = async (thread: InboxThread) => {
+    setTemplateError(null);
+    setTemplateOpen(true);
+    if (!templateKeyRef.current) {
+      templateKeyRef.current =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${thread.channel_id}:${thread.key}:${Date.now()}`;
+    }
+    if (templates !== null) return;
+    try {
+      setTemplates(await listWhatsAppTemplates());
+    } catch (e) {
+      setTemplateError(
+        e instanceof Error ? e.message : "Could not load templates.",
+      );
+    }
+  };
+
+  const chooseTemplate = (template: WhatsAppTemplate) => {
+    setTemplateId(template.id);
+    setTemplateVars(Array.from({ length: template.variables }, () => ""));
+    setTemplateError(null);
+  };
+
+  const handleSendTemplate = async (thread: InboxThread) => {
+    if (!selectedTemplate || templateBusy) return;
+    if (
+      selectedTemplate.variables > 0 &&
+      templateVars.some((v) => !v.trim())
+    ) {
+      setTemplateError("Fill every variable before sending.");
+      return;
+    }
+    setTemplateBusy(true);
+    setTemplateError(null);
+    try {
+      const result = await sendWhatsAppTemplate({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone ?? "",
+        templateId: selectedTemplate.id,
+        variables: templateVars,
+        // One key per picker session: a double click retries the same send
+        // instead of billing two messages.
+        idempotencyKey: templateKeyRef.current,
+      });
+      if (result.status === "sent") {
+        setTemplateOpen(false);
+        setTemplateId("");
+        setTemplateVars([]);
+        setTemplates(null);
+        templateKeyRef.current = "";
+        await reloadThread(thread);
+      } else {
+        setTemplateError(result.error ?? "Meta rejected the template.");
+      }
+    } catch (e) {
+      setTemplateError(
+        e instanceof Error ? e.message : "Could not send the template.",
+      );
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
+
+  const handleRecordConsent = async (thread: InboxThread) => {
+    setTemplateError(null);
+    try {
+      const res = await recordWhatsAppConsent({
+        channelId: thread.channel_id,
+        contactPhone: thread.contact_phone ?? "",
+        source: "operator",
+      });
+      setThreadState((prev) =>
+        prev
+          ? { ...prev, opt_in_at: res.opt_in_at, opt_in_source: res.opt_in_source }
+          : prev,
+      );
+    } catch (e) {
+      setTemplateError(
+        e instanceof Error ? e.message : "Could not record consent.",
+      );
+    }
+  };
+
   // Debounce the search input so we don't refetch on every keystroke.
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   useEffect(() => {
@@ -337,6 +519,23 @@ export default function InboxView() {
   const requestedKey = useRef<string | null>(null);
   const target = effectiveSelected;
   const targetKey = target ? `${target.channel_id}:${target.key}` : null;
+  // The thread state is authoritative while the open thread is the loaded
+  // one; the list row is the fallback before the messages call returns.
+  const activeMode: "ai" | "human" =
+    threadState?.mode ?? target?.mode ?? "ai";
+  // Meta's window is per conversation. Once it closes a free-form reply is
+  // rejected, so the composer steps aside for the template picker.
+  const windowClosed =
+    (target?.platform ?? "").toLowerCase() === "whatsapp" &&
+    loadedKey === targetKey &&
+    threadState?.reply_window_open === false;  const approvedTemplates = useMemo(
+    () =>
+      (templates ?? []).filter(
+        (t) => t.status === "approved" && t.category === "utility",
+      ),
+    [templates],
+  );
+  const selectedTemplate = approvedTemplates.find((t) => t.id === templateId) ?? null;
   const targetKeyRef = useRef<string | null>(null);
   useEffect(() => {
     targetKeyRef.current = targetKey;
@@ -357,6 +556,35 @@ export default function InboxView() {
     // below, which requires an id and would drop this.
     if (e.type === "typing" && e.channel_id) {
       setAiTyping(e.channel_id, e.contact_phone ?? UNKNOWN_THREAD_KEY, e.typing !== false);
+      return;
+    }
+    // Another tab switched the conversation between AI and human. Update the
+    // row and, when it is the open thread, the mode switch itself.
+    if (e.type === "mode" && e.channel_id) {
+      const key = e.contact_phone ?? UNKNOWN_THREAD_KEY;
+      const composite = `${e.channel_id}:${key}`;
+      if (e.mode) {
+        setThreads((prev) =>
+          prev.map((t) =>
+            `${t.channel_id}:${t.key}` === composite
+              ? {
+                  ...t,
+                  mode: e.mode,
+                  mode_changed_at: e.mode_changed_at ?? t.mode_changed_at,
+                  mode_changed_by: e.mode_changed_by ?? t.mode_changed_by,
+                }
+              : t,
+          ),
+        );
+        if (composite === targetKeyRef.current) {
+          setThreadState((prev) => ({
+            mode: e.mode!,
+            mode_changed_at: e.mode_changed_at ?? prev?.mode_changed_at ?? null,
+            mode_changed_by: e.mode_changed_by ?? prev?.mode_changed_by ?? null,
+            context: prev?.context ?? null,
+          }));
+        }
+      }
       return;
     }
     if (e.type !== "message" || !e.channel_id || !e.id) return;
@@ -429,16 +657,19 @@ export default function InboxView() {
     requestedKey.current = targetKey;
     if (!target) return;
     let cancelled = false;
+    setThreadState(null);
     (async () => {
       try {
-        const rows = await fetchThreadMessages(target.channel_id, target.contact_phone);
+        const data = await fetchThreadMessages(target.channel_id, target.contact_phone);
         if (!cancelled && requestedKey.current === targetKey) {
-          setMessages(rows);
+          setMessages(data.messages);
+          setThreadState(data.thread);
           setLoadedKey(targetKey);
         }
       } catch (e) {
         if (!cancelled && requestedKey.current === targetKey) {
           setMessages([]);
+          setThreadState(null);
           setLoadedKey(targetKey);
           setError(e instanceof Error ? e.message : "Could not load this conversation.");
         }
@@ -738,7 +969,7 @@ export default function InboxView() {
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-3 border-b border-ink/[0.06] px-3 py-3 dark:border-fog/[0.06]">
+              <div className="flex flex-wrap items-center gap-3 border-b border-ink/[0.06] px-3 py-3 dark:border-fog/[0.06]">
                 <button
                   onClick={() => setSelectedKey(null)}
                   aria-label="Back to conversations"
@@ -772,12 +1003,103 @@ export default function InboxView() {
                     </p>
                   </span>
                 </button>
+                {/* Who answers: the same switch the backend uses to mute the
+                    AI. Segmented so both states are visible at once — a
+                    toggle would hide the fact that a human took over. */}
+                <div
+                  role="group"
+                  aria-label="Who answers this conversation"
+                  className="ml-auto flex w-full shrink-0 items-center gap-0.5 rounded-full border border-ink/[0.08] bg-white p-0.5 sm:w-auto dark:border-fog/[0.12] dark:bg-ink"
+                >
+                  <button
+                    type="button"
+                    aria-pressed={activeMode === "ai"}
+                    disabled={modeBusy}
+                    onClick={() => void handleModeChange(target, "ai")}
+                    title="The AI answers this conversation"
+                    className={`flex-1 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide transition disabled:opacity-50 sm:flex-none ${
+                      activeMode === "ai"
+                        ? "bg-deep-violet text-white"
+                        : "text-ink/45 hover:text-ink/70 dark:text-fog/45 dark:hover:text-fog/70"
+                    }`}
+                  >
+                    AI
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={activeMode === "human"}
+                    disabled={modeBusy}
+                    onClick={() => void handleModeChange(target, "human")}
+                    title="A person answers; the AI stays silent"
+                    className={`flex-1 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide transition disabled:opacity-50 sm:flex-none ${
+                      activeMode === "human"
+                        ? "bg-deep-violet text-white"
+                        : "text-ink/45 hover:text-ink/70 dark:text-fog/45 dark:hover:text-fog/70"
+                    }`}
+                  >
+                    Human
+                  </button>
+                </div>
                 {target.is_unknown && (
                   <span className="hidden shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700 sm:inline">
                     Sender not recorded
                   </span>
                 )}
               </div>
+
+              {modeError && (
+                <p
+                  role="alert"
+                  className="border-b border-ink/[0.04] px-4 py-2 text-[11px] font-medium text-[#C4304B] dark:border-fog/[0.04] dark:text-[#FF8FA3]"
+                >
+                  {modeError}
+                </p>
+              )}
+
+              {/* Conversation state: an explicit human owner, and the stored
+                  summary of what has happened so far. The summary is what the
+                  AI resumes with, so the human reads the same page. */}
+              {activeMode === "human" && (
+                <div className="flex items-center gap-2 border-b border-ink/[0.04] bg-fog/60 px-4 py-2 dark:border-fog/[0.04] dark:bg-fog/[0.05]">
+                  <span className="rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                    Human
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-ink/60 dark:text-fog/60">
+                    The AI is paused on this conversation.
+                    {threadState?.mode_changed_by === "system"
+                      ? " It was escalated automatically."
+                      : ""}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={modeBusy}
+                    onClick={() => void handleResolve(target)}
+                    className="shrink-0 rounded-full border border-deep-violet/25 px-2.5 py-1 text-[10px] font-bold text-deep-violet transition hover:bg-deep-violet/10 disabled:opacity-50 dark:border-fog/20 dark:text-fog"
+                  >
+                    Resolve
+                  </button>
+                </div>
+              )}
+
+              {threadState?.context && (
+                <details
+                  key={targetKey ?? "thread"}
+                  open={activeMode === "human"}
+                  className="border-b border-ink/[0.04] px-4 py-2 dark:border-fog/[0.04]"
+                >
+                  <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
+                    Conversation context
+                    <span className="ml-1.5 font-medium normal-case tracking-normal">
+                      · {contextReasonLabel(threadState.context.reason)} ·{" "}
+                      {relative(threadState.context.created_at)} ·{" "}
+                      {threadState.context.message_count} messages
+                    </span>
+                  </summary>
+                  <p className="mt-1.5 whitespace-pre-line text-[12px] leading-5 text-ink/70 dark:text-fog/70">
+                    {threadState.context.summary}
+                  </p>
+                </details>
+              )}
 
               <div className="border-b border-ink/[0.04] px-3 py-2 dark:border-fog/[0.04]">
                 <input
@@ -896,10 +1218,118 @@ export default function InboxView() {
                   </p>
                 ) : (
                   <>
-                    {!replyWindowOpen(target) && (
-                      <p className="mb-2 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-                        Reply window closed — Meta only allows free-form replies within 24 hours of the customer&apos;s last message. Use a template message instead.
-                      </p>
+                    {(!replyWindowOpen(target) || windowClosed) && (
+                      <div className="mb-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
+                        <p className="text-[12px] font-medium text-amber-800 dark:text-amber-300">
+                          Reply window closed — Meta only allows free-form replies within 24 hours of the customer&apos;s last message.
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void openTemplatePicker(target)}
+                            className="rounded-full bg-deep-violet px-3 py-1 text-[11px] font-bold text-white transition active:translate-y-[1px] active:scale-[0.98]"
+                          >
+                            {templateOpen ? "Hide templates" : "Send a template"}
+                          </button>
+                          {threadState?.opt_in_at ? (
+                            <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-ink/40 dark:text-amber-200">
+                              Opt-in on record
+                              {threadState.opt_in_source
+                                ? ` · ${threadState.opt_in_source.replace(/_/g, " ")}`
+                                : ""}
+                            </span>
+                          ) : (
+                            <>
+                              <span className="text-[11px] font-medium text-amber-800/80 dark:text-amber-300/80">
+                                No opt-in on record — templates need one.
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleRecordConsent(target)}
+                                className="rounded-full border border-amber-400/60 px-2.5 py-0.5 text-[10px] font-bold text-amber-800 transition hover:bg-amber-100 dark:border-amber-400/40 dark:text-amber-200"
+                              >
+                                Record consent
+                              </button>
+                            </>
+                          )}
+                        </div>
+
+                        {templateOpen && (
+                          <div className="mt-3 rounded-xl bg-white/80 p-3 dark:bg-ink/40">
+                            {templateError && (
+                              <p className="mb-2 text-[11px] font-medium text-[#C4304B] dark:text-[#FF8FA3]">
+                                {templateError}
+                              </p>
+                            )}
+                            {templates === null ? (
+                              <p className="text-[11px] text-ink/45 dark:text-fog/45">
+                                Loading templates…
+                              </p>
+                            ) : approvedTemplates.length === 0 ? (
+                              <p className="text-[11px] text-ink/45 dark:text-fog/45">
+                                No approved utility template yet. Create one in
+                                WhatsApp Manager, then sync on the Templates page.
+                              </p>
+                            ) : (
+                              <>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {approvedTemplates.map((t) => (
+                                    <button
+                                      key={t.id}
+                                      type="button"
+                                      onClick={() => chooseTemplate(t)}
+                                      aria-pressed={templateId === t.id}
+                                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                                        templateId === t.id
+                                          ? "bg-deep-violet text-white"
+                                          : "border border-ink/[0.1] text-ink/60 hover:border-deep-violet/40 dark:border-fog/[0.15] dark:text-fog/60"
+                                      }`}
+                                    >
+                                      {t.name}
+                                      <span className="ml-1 font-normal opacity-60">
+                                        {t.language}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                                {selectedTemplate && selectedTemplate.variables > 0 && (
+                                  <div className="mt-2 grid gap-1.5">
+                                    {templateVars.map((value, index) => (
+                                      <input
+                                        key={index}
+                                        value={value}
+                                        onChange={(e) => {
+                                          const next = [...templateVars];
+                                          next[index] = e.target.value;
+                                          setTemplateVars(next);
+                                        }}
+                                        placeholder={`Variable ${index + 1}`}
+                                        aria-label={`Template variable ${index + 1}`}
+                                        className="input-field"
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                                {selectedTemplate && (
+                                  <p className="mt-2 whitespace-pre-line text-[11px] leading-4 text-ink/50 dark:text-fog/50">
+                                    {selectedTemplate.body}
+                                  </p>
+                                )}
+                                <div className="mt-2 flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSendTemplate(target)}
+                                    disabled={!selectedTemplate || templateBusy}
+                                    className="rounded-full bg-deep-violet px-3 py-1.5 text-[11px] font-bold text-white transition disabled:opacity-40 active:translate-y-[1px] active:scale-[0.98]"
+                                  >
+                                    {templateBusy ? "Sending…" : "Send template"}
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )}
                     <div className="flex items-end gap-2">
                       <textarea
@@ -912,9 +1342,13 @@ export default function InboxView() {
                           }
                         }}
                         rows={2}
-                        placeholder={replyWindowOpen(target) ? "Write a reply…" : "Reply window closed"}
+                        placeholder={
+                          !replyWindowOpen(target) || windowClosed
+                            ? "Reply window closed"
+                            : "Write a reply…"
+                        }
                         aria-label="Write a reply"
-                        disabled={!replyWindowOpen(target)}
+                        disabled={!replyWindowOpen(target) || windowClosed}
                         className="input-field flex-1 resize-none disabled:opacity-50"
                       />
                       <button onClick={() => void send()} disabled={!canSend} className="btn-primary disabled:opacity-40">
@@ -922,7 +1356,7 @@ export default function InboxView() {
                       </button>
                     </div>
                     <p className="mt-1.5 text-[11px] text-ink/35 dark:text-fog/35">
-                      {replyWindowOpen(target)
+                      {replyWindowOpen(target) && !windowClosed
                         ? `Reply window open — closes ${replyWindowExpiresAt(target)?.toLocaleString() ?? ""}.`
                         : "WhatsApp/Instagram only allow replies within 24 hours of the customer’s last message."}
                     </p>

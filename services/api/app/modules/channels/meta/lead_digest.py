@@ -157,6 +157,9 @@ async def _pending_leads(db, tenant_id: str, limit: int) -> list[Lead]:
             Lead.tenant_id == tenant_id,
             Lead.stage.in_(PENDING_STAGES),
             Lead.opt_out.is_(False),
+            # Merged rows are the same person on another channel — see
+            # _count_pending.
+            Lead.merged_into_id.is_(None),
         )
         .order_by(
             (Lead.priority == "important").desc(),
@@ -296,6 +299,9 @@ async def _count_pending(db, tenant_id: str) -> int:
                 Lead.tenant_id == tenant_id,
                 Lead.stage.in_(PENDING_STAGES),
                 Lead.opt_out.is_(False),
+                # A lead merged into another channel's row is the same person;
+                # counting both would inflate every digest.
+                Lead.merged_into_id.is_(None),
             )
         )
     ).scalar() or 0

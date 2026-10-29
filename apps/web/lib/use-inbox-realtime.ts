@@ -49,6 +49,7 @@ export interface InboxRealtimeEvent {
     | "notification"
     | "review_issue"
     | "typing"
+    | "mode"
     | "ping";
   notification?: NotificationPayload;
   id?: string;
@@ -66,6 +67,10 @@ export interface InboxRealtimeEvent {
   /* typing events — who is composing in this thread right now */
   typing?: boolean;
   typing_source?: "ai" | "agent";
+  /* conversation-mode events — another tab switched AI/human */
+  mode?: "ai" | "human";
+  mode_changed_at?: string | null;
+  mode_changed_by?: string | null;
   /* comment events */
   comment_id?: string | null;
   parent_comment_id?: string | null;

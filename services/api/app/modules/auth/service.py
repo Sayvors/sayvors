@@ -39,6 +39,26 @@ from .events import (
 from ...modules.email.service import send_welcome_email
 
 
+def _adopt_provider_avatar(user: User, provider: str, picture: str | None) -> None:
+    """Record a provider snapshot without clobbering an explicit choice.
+
+    `avatar_source is None` means the user never chose, so the first provider
+    picture becomes the effective avatar. Once they pick a source (including
+    "none"), a later sign-in only refreshes that provider's snapshot - a
+    device upload must survive a Google login.
+    """
+    if not picture:
+        return
+    url = picture.strip()
+    if not url:
+        return
+    field = "google_avatar_url" if provider == "google" else "facebook_avatar_url"
+    setattr(user, field, url[:1000])
+    if user.avatar_source in (None, provider):
+        user.avatar_source = provider
+        user.avatar_url = url[:1000]
+
+
 async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str) -> dict:
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
@@ -109,6 +129,7 @@ async def signup(body: SignupRequest, db: AsyncSession, user_agent: str, ip: str
             "email": user.email,
             "email_verified": user.email_verified,
             "onboarded": user.onboarded,
+            "avatar_url": user.avatar_url,
         },
         "verification_token": raw_token,
     }
@@ -181,6 +202,7 @@ async def login(body: LoginRequest, db: AsyncSession, user_agent: str, ip: str) 
             "email": user.email,
             "email_verified": user.email_verified,
             "onboarded": user.onboarded,
+            "avatar_url": user.avatar_url,
         },
     }
 
@@ -226,6 +248,7 @@ async def _issue_session(user: User, db: AsyncSession, event: str,
             "email": user.email,
             "email_verified": user.email_verified,
             "onboarded": user.onboarded,
+            "avatar_url": user.avatar_url,
         },
     }
 
@@ -271,8 +294,7 @@ async def google_login(claims: dict, db: AsyncSession,
                 # Decision 1A: link — existing password account adopts Google.
                 if user.google_sub is None:
                     user.google_sub = sub
-                if picture:
-                    user.avatar_url = picture
+                _adopt_provider_avatar(user, "google", picture)
             else:
                 user = User(
                     first_name=first[:100],
@@ -282,8 +304,8 @@ async def google_login(claims: dict, db: AsyncSession,
                     email_verified=True,
                     onboarded=False,
                     google_sub=sub,
-                    avatar_url=picture,
                 )
+                _adopt_provider_avatar(user, "google", picture)
                 db.add(user)
                 await db.flush()  # assign user.id before the refresh-token row
                 event = "signup"
@@ -292,8 +314,7 @@ async def google_login(claims: dict, db: AsyncSession,
                 user.first_name = first[:100]
             if last:
                 user.last_name = last[:100]
-            if picture:
-                user.avatar_url = picture
+            _adopt_provider_avatar(user, "google", picture)
 
         result = await _issue_session(user, db, event, user_agent, ip,
                                       metadata={"via": "google"})
@@ -343,8 +364,7 @@ async def facebook_login(profile: dict, db: AsyncSession,
                 # Link — existing password account adopts Facebook.
                 if user.facebook_id is None:
                     user.facebook_id = fb_id
-                if picture:
-                    user.avatar_url = picture
+                _adopt_provider_avatar(user, "facebook", picture)
             else:
                 user = User(
                     first_name=first[:100],
@@ -354,8 +374,8 @@ async def facebook_login(profile: dict, db: AsyncSession,
                     email_verified=True,
                     onboarded=False,
                     facebook_id=fb_id,
-                    avatar_url=picture,
                 )
+                _adopt_provider_avatar(user, "facebook", picture)
                 db.add(user)
                 await db.flush()  # assign user.id before the refresh-token row
                 event = "signup"
@@ -364,8 +384,7 @@ async def facebook_login(profile: dict, db: AsyncSession,
                 user.first_name = first[:100]
             if last:
                 user.last_name = last[:100]
-            if picture:
-                user.avatar_url = picture
+            _adopt_provider_avatar(user, "facebook", picture)
 
         result = await _issue_session(user, db, event, user_agent, ip,
                                       metadata={"via": "facebook"})
@@ -798,6 +817,7 @@ async def verify_signup_otp(
             "email": user.email,
             "email_verified": user.email_verified,
             "onboarded": user.onboarded,
+            "avatar_url": user.avatar_url,
         },
     }
 

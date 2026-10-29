@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -18,6 +19,8 @@ from ..users.models import User
 from .models import Channel, ChannelMessage, ChannelThread, ContactProfile
 from . import thread_maintenance  # noqa: F401  registers event listeners
 from .schemas import ChannelCreate, ChannelMessageSend
+
+logger = logging.getLogger(__name__)
 
 
 def encrypt_token(token: str) -> str:
@@ -389,6 +392,30 @@ async def send_message(
     db.add(outbound)
     await db.commit()
     await db.refresh(outbound)
+
+    # Any human outbound means a person owns this conversation: mute the AI,
+    # cancel any queued AI follow-up, and reset the escalation clock so the
+    # next customer message is not treated as an AI miss. A failed send is
+    # excluded on purpose — the customer never saw a human reply, so the AI
+    # must keep answering.
+    if not error:
+        from .conversation_mode import MODE_HUMAN, set_mode
+
+        try:
+            await set_mode(
+                db,
+                tenant_id=tenant_id_of(user),
+                channel_id=channel_id,
+                contact_phone=contact_phone,
+                mode=MODE_HUMAN,
+                by=user.id or "human_reply",
+                reason="human_reply",
+            )
+        except Exception as exc:  # noqa: BLE001 - the message already landed
+            logger.warning(
+                "conversation mode switch failed after human reply "
+                "channel=%s: %s", channel_id, exc,
+            )
     return outbound
 
 
@@ -653,7 +680,11 @@ def _thread_payloads(
                 "can_reply": ch.platform != "google_reviews" and phone is not None,
                 "archived": t.archived_at is not None,
                 "pinned": t.pinned_at is not None,
-                "pinned": t.pinned_at is not None,
+                "mode": t.conversation_mode or "ai",
+                "mode_changed_at": (
+                    t.mode_changed_at.isoformat() if t.mode_changed_at else None
+                ),
+                "mode_changed_by": t.mode_changed_by,
             }
         )
     return out
@@ -929,6 +960,11 @@ async def list_inbox_threads(
                     "priority": priority,
                     "important": is_important(priority, category),
                     "can_reply": platform != "google_reviews" and phone is not None,
+                    # No thread row exists on this path, so nothing has ever
+                    # switched the conversation: the AI owns it.
+                    "mode": "ai",
+                    "mode_changed_at": None,
+                    "mode_changed_by": None,
                 }
             )
         return out

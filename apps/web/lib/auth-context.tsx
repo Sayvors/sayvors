@@ -13,6 +13,8 @@ interface User {
   email: string;
   email_verified: boolean;
   onboarded: boolean;
+  /** Effective profile picture; null when the user has none. */
+  avatar_url?: string | null;
   theme?: string;
   language?: string;
 }
@@ -101,7 +103,11 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
       pathname.startsWith("/reset-password") ||
       pathname.startsWith("/verify-email") ||
       pathname.startsWith("/verify-otp") ||
-      pathname.startsWith("/invite");
+      pathname.startsWith("/invite") ||
+      // Public catalog links are opened by customers with no session at all;
+      // the token in the URL is the credential. Without this the provider's
+      // own anonymous /auth/me probe would bounce every visitor to /login.
+      pathname.startsWith("/catalog");
     if (typeof window !== "undefined" && !publicPath) {
       window.location.href = "/login";
     }

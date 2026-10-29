@@ -12,11 +12,16 @@ See docs/specs/2026-10-13-lead-priority-escalation-design.md.
 """
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from ...channels.service import hash_contact_phone
+from ...channels.service import (
+    encrypt_contact_phone,
+    encrypt_message_content,
+    hash_contact_phone,
+)
 from ..models import ChannelMessage, Lead
 
 logger = logging.getLogger(__name__)
@@ -132,13 +137,42 @@ async def update_escalation_state(db, lead) -> None:
         return
 
     if was_important:
+        # A human reply already reset the counter above; set it explicitly so
+        # no future branch can leave a stale escalated value behind.
         lead.priority = "normal"
+        lead.ai_miss_count = 0
         _clear_escalation_state(lead)
 
 
-def should_ai_reply(lead) -> bool:
-    """False while the thread is handed to a human."""
+def should_ai_reply(lead, mode: str = "ai") -> bool:
+    """False while a human owns the thread or an escalation is unresolved.
+
+    ``mode`` comes from ``ChannelThread.conversation_mode``. The priority check
+    stays as well: automatic escalation sets both, and if the thread-row write
+    ever fails the mute must still hold rather than let the AI talk over a
+    person.
+    """
+    from ...channels.conversation_mode import MODE_HUMAN
+
+    if mode == MODE_HUMAN:
+        return False
     return (lead.priority or "normal") != "important"
+
+
+def resume_lead(lead, reason: str) -> None:
+    """Hand a thread back to the AI.
+
+    Zeroing ``ai_miss_count`` is the invariant that makes this stick. The
+    counter is the only input to ``priority``, so leaving it at the escalated
+    value meant the very next inbound incremented past the threshold and
+    muted the customer again — the 24h resume sweep appeared to work while
+    every following message re-escalated instantly (BUG-1). Every path that
+    returns a thread to the AI goes through here.
+    """
+    lead.priority = "normal"
+    lead.ai_miss_count = 0
+    _clear_escalation_state(lead)
+    logger.info("lead %s handed back to the AI (%s)", lead.id, reason)
 
 
 def _lead_label(lead) -> str:
@@ -259,32 +293,113 @@ async def on_escalate(db, lead, tenant_settings: dict | None = None) -> None:
     lead.escalation_reminder_at = _now() + timedelta(hours=reminder_hours)
 
 
-async def send_handover(db, lead, adapter, phone_number_id: str, token: str) -> None:
-    """Deliver the holding line, once.
+async def _persist_handover(db, lead, provider_msg_id: str | None) -> None:
+    """Store the holding line as a normal outbound row.
 
-    Guarded by handover_sent_at so a re-trigger never repeats it. On failure
-    the column stays NULL: the thread still goes silent (the handover is about
-    the AI stopping, not the message landing) and a failed cosmetic line must
-    not block the escalation itself.
+    Without this the inbox, the lead digest and the escalation counter never
+    saw the message the customer actually received: the thread looked
+    unanswered in the dashboard while WhatsApp showed a reply (BUG-3).
+    ``is_ai`` stays False on purpose — the holding line is the AI stepping
+    aside, so a later inbound must reset the miss counter rather than count
+    this row as another AI miss.
+    """
+    platform = lead.platform or "whatsapp"
+    # contact_id is NOT NULL on Lead, but an empty value would still crash the
+    # phone hash, so the guard is explicit rather than implied.
+    contact = lead.contact_id or ""
+    row = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=lead.channel_id,
+        platform_message_id=(provider_msg_id or "")[:200] or None,
+        direction="outbound",
+        content=encrypt_message_content(HANDOVER_TEXT),
+        content_type="text",
+        status="sent",
+        contact_phone=encrypt_contact_phone(contact or None),
+        contact_phone_hash=hash_contact_phone(contact) if contact else None,
+        is_ai=False,
+        handled_by="system",
+    )
+    db.add(row)
+    # Committed here because the message already reached the customer: the
+    # row must survive even if the caller's transaction later rolls back.
+    await db.commit()
+
+    try:
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(lead.tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": lead.channel_id,
+            "platform": platform,
+            "direction": "outbound",
+            "content": HANDOVER_TEXT,
+            "content_type": "text",
+            "status": "sent",
+            "contact_phone": lead.contact_id,
+            "created_at": row.created_at,
+        })
+    except Exception as e:
+        logger.warning(
+            "handover realtime publish failed for lead %s: %s", lead.id, e
+        )
+
+
+async def send_handover(db, lead, adapter, phone_number_id: str, token: str) -> None:
+    """Deliver the holding line, once, and record it.
+
+    Guarded by handover_sent_at so a re-trigger never repeats it. A send
+    failure leaves the column NULL: the thread still goes silent (the
+    handover is about the AI stopping, not the message landing) and a failed
+    cosmetic line must not block the escalation itself. A persistence failure
+    after a successful send is logged but does not reopen the send — the
+    customer already has the message.
     """
     if lead.handover_sent_at is not None:
         return
     try:
-        await adapter.send_text_message(
+        provider_msg_id = await adapter.send_text_message(
             phone_number_id, token, lead.contact_id, HANDOVER_TEXT
         )
         lead.handover_sent_at = _now()
     except Exception as e:
         logger.warning("handover line failed for lead %s: %s", lead.id, e)
+        return
+    try:
+        await _persist_handover(db, lead, provider_msg_id)
+    except Exception as e:
+        logger.error(
+            "handover line sent but not persisted for lead %s: %s", lead.id, e
+        )
 
 
 async def escalate_to_human(db, lead, adapter, phone_number_id: str, token: str) -> None:
     """Hand a thread to a human: cancel queued nudges, say so once, stop.
 
-    Called by the consumer when a thread is 'important' at reply time. After
-    this the AI stays silent for the thread until the 24h resume sweep.
+    Called by the consumer when a thread is 'important' at reply time. This is
+    the automatic writer of ``conversation_mode`` — the thread row records
+    ``mode_changed_by="system"`` so the resume sweep knows it may reverse the
+    mute, unlike a mode a person set. After this the AI stays silent until the
+    resume sweep or a human resolve.
     """
+    from ...channels.conversation_mode import MODE_HUMAN, MODE_SOURCE_SYSTEM, set_mode
     from .lead_engine import cancel_pending_actions
+
+    # Mode first: a failed send below must not leave the thread writable by
+    # the AI. Resetting the escalation clock is deliberately skipped here —
+    # the sweep and the reminder email both key on it, and that clock is what
+    # rescues a thread nobody picks up.
+    await set_mode(
+        db,
+        tenant_id=lead.tenant_id,
+        channel_id=lead.channel_id,
+        contact_phone=lead.contact_id,
+        mode=MODE_HUMAN,
+        by=MODE_SOURCE_SYSTEM,
+        reason="escalation",
+        commit=False,
+    )
 
     try:
         await cancel_pending_actions(
@@ -393,11 +508,59 @@ async def run_resume_sweep(db, limit: int = 50) -> int:
         )
         if lead.priority_since > own_cutoff:
             continue        # this tenant allows longer
-        lead.priority = "normal"
-        _clear_escalation_state(lead)
-        resumed += 1
-        logger.info(
-            "lead %s handed back to the AI: no human action within %sh",
-            lead.id, tenant_settings["escalation_resume_hours"],
+        # A person took this thread over (or replied in it): the sweep must
+        # not hand it back to the AI under them. Only a mute this sweep arm
+        # itself — mode_changed_by="system" — is auto-reversible.
+        thread = await _thread_for(db, lead)
+        if thread is not None and (thread.mode_changed_by or "") not in (
+            "", "system",
+        ):
+            logger.info(
+                "lead %s kept in human mode by %s — sweep skipped",
+                lead.id, thread.mode_changed_by,
+            )
+            continue
+        resume_lead(
+            lead,
+            reason=(
+                "no human action within "
+                f"{tenant_settings['escalation_resume_hours']}h"
+            ),
         )
+        await _set_mode_from_system(db, lead, reason="auto_resume")
+        resumed += 1
     return resumed
+
+
+async def _thread_for(db, lead):
+    """The thread row for this lead, if one exists."""
+    from ...channels.conversation_mode import get_thread
+
+    try:
+        return await get_thread(db, lead.channel_id, lead.contact_id)
+    except Exception as e:  # noqa: BLE001 - never block the sweep
+        logger.warning("thread lookup failed for lead %s: %s", lead.id, e)
+        return None
+
+
+async def _set_mode_from_system(db, lead, *, reason: str) -> None:
+    """Mirror a resume onto the thread row. Best-effort, never raises."""
+    from ...channels.conversation_mode import (
+        MODE_AI,
+        MODE_SOURCE_SYSTEM,
+        set_mode,
+    )
+
+    try:
+        await set_mode(
+            db,
+            tenant_id=lead.tenant_id,
+            channel_id=lead.channel_id,
+            contact_phone=lead.contact_id,
+            mode=MODE_AI,
+            by=MODE_SOURCE_SYSTEM,
+            reason=reason,
+            commit=False,
+        )
+    except Exception as e:  # noqa: BLE001 - the lead is already resumed
+        logger.warning("mode mirror failed for lead %s: %s", lead.id, e)

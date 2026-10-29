@@ -96,9 +96,39 @@ class ChannelMessageResponse(BaseModel):
     created_at: str
 
 
+class ThreadContextOut(BaseModel):
+    """The newest stored summary of one conversation."""
+
+    summary: str
+    message_count: int
+    # mode_change | resolve | escalation | periodic | manual
+    reason: str
+    created_at: str
+
+
+class ThreadStateOut(BaseModel):
+    mode: str = "ai"
+    mode_changed_at: str | None = None
+    # "system" for the automatic escalation, otherwise the acting user id or
+    # "human_reply". The UI uses it to say why the AI stopped.
+    mode_changed_by: str | None = None
+    context: ThreadContextOut | None = None
+    # Meta's 24h customer-service window. False means a free-form reply will be
+    # rejected and only an approved template can reach the customer.
+    reply_window_open: bool = False
+    # Consent basis for templates (NULL = none recorded).
+    opt_in_at: str | None = None
+    opt_in_source: str | None = None
+    opted_out: bool = False
+
+
 class ChannelMessageListResponse(BaseModel):
     messages: list[ChannelMessageResponse]
     total: int
+    # Conversation-level state that the thread view needs on open: who owns
+    # the conversation and the newest summary. Optional so the channel-level
+    # message endpoint keeps working unchanged.
+    thread: ThreadStateOut | None = None
 
 
 class InboxThread(BaseModel):
@@ -124,6 +154,11 @@ class InboxThread(BaseModel):
     message_count: int
     category: str | None = None
     priority: str | None = None
+    # Who answers this conversation: "ai" (default) or "human". "human" means
+    # the AI is muted, whoever set it.
+    mode: str = "ai"
+    mode_changed_at: str | None = None
+    mode_changed_by: str | None = None
     # Whether the conversation needs a human now — urgent/high priority
     # or a complaint. Derived from the two fields above, so it means the
     # same thing for a WhatsApp thread and a Google review.
@@ -166,6 +201,7 @@ class AutoReplyConfigUpdate(BaseModel):
     enabled: bool | None = None
     tone: str | None = Field(None, description="friendly, professional, apologetic, playful, ...")
     databank_id: str | None = Field(None, description="Databank linked for grounding; null to unlink")
+    databank_grounding: bool | None = Field(None, description="Retrieve databank passages for each inbound message and ground the reply in them; default on")
     min_rating_auto: int | None = Field(None, ge=1, le=5, description="Ratings below this are queued for approval")
     model: str | None = Field(None, description="LLM catalog model id from the enabled list; empty string resets to tenant default")
     approval_mode: str | None = Field(None, pattern="^(auto|approval)$", description="auto = post above threshold; approval = all replies wait for human approval")
@@ -189,6 +225,7 @@ class AutoReplyConfigResponse(BaseModel):
     enabled: bool
     tone: str
     databank_id: str | None
+    databank_grounding: bool = True
     min_rating_auto: int
     model: str | None = Field(None, description="Explicit model choice; null = tenant default from enabled models")
     approval_mode: str = "auto"

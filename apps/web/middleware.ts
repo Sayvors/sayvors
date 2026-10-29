@@ -55,6 +55,22 @@ export function middleware(request: NextRequest) {
   // match an https:// host source against a wss:// URL, so connect-src
   // carries the API host in both spellings.
   const wsApiUrl = apiUrl.replace(/^http/, "ws");
+  // Uploaded media (avatars, covers, post photos) is served by the object
+  // store, whose host is deployment-specific: S3 virtual-hosted URLs
+  // (<bucket>.s3.<region>.amazonaws.com), a custom CDN base
+  // (S3_MEDIA_PUBLIC_BASE_URL), or GCS. Local dev serves /media-files/*
+  // straight from the API instead. Mirrors the image remotePatterns in
+  // next.config.ts — keep the two lists in step. img-src cannot execute
+  // script, so a host wildcard here is far cheaper than a broken avatar.
+  const mediaSrc = [
+    apiUrl,
+    "https://*.sayvors.com",
+    "https://*.amazonaws.com",
+    "https://storage.googleapis.com",
+    "https://*.googleusercontent.com",
+    "https://*.ggpht.com",
+    ...(isProd ? [] : ["http://localhost:8000", "http://127.0.0.1:8000"]),
+  ].join(" ");
   const scriptSrc = isProd
     ? `'self' 'nonce-${nonce}' 'strict-dynamic' ${apiUrl} ${gsi}${devSdk}`
     : `'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-eval' ${apiUrl} ${gsi}${devSdk}`;
@@ -66,7 +82,8 @@ export function middleware(request: NextRequest) {
     // Contact avatars come straight from Meta's CDNs (Instagram profile_pic,
     // Messenger lookaside) — temporary links by design, refreshed weekly.
     // WhatsApp business profile photos are served from pps.whatsapp.net.
-    `img-src 'self' data: blob: ${gsi} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com https://*.whatsapp.net`,
+    // Uploaded profile media comes from the object store (see mediaSrc).
+    `img-src 'self' data: blob: ${gsi} https://www.gstatic.com https://*.cdninstagram.com https://*.fbcdn.net https://*.fbsbx.com https://*.whatsapp.net ${mediaSrc}`,
     "font-src 'self' data:",
     // Meta SDK subresources (graph calls, dialog/popup channel frames)
     // plus the realtime inbox WebSocket (wss:// form of the API host).

@@ -432,6 +432,7 @@ async def me(user=Depends(get_current_user)):
         "email": user.email,
         "email_verified": user.email_verified,
         "onboarded": user.onboarded,
+        "avatar_url": user.avatar_url,
         "theme": user.theme or "light",
         "language": user.language or "en",
         "created_at": user.created_at.isoformat(),

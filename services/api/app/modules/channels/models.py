@@ -140,12 +140,12 @@ class ChannelMessage(Base):
     is_ai: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0", nullable=False
     )
-    # Who handled this message: human / ai / unknown (old rows). Drives the
-    # AI-performance split in analytics (deflection framing). Set at write
-    # time by the consumer (ai) and inbox reply endpoints (human); never
-    # inferred from text.
+    # Who handled this message: human / ai / system / unknown (old rows).
+    # Drives the AI-performance split in analytics (deflection framing). Set
+    # at write time by the consumer (ai), inbox reply endpoints (human) and
+    # the escalation handover line (system); never inferred from text.
     handled_by: Mapped[str] = mapped_column(
-        Enum("human", "ai", "unknown", name="message_handled_by"),
+        Enum("human", "ai", "system", "unknown", name="message_handled_by"),
         default="unknown",
         server_default="unknown",
         nullable=False,
@@ -218,7 +218,134 @@ class ChannelThread(Base):
     pinned_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None, index=True
     )
+    # Who answers this conversation: "ai" (default) or "human". The single
+    # source of truth for the AI mute — priority=important is only the
+    # automatic path that sets it. Indexed because the reply consumer and the
+    # resume sweep both look it up per inbound.
+    conversation_mode: Mapped[str] = mapped_column(
+        Enum("ai", "human", name="conversation_mode"),
+        default="ai",
+        server_default="ai",
+        nullable=False,
+        index=True,
+    )
+    # Why the mode last changed, and who did it. "system" means the automatic
+    # escalation path, which the resume sweep may reverse; any other value
+    # (a user id, "human_reply", "resolve") means a human decision that the
+    # sweep must not steal back.
+    mode_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    mode_changed_by: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, default=None
+    )
     channel = relationship("Channel", back_populates="threads")
+
+
+class ChannelBridge(Base):
+    """A one-time link from an Instagram DM to the tenant's WhatsApp number.
+
+    WhatsApp will not let a business message a number it picked up in an
+    Instagram chat before the customer writes first, so the move has to be
+    customer-initiated: the DM replies with ``https://wa.me/<our number>?text=<token>``,
+    the customer taps it, and the first WhatsApp inbound from that number is
+    matched back to the Instagram lead.
+
+    The token is the fallback identity — it survives the customer writing from
+    a different phone than the one they typed. ``phone_e164`` is the primary
+    match, because it needs no cooperation from the text at all.
+
+    Single use: ``used_at`` is set when a WhatsApp inbound consumes it, so a
+    forwarded link cannot merge a second stranger into the same lead.
+    """
+
+    __tablename__ = "channel_bridges"
+    __table_args__ = (
+        # Token lookup is the inbound hot path and must not scan.
+        Index("uq_channel_bridges_token", "token", unique=True),
+        Index("ix_channel_bridges_tenant_phone", "tenant_id", "phone_e164"),
+        Index("ix_channel_bridges_source", "channel_id", "contact_id"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    # The source thread: the Instagram channel and the IGSID that asked.
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE")
+    )
+    contact_id: Mapped[str] = mapped_column(String(64))
+    # The number the customer typed, already E.164.
+    phone_e164: Mapped[str] = mapped_column(String(32))
+    token: Mapped[str] = mapped_column(String(16))
+    # The WhatsApp number the link points at. Kept so the merge can tell which
+    # of several numbers the customer was sent to.
+    target_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # NULL until a DM with the link was actually delivered. A failed send must
+    # retry on the next turn, and a delivered one must not repeat.
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The WhatsApp lead this bridge was merged into.
+    used_by_lead_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+
+class ConversationContext(Base):
+    """A stored, human-readable summary of one conversation.
+
+    The AI rebuilds its prompt from the last N raw messages every turn, which
+    loses everything older than the window and gives a human opening the
+    thread no orientation. This table holds point-in-time summaries written on
+    mode changes, on resolve, and periodically while a thread runs.
+
+    ``summary`` is encrypted: it paraphrases what the customer said, which is
+    the same PII as the messages it came from. History is kept rather than
+    overwritten so a bad generation can be replaced without losing the last
+    good one — readers always take the newest row.
+    """
+
+    __tablename__ = "conversation_contexts"
+    __table_args__ = (
+        # Latest-context lookup is always "newest row for this thread".
+        Index(
+            "ix_conversation_contexts_thread",
+            "channel_id",
+            "contact_phone_hash",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE")
+    )
+    contact_phone: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    summary: Mapped[str] = mapped_column(Text)
+    # How many messages the summary covers, so a reader can tell a 2-message
+    # summary from a 200-message one.
+    message_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    # mode_change | resolve | escalation | periodic | manual
+    reason: Mapped[str] = mapped_column(String(32), default="manual")
+    # Which model wrote it. NULL when generation failed and the row records
+    # only that an attempt happened.
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
 
 
 
@@ -431,6 +558,29 @@ class Lead(Base):
     handover_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Unified-inbox thread key, for the lead -> conversation deep link.
     thread_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # ── WhatsApp opt-in (Meta requires a recorded basis before any template) ──
+    # Set when the customer explicitly agrees to WhatsApp messages: the
+    # Instagram bridge (they tapped and wrote), or an operator recording a
+    # verbal/other agreement. NULL means "no basis" — templates are refused.
+    whatsapp_opt_in_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # instagram_bridge | operator | import
+    whatsapp_opt_in_source: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    # The inbound/template message that evidenced the consent, for an audit.
+    whatsapp_opt_in_message_id: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )
+    # Set on a lead that was consolidated into another channel's lead. An
+    # Instagram lead that moves to WhatsApp keeps its row and its thread, but
+    # the WhatsApp lead becomes the one the pipeline works — this pointer lets
+    # the list, the digest and the merge code tell the two apart without
+    # deleting history.
+    merged_into_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -556,6 +706,12 @@ class AutoReplyConfig(Base):
     tone: Mapped[str] = mapped_column(String(50), default="friendly")
     # Optional Databank linked for grounding replies in merchant knowledge
     databank_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # Ground customer-facing replies in the databank (retrieval per message,
+    # not just the distilled profile card). Default ON: an empty databank
+    # retrieves nothing, so the switch only matters once there is content.
+    databank_grounding: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
     # Reviews with rating below this are queued for human approval, not auto-posted
     min_rating_auto: Mapped[int] = mapped_column(Integer, default=4)
     # "auto" = post above min_rating_auto, queue below.

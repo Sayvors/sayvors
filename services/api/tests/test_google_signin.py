@@ -122,6 +122,7 @@ async def test_verify_endpoint_success(client, db, user_id):
     assert "refresh_token" not in data  # refresh travels as httpOnly cookie
     assert set(data["user"]) == {
         "id", "first_name", "last_name", "email", "email_verified", "onboarded",
+        "avatar_url",
     }
     assert data["user"]["email"] == "guser@sayvors.com"
     u = await db.get(User, data["user"]["id"])

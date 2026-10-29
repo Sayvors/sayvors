@@ -299,9 +299,30 @@ async def test_handover_line_sent_exactly_once(db, monkeypatch):
     assert lead_escalation.HANDOVER_TEXT in sent[0]
     assert lead.handover_sent_at is not None
 
+    # BUG-3: the line the customer received must exist in the inbox too.
+    from app.modules.channels.service import decrypt_message_content
+
+    stored = (await db.execute(
+        select(ChannelMessage).where(
+            ChannelMessage.channel_id == lead.channel_id,
+            ChannelMessage.handled_by == "system",
+        )
+    )).scalars().all()
+    assert len(stored) == 1, "holding line must be persisted as an outbound row"
+    assert stored[0].is_ai is False, "the handover is not an AI answer"
+    assert stored[0].platform_message_id == "wamp-1"
+    assert decrypt_message_content(stored[0].content) == lead_escalation.HANDOVER_TEXT
+
     await lead_escalation.escalate_to_human(db, lead, _Adapter(), "PHONE", "tok")
     await db.commit()
     assert len(sent) == 1, "handover line must never repeat"
+    stored = (await db.execute(
+        select(ChannelMessage).where(
+            ChannelMessage.channel_id == lead.channel_id,
+            ChannelMessage.handled_by == "system",
+        )
+    )).scalars().all()
+    assert len(stored) == 1, "re-trigger must not duplicate the stored line"
 
 
 @pytest.mark.asyncio
@@ -429,8 +450,51 @@ async def test_resume_hands_thread_back_after_24h(db, monkeypatch):
     assert await lead_escalation.run_resume_sweep(db) == 1
     await db.commit()
     assert lead.priority == "normal"
+    assert lead.ai_miss_count == 0, "resume must start a fresh miss cycle"
     assert lead.handover_sent_at is None
     assert lead.priority_since is None
+    assert lead_escalation.should_ai_reply(lead) is True
+
+
+@pytest.mark.asyncio
+async def test_resume_breaks_the_reescalation_loop(db, monkeypatch):
+    """The next inbound after a resume must be a normal miss, not a re-mute.
+
+    Regression guard for BUG-1: the sweep used to set priority back to
+    'normal' while leaving ai_miss_count at the escalated value. The next
+    message incremented it past the threshold, re-entered 'important', and
+    the customer was silenced again — the resume looked successful in the
+    database and the AI still never replied.
+    """
+    from app.modules.channels.meta import lead_escalation
+
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
+    lead.ai_miss_count = 2
+    await db.commit()
+    await lead_escalation.update_escalation_state(db, lead)
+    lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=25)
+    await db.commit()
+    assert lead.priority == "important"
+
+    assert await lead_escalation.run_resume_sweep(db) == 1
+    await db.commit()
+    assert lead.ai_miss_count == 0
+
+    # The customer writes again after the resume.
+    db.add(ChannelMessage(
+        id=str(uuid.uuid4()), channel_id=lead.channel_id, direction="inbound",
+        content="hello again", content_type="text", status="delivered",
+        contact_phone=lead.contact_id,
+        created_at=datetime.now(timezone.utc),
+    ))
+    await db.flush()
+    await lead_escalation.update_escalation_state(db, lead)
+    await db.commit()
+
+    assert lead.ai_miss_count == 1
+    assert lead.priority == "normal", "a fresh cycle must not re-mute instantly"
     assert lead_escalation.should_ai_reply(lead) is True
 
 

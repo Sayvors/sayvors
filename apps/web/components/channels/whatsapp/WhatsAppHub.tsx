@@ -8,8 +8,10 @@ import { fetchMetaAssets, type MetaAsset } from "@/lib/api-meta";
 import ProfileForm from "./ProfileForm";
 import NumbersHealth from "./NumbersHealth";
 import WhatsAppSettings from "./WhatsAppSettings";
+import CatalogPanel from "./CatalogPanel";
+import TemplatesPanel from "./TemplatesPanel";
 
-type Tab = "profile" | "numbers" | "settings";
+type Tab = "profile" | "numbers" | "settings" | "catalog" | "templates";
 
 /* Official WhatsApp palette — light AND dark. The hub follows the app's .dark
  * class (ThemeProvider toggles it on <html>): light keeps the classic WhatsApp
@@ -59,11 +61,22 @@ function initialsOf(n: MetaAsset): string {
   return base.slice(0, 2).toUpperCase();
 }
 
+const WHATSAPP_TABS: Tab[] = ["profile", "numbers", "settings", "catalog", "templates"];
+const TAB_LABEL: Record<Tab, string> = {
+  profile: "Profile",
+  numbers: "Numbers",
+  settings: "Settings",
+  catalog: "Catalog",
+  templates: "Templates",
+};
+
 export default function WhatsAppHub() {
   const params = useSearchParams();
   const router = useRouter();
   const rawTab = params.get("tab");
-  const tab: Tab = (["profile", "numbers", "settings"] as string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "profile";
+  const tab: Tab = WHATSAPP_TABS.includes(rawTab as Tab)
+    ? (rawTab as Tab)
+    : "profile";
   const locParam = params.get("location") ?? "";
   const [numbers, setNumbers] = useState<MetaAsset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -235,7 +248,7 @@ export default function WhatsAppHub() {
           )}
         </header>
         <nav className="flex gap-1 overflow-x-auto bg-[var(--wa-panel)] px-4 shadow-[0_1px_2px_rgba(0,0,0,0.08)]" role="tablist" aria-label="WhatsApp sections">
-          {(["profile", "numbers", "settings"] as Tab[]).map((t) => (
+          {WHATSAPP_TABS.map((t) => (
             <button
               key={t}
               role="tab"
@@ -243,7 +256,7 @@ export default function WhatsAppHub() {
               onClick={() => goto(t)}
               className={`min-h-11 shrink-0 border-b-[3px] px-3.5 text-[13px] font-semibold uppercase tracking-wide transition ${tab === t ? "border-[var(--wa-accent)] text-[var(--wa-accent-deep)]" : "border-transparent text-[var(--wa-text-2)] hover:text-[var(--wa-text)]"}`}
             >
-              {t === "profile" ? "Profile" : t === "numbers" ? "Numbers" : "Settings"}
+              {TAB_LABEL[t]}
             </button>
           ))}
         </nav>
@@ -256,7 +269,7 @@ export default function WhatsAppHub() {
                 <button onClick={() => window.location.reload()} className="font-bold underline">Retry</button>
               </div>
             )}
-            {numbers.length === 0 && !loading && (
+            {numbers.length === 0 && !loading && tab !== "catalog" && tab !== "templates" && (
               <div className="mx-auto max-w-md rounded-lg bg-[var(--wa-panel)] p-8 text-center shadow-[0_1px_2px_rgba(0,0,0,0.15)]">
                 <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[var(--wa-accent)]/10 text-3xl">💬</div>
                 <p className="mt-3 text-[16px] font-semibold text-[var(--wa-text)]">Connect WhatsApp first</p>
@@ -276,6 +289,10 @@ export default function WhatsAppHub() {
                 businessName={active.name}
               />
             )}
+            {/* Catalog and Templates are tenant-level, not per number: they
+                render even before a number is connected. */}
+            {tab === "catalog" && <CatalogPanel />}
+            {tab === "templates" && <TemplatesPanel />}
           </div>
         </div>
       </main>

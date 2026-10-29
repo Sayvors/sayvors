@@ -142,7 +142,7 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
       }
       // Public pages must not bounce: auth pages would reload-loop, and /invite
       // visitors are anonymous by definition (they have no session yet).
-      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp") && !window.location.pathname.startsWith("/invite")) {
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/signup") && !window.location.pathname.startsWith("/forgot-password") && !window.location.pathname.startsWith("/reset-password") && !window.location.pathname.startsWith("/verify-email") && !window.location.pathname.startsWith("/verify-otp") && !window.location.pathname.startsWith("/invite") && !window.location.pathname.startsWith("/catalog")) {
         window.location.href = "/login";
       }
       throw new Error("Unauthorized");
