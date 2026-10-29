@@ -30,6 +30,7 @@ from typing import Optional
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.short_codes import CODE_ALPHABET as _SHARED_ALPHABET
 from ..scheduling import release_lock, take_lock
 from .classification import ReviewClassification
 
@@ -44,9 +45,8 @@ _TICKET_RE = re.compile(r"\bTK-(\d{1,9})\b", re.IGNORECASE)
 
 # Handoff codes are what a customer actually types on WhatsApp, read off a
 # screenshot by hand -- so no 0/O or 1/I, and no separators to mistype.
-# Minting is Phase C; the shape is fixed here because the ladder already
-# consumes it.
-CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+# The alphabet itself is shared with the WhatsApp bridge (core.short_codes).
+CODE_ALPHABET = _SHARED_ALPHABET
 CODE_LENGTH = 6
 _CODE_RE = re.compile(rf"^[A-HJ-NP-Z2-9]{{{CODE_LENGTH}}}$")
 
