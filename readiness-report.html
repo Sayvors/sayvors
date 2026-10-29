@@ -93,6 +93,11 @@
     word-break: break-all;
   }
   .path { color: var(--fg2); }
+  pre {
+    margin: 10px 0 14px; padding: 12px 14px; background: var(--sunken);
+    border: 1px solid var(--line); border-radius: 10px; overflow-x: auto;
+  }
+  pre code { background: none; padding: 0; }
 
   /* Sticky header */
   .top {
@@ -181,7 +186,7 @@
 
 <div class="top">
   <span class="name">Sayvors 1M-User Readiness</span>
-  <span class="chip warn">5 findings open (2 audit · 3 INS) · 2 server CVEs · 36 resolved · billing new · gcp new</span> <span class="chip ok">deps: 55/55 closed</span>
+  <span class="chip warn">5 findings open (2 audit · 3 INS) · 2 server CVEs · 36 resolved · billing new · gcp new · handoff ledger new (15)</span> <span class="chip ok">deps: 55/55 closed</span>
   <nav class="topnav">
     <a href="#blockers">Blockers</a>
     <a href="#pass-2026-10-25">Oct 25 pass</a>
@@ -191,6 +196,7 @@
     <a href="#dependencies">Deps</a>
     <a href="#sec-audit-2026-10-26">Sec audit</a>
     <a href="#gcp-mvp">GCP</a>
+    <a href="#handoff">Handoff</a>
     <a href="#plan">15-day plan</a>
     <a href="#buybuild">Buy vs build</a>
     <a href="#queue">Queue</a>
@@ -204,6 +210,7 @@
 <div class="verdict">
   <p><strong>Most of the audit is closed — 32 of the 34 findings in the original ledger are resolved; 2 remain open (OPS-1, OPS-4).</strong> Counting the Oct 25 INS pass, 36 of 41 code findings are closed and 5 remain; the two server-image CVEs (Redis 7, Kafka 3.8) are separate and still open. Multi-tenant isolation held up under an adversarial pass — not one missing tenant filter was found across every router. Auth internals are genuinely solid. The unified job-processing design in the repo is enterprise-grade and approved after four review rounds. What still stands between here and 1M users is a short list: no rehearsed backup, one box carrying everything, and a production host that has not been stood up.</p>
   <p>A separate <strong>billing &amp; plans</strong> workstream is now tracked in <a href="#billing">§6b</a>. The wallet hotfix, durable spend ledger, five plans, admin plan CRUD, entitlements service and enforcement at channel-connect / message-send / LLM are deployed to staging (<code>d82d800</code>, 2026-10-28). It is not counted in the 32/2 audit ledger.</p>
+  <p>A third workstream opened on 2026-10-29: <a href="#handoff">conversation control &amp; Instagram &rarr; WhatsApp handoff</a>. It carries 15 open items plus a deferred calling decision. It is product work, not an audit finding, and is not counted in the 32/2 ledger either - but <strong>BUG-1 is a live customer-facing mute</strong> and should be fixed before the next deploy.</p>
 </div>
 
 <div class="stats">
@@ -1553,8 +1560,117 @@
   <p class="note">The owner’s sizing choice trades peak headroom for cost — the correct lever is <strong>plan-level daily message quotas</strong> (load capped by billing, not by infra) plus a queue-depth alert so “workers saturated” is seen before tenants feel it. Two honest caveats. (1) At full 1M saturation the <strong>LLM API bill dwarfs this entire table</strong>; negotiate model pricing before infra. (2) These are planning figures; §11 fix-queue row 13 (k6 load test) is what converts them from estimates to facts. Path from MVP to here is strictly: resize DB → split worker lanes → flip on replicas/HA — the order the outgrow-list already implies.</p>
 </section>
 
+<section id="handoff">
+  <div class="eyebrow">&sect;&sect; 17 - Conversation control &amp; handoff - 2026-10-29</div>
+  <h2>Instagram &rarr; WhatsApp, conversation modes, catalog/databank, named agents</h2>
+  <p>This section exists because a demo reel showed a flow we do not run: Instagram DM &rarr; ask for WhatsApp &rarr; send the catalog &rarr; voice notes in Arabic &rarr; a call &rarr; handoff to a named agent. The messaging half is real. The bridge, the catalog send, the call and the named handoff are not. Below is the honest beat-by-beat, then the ledger we work from.</p>
+
+  <h3>What the reel shows vs what the code does</h3>
+  <div class="scroll"><table>
+    <tr><th>Reel beat</th><th>Sayvors today</th><th>Status</th></tr>
+    <tr><td>IG DM arrives, AI replies in seconds</td><td><code>_handle_instagram_message</code> persists the DM, sends typing dots, generates a reply through the parent Page token, supports multi-part rendering.</td><td><span class="chip ok">Works</span></td></tr>
+    <tr><td>"What's your WhatsApp number?"</td><td>The AI can ask; <code>lead_engine</code> extracts the number deterministically and via the LLM, validates E.164, stores <code>lead.phone_number</code>.</td><td><span class="chip ok">Works</span> <span class="chip warn">prompt forbids the promise</span></td></tr>
+    <tr><td>"Catalog is on its way to your WhatsApp"</td><td>Nothing sends. <code>WhatsAppAdapter</code> has text, voice note and typing only - no template send. No worker opens a WhatsApp thread from an IG lead.</td><td><span class="chip crit">Missing</span></td></tr>
+    <tr><td>Contact created, context carried over</td><td>The IG lead keeps name/phone/intent, but the WhatsApp thread is a separate lead keyed by phone. No merge by <code>phone_number</code>; the WhatsApp prompt never sees the IG transcript.</td><td><span class="chip crit">Missing</span></td></tr>
+    <tr><td>Arabic WhatsApp voice note &rarr; transcribed</td><td><code>stt</code> module (faster-whisper) downloads the audio, transcribes, replies.</td><td><span class="chip ok">Works</span></td></tr>
+    <tr><td>Arabic voice reply</td><td><code>send_voice_note</code> + TTS, gated by the per-user voice tier (<code>off|simple|advanced</code>).</td><td><span class="chip ok">Works</span></td></tr>
+    <tr><td>IG voice notes</td><td>Any IG message without <code>text</code> is stored as <code>[non-text message]</code> - no download, no STT.</td><td><span class="chip crit">Missing</span></td></tr>
+    <tr><td>"Qualified: wholesale"</td><td>Intent enum is <code>buying|booking|quote|info</code>; "wholesale" has no home, and <code>stage</code> flips to <code>qualified</code> on any intent.</td><td><span class="chip warn">Partial</span></td></tr>
+    <tr><td>Call answered by Astra, summary logged</td><td>No call code at all - no Calling API, no media stack, no call object.</td><td><span class="chip crit">Missing</span></td></tr>
+    <tr><td>Handed to Emma</td><td>Escalation exists (holding line, AI silence, reminder sweep, resume window) but it is a flag, not an assignment: <code>handled_by</code> is <code>human|ai|unknown</code>, no assignee, no routing.</td><td><span class="chip warn">Partial</span></td></tr>
+  </table></div>
+
+  <h3>The ledger</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Sev</th><th>Finding</th><th>Fix</th><th>Effort</th></tr>
+    <tr><td class="num">HAND-1</td><td><span class="chip crit">Crit</span></td><td><strong>No Instagram &rarr; WhatsApp move.</strong> A captured <code>lead.phone_number</code> goes nowhere; the <code>wa.me</code> helpers are wired only to review handoff.</td><td>Capture explicit opt-in + E.164 in the IG DM; reply with <code>https://wa.me/&lt;tenant number&gt;?text=&lt;token&gt;</code>; match the token on the first WhatsApp inbound and link the two leads. Customer-initiated, so it opens the 24h window with no template.</td><td class="num">2 days</td></tr>
+    <tr><td class="num">HAND-2</td><td><span class="chip high">High</span></td><td><strong>No business-initiated WhatsApp.</strong> Outside the 24h window nothing can be sent; there is no <code>type: template</code> path and no consent record.</td><td><code>send_template_message()</code> + consent columns (<code>whatsapp_opt_in_at</code>, <code>whatsapp_opt_in_source</code>, <code>whatsapp_opt_in_message_id</code>) + an approved utility template + an idempotent send worker.</td><td class="num">3 days + Meta review</td></tr>
+    <tr><td class="num">HAND-3</td><td><span class="chip crit">Crit</span></td><td><strong>No cross-channel identity.</strong> IG lead keyed by IGSID, WhatsApp lead keyed by phone: two rows, two threads, no shared history.</td><td>Merge on the first WhatsApp inbound by phone hash; point both thread keys at one lead; carry the IG transcript summary into the WhatsApp prompt.</td><td class="num">1 day</td></tr>
+    <tr><td class="num">HAND-4</td><td><span class="chip crit">Crit</span></td><td><strong>AI identity and channel policy.</strong> The IG prompt forbids promising contact elsewhere and never tells the model to avoid "I am a text-based AI". Voice exists but the prompt does not know the tier.</td><td>One policy block per channel: never claim to be a bot/AI; never describe itself as text-only; voice enabled &rarr; voice for voice-in on WhatsApp (the Instagram adapter has no voice send yet); only promise a WhatsApp send when HAND-1/2 can actually deliver.</td><td class="num">0.5 day</td></tr>
+    <tr><td class="num">HAND-5</td><td><span class="chip med">Med</span></td><td><strong>Lead labels are not canonical.</strong> "Wholesale" cannot be expressed; <code>qualified</code> means "said something", not "sales-qualified".</td><td>Taxonomy <code>wholesale|retail|booking|quote|support|info</code>, per-tenant stage rules, and the same label in inbox, lead card, digest and escalation email.</td><td class="num">1 day</td></tr>
+    <tr><td class="num">HAND-6</td><td><span class="chip crit">Crit</span></td><td><strong>No catalog.</strong> The AI cannot quote a price, check stock, or send an item.</td><td><code>catalog_items</code> table + admin CRUD + compact retrieval into the reply prompt + send item card/image + a shareable catalog link.</td><td class="num">3-4 days</td></tr>
+    <tr><td class="num">HAND-7</td><td><span class="chip high">High</span></td><td><strong>The databank is owner-only.</strong> <code>rag.Databank</code> is read by the assistant; customer-facing Meta replies never retrieve from it.</td><td>Tenant-scoped retrieval in the Meta reply path with a token budget and hard timeout; cite-or-say-unknown rule; per-tenant toggle.</td><td class="num">2-3 days</td></tr>
+    <tr><td class="num">HAND-8</td><td><span class="chip crit">Crit</span></td><td><strong>No conversation mode.</strong> No <code>ai|human</code> column. <code>priority=important</code> is the only "a human owns this" signal, and it is a one-way mute.</td><td><code>conversation_mode</code> on the thread/lead, a switch at the top of the thread, auto-switch to human on any human outbound, back to AI on resolve. Every transition zeroes <code>ai_miss_count</code> and resets the escalation clock.</td><td class="num">2 days</td></tr>
+    <tr><td class="num">HAND-9</td><td><span class="chip high">High</span></td><td><strong>No stored conversation context.</strong> The AI rebuilds from raw messages every turn; humans get no summary.</td><td><code>conversation_contexts</code> table; generate on mode change, on resolve and every N messages; inject the latest into the AI prompt; show it as a card in the thread for the human.</td><td class="num">2 days</td></tr>
+    <tr><td class="num">HAND-10</td><td><span class="chip med">Med</span></td><td><strong>Handoff is not an assignment.</strong> No assignee, no routing, no presence, no "mine" filter.</td><td><code>assigned_to</code> + team-member picker + notify the assignee + inbox filter "mine"; optional round-robin by channel.</td><td class="num">2 days</td></tr>
+    <tr><td class="num">HAND-11</td><td><span class="chip med">Med</span></td><td><strong>No cumulative memory.</strong> Nothing writes a resolved conversation back into the databank, so the AI does not get smarter from outcomes.</td><td>On resolve, store summary + outcome + approved facts; PII-scrub; make them retrievable; tenant toggle and a review queue.</td><td class="num">2 days</td></tr>
+    <tr class="warn"><td class="num">BUG-1</td><td><span class="chip crit">Crit</span></td><td><strong>An escalated thread never comes back to the AI.</strong> <code>should_ai_reply</code> is False while <code>priority=important</code>; resume needs <code>priority_since</code> + <code>escalation_resume_hours</code>; and <code>ai_miss_count</code> is <em>never reset on resume</em>, so the next inbound re-escalates instantly.</td><td>Zero <code>ai_miss_count</code> on every entry to AI mode; make resume explicit and observable; regression test "escalate &rarr; resume &rarr; inbound &rarr; AI replies".</td><td class="num">0.5 day</td></tr>
+    <tr class="warn"><td class="num">BUG-2</td><td><span class="chip high">High</span></td><td><strong>A handoff code is ignored while escalated.</strong> The escalation gate returns at <code>consumer.py:709-716</code>, before <code>resolve_and_advance</code> at <code>:727</code>.</td><td>Resolve a handoff code before the escalation gate - a code is an explicit request for a human, not another repeat question.</td><td class="num">0.5 day</td></tr>
+    <tr class="warn"><td class="num">BUG-3</td><td><span class="chip high">High</span></td><td><strong>The handover line is invisible.</strong> <code>send_handover</code> sends through the adapter without persisting a <code>ChannelMessage</code>, so the inbox, digest and counter never see it.</td><td>Persist it as an outbound row with a new <code>handled_by=system</code> enum value (migration) and <code>is_ai=False</code>.</td><td class="num">0.5 day</td></tr>
+    <tr class="warn"><td class="num">BUG-4</td><td><span class="chip high">High</span></td><td><strong>No escalation clock in the UI.</strong> <code>priority_since</code>, <code>escalation_reminder_at</code> and the resume window are stored but never surfaced; there is no "hand back to AI".</td><td>Countdown chip on the thread + "resume now" action with a reason.</td><td class="num">1 day</td></tr>
+    <tr><td class="num">CALL-1</td><td><span class="chip low">Deferred</span></td><td><strong>WhatsApp calling.</strong> No call code, no media stack.</td><td>Buy, do not build. See the calling note below.</td><td class="num">3-6 weeks</td></tr>
+  </table></div>
+
+  <h3>How the Instagram &rarr; WhatsApp move works</h3>
+  <p>The constraint that decides the design: WhatsApp Cloud API will not let you send a free-form message to a number you picked up in an Instagram chat. Business-initiated messages need an approved template plus recorded opt-in. So there are two compliant routes, and they ship in order.</p>
+  <div class="cards2">
+    <div class="card">
+      <h3>Route A - click-to-chat (ship first)</h3>
+      <ol>
+        <li>In the IG DM the AI asks for the number and explicit consent: "Want the catalog on WhatsApp? Send your number and I'll message you there."</li>
+        <li><code>lead_engine</code> captures it as <code>lead.phone_number</code> (already E.164).</li>
+        <li>The bot replies with <code>https://wa.me/&lt;tenant business number&gt;?text=&lt;token&gt;</code>. The link must point at <strong>our</strong> number, not the customer's - <code>wa.me/&lt;customer number&gt;</code> opens a chat with themselves.</li>
+        <li>The customer taps and sends. That inbound opens the 24h customer-service window.</li>
+        <li>The token identifies the IG lead; the worker links the two rows and hands the AI the IG summary.</li>
+      </ol>
+      <p class="note">No template review. One extra tap. Reuses the review-handoff pattern already in <code>review_engine/handoff.py</code> and <code>tickets.py</code>.</p>
+    </div>
+    <div class="card">
+      <h3>Route B - business-initiated template</h3>
+      <ol>
+        <li>Capture opt-in in the IG DM and store the evidence: time, source, message id.</li>
+        <li>Add <code>send_template_message()</code> to <code>WhatsAppAdapter</code> (<code>type: template</code>, name, language, components).</li>
+        <li>Get a <code>utility</code> template approved, e.g. <code>catalog_handoff</code> with a <code>{{1}}</code> name parameter - one per language.</li>
+        <li>A worker sends it once, idempotently, keyed on the lead.</li>
+        <li>The reply opens the 24h window and normal AI/voice takes over.</li>
+      </ol>
+      <p class="note">This is what makes "the catalog is on its way" true. Until it ships, the AI must not say it.</p>
+    </div>
+  </div>
+
+  <h3>Conversation modes and context snapshots</h3>
+  <p>Target state machine, replacing the current one-way mute. The invariant that fixes the silent thread: <strong>every entry into AI mode zeroes <code>ai_miss_count</code> and clears the escalation clock</strong>, and every transition writes a context snapshot.</p>
+  <div class="scroll"><table>
+    <tr><th>From</th><th>Trigger</th><th>To</th><th>Side effects</th></tr>
+    <tr><td><code>AI</code></td><td><code>ai_miss_count &gt;= escalation_threshold</code></td><td><code>HUMAN_NEEDED</code></td><td>Holding line persisted, nudges cancelled, owner email + in-app notification, resume timer armed, snapshot written.</td></tr>
+    <tr><td><code>HUMAN_NEEDED</code></td><td>a human sends a message, or an agent flips the switch</td><td><code>HUMAN_ACTIVE</code></td><td>Timer cleared, assignee recorded, snapshot written. The customer is no longer waiting on a bot.</td></tr>
+    <tr><td><code>HUMAN_ACTIVE</code></td><td>agent resolves, or flips back to AI</td><td><code>AI</code></td><td><code>ai_miss_count = 0</code>, all escalation fields cleared, snapshot written. The next inbound gets a fresh AI reply with the stored context.</td></tr>
+    <tr><td><code>HUMAN_NEEDED</code></td><td>resume window expires with no human action</td><td><code>AI</code></td><td><code>ai_miss_count = 0</code>, snapshot written, log line "handed back to the AI".</td></tr>
+    <tr><td><code>AI</code></td><td>customer sends a message</td><td><code>AI</code></td><td>Normal reply. A human outbound at any time flips to <code>HUMAN_ACTIVE</code> automatically.</td></tr>
+  </table></div>
+  <p>Snapshots are written on every transition, on resolve, and every N messages (N=20 suggested) - not on every message, because each one is an LLM call. The latest snapshot is injected into the AI prompt and shown to the human as a card at the top of the thread. The customer never sees it.</p>
+
+  <h3>The silent thread: 15 Oct &rarr; 26 Oct</h3>
+  <p>The pasted WhatsApp export shows the AI sending the holding line once ("Let me get my colleague to help you with this."), then nothing for 11 days while the customer kept writing, including a handoff code <code>GFW8XH</code>. That is not a provider outage. Three defects in our own code produce exactly this:</p>
+  <ol>
+    <li><strong>The mute is one-way.</strong> <code>should_ai_reply()</code> returns False while <code>priority == "important"</code> (<code>lead_escalation.py:139-141</code>), and the consumer returns at <code>consumer.py:709-716</code>. Nothing in the inbound path can lift it.</li>
+    <li><strong>The resume loop re-escalates instantly.</strong> <code>run_resume_sweep</code> sets priority back to <code>normal</code> but <code>_clear_escalation_state</code> does not touch <code>ai_miss_count</code>. On the next inbound, <code>update_escalation_state</code> increments from a value already above the threshold, so it re-enters <code>important</code> and mutes again. The customer gets a holding line per cycle at best.</li>
+    <li><strong>The resume window may simply be long.</strong> <code>escalation_resume_hours</code> is tenant-configurable up to <strong>336 hours (14 days)</strong>. If this tenant is set near the maximum, 11 days of silence is the configured behaviour, not a bug - and nothing in the UI shows the countdown, so it looks like a hang.</li>
+  </ol>
+  <p>The handoff code never resolved because the escalation gate returns before <code>resolve_and_advance</code> (BUG-2), and the holding line never appears in the dashboard because it is not persisted (BUG-3).</p>
+  <p class="note"><strong>Verify on staging before changing code.</strong> Run this against the tenant and the customer number:</p>
+  <pre><code>select id, contact_name, priority, ai_miss_count, priority_since,
+       escalated_at, escalation_reminder_at, handover_sent_at
+from leads
+where contact_id = '&lt;customer phone in E.164&gt;';
+
+select lead_settings-&gt;&gt;'escalation_resume_hours' as resume_hours,
+       lead_settings-&gt;&gt;'escalation_threshold'    as threshold
+from users where id = '&lt;tenant id&gt;';</code></pre>
+  <p class="note">Then grep the worker log for <code>WhatsApp AI handover</code>, <code>handed back to the AI</code> and <code>escalation sweep failed</code>. If <code>ai_miss_count</code> is 3+ and <code>priority_since</code> is old, BUG-1 is confirmed. If <code>priority_since</code> is NULL, the row was muted by a path that never armed a resume - a fourth defect worth finding before shipping the fix.</p>
+
+  <h3>WhatsApp calling - deferred, and what it would need</h3>
+  <p><strong>Short answer: yes, third-party integration is needed beyond STT and TTS.</strong> The WhatsApp Business Calling API gives you call signalling and media between a business and a customer; it does not give you a voice agent. To answer a call and talk, you still need a realtime media/orchestration layer, streaming ASR, streaming TTS, voice-activity detection with barge-in, and recording consent.</p>
+  <p>Our current pieces do not fit a live call: STT is file-based (faster-whisper over a downloaded file) and TTS is request/response. Both would have to be replaced with streaming providers. Two viable shapes:</p>
+  <ul>
+    <li><strong>Buy a voice-agent platform</strong> (LiveKit Agents, Pipecat, Vapi, Retell, Bland) and bridge WhatsApp calls over SIP where supported. Fastest path, per-minute cost, least control.</li>
+    <li><strong>Build on a CPaaS media stream</strong> (Twilio, Telnyx, Vonage) plus streaming STT/TTS (Deepgram, AssemblyAI, Azure, Google; ElevenLabs, Cartesia). More control, more work.</li>
+  </ul>
+  <p class="note">Availability, call-permission rules and opt-in vary by country and are changing; verify against Meta's current Calling API docs before scoping. Budget 3-6 weeks of integration even when buying, plus per-minute cost. Not in this ledger's critical path.</p>
+</section>
+
 <footer>
-  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-26; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land.
+  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-29; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land. The 2026-10-29 pass added the conversation-control and Instagram &rarr; WhatsApp ledger (&sect;17, 15 open items plus a deferred calling decision), including the silent-thread root cause (BUG-1 to BUG-4) found in the escalation code.
 </footer>
 
 </div>
