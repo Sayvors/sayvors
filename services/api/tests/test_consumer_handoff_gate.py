@@ -31,13 +31,14 @@ def _session_factory():
 class _Adapter:
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.typing: list[str] = []
 
     async def send_text_message(self, phone_number_id, token, to, text):
         self.sent.append(text)
         return "wamid-out-1"
 
-    async def send_typing_indicator(self, *args, **kwargs):
-        return None
+    async def send_typing_indicator(self, phone_number_id, token, wamid):
+        self.typing.append(wamid)
 
 
 async def _seed(db):
@@ -80,10 +81,14 @@ async def _seed(db):
     return lead, channel
 
 
-@pytest.mark.asyncio
-async def test_handoff_code_reaches_ai_while_escalated(db, monkeypatch):
-    lead, channel = await _seed(db)
-    adapter = _Adapter()
+async def _patch_consumer(
+    monkeypatch,
+    adapter,
+    *,
+    generate,
+    resolve=None,
+) -> None:
+    """Wire the consumer to the test session and a fake adapter/model."""
 
     async def _noop(*args, **kwargs):
         return None
@@ -91,11 +96,55 @@ async def test_handoff_code_reaches_ai_while_escalated(db, monkeypatch):
     async def _fake_classify(*args, **kwargs):
         return {"language": "en", "confused": False, "awaiting_user": False}
 
-    async def _fake_generate(*args, **kwargs):
-        return "Your issue is resolved — the replacement ships today."
-
     async def _fake_render(style, reply, tenant_id, db_):
         return [reply]
+
+    async def _no_match(*args, **kwargs):
+        return None
+
+    def _fake_decrypt(connection):
+        return "tok"
+
+    monkeypatch.setattr(consumer, "async_session", _session_factory())
+    monkeypatch.setattr(consumer, "_typing_indicator_enabled", _noop)
+    monkeypatch.setattr(consumer, "_publish_typing", _noop)
+    monkeypatch.setattr(consumer, "_publish_message_notification", _noop)
+    monkeypatch.setattr(consumer, "_generate_reply", generate)
+    monkeypatch.setattr(
+        "app.modules.channels.meta.credentials.decrypt_connection_token",
+        _fake_decrypt,
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.meta.service.get_adapter", lambda platform: adapter
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.meta.thread_stats.classify_thread", _fake_classify
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.meta.thread_state.apply_classification", _noop
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.realtime.publish_inbox_event", _noop
+    )
+    monkeypatch.setattr(
+        "app.modules.review_engine.handoff.resolve_and_advance",
+        resolve or _no_match,
+    )
+    monkeypatch.setattr(
+        "app.modules.review_engine.handoff.is_status_check", lambda text: False
+    )
+    monkeypatch.setattr(
+        "app.modules.channels.meta.response_style.render_response", _fake_render
+    )
+
+
+@pytest.mark.asyncio
+async def test_handoff_code_reaches_ai_while_escalated(db, monkeypatch):
+    lead, channel = await _seed(db)
+    adapter = _Adapter()
+
+    async def _fake_generate(*args, **kwargs):
+        return "Your issue is resolved — the replacement ships today."
 
     async def _fake_resolve(*args, **kwargs):
         return SimpleNamespace(
@@ -115,38 +164,8 @@ async def test_handoff_code_reaches_ai_while_escalated(db, monkeypatch):
             raw="GFW8XH",
         )
 
-    def _fake_decrypt(connection):
-        return "tok"
-
-    monkeypatch.setattr(consumer, "async_session", _session_factory())
-    monkeypatch.setattr(consumer, "_typing_indicator_enabled", _noop)
-    monkeypatch.setattr(consumer, "_publish_typing", _noop)
-    monkeypatch.setattr(consumer, "_publish_message_notification", _noop)
-    monkeypatch.setattr(consumer, "_generate_reply", _fake_generate)
-    monkeypatch.setattr(
-        "app.modules.channels.meta.credentials.decrypt_connection_token",
-        _fake_decrypt,
-    )
-    monkeypatch.setattr(
-        "app.modules.channels.meta.service.get_adapter", lambda platform: adapter
-    )
-    monkeypatch.setattr(
-        "app.modules.channels.meta.thread_stats.classify_thread", _fake_classify
-    )
-    monkeypatch.setattr(
-        "app.modules.channels.meta.thread_state.apply_classification", _noop
-    )
-    monkeypatch.setattr(
-        "app.modules.channels.realtime.publish_inbox_event", _noop
-    )
-    monkeypatch.setattr(
-        "app.modules.review_engine.handoff.resolve_and_advance", _fake_resolve
-    )
-    monkeypatch.setattr(
-        "app.modules.review_engine.handoff.is_status_check", lambda text: False
-    )
-    monkeypatch.setattr(
-        "app.modules.channels.meta.response_style.render_response", _fake_render
+    await _patch_consumer(
+        monkeypatch, adapter, generate=_fake_generate, resolve=_fake_resolve
     )
 
     event = {
@@ -176,3 +195,50 @@ async def test_handoff_code_reaches_ai_while_escalated(db, monkeypatch):
         )
     )).scalars().all()
     assert handovers == [], "a matched code must not trigger the handover mute"
+
+
+@pytest.mark.asyncio
+async def test_a_human_owned_thread_gets_no_ai_reply_and_no_holding_line(
+    db, monkeypatch
+):
+    """Explicit human mode means silence — not the escalation holding line.
+
+    The holding line is the automatic escalation's way of explaining why the
+    AI stopped. When a person already owns the thread, sending it would be
+    false and would put an AI-pipeline message into a human conversation.
+    """
+    from app.modules.channels.conversation_mode import MODE_HUMAN, set_mode
+
+    lead, channel = await _seed(db)
+    lead.priority = "normal"
+    lead.ai_miss_count = 0
+    await db.commit()
+    await set_mode(
+        db, tenant_id=lead.tenant_id, channel_id=channel.id,
+        contact_phone=CUSTOMER, mode=MODE_HUMAN, by="user-123", reason="manual",
+    )
+    adapter = _Adapter()
+
+    async def _fake_generate(*args, **kwargs):
+        raise AssertionError("the AI must not generate in human mode")
+
+    await _patch_consumer(monkeypatch, adapter, generate=_fake_generate)
+
+    event = {
+        "external_asset_id": PHONE_NUMBER_ID,
+        "external_event_id": "wamid-in-human-1",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+    data = {"from": CUSTOMER, "text": "any update?", "msg_type": "text"}
+
+    await consumer._handle_message_received(event, data)
+
+    assert adapter.sent == [], "a human-owned thread must stay silent"
+    assert adapter.typing == [], "no typing indicator for a muted thread"
+    handovers = (await db.execute(
+        select(ChannelMessage).where(
+            ChannelMessage.channel_id == channel.id,
+            ChannelMessage.handled_by == "system",
+        )
+    )).scalars().all()
+    assert handovers == [], "no holding line for a human-owned thread"

@@ -96,9 +96,32 @@ class ChannelMessageResponse(BaseModel):
     created_at: str
 
 
+class ThreadContextOut(BaseModel):
+    """The newest stored summary of one conversation."""
+
+    summary: str
+    message_count: int
+    # mode_change | resolve | escalation | periodic | manual
+    reason: str
+    created_at: str
+
+
+class ThreadStateOut(BaseModel):
+    mode: str = "ai"
+    mode_changed_at: str | None = None
+    # "system" for the automatic escalation, otherwise the acting user id or
+    # "human_reply". The UI uses it to say why the AI stopped.
+    mode_changed_by: str | None = None
+    context: ThreadContextOut | None = None
+
+
 class ChannelMessageListResponse(BaseModel):
     messages: list[ChannelMessageResponse]
     total: int
+    # Conversation-level state that the thread view needs on open: who owns
+    # the conversation and the newest summary. Optional so the channel-level
+    # message endpoint keeps working unchanged.
+    thread: ThreadStateOut | None = None
 
 
 class InboxThread(BaseModel):
@@ -124,6 +147,11 @@ class InboxThread(BaseModel):
     message_count: int
     category: str | None = None
     priority: str | None = None
+    # Who answers this conversation: "ai" (default) or "human". "human" means
+    # the AI is muted, whoever set it.
+    mode: str = "ai"
+    mode_changed_at: str | None = None
+    mode_changed_by: str | None = None
     # Whether the conversation needs a human now — urgent/high priority
     # or a complaint. Derived from the two fields above, so it means the
     # same thing for a WhatsApp thread and a Google review.

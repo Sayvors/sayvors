@@ -28,6 +28,11 @@ export interface InboxThread {
   category?: string | null;
   /** urgent | high | normal | low */
   priority?: string | null;
+  /** Who answers this conversation. "human" mutes the AI. */
+  mode?: "ai" | "human";
+  mode_changed_at?: string | null;
+  /** "system" for the automatic escalation, otherwise the acting user id. */
+  mode_changed_by?: string | null;
   /** Needs a human now — urgent/high priority or a complaint. One rule
    * for every source, so a Google review and a WhatsApp thread mean the
    * same thing here. */
@@ -39,6 +44,23 @@ export interface InboxThread {
   archived?: boolean;
   /** Soft-pinned: sorts to the top of the inbox list. */
   pinned?: boolean;
+}
+
+/** The newest stored summary of a conversation, shown as a card in the
+ *  thread and injected into the AI prompt. */
+export interface ThreadContext {
+  summary: string;
+  message_count: number;
+  /** mode_change | resolve | escalation | periodic | manual */
+  reason: string;
+  created_at: string;
+}
+
+export interface ThreadState {
+  mode: "ai" | "human";
+  mode_changed_at: string | null;
+  mode_changed_by: string | null;
+  context: ThreadContext | null;
 }
 
 export interface InboxMessage {
@@ -96,12 +118,43 @@ export async function deleteInboxThread(channelId: string, contactPhone: string 
 export async function fetchThreadMessages(
   channelId: string,
   contactPhone: string | null,
-): Promise<InboxMessage[]> {
+): Promise<{ messages: InboxMessage[]; thread: ThreadState | null }> {
   const key = contactPhone ?? UNKNOWN_THREAD_KEY;
   const data = await apiFetch(
     `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(key)}`,
   );
-  return (data?.messages ?? []) as InboxMessage[];
+  return {
+    messages: (data?.messages ?? []) as InboxMessage[],
+    thread: (data?.thread ?? null) as ThreadState | null,
+  };
+}
+
+/** Switch the conversation between AI and human ownership. */
+export async function setInboxThreadMode(
+  channelId: string,
+  contactPhone: string | null,
+  mode: "ai" | "human",
+): Promise<ThreadState> {
+  const key = contactPhone ?? UNKNOWN_THREAD_KEY;
+  return (await apiFetch(
+    `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(key)}/mode`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ mode }),
+    },
+  )) as ThreadState;
+}
+
+/** Close the human session and hand the thread back to the AI. */
+export async function resolveInboxThread(
+  channelId: string,
+  contactPhone: string | null,
+): Promise<ThreadState> {
+  const key = contactPhone ?? UNKNOWN_THREAD_KEY;
+  return (await apiFetch(
+    `/api/v1/inbox/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(key)}/resolve`,
+    { method: "POST" },
+  )) as ThreadState;
 }
 
 /** Throws with the provider's reason so the thread can show it as failed. */

@@ -43,6 +43,7 @@ from .schemas import (
     ServiceCreate,
     ServiceResponse,
     ServiceUpdate,
+    ThreadStateOut,
     VerificationRequest,
     VerificationResponse,
 )
@@ -612,6 +613,9 @@ async def inbox_thread_messages(
         channel = await get_channel(channel_id, ctx.user, db)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
+    thread_state = None
+    if phone is not None:
+        thread_state = await _thread_state(db, ctx.tenant_id, channel_id, phone)
     return ChannelMessageListResponse(
         messages=[
             ChannelMessageResponse(
@@ -630,7 +634,176 @@ async def inbox_thread_messages(
             for m in msgs
         ],
         total=len(msgs),
+        thread=thread_state,
     )
+
+
+async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> ThreadStateOut:
+    """Mode + newest summary for one thread.
+
+    Both reads are indexed and bounded; a read failure degrades to the safe
+    default (AI owns) rather than failing the whole thread view.
+    """
+    from .conversation_context import latest
+    from .conversation_mode import get_state
+
+    state = await get_state(db, channel_id, phone)
+    context = None
+    try:
+        row = await latest(db, channel_id=channel_id, contact_phone=phone)
+        if row is not None:
+            summary = decrypt_message_content(row.summary) or ""
+            if summary.strip():
+                context = {
+                    "summary": summary,
+                    "message_count": int(row.message_count or 0),
+                    "reason": row.reason or "manual",
+                    "created_at": row.created_at.isoformat(),
+                }
+    except Exception as e:  # noqa: BLE001 - the card is an enhancement
+        logger.warning(
+            "thread context read failed channel=%s: %s", channel_id, e
+        )
+    return ThreadStateOut(**state, context=context)
+
+
+class ThreadModeUpdate(BaseModel):
+    mode: str = Field(..., pattern="^(ai|human)$")
+    reason: str | None = Field(None, max_length=200)
+
+
+@_inbox_router.patch(
+    "/threads/{channel_id}/{contact_phone}/mode",
+    response_model=ThreadStateOut,
+)
+async def inbox_thread_set_mode(
+    channel_id: str,
+    contact_phone: str,
+    body: ThreadModeUpdate,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch the conversation between AI and human ownership.
+
+    This is the explicit control behind the inbox switch. "human" mutes the
+    AI immediately and cancels queued follow-ups; "ai" hands the thread back
+    with a fresh escalation clock. Both directions write a context snapshot,
+    so whoever answers next — model or person — starts oriented.
+    """
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    # can_edit_channel is a role-level check; it does not verify the channel
+    # belongs to this tenant. Resolve ownership explicitly or this endpoint
+    # would switch another tenant's thread.
+    if await get_channel(channel_id, ctx.user, db) is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    if phone is None:
+        raise HTTPException(
+            status_code=422,
+            detail="An unattributed thread has nobody to switch.",
+        )
+
+    from .conversation_context import generate
+    from .conversation_mode import set_mode
+
+    try:
+        thread = await set_mode(
+            db,
+            tenant_id=ctx.tenant_id,
+            channel_id=channel_id,
+            contact_phone=phone,
+            mode=body.mode,
+            by=ctx.user.id,
+            reason=(body.reason or "manual")[:200],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if thread is None:
+        raise HTTPException(
+            status_code=409, detail="Could not open this conversation thread."
+        )
+
+    await generate(
+        db,
+        tenant_id=ctx.tenant_id,
+        channel_id=channel_id,
+        contact_phone=phone,
+        reason="mode_change",
+    )
+
+    from .realtime import publish_inbox_event
+
+    await publish_inbox_event(ctx.tenant_id, {
+        "type": "mode",
+        "channel_id": channel_id,
+        "contact_phone": phone,
+        "mode": body.mode,
+        "mode_changed_by": ctx.user.id,
+    })
+    return await _thread_state(db, ctx.tenant_id, channel_id, phone)
+
+
+@_inbox_router.post(
+    "/threads/{channel_id}/{contact_phone}/resolve",
+    response_model=ThreadStateOut,
+)
+async def inbox_thread_resolve(
+    channel_id: str,
+    contact_phone: str,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Close the human session and hand the thread back to the AI.
+
+    The summary written here is what the AI resumes with, so the customer does
+    not have to repeat the conversation to a different responder.
+    """
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    # Ownership, not just role permission — see the mode endpoint.
+    if await get_channel(channel_id, ctx.user, db) is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
+    if phone is None:
+        raise HTTPException(
+            status_code=422,
+            detail="An unattributed thread has nobody to switch.",
+        )
+
+    from .conversation_context import generate
+    from .conversation_mode import resolve as resolve_thread
+
+    thread = await resolve_thread(
+        db,
+        tenant_id=ctx.tenant_id,
+        channel_id=channel_id,
+        contact_phone=phone,
+        user_id=ctx.user.id,
+    )
+    if thread is None:
+        raise HTTPException(
+            status_code=409, detail="Could not open this conversation thread."
+        )
+
+    await generate(
+        db,
+        tenant_id=ctx.tenant_id,
+        channel_id=channel_id,
+        contact_phone=phone,
+        reason="resolve",
+    )
+
+    from .realtime import publish_inbox_event
+
+    await publish_inbox_event(ctx.tenant_id, {
+        "type": "mode",
+        "channel_id": channel_id,
+        "contact_phone": phone,
+        "mode": "ai",
+        "mode_changed_by": ctx.user.id,
+    })
+    return await _thread_state(db, ctx.tenant_id, channel_id, phone)
 
 
 class ThreadCategoryUpdate(BaseModel):
@@ -721,6 +894,10 @@ async def inbox_thread_delete(
     """
     if ctx.channel_level(channel_id) == "none":
         raise HTTPException(status_code=404, detail="Channel not found")
+    # channel_level is a role default, not an ownership check — without this a
+    # member of one tenant could delete another tenant's conversation by id.
+    if await get_channel(channel_id, ctx.user, db) is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
     phone = None if contact_phone == UNKNOWN_THREAD_KEY else contact_phone
     phone_hash = hash_contact_phone(phone) if phone else None
     from sqlalchemy import delete
@@ -732,6 +909,20 @@ async def inbox_thread_delete(
         msg_conditions.append(ChannelMessage.contact_phone_hash == phone_hash)
 
     await db.execute(delete(ChannelMessage).where(*msg_conditions))
+
+    # The stored summaries paraphrase those messages: deleting the thread
+    # without them would leave PII behind and a stale card on a future thread
+    # for the same contact.
+    from .models import ConversationContext
+
+    ctx_conditions = [ConversationContext.channel_id == channel_id]
+    if phone_hash is None:
+        ctx_conditions.append(ConversationContext.contact_phone_hash.is_(None))
+    else:
+        ctx_conditions.append(
+            ConversationContext.contact_phone_hash == phone_hash
+        )
+    await db.execute(delete(ConversationContext).where(*ctx_conditions))
 
     thread_conditions = [ChannelThread.channel_id == channel_id]
     if phone_hash is None:

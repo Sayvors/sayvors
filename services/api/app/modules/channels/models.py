@@ -218,7 +218,78 @@ class ChannelThread(Base):
     pinned_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None, index=True
     )
+    # Who answers this conversation: "ai" (default) or "human". The single
+    # source of truth for the AI mute — priority=important is only the
+    # automatic path that sets it. Indexed because the reply consumer and the
+    # resume sweep both look it up per inbound.
+    conversation_mode: Mapped[str] = mapped_column(
+        Enum("ai", "human", name="conversation_mode"),
+        default="ai",
+        server_default="ai",
+        nullable=False,
+        index=True,
+    )
+    # Why the mode last changed, and who did it. "system" means the automatic
+    # escalation path, which the resume sweep may reverse; any other value
+    # (a user id, "human_reply", "resolve") means a human decision that the
+    # sweep must not steal back.
+    mode_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    mode_changed_by: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, default=None
+    )
     channel = relationship("Channel", back_populates="threads")
+
+
+class ConversationContext(Base):
+    """A stored, human-readable summary of one conversation.
+
+    The AI rebuilds its prompt from the last N raw messages every turn, which
+    loses everything older than the window and gives a human opening the
+    thread no orientation. This table holds point-in-time summaries written on
+    mode changes, on resolve, and periodically while a thread runs.
+
+    ``summary`` is encrypted: it paraphrases what the customer said, which is
+    the same PII as the messages it came from. History is kept rather than
+    overwritten so a bad generation can be replaced without losing the last
+    good one — readers always take the newest row.
+    """
+
+    __tablename__ = "conversation_contexts"
+    __table_args__ = (
+        # Latest-context lookup is always "newest row for this thread".
+        Index(
+            "ix_conversation_contexts_thread",
+            "channel_id",
+            "contact_phone_hash",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("channels.id", ondelete="CASCADE")
+    )
+    contact_phone: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    summary: Mapped[str] = mapped_column(Text)
+    # How many messages the summary covers, so a reader can tell a 2-message
+    # summary from a 200-message one.
+    message_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    # mode_change | resolve | escalation | periodic | manual
+    reason: Mapped[str] = mapped_column(String(32), default="manual")
+    # Which model wrote it. NULL when generation failed and the row records
+    # only that an attempt happened.
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
 
 
 

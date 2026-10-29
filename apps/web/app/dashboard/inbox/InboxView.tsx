@@ -12,10 +12,13 @@ import {
   archiveInboxThread,
   deleteInboxThread,
   pinInboxThread,
+  resolveInboxThread,
   sendInboxMessage,
+  setInboxThreadMode,
   UNKNOWN_THREAD_KEY,
   type InboxMessage,
   type InboxThread,
+  type ThreadState,
 } from "@/lib/api-inbox";
 import { platformMeta } from "@/lib/platform";
 import { setActiveThread } from "@/lib/active-thread";
@@ -150,6 +153,22 @@ function dayLabel(iso: string): string {
   return d.toLocaleDateString("en", { month: "short", day: "numeric" });
 }
 
+/** Why a context snapshot was written, in the reader's language. */
+function contextReasonLabel(reason: string): string {
+  switch (reason) {
+    case "mode_change":
+      return "when the mode changed";
+    case "resolve":
+      return "when the thread was resolved";
+    case "escalation":
+      return "when it was escalated";
+    case "periodic":
+      return "mid-conversation";
+    default:
+      return "manually";
+  }
+}
+
 function PlatformBadge({ platform }: { platform: string | null }) {
   const meta = platformMeta(platform);
   if (!meta.icon) return null;
@@ -213,6 +232,9 @@ export default function InboxView() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [threadQuery, setThreadQuery] = useState("");
   const [showInfo, setShowInfo] = useState(false);
+  const [threadState, setThreadState] = useState<ThreadState | null>(null);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [modeError, setModeError] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -276,6 +298,59 @@ export default function InboxView() {
     setDeleteTarget(null);
   };
 
+  /** Apply a server-returned thread state to the open thread and its row. */
+  const applyThreadState = (thread: InboxThread, state: ThreadState) => {
+    setThreadState(state);
+    setThreads((prev) =>
+      prev.map((t) =>
+        `${t.channel_id}:${t.key}` === `${thread.channel_id}:${thread.key}`
+          ? {
+              ...t,
+              mode: state.mode,
+              mode_changed_at: state.mode_changed_at,
+              mode_changed_by: state.mode_changed_by,
+            }
+          : t,
+      ),
+    );
+  };
+
+  const handleModeChange = async (thread: InboxThread, next: "ai" | "human") => {
+    if (modeBusy) return;
+    setModeBusy(true);
+    setModeError(null);
+    try {
+      const state = await setInboxThreadMode(
+        thread.channel_id,
+        thread.contact_phone,
+        next,
+      );
+      applyThreadState(thread, state);
+    } catch (e) {
+      setModeError(
+        e instanceof Error ? e.message : "Could not switch this conversation.",
+      );
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
+  const handleResolve = async (thread: InboxThread) => {
+    if (modeBusy) return;
+    setModeBusy(true);
+    setModeError(null);
+    try {
+      const state = await resolveInboxThread(thread.channel_id, thread.contact_phone);
+      applyThreadState(thread, state);
+    } catch (e) {
+      setModeError(
+        e instanceof Error ? e.message : "Could not resolve this conversation.",
+      );
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
   // Debounce the search input so we don't refetch on every keystroke.
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   useEffect(() => {
@@ -337,6 +412,10 @@ export default function InboxView() {
   const requestedKey = useRef<string | null>(null);
   const target = effectiveSelected;
   const targetKey = target ? `${target.channel_id}:${target.key}` : null;
+  // The thread state is authoritative while the open thread is the loaded
+  // one; the list row is the fallback before the messages call returns.
+  const activeMode: "ai" | "human" =
+    threadState?.mode ?? target?.mode ?? "ai";
   const targetKeyRef = useRef<string | null>(null);
   useEffect(() => {
     targetKeyRef.current = targetKey;
@@ -357,6 +436,35 @@ export default function InboxView() {
     // below, which requires an id and would drop this.
     if (e.type === "typing" && e.channel_id) {
       setAiTyping(e.channel_id, e.contact_phone ?? UNKNOWN_THREAD_KEY, e.typing !== false);
+      return;
+    }
+    // Another tab switched the conversation between AI and human. Update the
+    // row and, when it is the open thread, the mode switch itself.
+    if (e.type === "mode" && e.channel_id) {
+      const key = e.contact_phone ?? UNKNOWN_THREAD_KEY;
+      const composite = `${e.channel_id}:${key}`;
+      if (e.mode) {
+        setThreads((prev) =>
+          prev.map((t) =>
+            `${t.channel_id}:${t.key}` === composite
+              ? {
+                  ...t,
+                  mode: e.mode,
+                  mode_changed_at: e.mode_changed_at ?? t.mode_changed_at,
+                  mode_changed_by: e.mode_changed_by ?? t.mode_changed_by,
+                }
+              : t,
+          ),
+        );
+        if (composite === targetKeyRef.current) {
+          setThreadState((prev) => ({
+            mode: e.mode!,
+            mode_changed_at: e.mode_changed_at ?? prev?.mode_changed_at ?? null,
+            mode_changed_by: e.mode_changed_by ?? prev?.mode_changed_by ?? null,
+            context: prev?.context ?? null,
+          }));
+        }
+      }
       return;
     }
     if (e.type !== "message" || !e.channel_id || !e.id) return;
@@ -429,16 +537,19 @@ export default function InboxView() {
     requestedKey.current = targetKey;
     if (!target) return;
     let cancelled = false;
+    setThreadState(null);
     (async () => {
       try {
-        const rows = await fetchThreadMessages(target.channel_id, target.contact_phone);
+        const data = await fetchThreadMessages(target.channel_id, target.contact_phone);
         if (!cancelled && requestedKey.current === targetKey) {
-          setMessages(rows);
+          setMessages(data.messages);
+          setThreadState(data.thread);
           setLoadedKey(targetKey);
         }
       } catch (e) {
         if (!cancelled && requestedKey.current === targetKey) {
           setMessages([]);
+          setThreadState(null);
           setLoadedKey(targetKey);
           setError(e instanceof Error ? e.message : "Could not load this conversation.");
         }
@@ -738,7 +849,7 @@ export default function InboxView() {
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-3 border-b border-ink/[0.06] px-3 py-3 dark:border-fog/[0.06]">
+              <div className="flex flex-wrap items-center gap-3 border-b border-ink/[0.06] px-3 py-3 dark:border-fog/[0.06]">
                 <button
                   onClick={() => setSelectedKey(null)}
                   aria-label="Back to conversations"
@@ -772,12 +883,103 @@ export default function InboxView() {
                     </p>
                   </span>
                 </button>
+                {/* Who answers: the same switch the backend uses to mute the
+                    AI. Segmented so both states are visible at once — a
+                    toggle would hide the fact that a human took over. */}
+                <div
+                  role="group"
+                  aria-label="Who answers this conversation"
+                  className="ml-auto flex w-full shrink-0 items-center gap-0.5 rounded-full border border-ink/[0.08] bg-white p-0.5 sm:w-auto dark:border-fog/[0.12] dark:bg-ink"
+                >
+                  <button
+                    type="button"
+                    aria-pressed={activeMode === "ai"}
+                    disabled={modeBusy}
+                    onClick={() => void handleModeChange(target, "ai")}
+                    title="The AI answers this conversation"
+                    className={`flex-1 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide transition disabled:opacity-50 sm:flex-none ${
+                      activeMode === "ai"
+                        ? "bg-deep-violet text-white"
+                        : "text-ink/45 hover:text-ink/70 dark:text-fog/45 dark:hover:text-fog/70"
+                    }`}
+                  >
+                    AI
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={activeMode === "human"}
+                    disabled={modeBusy}
+                    onClick={() => void handleModeChange(target, "human")}
+                    title="A person answers; the AI stays silent"
+                    className={`flex-1 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide transition disabled:opacity-50 sm:flex-none ${
+                      activeMode === "human"
+                        ? "bg-deep-violet text-white"
+                        : "text-ink/45 hover:text-ink/70 dark:text-fog/45 dark:hover:text-fog/70"
+                    }`}
+                  >
+                    Human
+                  </button>
+                </div>
                 {target.is_unknown && (
                   <span className="hidden shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700 sm:inline">
                     Sender not recorded
                   </span>
                 )}
               </div>
+
+              {modeError && (
+                <p
+                  role="alert"
+                  className="border-b border-ink/[0.04] px-4 py-2 text-[11px] font-medium text-[#C4304B] dark:border-fog/[0.04] dark:text-[#FF8FA3]"
+                >
+                  {modeError}
+                </p>
+              )}
+
+              {/* Conversation state: an explicit human owner, and the stored
+                  summary of what has happened so far. The summary is what the
+                  AI resumes with, so the human reads the same page. */}
+              {activeMode === "human" && (
+                <div className="flex items-center gap-2 border-b border-ink/[0.04] bg-fog/60 px-4 py-2 dark:border-fog/[0.04] dark:bg-fog/[0.05]">
+                  <span className="rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                    Human
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-ink/60 dark:text-fog/60">
+                    The AI is paused on this conversation.
+                    {threadState?.mode_changed_by === "system"
+                      ? " It was escalated automatically."
+                      : ""}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={modeBusy}
+                    onClick={() => void handleResolve(target)}
+                    className="shrink-0 rounded-full border border-deep-violet/25 px-2.5 py-1 text-[10px] font-bold text-deep-violet transition hover:bg-deep-violet/10 disabled:opacity-50 dark:border-fog/20 dark:text-fog"
+                  >
+                    Resolve
+                  </button>
+                </div>
+              )}
+
+              {threadState?.context && (
+                <details
+                  key={targetKey ?? "thread"}
+                  open={activeMode === "human"}
+                  className="border-b border-ink/[0.04] px-4 py-2 dark:border-fog/[0.04]"
+                >
+                  <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-wide text-ink/40 dark:text-fog/40">
+                    Conversation context
+                    <span className="ml-1.5 font-medium normal-case tracking-normal">
+                      · {contextReasonLabel(threadState.context.reason)} ·{" "}
+                      {relative(threadState.context.created_at)} ·{" "}
+                      {threadState.context.message_count} messages
+                    </span>
+                  </summary>
+                  <p className="mt-1.5 whitespace-pre-line text-[12px] leading-5 text-ink/70 dark:text-fog/70">
+                    {threadState.context.summary}
+                  </p>
+                </details>
+              )}
 
               <div className="border-b border-ink/[0.04] px-3 py-2 dark:border-fog/[0.04]">
                 <input
