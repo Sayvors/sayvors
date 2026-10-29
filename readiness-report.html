@@ -203,14 +203,14 @@
 
 <div class="verdict">
   <p><strong>Most of the audit is closed — 32 of the 34 findings in the original ledger are resolved; 2 remain open (OPS-1, OPS-4).</strong> Counting the Oct 25 INS pass, 36 of 41 code findings are closed and 5 remain; the two server-image CVEs (Redis 7, Kafka 3.8) are separate and still open. Multi-tenant isolation held up under an adversarial pass — not one missing tenant filter was found across every router. Auth internals are genuinely solid. The unified job-processing design in the repo is enterprise-grade and approved after four review rounds. What still stands between here and 1M users is a short list: no rehearsed backup, one box carrying everything, and a production host that has not been stood up.</p>
-  <p>A separate <strong>billing &amp; plans</strong> workstream is now tracked in <a href="#billing">§6b</a>. The wallet hotfix and the durable spend ledger are on <code>development</code> (<code>390ee95</code>); plan entitlements are the next build. It is not counted in the 32/2 audit ledger.</p>
+  <p>A separate <strong>billing &amp; plans</strong> workstream is now tracked in <a href="#billing">§6b</a>. The wallet hotfix, durable spend ledger, five plans, admin plan CRUD, entitlements service and enforcement at channel-connect / message-send / LLM are deployed to staging (<code>d82d800</code>, 2026-10-28). It is not counted in the 32/2 audit ledger.</p>
 </div>
 
 <div class="stats">
   <div class="stat"><div class="n calm">32</div><div class="l">of 34 original audit findings <strong>resolved</strong> — SEC 11 · SCALE 6 · OPS 3 · ANL 12; ML-1/BULK-1 are §4 work items, not ledger rows</div></div>
   <div class="stat"><div class="n amber">2</div><div class="l">findings <strong>still open</strong> — OPS-1 (backups), OPS-4 (prod host + SHA-pinned deploys)</div></div>
-  <div class="stat"><div class="n amber">New</div><div class="l">billing &amp; plans workstream — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM in <code>development</code> (not on <code>staging</code> yet); plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
-  <div class="stat"><div class="n calm">1,619</div><div class="l">backend tests passing locally (4 skipped) — CI gates every staging deploy on them</div></div>
+  <div class="stat"><div class="n amber">Live</div><div class="l">billing &amp; plans — wallet hotfix + durable ledger + 5 plans + admin plan CRUD + tenant grant-plan + entitlements service + enforcement at channel-connect/message-send/LLM; deployed to staging 2026-10-28, schema caught up from 5 migrations behind to <code>h4b5c6d7e8f9</code> head. Plan comparison + request-upgrade UI shipped (<a href="#billing">§6b</a>)</div></div>
+  <div class="stat"><div class="n calm">1,645</div><div class="l">backend tests (2 skipped in CI where pgvector runs; 4 skipped locally without Postgres) — CI gates every staging deploy on them; staging CI run #77 passed on <code>d82d800</code></div></div>
   <div class="stat"><div class="n amber">3</div><div class="l"><a href="#pass-2026-10-25">Oct 25 pass</a> — new findings still open: INS-3, INS-4, INS-5 (INS-1, INS-2, INS-6, INS-7 fixed)</div></div>
 </div>
 
@@ -671,7 +671,7 @@
     <tr><td><code>plans</code></td><td>Catalog the sellable plans (admin-managed).</td><td><code>id</code>, <code>slug</code> (unique), <code>name</code>, <code>price_cents</code>, <code>included_credit_cents</code>, <code>max_channels</code> (nullable = unlimited), <code>max_messages_per_month</code> (nullable), <code>features</code> (JSONB), <code>is_active</code>, <code>sort_order</code></td></tr>
     <tr><td><code>tenant_subscriptions</code></td><td>One active subscription per tenant; history retained via status.</td><td><code>tenant_id</code> (unique), <code>plan_id</code> (FK), <code>status</code> (active/trialing/canceled/expired), <code>period_start</code>, <code>period_end</code>, <code>granted_by</code>, <code>granted_until</code> (promo override expiry)</td></tr>
   </table></div>
-  <p>The request path must never branch on a plan string. A single <strong>entitlements service</strong> resolves the active subscription to a plan, then exposes <code>get_entitlements(tenant_id) -&gt; Entitlements</code>. <em>Entitlements enforcement at the write paths (AI reply, channel connect, message send) is the next build step.</em></p>
+  <p>The request path must never branch on a plan string. A single <strong>entitlements service</strong> resolves the active subscription to a plan, then exposes <code>get_entitlements(tenant_id) -&gt; Entitlements</code>. <em>Entitlements enforcement is implemented at channel connect, message send and LLM calls, and is live on staging.</em></p>
 
   <h3>Plans (implemented, 2026-10-27)</h3>
   <div class="scroll"><table>
