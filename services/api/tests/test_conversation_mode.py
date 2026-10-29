@@ -257,6 +257,55 @@ async def _mode(db, channel) -> str:
 
 
 @pytest.mark.asyncio
+async def test_resolve_clears_a_legacy_escalation_without_a_mode_change(db):
+    """Resolve must be restorative even when the thread already reads as AI.
+
+    Deploying the mode column backfilled every thread to 'ai', including ones
+    that were escalated and muted. Resolve used to early-return on the unchanged
+    mode, leaving priority=important armed — the customer's next message then
+    re-escalated instantly, which looked like "resolved, then escalated again".
+    """
+    from app.modules.channels.conversation_mode import MODE_AI, resolve
+
+    lead, channel = await _seed(db, priority="important")
+    lead.ai_miss_count = 3
+    lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=2)
+    lead.handover_sent_at = datetime.now(timezone.utc)
+    thread = await _thread(db, channel)
+    assert thread is None, "no thread row yet: the migration default is the case under test"
+
+    await resolve(
+        db, tenant_id=lead.tenant_id, channel_id=channel.id,
+        contact_phone=CUSTOMER, user_id="user-123",
+    )
+
+    await db.refresh(lead)
+    assert lead.priority == "normal"
+    assert lead.ai_miss_count == 0
+    assert lead.priority_since is None
+    assert lead.handover_sent_at is None
+    assert await _mode(db, channel) == MODE_AI
+
+
+@pytest.mark.asyncio
+async def test_resolve_is_idempotent(db):
+    """A second Resolve click must not fail or rewrite the transition time."""
+    from app.modules.channels.conversation_mode import resolve
+
+    lead, channel = await _seed(db)
+    await resolve(
+        db, tenant_id=lead.tenant_id, channel_id=channel.id,
+        contact_phone=CUSTOMER, user_id="user-123",
+    )
+    first = (await _thread(db, channel)).mode_changed_at
+    await resolve(
+        db, tenant_id=lead.tenant_id, channel_id=channel.id,
+        contact_phone=CUSTOMER, user_id="user-123",
+    )
+    assert (await _thread(db, channel)).mode_changed_at == first
+
+
+@pytest.mark.asyncio
 async def test_a_human_outbound_message_switches_the_thread(db, monkeypatch):
     """Sending from the inbox is what "a human owns this" means in practice."""
     from app.modules.channels import service as channel_service

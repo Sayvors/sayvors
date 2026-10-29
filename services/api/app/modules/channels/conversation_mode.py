@@ -264,14 +264,17 @@ async def set_mode(
 
 
 async def resolve(db, *, tenant_id: str, channel_id: str, contact_phone: str,
-                  user_id: str) -> ChannelThread | None:
+                  user_id: str, commit: bool = True) -> ChannelThread | None:
     """Close a human session and hand the thread back to the AI.
 
-    Separate from a plain ``set_mode(ai)`` only in what the caller does with
-    it: resolve also triggers a context snapshot, so the AI resumes with the
-    outcome of the human conversation rather than a bare history window.
+    Always clears the escalation clock, even when the thread is already in AI
+    mode. ``set_mode`` is idempotent and returns early on an unchanged mode —
+    which is exactly the state a deploy leaves an escalated thread in when the
+    migration backfills ``conversation_mode='ai'``. Resolve used to inherit that
+    early return, so priority stayed ``important`` and the customer's next
+    message re-escalated immediately.
     """
-    return await set_mode(
+    thread = await set_mode(
         db,
         tenant_id=tenant_id,
         channel_id=channel_id,
@@ -279,4 +282,17 @@ async def resolve(db, *, tenant_id: str, channel_id: str, contact_phone: str,
         mode=MODE_AI,
         by=user_id,
         reason="resolve",
+        commit=False,
     )
+    # Unconditional: the mode may already have been "ai" while a stale
+    # escalation was still armed.
+    lead = await _lead_for(
+        db, channel_id=channel_id, contact_phone=contact_phone
+    )
+    if lead is not None:
+        from .meta.lead_escalation import resume_lead
+
+        resume_lead(lead, reason="resolve")
+    if commit:
+        await db.commit()
+    return thread
