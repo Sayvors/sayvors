@@ -145,6 +145,31 @@ async def _typing_indicator_enabled(tenant_id: str) -> bool:
         return True
 
 
+async def _auto_reply_enabled(db, channel_id: str) -> bool:
+    """Is the AI allowed to answer on this channel?
+
+    The switch the dashboard shows ("Let the AI answer incoming WhatsApp
+    messages automatically"). No row means the tenant never touched it, so the
+    answer is yes — a missing config must not silence a working number.
+    A read failure also answers yes: this is a preference, and failing closed
+    would mute the assistant because of a transient database error.
+    """
+    try:
+        from ...channels.models import AutoReplyConfig
+
+        value = (
+            await db.execute(
+                select(AutoReplyConfig.enabled).where(
+                    AutoReplyConfig.channel_id == channel_id
+                )
+            )
+        ).scalar_one_or_none()
+        return True if value is None else bool(value)
+    except Exception as e:  # noqa: BLE001 - never mute on a read failure
+        logger.warning("auto-reply setting read failed channel=%s: %s", channel_id, e)
+        return True
+
+
 async def _publish_typing(
     tenant_id: str,
     channel_id: str,
@@ -823,6 +848,16 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 "WhatsApp bridge link failed wamid=%s: %s: %s",
                 wamid[:32], type(e).__name__, str(e)[:200],
             )
+
+        # Auto-reply switch. Off means the message is kept and shown to the
+        # team, but the AI stays out of the thread entirely — including the
+        # escalation counter, which only exists to measure AI misses.
+        if not await _auto_reply_enabled(db, channel.id):
+            logger.info(
+                "WhatsApp AI reply skipped (auto-reply off) wamid=%s from=+%s",
+                wamid[:32], from_wa[-6:],
+            )
+            return
 
         # Escalation counter. The customer has just written again, so if the
         # previous voice in this thread was the AI, this is another miss. May
@@ -2080,6 +2115,12 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         # from the inbox must stop the Instagram AI too. The message above is
         # stored regardless — muting the AI never hides the customer.
         from ...channels.conversation_mode import get_mode
+
+        if not await _auto_reply_enabled(db, channel.id):
+            logger.info(
+                "Instagram AI reply skipped (auto-reply off) mid=%s", mid[:32]
+            )
+            return
 
         if await get_mode(db, channel.id, igsid) == "human":
             logger.info(

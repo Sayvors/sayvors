@@ -128,6 +128,16 @@ async def test_an_invalid_mode_is_rejected(client, db, user_id):
 
 
 @pytest.mark.asyncio
+async def test_a_whatsapp_channel_defaults_to_auto_reply_on(client, db, user_id):
+    """Merely opening the settings screen must not silence a working number."""
+    await _seed(db, user_id, channel_id="chan-autoreply-default")
+
+    r = client.get("/api/v1/channels/chan-autoreply-default/autoreply")
+    assert r.status_code == 200, r.text
+    assert r.json()["enabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_deleting_a_thread_removes_its_stored_context(client, db, user_id):
     """A deleted conversation must not leave a summary of it behind."""
     from sqlalchemy import select

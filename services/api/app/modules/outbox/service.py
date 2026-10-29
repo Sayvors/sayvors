@@ -139,6 +139,15 @@ async def fetch_pending_events(batch_size: int = 100) -> list[EventOutbox]:
     """Fetch a batch of events ready for delivery with FOR UPDATE SKIP LOCKED.
 
     Multiple drainers can run concurrently without twin-sending events (S5 in design doc).
+
+    Ownership split: ``meta.*`` rows are EXCLUDED here. They are owned
+    exclusively by the meta events worker, which claims them from the same
+    table (pending -> processing -> sent/failed/dead). The Kafka publisher
+    must never mark them ``sent``: nothing consumes the ``meta-events`` Kafka
+    topic since the sequential Kafka consumer was retired, so a published
+    meta event is processed by nobody — yet its row reads ``sent`` and the
+    meta worker will never pick it up. That race silently drops inbound
+    customer messages (accepted 200, stored nowhere, no reply, no log).
     """
     async with async_session() as db:
         now = datetime.now(timezone.utc)
@@ -148,6 +157,8 @@ async def fetch_pending_events(batch_size: int = 100) -> list[EventOutbox]:
                 EventOutbox.status.in_(["pending", "failed"]),
                 EventOutbox.next_retry_at <= now,
                 EventOutbox.attempts < MAX_RETRIES,
+                # Meta events belong to the meta events worker (see above).
+                ~EventOutbox.event_type.like("meta.%"),
             )
             .order_by(EventOutbox.created_at)
             .with_for_update(skip_locked=True)
