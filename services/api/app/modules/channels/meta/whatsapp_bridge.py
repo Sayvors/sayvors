@@ -32,7 +32,7 @@ from ..models import ChannelBridge, ConversationContext, Lead
 logger = logging.getLogger(__name__)
 
 # No 0/O or 1/I: the token is read off a screen and sometimes typed by hand.
-TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+# The alphabet is shared with review handoff codes (core.short_codes).
 TOKEN_LENGTH = 6
 TOKEN_PREFIX = "SV-"
 # Long enough that a customer can come back to the chat days later, short
@@ -89,7 +89,9 @@ def dm_text(token: str, whatsapp_number: str) -> str:
 def _random_token() -> str:
     # secrets, not random: a guessable token would let someone merge a
     # stranger's Instagram lead into their own WhatsApp thread.
-    return "".join(secrets.choice(TOKEN_ALPHABET) for _ in range(TOKEN_LENGTH))
+    from ....core.short_codes import CODE_ALPHABET
+
+    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(TOKEN_LENGTH))
 
 
 async def active_whatsapp_asset(db, tenant_id: str):
