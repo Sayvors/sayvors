@@ -263,3 +263,57 @@ async def test_a_non_http_image_url_is_not_sent(db):
         db, adapter, channel, uid, "pn-cat", "tok", "+966500000555", item.id
     )
     assert adapter.images == []
+
+
+@pytest.mark.asyncio
+async def test_share_link_create_rotate_and_revoke(client, db, user_id):
+    assert client.get("/api/v1/catalog/share").json()["token"] is None
+
+    created = client.post("/api/v1/catalog/share")
+    assert created.status_code == 200, created.text
+    token = created.json()["token"]
+    assert token and len(token) >= 32
+    assert created.json()["path"] == f"/catalog/{token}"
+
+    # Idempotent: clicking "create" again must not break a saved link.
+    assert client.post("/api/v1/catalog/share").json()["token"] == token
+
+    rotated = client.post("/api/v1/catalog/share?rotate=true").json()["token"]
+    assert rotated != token
+    assert client.get(f"/api/v1/catalog/public/{token}").status_code == 404
+    assert client.get(f"/api/v1/catalog/public/{rotated}").status_code == 200
+
+    assert client.delete("/api/v1/catalog/share").status_code == 204
+    assert client.get(f"/api/v1/catalog/public/{rotated}").status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_public_payload_is_narrow(client, db, user_id):
+    """Public means public: no ids, no tenant, no inactive rows."""
+    await catalog.create_item(db, user_id, {
+        "name": "Ethiopia Guji 1kg",
+        "price": "85.00",
+        "currency": "SAR",
+        "image_url": "https://cdn.example.com/guji.jpg",
+    })
+    hidden = await catalog.create_item(db, user_id, {
+        "name": "Secret prototype", "price": "1.00", "active": False,
+    })
+    token = client.post("/api/v1/catalog/share").json()["token"]
+
+    body = client.get(f"/api/v1/catalog/public/{token}").json()
+    names = [i["name"] for i in body["items"]]
+    assert "Ethiopia Guji 1kg" in names
+    assert hidden.name not in names
+    for row in body["items"]:
+        assert "id" not in row
+        assert "tenant_id" not in row
+    priced = next(i for i in body["items"] if i["name"] == "Ethiopia Guji 1kg")
+    assert priced["price_display"] == "85 SAR"
+    assert priced["image_url"] == "https://cdn.example.com/guji.jpg"
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_public_token_is_a_404(client):
+    r = client.get("/api/v1/catalog/public/not-a-real-token")
+    assert r.status_code == 404

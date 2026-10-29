@@ -6,6 +6,29 @@ from sqlalchemy.orm import Mapped, mapped_column
 from ...database import Base
 
 
+class CatalogShare(Base):
+    """The tenant's public catalog link.
+
+    One row per tenant. ``token`` is the whole credential — the public page has
+    no session — so it is 32 random URL-safe characters, unique, and revoked by
+    deleting the row. Separate from ``users`` on purpose: the catalog does not
+    depend on the auth model, and a team member's account row is not the tenant.
+    """
+
+    __tablename__ = "catalog_shares"
+    __table_args__ = (
+        # The public lookup is by token alone; uniqueness is what makes it a
+        # single link rather than a shared namespace.
+        Index("uq_catalog_shares_token", "token", unique=True),
+    )
+
+    tenant_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    token: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class CatalogItem(Base):
     """One sellable item: the assistant's only source for price and stock.
 
