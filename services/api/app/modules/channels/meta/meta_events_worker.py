@@ -213,8 +213,8 @@ async def _process_event(db, event_data: Dict[str, Any]) -> bool:
         # Delivery unknown - don't retry
         await _mark_event_ambiguous(db, event_id)
         return False
-    except _PermanentError:
-        await _mark_event_failed(db, event_id, retry=False)
+    except _PermanentError as e:
+        await _mark_event_failed(db, event_id, str(e), retry=False)
         return False
     except Exception as e:
         logger.exception("Failed processing meta event %s: %s", event_id, e)
