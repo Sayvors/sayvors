@@ -1511,6 +1511,7 @@ def _config_response(config: AutoReplyConfig) -> AutoReplyConfigResponse:
         enabled=config.enabled,
         tone=config.tone,
         databank_id=config.databank_id,
+        databank_grounding=bool(getattr(config, "databank_grounding", True)),
         min_rating_auto=config.min_rating_auto,
         model=config.model,
         approval_mode=config.approval_mode,
@@ -1576,6 +1577,8 @@ async def update_autoreply_config(
         config.tone = body.tone[:50]
     if body.databank_id is not None:
         config.databank_id = body.databank_id or None
+    if body.databank_grounding is not None:
+        config.databank_grounding = body.databank_grounding
     if body.min_rating_auto is not None:
         config.min_rating_auto = body.min_rating_auto
     if body.model is not None:

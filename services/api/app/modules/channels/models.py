@@ -691,6 +691,12 @@ class AutoReplyConfig(Base):
     tone: Mapped[str] = mapped_column(String(50), default="friendly")
     # Optional Databank linked for grounding replies in merchant knowledge
     databank_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # Ground customer-facing replies in the databank (retrieval per message,
+    # not just the distilled profile card). Default ON: an empty databank
+    # retrieves nothing, so the switch only matters once there is content.
+    databank_grounding: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
     # Reviews with rating below this are queued for human approval, not auto-posted
     min_rating_auto: Mapped[int] = mapped_column(Integer, default=4)
     # "auto" = post above min_rating_auto, queue below.

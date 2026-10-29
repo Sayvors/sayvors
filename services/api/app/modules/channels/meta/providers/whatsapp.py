@@ -155,6 +155,39 @@ class WhatsAppAdapter(MetaProviderAdapter):
         msgs = data.get("messages", [])
         return msgs[0].get("id", "") if msgs else ""
 
+    async def send_image(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        image_url: str,
+        caption: str | None = None,
+    ) -> str:
+        """Send a public image URL in the session window. Returns the wamid.
+
+        Link-based on purpose: the catalog stores image URLs, and downloading
+        plus re-uploading the same bytes would add a failure mode (and a
+        storage bill) without changing what the customer sees. Graph fetches
+        the URL itself, so it must be publicly reachable.
+        """
+        image: dict = {"link": image_url}
+        if caption:
+            image["caption"] = caption[:1024]
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "image",
+                "image": image,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
     async def upload_media(
         self, phone_number_id: str, token: str, data: bytes, mime_type: str
     ) -> str:

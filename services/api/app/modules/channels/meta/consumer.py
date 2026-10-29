@@ -563,6 +563,34 @@ async def _generate_reply(
         else ""
     )
 
+    # Databank grounding: retrieve the passages that match THIS message, so a
+    # price, a spec or a policy comes from the business's own documents instead
+    # of being guessed. Bounded (2.5s, 4 passages) and best-effort — the reply
+    # goes out regardless.
+    grounding = ""
+    if text:
+        try:
+            from ...rag.grounding import reply_block
+
+            grounding = await reply_block(
+                db, tenant_id=tenant_id, channel_id=channel.id, query=text
+            )
+        except Exception as e:  # noqa: BLE001 - never cost the reply
+            logger.warning(
+                "databank grounding skipped channel=%s: %s", channel.id, e
+            )
+
+    # Catalog: the only source for prices and stock. Empty when the tenant has
+    # no active items, so a business that never filled it pays nothing.
+    from ...catalog.service import catalog_block
+
+    catalog = await catalog_block(
+        db,
+        tenant_id=tenant_id,
+        query=text,
+        allow_image=(platform == "WhatsApp"),
+    )
+
     resp = await complete(
         model=model_id,
         messages=history,
@@ -573,6 +601,8 @@ async def _generate_reply(
             bridge_enabled=bridge_enabled,
         )
         + (f"\n\n{business_card}" if business_card else "")
+        + (f"\n\n{grounding}" if grounding else "")
+        + (f"\n\n{catalog}" if catalog else "")
         + stored_block
         + (f"\n\n{context}" if context else "")
         + f"\n\n{LEAD_PROMPT_BLOCK}",
@@ -614,6 +644,77 @@ async def _channel_for(
         db.add(channel)
         await db.flush()
     return channel
+
+
+async def _send_catalog_image(
+    db, adapter, channel, tenant_id: str, phone_number_id: str, token: str,
+    to: str, item_id: str,
+) -> None:
+    """Send the photo of one catalog item the model asked for.
+
+    Best-effort: the text reply has already landed, so an image-host failure
+    is a missing photo, not a broken answer. Tenant-scoped lookup — a
+    prompt-injected id can only ever select this tenant's own item.
+    """
+    from ...catalog.service import get_item, price_display
+
+    try:
+        from ...channels.models import ChannelMessage
+
+        item = await get_item(db, tenant_id, item_id)
+        if item is None or not item.active or not item.image_url:
+            logger.info("catalog image skipped item=%s (missing/inactive)", item_id)
+            return
+        # Graph fetches the URL itself; anything not http(s) is not a photo.
+        if not item.image_url.startswith(("http://", "https://")):
+            logger.warning(
+                "catalog image skipped item=%s (non-http url)", item_id
+            )
+            return
+        price = price_display(item)
+        caption = f"{item.name} — {price}" if price else item.name
+        provider_msg_id = await adapter.send_image(
+            phone_number_id, token, to, item.image_url, caption
+        )
+    except Exception as e:  # noqa: BLE001 - never break the reply flow
+        logger.warning(
+            "catalog image failed item=%s: %s: %s",
+            item_id, type(e).__name__, str(e)[:200],
+        )
+        return
+
+    row = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        platform_message_id=(provider_msg_id or "")[:200] or None,
+        direction="outbound",
+        content=encrypt_message_content(caption),
+        content_type="image",
+        status="sent",
+        contact_phone=encrypt_contact_phone(to or None),
+        contact_phone_hash=hash_contact_phone(to),
+        is_ai=True,
+        handled_by="ai",
+    )
+    db.add(row)
+    await db.commit()
+    try:
+        from ...channels.realtime import publish_inbox_event
+
+        await publish_inbox_event(tenant_id, {
+            "type": "message",
+            "id": row.id,
+            "channel_id": channel.id,
+            "platform": "whatsapp",
+            "direction": "outbound",
+            "content": caption,
+            "content_type": "image",
+            "status": "sent",
+            "contact_phone": to,
+            "created_at": row.created_at,
+        })
+    except Exception as e:  # noqa: BLE001 - the image already landed
+        logger.debug("catalog image realtime publish skipped: %s", e)
 
 
 async def _handle_message_received(event: dict, data: dict) -> None:
@@ -1047,6 +1148,13 @@ async def _handle_message_received(event: dict, data: dict) -> None:
 
         reply, lead_delta = split_reply_and_lead(raw_reply)
 
+        # A SEND_ITEM marker is an instruction to the pipeline, never text for
+        # the customer — stripped on every platform. WhatsApp acts on it below;
+        # Instagram has no image send yet, so the marker is dropped.
+        from ...catalog.service import split_catalog_request
+
+        reply, send_item_id = split_catalog_request(reply)
+
         if not reply:
             logger.warning(
                 "WhatsApp AI reply was empty — skipping send wamid=%s from=+%s",
@@ -1239,6 +1347,14 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 })
                 if index < len(messages) - 1:
                     await asyncio.sleep(_MESSAGE_GAP_SECONDS)
+
+        # Item photo the model asked for, after the text so the answer never
+        # waits on an image host.
+        if send_item_id:
+            await _send_catalog_image(
+                db, adapter, channel, tenant_id, phone_number_id, token,
+                from_wa, send_item_id,
+            )
 
         # Lead engine, send side: merge whatever the reply call extracted,
         # then arm the durable follow-up when the reply ended with a
@@ -2048,6 +2164,13 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
         from .lead_engine import split_reply_and_lead
 
         reply, lead_delta = split_reply_and_lead(raw_reply)
+
+        # A SEND_ITEM marker is an instruction to the pipeline, never text for
+        # the customer — stripped on every platform. WhatsApp acts on it below;
+        # Instagram has no image send yet, so the marker is dropped.
+        from ...catalog.service import split_catalog_request
+
+        reply, _ = split_catalog_request(reply)
 
         if not reply:
             logger.warning(

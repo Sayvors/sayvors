@@ -194,6 +194,7 @@ class AutoReplyConfigUpdate(BaseModel):
     enabled: bool | None = None
     tone: str | None = Field(None, description="friendly, professional, apologetic, playful, ...")
     databank_id: str | None = Field(None, description="Databank linked for grounding; null to unlink")
+    databank_grounding: bool | None = Field(None, description="Retrieve databank passages for each inbound message and ground the reply in them; default on")
     min_rating_auto: int | None = Field(None, ge=1, le=5, description="Ratings below this are queued for approval")
     model: str | None = Field(None, description="LLM catalog model id from the enabled list; empty string resets to tenant default")
     approval_mode: str | None = Field(None, pattern="^(auto|approval)$", description="auto = post above threshold; approval = all replies wait for human approval")
@@ -217,6 +218,7 @@ class AutoReplyConfigResponse(BaseModel):
     enabled: bool
     tone: str
     databank_id: str | None
+    databank_grounding: bool = True
     min_rating_auto: int
     model: str | None = Field(None, description="Explicit model choice; null = tenant default from enabled models")
     approval_mode: str = "auto"
