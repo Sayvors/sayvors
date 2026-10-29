@@ -145,6 +145,76 @@ async def _patch_consumer(
 
 
 @pytest.mark.asyncio
+async def test_auto_reply_off_stores_the_message_and_stays_silent(db, monkeypatch):
+    """The dashboard switch must actually gate the AI.
+
+    It persisted and rendered for months without any consumer reading it, so
+    turning it off (or on) changed nothing. With it off the message is still
+    stored for the team; only the AI stops.
+    """
+    from app.modules.channels.models import AutoReplyConfig
+
+    lead, channel = await _seed(db)
+    lead.priority = "normal"
+    lead.ai_miss_count = 0
+    db.add(AutoReplyConfig(channel_id=channel.id, enabled=False))
+    await db.commit()
+    adapter = _Adapter()
+
+    async def _fake_generate(*args, **kwargs):
+        raise AssertionError("the AI must not generate when auto-reply is off")
+
+    await _patch_consumer(monkeypatch, adapter, generate=_fake_generate)
+
+    event = {
+        "external_asset_id": PHONE_NUMBER_ID,
+        "external_event_id": "wamid-auto-off-1",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+    data = {"from": CUSTOMER, "text": "hello?", "msg_type": "text"}
+
+    await consumer._handle_message_received(event, data)
+
+    assert adapter.sent == [], "auto-reply off means no outbound at all"
+    assert adapter.typing == [], "no typing indicator either"
+    stored = (await db.execute(
+        select(ChannelMessage).where(
+            ChannelMessage.platform_message_id == "wamid-auto-off-1"
+        )
+    )).scalars().all()
+    assert len(stored) == 1, "the customer's message is still kept for the team"
+    await db.refresh(lead)
+    assert lead.ai_miss_count == 0, "no escalation counting while the AI is off"
+
+
+@pytest.mark.asyncio
+async def test_auto_reply_on_answers_normally(db, monkeypatch):
+    from app.modules.channels.models import AutoReplyConfig
+
+    lead, channel = await _seed(db)
+    lead.priority = "normal"
+    lead.ai_miss_count = 0
+    db.add(AutoReplyConfig(channel_id=channel.id, enabled=True))
+    await db.commit()
+    adapter = _Adapter()
+
+    async def _fake_generate(*args, **kwargs):
+        return "Hello! How can I help?"
+
+    await _patch_consumer(monkeypatch, adapter, generate=_fake_generate)
+
+    event = {
+        "external_asset_id": PHONE_NUMBER_ID,
+        "external_event_id": "wamid-auto-on-1",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+    data = {"from": CUSTOMER, "text": "hello", "msg_type": "text"}
+
+    await consumer._handle_message_received(event, data)
+    assert adapter.sent == ["Hello! How can I help?"]
+
+
+@pytest.mark.asyncio
 async def test_handoff_code_reaches_ai_while_escalated(db, monkeypatch):
     lead, channel = await _seed(db)
     adapter = _Adapter()

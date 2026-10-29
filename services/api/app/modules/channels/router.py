@@ -1546,14 +1546,17 @@ async def get_autoreply_config(
 ):
     if ctx.channel_level(channel_id) == "none":
         raise HTTPException(status_code=404, detail="Channel not found")
-    await _get_owned_channel(channel_id, ctx.user, db)
+    channel = await _get_owned_channel(channel_id, ctx.user, db)
     result = await db.execute(
         select(AutoReplyConfig).where(AutoReplyConfig.channel_id == channel_id)
     )
     config = result.scalar_one_or_none()
     if not config:
-        # Implicit default config; enabled=False until the merchant turns it on
-        config = AutoReplyConfig(channel_id=channel_id)
+        # Messaging channels answer by default — that is what the number is
+        # for, and simply opening this screen must not silently switch the AI
+        # off. Review channels keep the historical opt-in default.
+        enabled = channel.platform in ("whatsapp", "instagram")
+        config = AutoReplyConfig(channel_id=channel_id, enabled=enabled)
         db.add(config)
         await db.commit()
         await db.refresh(config)
