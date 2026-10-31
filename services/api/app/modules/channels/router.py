@@ -124,13 +124,15 @@ async def connect_channel(
     from ...channels.service import list_channels
 
     existing, _ = await list_channels(ctx.user, db, limit=100, offset=0)
+    from ..billing.entitlements import entitlement_403
+
     if not ent.channel_quota_ok(len(existing)):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Channel limit reached for plan '{ent.plan_slug}' (max {ent.max_channels}). Upgrade to add more.",
+        raise entitlement_403(
+            f"Channel limit reached for plan '{ent.plan_slug}' (max {ent.max_channels}). Upgrade to add more.",
+            "quota",
         )
     if not ent.has_feature("channels"):
-        raise HTTPException(status_code=403, detail="Channels are not included in your plan.")
+        raise entitlement_403("Channels are not included in your plan.", "channels")
 
     try:
         channel = await create_channel(body, ctx.user, db)
@@ -1040,11 +1042,19 @@ async def inbox_send(
 
     tid = tenant_id_of(ctx.user)
     ent = await get_entitlements(tid, db)
+    from ..billing.entitlements import entitlement_403
+
     if not ent.has_feature("messaging"):
-        raise HTTPException(status_code=403, detail="Messaging is not included in your plan.")
+        raise entitlement_403("Messaging is not included in your plan.", "messaging")
     used = await count_messages_this_month(tid, db)
     if not ent.message_quota_ok(used):
-        raise HTTPException(status_code=429, detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.")
+        from ..billing.entitlements import ENTITLEMENT_DENIED_HEADER
+
+        raise HTTPException(
+            status_code=429,
+            detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
+            headers={ENTITLEMENT_DENIED_HEADER: "quota"},
+        )
     try:
         msg = await send_message(
             body.channel_id,

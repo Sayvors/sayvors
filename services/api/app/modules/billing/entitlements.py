@@ -36,7 +36,36 @@ def _get_session_factory():
 
 
 class EntitlementDenied(Exception):
-    """Raised when a tenant's effective plan lacks a required feature or quota."""
+    """Raised when a tenant's effective plan lacks a required feature or quota.
+
+    Carries the feature key (or "quota") so the API layer can attach a
+    machine-readable header — the dashboard shows an upgrade prompt instead
+    of a bare 403.
+    """
+
+    def __init__(self, message: str, feature: str | None = None):
+        super().__init__(message)
+        self.feature = feature
+
+
+#: Response header marking a 403/429 as a plan-limit denial rather than a
+#: permission or auth failure. Value is the feature key, or "quota".
+ENTITLEMENT_DENIED_HEADER = "X-Entitlement-Denied"
+
+
+def entitlement_403(detail: str, feature: str | None = None):
+    """Build a 403 that the dashboard renders as an upgrade prompt.
+
+    Use this (instead of a bare HTTPException) for every plan/feature gate
+    so tenants always get the same "this is premium" path.
+    """
+    from fastapi import HTTPException
+
+    return HTTPException(
+        status_code=403,
+        detail=detail,
+        headers={ENTITLEMENT_DENIED_HEADER: feature or "plan"},
+    )
 
 
 @dataclass
@@ -165,5 +194,6 @@ async def check_feature(tenant_id: str, feature: str) -> None:
         ent = await get_entitlements(tenant_id, db)
         if not ent.has_feature(feature):
             raise EntitlementDenied(
-                f"Feature '{feature}' is not included in plan '{ent.plan_slug}'."
+                f"Feature '{feature}' is not included in plan '{ent.plan_slug}'.",
+                feature=feature,
             )

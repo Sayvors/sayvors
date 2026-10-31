@@ -3,8 +3,20 @@
 import { API_BASE } from "./api-base";
 import { refreshSession } from "./auth-context";
 import { ensureCsrfToken, getCsrfToken, isCsrfFailure, prefetchCsrfToken } from "./csrf";
+import { notifyEntitlementDenied, ENTITLEMENT_DENIED_HEADER } from "./entitlements";
 
 const API = API_BASE;
+const ENTITLEMENT_HEADER = ENTITLEMENT_DENIED_HEADER;
+
+/** Fire the global upgrade prompt when the API flags a plan-limit denial. */
+function checkEntitlement(res: Response, message: string): void {
+  const flag = res.headers.get(ENTITLEMENT_HEADER);
+  if (!flag) return;
+  notifyEntitlementDenied({
+    feature: flag === "plan" ? null : flag,
+    message,
+  });
+}
 
 /**
  * Turn an error response into something a person can act on. `res.text()` was
@@ -98,6 +110,14 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
     // middleware answers before the route, so a rejected write never had a
     // side effect and replaying it cannot duplicate one.
     if (isWrite && isCsrfFailure(res)) {
+      // Entitlement denials are final: retrying cannot help, and reporting
+      // them as a session problem sends the user to reload for nothing.
+      const flag = res.headers.get(ENTITLEMENT_HEADER);
+      if (flag) {
+        const message = await readError(res);
+        checkEntitlement(res, message);
+        throw new Error(message);
+      }
       const fresh = await ensureCsrfToken();
       if (fresh) {
         res = await doFetch({
@@ -136,7 +156,11 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
             `The server is unreachable right now (gateway error ${retryRes.status}) — try again in a minute.`,
           );
         }
-        if (!retryRes.ok) throw new Error(await readError(retryRes));
+        if (!retryRes.ok) {
+          const message = await readError(retryRes);
+          checkEntitlement(retryRes, message);
+          throw new Error(message);
+        }
         if (retryRes.status === 204) return undefined;
         return retryRes.json();
       }
@@ -148,7 +172,11 @@ export async function apiFetch(path: string, options: RequestInit = {}, timeoutM
       throw new Error("Unauthorized");
     }
 
-    if (!res.ok) throw new Error(await readError(res));
+    if (!res.ok) {
+      const message = await readError(res);
+      checkEntitlement(res, message);
+      throw new Error(message);
+    }
     if (res.status === 204) return undefined;
     return res.json();
   } catch (e) {

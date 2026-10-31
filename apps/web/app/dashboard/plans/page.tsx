@@ -19,57 +19,7 @@ interface ApiChannel {
   status: string;
 }
 
-const FEATURE_LABELS: Record<string, string> = {
-  channels: "Messaging channels",
-  messaging: "Inbox messaging",
-  ai_replies: "AI replies",
-  reviews: "Review management",
-  posts: "Social posts",
-  media: "Media library",
-  analytics: "Analytics",
-  automation: "Automation rules",
-  databank: "Knowledge base",
-  leads: "Lead pipeline",
-  voice: "Voice & TTS",
-  scheduling: "Scheduling",
-  assistant: "AI assistant",
-  social_response_style: "Social response style",
-  bulk_edit_csv: "Bulk edit CSV",
-  benchmarking: "Benchmarking",
-  verifications: "Verifications",
-  growth: "Growth insights",
-  ticket_assignment: "Ticket assignment",
-  voice_replies: "Voice replies (beta)",
-  ask_sayvors_premium: "ASK Sayvors premium",
-  priority_support: "Priority support",
-  sla: "SLA guarantee",
-};
-
-const FEATURE_ORDER = [
-  "channels",
-  "messaging",
-  "ai_replies",
-  "reviews",
-  "posts",
-  "media",
-  "analytics",
-  "automation",
-  "databank",
-  "leads",
-  "voice",
-  "scheduling",
-  "assistant",
-  "social_response_style",
-  "bulk_edit_csv",
-  "benchmarking",
-  "verifications",
-  "growth",
-  "ticket_assignment",
-  "voice_replies",
-  "ask_sayvors_premium",
-  "priority_support",
-  "sla",
-];
+import { FEATURE_LABELS, FEATURE_ORDER } from "@/lib/feature-labels";
 
 function fmtCents(c: number): string {
   return `$${(c / 100).toFixed(0)}`;

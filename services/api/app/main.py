@@ -511,8 +511,13 @@ from .modules.billing.entitlements import EntitlementDenied
 @app.exception_handler(EntitlementDenied)
 async def _entitlement_denied_handler(request, exc):
     from fastapi import HTTPException
+    from .modules.billing.entitlements import ENTITLEMENT_DENIED_HEADER
 
-    raise HTTPException(status_code=403, detail=str(exc))
+    raise HTTPException(
+        status_code=403,
+        detail=str(exc),
+        headers={ENTITLEMENT_DENIED_HEADER: exc.feature or "plan"},
+    )
 # Routers are imported at the top of this module; only registration happens
 # here. Re-importing them lower down shadowed nothing but left two copies of
 # every import to keep in sync.
