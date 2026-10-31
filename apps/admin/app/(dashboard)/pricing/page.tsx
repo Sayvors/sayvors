@@ -23,17 +23,18 @@ const KIND_HELP: Record<PricingKind, string> = {
 
 const usd = (cents: number) => `$${(cents / 100).toFixed(cents < 100 ? 4 : 2)}`;
 
-/** Human translation of a rate: tokens per dollar, dollars per audio hour. */
+/** Human translation of a rate: dollars per 1M tokens, tokens per dollar. */
 function explain(kind: PricingKind, cents: number): string {
   if (cents <= 0) return "free — no wallet debit";
   if (kind === "llm_input" || kind === "llm_output") {
     const tokensPerDollar = (1_000_000 * 100) / cents;
-    return `≈ ${tokensPerDollar >= 1_000_000
-      ? `${(tokensPerDollar / 1_000_000).toFixed(1)}M`
+    const perMillion = `$${(cents / 100).toFixed(cents % 1 === 0 ? 2 : 4)} per 1M`;
+    return `${perMillion} · ≈ ${tokensPerDollar >= 1_000_000
+      ? `${(tokensPerDollar / 1_000_000).toFixed(2)}M`
       : `${Math.round(tokensPerDollar / 1000)}k`} tokens per $1`;
   }
-  if (kind === "asr_minute") return `${usd(cents * 60)} per audio hour`;
-  return `${usd(cents * 1000)} per million characters`;
+  if (kind === "asr_minute") return `$${(cents / 100).toFixed(2)} per minute · ${usd(cents * 60)} per audio hour`;
+  return `${usd(cents)} per 1k chars · ${usd(cents * 1000)} per 1M chars`;
 }
 
 export default function AdminPricingPage() {
@@ -120,6 +121,10 @@ export default function AdminPricingPage() {
         <code className="mx-1 rounded bg-ink/[0.05] px-1">completion_tokens / 1M × output rate</code>,
         rounded up to the next cent. Voice is post-paid: minutes × the ASR rate, charged after the
         note is transcribed. A rate of <b className="font-bold">0</b> means that meter is off.
+        <span className="mt-1 block text-ink/45">
+          100 ¢ = $1.00. So 100 ¢/1M tokens = $1 per 1M tokens; the groq default of 15 ¢/1M =
+          $0.15 per 1M, i.e. about 6.7M tokens per $1.
+        </span>
       </div>
 
       {error ? (
@@ -142,7 +147,7 @@ export default function AdminPricingPage() {
               <div className="mt-3 overflow-hidden rounded-[2px] border border-[var(--ui-line)]">
                 <div className="hidden grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.4fr)_auto] gap-3 border-b border-[var(--ui-line)] bg-ink/[0.02] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40 sm:grid">
                   <span>Key</span>
-                  <span>Rate ({group.kind === "asr_minute" ? "¢/min" : group.kind === "tts_kchar" ? "¢/1k chars" : "¢/1M tokens"})</span>
+                  <span>Rate ({group.kind === "asr_minute" ? "US ¢/min" : group.kind === "tts_kchar" ? "US ¢/1k chars" : "US ¢/1M tokens"})</span>
                   <span>Means</span>
                   <span className="sr-only">Save</span>
                 </div>
