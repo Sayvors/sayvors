@@ -404,7 +404,9 @@ def _system_prompt(
         "Language: reply in the language the customer wrote in "
         "(Arabic or English; match their script exactly).",
         "Never invent prices, stock, opening hours or policies you were "
-        "not given — say you will confirm with the team and follow up here.",
+        "not given. When an OPENING HOURS block is present, answer from it "
+        "directly; if it does not cover the day asked about, say you will "
+        "confirm with the team and follow up here.",
     ]
     if voice_enabled:
         lines.append(
@@ -529,6 +531,32 @@ async def _generate_reply(
 
     business_card = await prompt_block(tenant_id, db)
 
+    # Opening hours: stored on the location profile (and synced to Google) but
+    # never fed to the assistant, so "what are your hours?" was answered with
+    # "I'll confirm with the team" although the business publishes them. The
+    # block is ground truth; "" when the tenant has not set any hours.
+    hours_block = ""
+    try:
+        import json
+
+        from .lead_engine import normalize_lead_settings
+        from ...locations.ai_hours import opening_hours_block
+
+        try:
+            meta = json.loads(channel.metadata_json or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        hours_block = await opening_hours_block(
+            db,
+            tenant_id,
+            listing_id=str(meta.get("location_id") or "") or None,
+            timezone_name=normalize_lead_settings(
+                getattr(user, "lead_settings", None)
+            )["timezone"],
+        )
+    except Exception as e:  # noqa: BLE001 - never cost the reply
+        logger.warning("opening hours block skipped channel=%s: %s", channel.id, e)
+
     # Lead capture rides this same call: the model may append one silent
     # LEAD line, which the handlers split off after the fact — extraction
     # without a second LLM request.
@@ -626,6 +654,7 @@ async def _generate_reply(
             bridge_enabled=bridge_enabled,
         )
         + (f"\n\n{business_card}" if business_card else "")
+        + (f"\n\n{hours_block}" if hours_block else "")
         + (f"\n\n{grounding}" if grounding else "")
         + (f"\n\n{catalog}" if catalog else "")
         + stored_block
@@ -823,6 +852,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             message_id=wamid[:200] or None,
             inbound_text=text,
             occurred_at=row.created_at,
+            require_intent=True,
         )
 
         # Instagram -> WhatsApp bridge. The first inbound from a number that
@@ -859,17 +889,9 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             )
             return
 
-        # Escalation counter. The customer has just written again, so if the
-        # previous voice in this thread was the AI, this is another miss. May
-        # promote the lead to 'important' and email a human; see
-        # lead_escalation.py. Never raises.
-        from .lead_escalation import update_escalation_state
-
-        try:
-            await update_escalation_state(db, inbound_lead)
-            await db.commit()
-        except Exception as e:
-            logger.warning("escalation update failed wamid=%s: %s", wamid[:32], e)
+        # Escalation is evaluated AFTER the thread classifier below: the
+        # counter only moves when the customer came back confused, so the
+        # signal has to exist first.
 
         from ...channels.realtime import publish_inbox_event
 
@@ -945,10 +967,11 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 inbound_lead is not None
                 and (inbound_lead.priority or "normal") == "important"
             ):
-                from .lead_escalation import escalate_to_human
+                from .lead_escalation import detect_urgency, escalate_to_human
 
                 await escalate_to_human(
-                    db, inbound_lead, adapter, phone_number_id, token
+                    db, inbound_lead, adapter, phone_number_id, token,
+                    urgent=detect_urgency(text),
                 )
                 await db.commit()
             logger.info(
@@ -1001,6 +1024,28 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             "awaiting=%s", wamid[:32], stats.get("language"),
             stats.get("confused"), stats.get("awaiting_user"),
         )
+
+        # Escalation. Two independent triggers, both in lead_escalation.py:
+        #   * urgency — the customer said it cannot wait, escalate now;
+        #   * confusion counter — only if the tenant opted in (threshold > 0).
+        # A normal follow-up question is neither, so a healthy thread keeps
+        # being answered by the AI instead of being muted after three turns.
+        from .lead_escalation import detect_urgency, update_escalation_state
+
+        urgent = detect_urgency(text)
+        if inbound_lead is not None:
+            try:
+                await update_escalation_state(
+                    db,
+                    inbound_lead,
+                    confused=bool(stats.get("confused")),
+                    urgent=urgent,
+                )
+                await db.commit()
+            except Exception as e:
+                logger.warning(
+                    "escalation update failed wamid=%s: %s", wamid[:32], e
+                )
 
         # Escalation and the review handoff both decide whether the AI may
         # speak. Order matters twice over:
@@ -1142,7 +1187,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         # and a matched handoff code already resumed and re-moded the thread.
         if inbound_lead is not None and not should_ai_reply(inbound_lead):
             await escalate_to_human(
-                db, inbound_lead, adapter, phone_number_id, token
+                db, inbound_lead, adapter, phone_number_id, token,
+                urgent=detect_urgency(text),
             )
             await db.commit()
             logger.info(
@@ -1408,6 +1454,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             message_id=wamid[:200] or None,
             inbound_text=text,
             delta=lead_delta,
+            require_intent=True,
         )
         if lead is not None:
             final_text = reply if voice_sent else messages[-1]
@@ -1422,6 +1469,19 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     question=final_text,
                     settings=lead_settings,
                 )
+
+            # The LEAD line extracted from the reply can be the first proof
+            # this is a lead. When the message was also urgent, page the team
+            # now rather than waiting for the customer to write again.
+            if detect_urgency(text) and (lead.priority or "normal") != "important":
+                try:
+                    await update_escalation_state(db, lead, urgent=True)
+                    await db.commit()
+                except Exception as e:  # noqa: BLE001 - the reply already went out
+                    logger.warning(
+                        "post-reply urgency escalation failed lead=%s: %s",
+                        lead.id, e,
+                    )
 
         logger.info(
             "WhatsApp AI reply sent to=+%s wamid=%s provider_msg=%s parts=%d%s",
@@ -2109,6 +2169,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             message_id=mid[:200] or None,
             inbound_text=text,
             occurred_at=row.created_at,
+            require_intent=True,
         )
 
         # Same conversation mode as WhatsApp: a human who took the thread over
@@ -2322,6 +2383,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             message_id=mid[:200] or None,
             inbound_text=text,
             delta=lead_delta,
+            require_intent=True,
         )
         if lead is not None and is_open_question(messages[-1]):
             await schedule_followup(

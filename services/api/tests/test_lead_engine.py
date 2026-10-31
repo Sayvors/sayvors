@@ -567,6 +567,82 @@ async def test_duplicate_step_is_structurally_impossible(db, channel_id, user_id
     await db.rollback()
 
 
+# ── lead vs information request ──────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I want an e-commerce website for shoes and jewelry",
+        "how much for 50 boxes?",
+        "I need to book an appointment",
+        "عرض سعر من فضلك",
+    ],
+)
+def test_messages_with_lead_substance(text):
+    assert le.has_lead_substance(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Hi, what is your working hours?",
+        "Where are you located?",
+        "Why don't you help me",
+        "thanks",
+        "",
+        None,
+    ],
+)
+def test_information_requests_have_no_lead_substance(text):
+    assert le.has_lead_substance(text) is False
+
+
+@pytest.mark.asyncio
+async def test_information_request_is_not_stored_as_a_lead(db, channel_id, user_id):
+    """A pure question stays an inbox message: no CRM row, no notification."""
+    lead = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="info-1", message_id="m-info",
+        inbound_text="Hi, what is your working hours?",
+        require_intent=True,
+    )
+    assert lead is None
+    assert await _lead_by_contact(db, channel_id, "info-1") is None
+
+
+@pytest.mark.asyncio
+async def test_a_real_request_is_stored_as_a_lead(db, channel_id, user_id):
+    lead = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="info-2", message_id="m-lead",
+        inbound_text="I want an e-commerce website for shoes and jewelry",
+        require_intent=True,
+    )
+    assert lead is not None
+    assert lead.stage == "qualified"
+
+
+@pytest.mark.asyncio
+async def test_known_lead_is_kept_even_for_an_information_question(db, channel_id, user_id):
+    """require_intent gates CREATION only; a returning lead must not vanish."""
+    first = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="info-3", message_id="m-1", inbound_text="quote for a website",
+        require_intent=True,
+    )
+    assert first is not None
+
+    later = await le.capture_lead(
+        db, tenant_id=user_id, channel_id=channel_id, platform="whatsapp",
+        contact_id="info-3", message_id="m-2",
+        inbound_text="what are your working hours?",
+        require_intent=True,
+    )
+    assert later is not None
+    assert later.id == first.id
+
+
 @pytest.mark.asyncio
 async def test_latest_inbound_returns_newest(db, channel_id):
     db.add(ChannelMessage(
