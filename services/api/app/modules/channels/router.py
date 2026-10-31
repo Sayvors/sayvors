@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_db, get_current_user
-from ..team.context import TenantContext, get_context, require_perm
+from ..team.context import TenantContext, get_context, require_perm, tenant_id_of
 from ...database import async_session as _async_session
 from ...config import settings
 from ..auth.rate_limit import rate_limit
@@ -299,6 +299,9 @@ async def create_service(
     await enqueue_event_in(db, "google.service.created", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     await db.commit()
     await db.refresh(service)
+    from ..profile.facts_store import rebuild_facts_safe
+
+    await rebuild_facts_safe(db, tenant_id_of(ctx.user))
     return _service_response(service)
 
 
@@ -324,6 +327,9 @@ async def update_service(
     await enqueue_event_in(db, "google.service.updated", {"channel_id": channel_id, "service_id": service.id}, "google-business-events")
     await db.commit()
     await db.refresh(service)
+    from ..profile.facts_store import rebuild_facts_safe
+
+    await rebuild_facts_safe(db, tenant_id_of(ctx.user))
     return _service_response(service)
 
 
@@ -346,6 +352,9 @@ async def delete_service(
 
     await enqueue_event_in(db, "google.service.deleted", {"channel_id": channel_id, "service_id": service_id}, "google-business-events")
     await db.commit()
+    from ..profile.facts_store import rebuild_facts_safe
+
+    await rebuild_facts_safe(db, tenant_id_of(ctx.user))
 
 
 @router.post("/{channel_id}/messages", response_model=ChannelMessageResponse, status_code=status.HTTP_201_CREATED)

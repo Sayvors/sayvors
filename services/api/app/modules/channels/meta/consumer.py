@@ -417,6 +417,13 @@ def _system_prompt(
         "here, then offer to have the team follow up in this chat. Do not "
         "repeat the same apology or deflection, and do not promise a "
         "callback elsewhere.",
+        # Tool contract. The router pre-loads hours/address/website/etc., but
+        # anything it missed is one tool call away.
+        "Business facts tool: for opening hours, branches or address, website, "
+        "services, team or owner, call get_business_facts with the matching "
+        "topic. State the returned value directly. If it returns nothing, say "
+        "you don't have that detail here — never guess and never answer with "
+        "a question instead of the fact.",
         # Hours vs availability: the block's hours are for people walking in,
         # not for this chat. A customer must never be told "we're closed".
         "You answer 24/7. The opening hours describe the business's physical "
@@ -557,33 +564,32 @@ async def _generate_reply(
 
     business_card = await prompt_block(tenant_id, db)
 
-    # Public facts: hours, address, website, services (offered/not offered) and
-    # the owner's profile, in one ground-truth block. The hours are the
-    # business's physical visiting hours — the prompt tells the model they are
-    # not its own availability. Best-effort; "" when nothing is configured.
+    # Business facts come from the central `tenant_facts` store via the same
+    # `get_business_facts` tool the model can call. Detected topics are read
+    # eagerly (a deterministic tool call, so "what are your hours?" cannot be
+    # missed); the tool is also offered to the model for anything the router
+    # did not spot. Hours are physical visiting hours — the assistant is 24/7.
     facts_block = ""
+    fact_topics: list[str] = []
     try:
-        import json
+        from ...profile.facts_store import get_facts, render_core
+        from ...profile.facts_tool import detect_topics, render_topic
 
-        from .lead_engine import normalize_lead_settings
-        from ...profile.public_facts import public_facts_block
-
-        try:
-            meta = json.loads(channel.metadata_json or "{}")
-        except (TypeError, ValueError):
-            meta = {}
-        facts_block = await public_facts_block(
-            db,
-            tenant_id=tenant_id,
-            channel_id=channel.id,
-            user=user,
-            timezone_name=normalize_lead_settings(
-                getattr(user, "lead_settings", None)
-            )["timezone"],
-            listing_id=str(meta.get("location_id") or "") or None,
-        )
+        facts = await get_facts(db, tenant_id)
+        facts_block = render_core(facts)
+        fact_topics = detect_topics(text)
+        slices: list[str] = []
+        for topic in fact_topics:
+            slice_text = render_topic(facts, topic)
+            if slice_text:
+                slices.append(f"[get_business_facts(topic=\"{topic}\")]\n{slice_text}")
+        if slices:
+            facts_block += (
+                "\n\nBUSINESS FACTS TOOL RESULTS (answer these directly):\n"
+                + "\n\n".join(slices)
+            )
     except Exception as e:  # noqa: BLE001 - never cost the reply
-        logger.warning("public facts block skipped channel=%s: %s", channel.id, e)
+        logger.warning("business facts skipped channel=%s: %s", channel.id, e)
 
     # Lead capture rides this same call: the model may append one silent
     # LEAD line, which the handlers split off after the fact — extraction
@@ -697,10 +703,8 @@ async def _generate_reply(
         len(catalog), len(stored_block),
     )
 
-    resp = await complete(
-        model=model_id,
-        messages=history,
-        system_prompt=_system_prompt(
+    system_prompt = (
+        _system_prompt(
             user,
             platform=platform,
             voice_enabled=voice_enabled,
@@ -713,13 +717,64 @@ async def _generate_reply(
         + (f"\n\n{catalog}" if catalog else "")
         + stored_block
         + (f"\n\n{context}" if context else "")
-        + f"\n\n{LEAD_PROMPT_BLOCK}",
+        + f"\n\n{LEAD_PROMPT_BLOCK}"
+    )
+
+    from ...profile.facts_tool import FACTS_TOOL, run_facts_tool
+
+    resp = await complete(
+        model=model_id,
+        messages=history,
+        system_prompt=system_prompt,
         temperature=_REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
+        tools=[FACTS_TOOL],
         tenant_id=tenant_id,
         purpose=f"{platform.lower()}.auto_reply",
         channel_id=channel.id,
     )
+
+    # The model may still ask for a fact the router did not detect. Execute the
+    # tool here (tenant id from context, never from the model's arguments) and
+    # make one final, tools-free call so it cannot loop.
+    if resp.tool_calls:
+        observations: list[str] = []
+        for call in resp.tool_calls[:2]:
+            if call.name != FACTS_TOOL.name:
+                continue
+            topic = str((call.arguments or {}).get("topic") or "all")
+            slice_text = await run_facts_tool(db, tenant_id, topic)
+            observations.append(
+                f"Tool get_business_facts(topic=\"{topic}\") returned:\n"
+                f"{slice_text or '(not configured)'}"
+            )
+            logger.info(
+                "facts tool used tenant=%s topic=%s chars=%d",
+                tenant_id, topic, len(slice_text or ""),
+            )
+        if observations:
+            resp = await complete(
+                model=model_id,
+                messages=list(history)
+                + [
+                    LLMMessage(role="assistant", content=resp.content or ""),
+                    LLMMessage(
+                        role="user",
+                        content=(
+                            "\n\n".join(observations)
+                            + "\n\nAnswer the customer's last message using these "
+                            "facts. State them directly; do not say you will confirm."
+                        ),
+                    ),
+                ],
+                system_prompt=system_prompt,
+                temperature=_REPLY_TEMPERATURE,
+                max_tokens=_REPLY_MAX_TOKENS,
+                tenant_id=tenant_id,
+                purpose=f"{platform.lower()}.auto_reply",
+                channel_id=channel.id,
+            )
+
     return (resp.content or "").strip()
 
 
