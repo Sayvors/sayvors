@@ -117,6 +117,34 @@ async def test_empty_tenant_yields_no_block(db):
 
 
 @pytest.mark.asyncio
+async def test_legacy_whatsapp_hours_are_still_answered(db):
+    """Pre-removal tenants keep their hours until they re-save in Locations."""
+    from app.modules.channels.meta.models import MetaAsset
+    from app.modules.profile.public_facts import public_facts_block
+
+    channel, user = await _seed(db, hours=False)
+    asset = await db.get(MetaAsset, "facts-asset-1")
+    asset.asset_metadata = {
+        **(asset.asset_metadata or {}),
+        "business_profile": {
+            **(asset.asset_metadata or {}).get("business_profile", {}),
+            "hours": {
+                "mon": [{"start": "09:00", "end": "17:00"}],
+                "fri": [],
+            },
+        },
+    }
+    await db.commit()
+
+    block = await public_facts_block(
+        db, tenant_id=user.id, channel_id=channel.id, user=user
+    )
+
+    assert "- Monday: 09:00-17:00" in block
+    assert "- Friday: closed" in block
+
+
+@pytest.mark.asyncio
 async def test_partial_facts_still_render(db):
     channel, user = await _seed(db, hours=False, services=False, profile=False)
 

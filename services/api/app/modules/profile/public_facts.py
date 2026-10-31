@@ -82,6 +82,47 @@ def _websites(raw) -> list[str]:
     return []
 
 
+_WA_DAYS = (
+    ("mon", "Monday"), ("tue", "Tuesday"), ("wed", "Wednesday"),
+    ("thu", "Thursday"), ("fri", "Friday"), ("sat", "Saturday"),
+    ("sun", "Sunday"),
+)
+
+
+def _legacy_whatsapp_hours_text(hours, timezone_name: str) -> str:
+    """Render the old WhatsApp-profile hours shape for the prompt.
+
+    That editor is gone (the API never accepted hours), but tenants who filled
+    it before the removal still have {mon: [{start, end}], ...} in their asset
+    metadata. Reading it here keeps those hours answerable until the owner
+    saves the same schedule on the Locations screen, which is the canonical
+    source. Empty (or absent) → "".
+    """
+    if not isinstance(hours, dict) or not hours:
+        return ""
+    lines = [
+        "OPENING HOURS (the business's physical visiting hours — not the "
+        "assistant's availability. Owner-configured; answer from this when "
+        "asked):",
+    ]
+    for key, label in _WA_DAYS:
+        slots = hours.get(key) or []
+        ranges: list[str] = []
+        for slot in slots[:2] if isinstance(slots, list) else []:
+            if not isinstance(slot, dict):
+                continue
+            start = str(slot.get("start") or "").strip()
+            end = str(slot.get("end") or "").strip()
+            if start and end:
+                ranges.append(f"{start}-{end}")
+        lines.append(f"- {label}: {' & '.join(ranges) if ranges else 'closed'}")
+    lines.append(
+        f"All times are local ({timezone_name or 'UTC'}). If a day is not "
+        "listed above, say you will confirm it with the team."
+    )
+    return "\n".join(lines)
+
+
 async def public_facts_block(
     db,
     *,
@@ -101,6 +142,23 @@ async def public_facts_block(
     hours = await opening_hours_block(
         db, tenant_id, listing_id=listing_id, timezone_name=timezone_name
     )
+    if not hours:
+        # Pre-removal tenancy: the old WhatsApp profile editor stored a shape
+        # this migration cannot move without guessing a listing. Read it so
+        # those owners are not answered with "I'll confirm" until they re-save
+        # the same schedule under Locations.
+        hours = _legacy_whatsapp_hours_text(profile.get("hours"), timezone_name)
+        if hours:
+            logger.info(
+                "Using legacy WhatsApp-profile hours tenant=%s channel=%s — "
+                "set the schedule in Locations to make it canonical",
+                tenant_id, channel_id,
+            )
+    if not hours:
+        logger.info(
+            "No opening hours configured tenant=%s channel=%s — the assistant "
+            "will defer hours questions", tenant_id, channel_id,
+        )
 
     lines: list[str] = [
         "PUBLIC BUSINESS FACTS (owner-configured; treat as ground truth and "
