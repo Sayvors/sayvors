@@ -149,3 +149,45 @@ async def test_urgent_handover_uses_its_own_line(db, monkeypatch):
     await db.commit()
 
     assert sent == [lead_escalation.URGENT_HANDOVER_TEXT]
+
+
+@pytest.mark.asyncio
+async def test_escalation_broadcasts_the_clock_to_open_tabs(db, monkeypatch):
+    """BUG-4: an already-open thread must get the escalation clock live,
+    without the agent reopening the conversation."""
+    from datetime import datetime, timezone
+
+    from app.modules.channels import realtime
+
+    events: list[dict] = []
+
+    async def _capture(tenant_id, event):
+        events.append(event)
+
+    monkeypatch.setattr(realtime, "publish_inbox_event", _capture)
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+    lead_escalation.clear_settings_cache()
+
+    class _Adapter:
+        async def send_text_message(self, phone_number_id, token, to, text):
+            return "wamp-clock"
+
+    lead = await _seed_thread(
+        db, last_outbound_is_ai=True, count=1, phone="+15550000042"
+    )
+    lead.priority = "important"
+    lead.priority_since = datetime.now(timezone.utc)
+    await db.commit()
+
+    await lead_escalation.escalate_to_human(db, lead, _Adapter(), "PHONE", "tok")
+    await db.commit()
+
+    mode_events = [e for e in events if e.get("type") == "mode"]
+    assert len(mode_events) == 1
+    event = mode_events[0]
+    assert event["mode"] == "human"
+    assert event["mode_changed_by"] == "system"
+    assert event["priority"] == "important"
+    assert event["priority_since"] is not None
+    assert event["escalation_resume_hours"] == 24
+    assert event["resume_at"] is not None

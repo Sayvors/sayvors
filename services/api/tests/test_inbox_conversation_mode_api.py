@@ -138,6 +138,112 @@ async def test_a_whatsapp_channel_defaults_to_auto_reply_on(client, db, user_id)
 
 
 @pytest.mark.asyncio
+async def test_thread_state_exposes_the_escalation_clock(client, db, user_id):
+    """BUG-4: an auto-escalated thread must say why the AI stopped, whether
+    the humans were told, and when the sweep hands it back."""
+    from datetime import datetime, timedelta, timezone
+
+    channel_id = "chan-mode-clock"
+    since = datetime.now(timezone.utc) - timedelta(hours=6)
+    db.add(Channel(
+        id=channel_id, user_id=user_id, platform="whatsapp",
+        platform_user_id="pn-clock", display_name="Clock", status="active",
+    ))
+    await db.flush()
+    db.add(Lead(
+        id=str(uuid.uuid4()), tenant_id=user_id, channel_id=channel_id,
+        platform="whatsapp", contact_id=CUSTOMER, stage="qualified",
+        language="en", opt_out=False, thread_key=CUSTOMER,
+        priority="important", ai_miss_count=3,
+        priority_since=since, escalated_at=since, handover_sent_at=since,
+        # NULL reminder + a sent escalation = the reminder already fired.
+        escalation_reminder_at=None,
+    ))
+    await db.commit()
+
+    opened = client.get(
+        f"/api/v1/inbox/threads/{channel_id}/%2B966500000003"
+    ).json()["thread"]
+
+    assert opened["priority"] == "important"
+    assert opened["ai_miss_count"] == 3
+    assert opened["escalated_at"] is not None
+    assert opened["handover_sent_at"] is not None
+    assert opened["escalation_reminder_at"] is None
+    assert opened["escalation_resume_hours"] == 24
+    assert opened["resume_at"] is not None
+
+    resumed = datetime.fromisoformat(opened["resume_at"])
+    started = datetime.fromisoformat(opened["priority_since"])
+    assert resumed - started == timedelta(hours=24)
+
+
+@pytest.mark.asyncio
+async def test_thread_state_uses_the_tenant_resume_window(client, db, user_id):
+    """The countdown must match the sweep's arithmetic, not a hardcoded 24h."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.users.models import User
+
+    db.add(User(
+        id=user_id, first_name="Test", last_name="Owner",
+        email="clock-owner@example.com", password_hash="x",
+        lead_settings={"escalation_resume_hours": 6},
+    ))
+    channel_id = "chan-mode-clock-window"
+    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.add(Channel(
+        id=channel_id, user_id=user_id, platform="whatsapp",
+        platform_user_id="pn-clock-window", display_name="Clock",
+        status="active",
+    ))
+    await db.flush()
+    db.add(Lead(
+        id=str(uuid.uuid4()), tenant_id=user_id, channel_id=channel_id,
+        platform="whatsapp", contact_id=CUSTOMER, stage="qualified",
+        language="en", opt_out=False, thread_key=CUSTOMER,
+        priority="important", ai_miss_count=1, priority_since=since,
+    ))
+    await db.commit()
+
+    opened = client.get(
+        f"/api/v1/inbox/threads/{channel_id}/%2B966500000003"
+    ).json()["thread"]
+
+    assert opened["escalation_resume_hours"] == 6
+    resumed = datetime.fromisoformat(opened["resume_at"])
+    started = datetime.fromisoformat(opened["priority_since"])
+    assert resumed - started == timedelta(hours=6)
+
+
+@pytest.mark.asyncio
+async def test_thread_state_has_no_clock_when_the_lead_is_normal(client, db, user_id):
+    """No escalation means no countdown — the strip is not permanent UI."""
+    channel_id = "chan-mode-normal"
+    db.add(Channel(
+        id=channel_id, user_id=user_id, platform="whatsapp",
+        platform_user_id="pn-normal", display_name="Normal", status="active",
+    ))
+    await db.flush()
+    db.add(Lead(
+        id=str(uuid.uuid4()), tenant_id=user_id, channel_id=channel_id,
+        platform="whatsapp", contact_id=CUSTOMER, stage="qualified",
+        language="en", opt_out=False, thread_key=CUSTOMER,
+        priority="normal", ai_miss_count=0,
+    ))
+    await db.commit()
+
+    opened = client.get(
+        f"/api/v1/inbox/threads/{channel_id}/%2B966500000003"
+    ).json()["thread"]
+
+    assert opened["priority"] == "normal"
+    assert opened["ai_miss_count"] == 0
+    assert opened["priority_since"] is None
+    assert opened["resume_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_deleting_a_thread_removes_its_stored_context(client, db, user_id):
     """A deleted conversation must not leave a summary of it behind."""
     from sqlalchemy import select

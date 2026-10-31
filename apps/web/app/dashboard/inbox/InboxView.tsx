@@ -143,6 +143,48 @@ function relative(iso: string | null): string {
   return new Date(iso).toLocaleDateString("en", { month: "short", day: "numeric" });
 }
 
+/** Time until an ISO instant, for the auto-resume countdown. Unlike
+ *  `relative` this counts forward, and "due now" is meaningful: the sweep may
+ *  simply not have run yet, so it must not read as if the AI already resumed. */
+function remaining(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.round((then - Date.now()) / 60000);
+  if (mins <= 0) return "due now";
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  if (hours < 24) return `in ${hours}h${rest ? ` ${rest}m` : ""}`;
+  const days = Math.floor(hours / 24);
+  const rem = hours % 24;
+  return `in ${days}d${rem ? ` ${rem}h` : ""}`;
+}
+
+/** Elapsed time for the escalation chip. `relative` returns a bare magnitude
+ *  used elsewhere ("12m"), which would read "now ago" here. */
+function ago(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+/** Reminder state for an escalated thread. A NULL reminder next to a sent
+ *  escalation means the reminder already fired — the sweep nulls it — not that
+ *  none was ever armed. */
+function reminderLabel(state: ThreadState): string {
+  if (!state.escalated_at) return "Escalation email not delivered";
+  const at = state.escalation_reminder_at;
+  if (!at) return "Reminder already sent";
+  return remaining(at) === "due now" ? "Reminder due" : `Reminder ${remaining(at)}`;
+}
+
 function clockTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -243,6 +285,18 @@ export default function InboxView() {
   const [threadState, setThreadState] = useState<ThreadState | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  // The escalation clock is live: while an escalated thread is open, tick
+  // every 30s so "AI resumes in 23h 48m" does not freeze at whatever it said
+  // when the thread was opened.
+  const [, setEscalationTick] = useState(0);
+  useEffect(() => {
+    if (threadState?.priority !== "important") return;
+    const id = window.setInterval(
+      () => setEscalationTick((n) => n + 1),
+      30_000,
+    );
+    return () => window.clearInterval(id);
+  }, [threadState?.priority]);
   // Templates: the only legal send once Meta's 24h window has closed.
   const [templates, setTemplates] = useState<WhatsAppTemplate[] | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
@@ -577,11 +631,32 @@ export default function InboxView() {
           ),
         );
         if (composite === targetKeyRef.current) {
+          // A system event carries the escalation clock; a manual change on
+          // another tab cleared it (resume_lead or takeover), so fall back to
+          // the defaults rather than leaving a stale countdown on screen.
+          const withClock = e.priority !== undefined;
           setThreadState((prev) => ({
+            ...(prev ?? {
+              mode: e.mode!,
+              mode_changed_at: null,
+              mode_changed_by: null,
+              context: null,
+            }),
             mode: e.mode!,
             mode_changed_at: e.mode_changed_at ?? prev?.mode_changed_at ?? null,
             mode_changed_by: e.mode_changed_by ?? prev?.mode_changed_by ?? null,
-            context: prev?.context ?? null,
+            priority: withClock ? e.priority : "normal",
+            ai_miss_count: withClock ? e.ai_miss_count ?? 0 : 0,
+            priority_since: withClock ? e.priority_since ?? null : null,
+            escalated_at: withClock ? e.escalated_at ?? null : null,
+            escalation_reminder_at: withClock
+              ? e.escalation_reminder_at ?? null
+              : null,
+            handover_sent_at: withClock ? e.handover_sent_at ?? null : null,
+            resume_at: withClock ? e.resume_at ?? null : null,
+            escalation_resume_hours: withClock
+              ? e.escalation_resume_hours ?? 24
+              : 24,
           }));
         }
       }
@@ -1060,24 +1135,81 @@ export default function InboxView() {
                   summary of what has happened so far. The summary is what the
                   AI resumes with, so the human reads the same page. */}
               {activeMode === "human" && (
-                <div className="flex items-center gap-2 border-b border-ink/[0.04] bg-fog/60 px-4 py-2 dark:border-fog/[0.04] dark:bg-fog/[0.05]">
-                  <span className="rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
-                    Human
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[11px] text-ink/60 dark:text-fog/60">
-                    The AI is paused on this conversation.
-                    {threadState?.mode_changed_by === "system"
-                      ? " It was escalated automatically."
-                      : ""}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={modeBusy}
-                    onClick={() => void handleResolve(target)}
-                    className="shrink-0 rounded-full border border-deep-violet/25 px-2.5 py-1 text-[10px] font-bold text-deep-violet transition hover:bg-deep-violet/10 disabled:opacity-50 dark:border-fog/20 dark:text-fog"
-                  >
-                    Resolve
-                  </button>
+                <div className="border-b border-ink/[0.04] bg-fog/60 dark:border-fog/[0.04] dark:bg-fog/[0.05]">
+                  <div className="flex items-center gap-2 px-4 py-2">
+                    <span className="rounded-full bg-deep-violet px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                      Human
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[11px] text-ink/60 dark:text-fog/60">
+                      The AI is paused on this conversation.
+                      {threadState?.mode_changed_by === "system"
+                        ? " It was escalated automatically."
+                        : ""}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={modeBusy}
+                      onClick={() => void handleResolve(target)}
+                      className="shrink-0 rounded-full border border-deep-violet/25 px-2.5 py-1 text-[10px] font-bold text-deep-violet transition hover:bg-deep-violet/10 disabled:opacity-50 dark:border-fog/20 dark:text-fog"
+                    >
+                      Resolve
+                    </button>
+                  </div>
+
+                  {/* The escalation clock. The mode switch says the AI is
+                      muted; this says why, whether the humans were told, and
+                      exactly when the sweep will hand the thread back — so a
+                      24h window cannot look like a dead bot. */}
+                  {threadState?.priority === "important" && (
+                    <div className="mx-3 mb-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span
+                          title={
+                            threadState.handover_sent_at
+                              ? "The customer was told a human is taking over."
+                              : "The holding line has not been delivered to the customer."
+                          }
+                          className="rounded-full bg-amber-200/70 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-900 dark:bg-amber-400/20 dark:text-amber-200"
+                        >
+                          Escalated
+                        </span>
+                        <span className="text-[11px] font-medium text-amber-900 dark:text-amber-200">
+                          {threadState.priority_since
+                            ? ago(threadState.priority_since)
+                            : "time unknown"}
+                          {threadState.ai_miss_count
+                            ? ` · ${threadState.ai_miss_count} missed ${
+                                threadState.ai_miss_count === 1 ? "turn" : "turns"
+                              }`
+                            : " · flagged urgent"}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={modeBusy}
+                          onClick={() => void handleModeChange(target, "ai")}
+                          title="Skip the scheduled resume and hand this thread back to the AI now."
+                          className="ml-auto shrink-0 rounded-full bg-deep-violet px-3 py-1 text-[10px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50"
+                        >
+                          Resume AI now
+                        </button>
+                      </div>
+                      <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-amber-900/80 dark:text-amber-200/80">
+                        <span>{reminderLabel(threadState)}</span>
+                        <span aria-hidden>·</span>
+                        <span>
+                          {threadState.resume_at
+                            ? `AI resumes automatically ${remaining(threadState.resume_at)}`
+                            : "No automatic resume scheduled"}
+                        </span>
+                        {threadState.resume_at && (
+                          <>
+                            <span aria-hidden>·</span>
+                            <span>{threadState.escalation_resume_hours ?? 24}h window</span>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

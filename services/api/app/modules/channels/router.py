@@ -814,11 +814,24 @@ async def inbox_thread_messages(
     )
 
 
-async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> ThreadStateOut:
-    """Mode, newest summary, window and consent for one thread.
+def _as_utc(value):
+    """Naive timestamps are UTC (SQLite drops tzinfo); make that explicit.
 
-    Both reads are indexed and bounded; a read failure degrades to the safe
-    default (AI owns) rather than failing the whole thread view.
+    The resume clock subtracts from an aware `now` in the sweep, so a naive
+    value read back from SQLite would raise if used directly here too.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> ThreadStateOut:
+    """Mode, newest summary, window, consent and escalation clock for one thread.
+
+    The reads are indexed and bounded; a read failure degrades to the safe
+    default (AI owns, no escalation) rather than failing the whole thread view.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -826,6 +839,7 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
 
     from .conversation_context import latest
     from .conversation_mode import get_state
+    from .meta.lead_escalation import load_settings
     from .models import ChannelMessage, Lead
 
     state = await get_state(db, channel_id, phone)
@@ -845,6 +859,19 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
         logger.warning(
             "thread context read failed channel=%s: %s", channel_id, e
         )
+
+    # The escalation clock. Defaults describe "not escalated", which is the
+    # safe side: the UI shows no countdown and no reminder state.
+    escalation: dict = {
+        "priority": "normal",
+        "ai_miss_count": 0,
+        "priority_since": None,
+        "escalated_at": None,
+        "escalation_reminder_at": None,
+        "handover_sent_at": None,
+        "resume_at": None,
+        "escalation_resume_hours": 24,
+    }
 
     # Meta's window and the template consent basis. A failure here must not
     # hide the thread: the fields simply read as "closed / no consent", which
@@ -872,7 +899,11 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
         lead = (
             await db.execute(
                 select(Lead)
-                .where(Lead.channel_id == channel_id, Lead.contact_id == phone)
+                .where(
+                    Lead.tenant_id == tenant_id,
+                    Lead.channel_id == channel_id,
+                    Lead.contact_id == phone,
+                )
                 .order_by(Lead.created_at.asc())
                 .limit(1)
             )
@@ -885,6 +916,47 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
             )
             opt_in_source = lead.whatsapp_opt_in_source
             opted_out = bool(lead.opt_out)
+
+            # Window length is a tenant setting; read it through the same
+            # loader the resume sweep uses so the UI cannot promise a
+            # different resume time than the sweep will act on. Bypass the
+            # sweep cache so a just-edited setting is reflected immediately.
+            resume_hours = int(
+                (await load_settings(db, tenant_id, use_cache=False)).get(
+                    "escalation_resume_hours", 24
+                )
+            )
+            priority_since = _as_utc(lead.priority_since)
+            escalation = {
+                "priority": lead.priority or "normal",
+                "ai_miss_count": int(lead.ai_miss_count or 0),
+                "priority_since": (
+                    priority_since.isoformat() if priority_since else None
+                ),
+                "escalated_at": (
+                    _as_utc(lead.escalated_at).isoformat()
+                    if lead.escalated_at
+                    else None
+                ),
+                "escalation_reminder_at": (
+                    _as_utc(lead.escalation_reminder_at).isoformat()
+                    if lead.escalation_reminder_at
+                    else None
+                ),
+                "handover_sent_at": (
+                    _as_utc(lead.handover_sent_at).isoformat()
+                    if lead.handover_sent_at
+                    else None
+                ),
+                "escalation_resume_hours": resume_hours,
+                "resume_at": None,
+            }
+            # Same arithmetic as run_resume_sweep: the clock only runs while
+            # the lead is actually escalated and has a start time.
+            if escalation["priority"] == "important" and priority_since:
+                escalation["resume_at"] = (
+                    priority_since + timedelta(hours=resume_hours)
+                ).isoformat()
     except Exception as e:  # noqa: BLE001 - see above
         logger.warning("thread window/consent read failed channel=%s: %s", channel_id, e)
 
@@ -895,6 +967,7 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
         opt_in_at=opt_in_at,
         opt_in_source=opt_in_source,
         opted_out=opted_out,
+        **escalation,
     )
 
 

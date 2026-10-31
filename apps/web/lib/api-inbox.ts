@@ -67,6 +67,16 @@ export interface ThreadState {
   opt_in_at?: string | null;
   opt_in_source?: string | null;
   opted_out?: boolean;
+  /** Escalation clock — why the AI stopped and when it takes over again. */
+  priority?: "normal" | "important";
+  ai_miss_count?: number;
+  priority_since?: string | null;
+  escalated_at?: string | null;
+  escalation_reminder_at?: string | null;
+  handover_sent_at?: string | null;
+  /** priority_since + escalation_resume_hours; null unless escalated. */
+  resume_at?: string | null;
+  escalation_resume_hours?: number;
 }
 
 export interface InboxMessage {

@@ -151,6 +151,19 @@ class ThreadStateOut(BaseModel):
     opt_in_at: str | None = None
     opt_in_source: str | None = None
     opted_out: bool = False
+    # Escalation clock (BUG-4). Stored on the lead, not the thread: the mode
+    # says the AI is muted, these say why and until when. Without them a long
+    # automatic-escalation window is indistinguishable from a hung bot.
+    priority: str = "normal"
+    ai_miss_count: int = 0
+    priority_since: str | None = None
+    escalated_at: str | None = None
+    escalation_reminder_at: str | None = None
+    handover_sent_at: str | None = None
+    # Derived from priority_since + the tenant's escalation_resume_hours, the
+    # same arithmetic run_resume_sweep uses. NULL unless the lead is escalated.
+    resume_at: str | None = None
+    escalation_resume_hours: int = 24
 
 
 class ChannelMessageListResponse(BaseModel):

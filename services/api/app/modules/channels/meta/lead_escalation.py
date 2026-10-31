@@ -45,19 +45,24 @@ def clear_settings_cache() -> None:
     _settings_cache.clear()
 
 
-async def load_settings(db, tenant_id: str) -> dict:
+async def load_settings(db, tenant_id: str, *, use_cache: bool = True) -> dict:
     """Escalation knobs for one tenant, normalised and clamped.
 
     Never raises: a missing or malformed row falls back to the defaults,
     because failing to read a setting must never stop a customer getting a
     reply.
+
+    ``use_cache=False`` is for UI reads. The cache lives for a sweep batch and
+    is only cleared when one finishes, so showing a thread the cached value
+    would keep promising an old resume window after the owner changed it.
     """
     from ...users.models import User
     from .lead_engine import normalize_lead_settings
 
-    cached = _settings_cache.get(tenant_id)
-    if cached is not None:
-        return cached
+    if use_cache:
+        cached = _settings_cache.get(tenant_id)
+        if cached is not None:
+            return cached
     try:
         row = (
             await db.execute(
@@ -68,7 +73,8 @@ async def load_settings(db, tenant_id: str) -> dict:
     except Exception as e:
         logger.warning("escalation settings read failed for %s: %s", tenant_id, e)
         settings = normalize_lead_settings(None)
-    _settings_cache[tenant_id] = settings
+    if use_cache:
+        _settings_cache[tenant_id] = settings
     return settings
 
 
@@ -441,6 +447,49 @@ async def send_handover(db, lead, adapter, phone_number_id: str, token: str,
         )
 
 
+async def _publish_mode(db, lead, *, mode: str) -> None:
+    """Broadcast a system mode change so open inbox tabs update live.
+
+    The router publishes this for human actions. The automatic paths must too,
+    or an already-open thread keeps showing the old owner — and, after BUG-4,
+    no escalation clock — until someone reopens it. Best-effort: a realtime
+    failure must never affect the escalation itself.
+    """
+    try:
+        from ...channels.realtime import publish_inbox_event
+
+        settings = await load_settings(db, lead.tenant_id)
+        hours = int(settings["escalation_resume_hours"])
+        since = lead.priority_since
+        if since is not None and since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        resume_at = None
+        if (lead.priority or "normal") == "important" and since is not None:
+            resume_at = (since + timedelta(hours=hours)).isoformat()
+
+        def _iso(value):
+            return value.isoformat() if value else None
+
+        await publish_inbox_event(lead.tenant_id, {
+            "type": "mode",
+            "channel_id": lead.channel_id,
+            "contact_phone": lead.contact_id,
+            "mode": mode,
+            "mode_changed_at": datetime.now(timezone.utc).isoformat(),
+            "mode_changed_by": "system",
+            "priority": lead.priority or "normal",
+            "ai_miss_count": int(lead.ai_miss_count or 0),
+            "priority_since": _iso(since),
+            "escalated_at": _iso(lead.escalated_at),
+            "escalation_reminder_at": _iso(lead.escalation_reminder_at),
+            "handover_sent_at": _iso(lead.handover_sent_at),
+            "escalation_resume_hours": hours,
+            "resume_at": resume_at,
+        })
+    except Exception as e:  # noqa: BLE001 - never break the escalation
+        logger.warning("mode event failed for lead %s: %s", lead.id, e)
+
+
 async def escalate_to_human(db, lead, adapter, phone_number_id: str, token: str,
                             urgent: bool = False) -> None:
     """Hand a thread to a human: cancel queued nudges, say so once, stop.
@@ -468,6 +517,7 @@ async def escalate_to_human(db, lead, adapter, phone_number_id: str, token: str,
         reason="escalation",
         commit=False,
     )
+    await _publish_mode(db, lead, mode=MODE_HUMAN)
 
     try:
         await cancel_pending_actions(
@@ -632,3 +682,5 @@ async def _set_mode_from_system(db, lead, *, reason: str) -> None:
         )
     except Exception as e:  # noqa: BLE001 - the lead is already resumed
         logger.warning("mode mirror failed for lead %s: %s", lead.id, e)
+        return
+    await _publish_mode(db, lead, mode=MODE_AI)

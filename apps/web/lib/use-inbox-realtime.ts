@@ -67,10 +67,20 @@ export interface InboxRealtimeEvent {
   /* typing events — who is composing in this thread right now */
   typing?: boolean;
   typing_source?: "ai" | "agent";
-  /* conversation-mode events — another tab switched AI/human */
+  /* conversation-mode events — another tab switched AI/human, or the
+     escalation system did. The clock fields are present only on system
+     events; a manual change always clears them. */
   mode?: "ai" | "human";
   mode_changed_at?: string | null;
   mode_changed_by?: string | null;
+  priority?: "normal" | "important";
+  ai_miss_count?: number;
+  priority_since?: string | null;
+  escalated_at?: string | null;
+  escalation_reminder_at?: string | null;
+  handover_sent_at?: string | null;
+  resume_at?: string | null;
+  escalation_resume_hours?: number;
   /* comment events */
   comment_id?: string | null;
   parent_comment_id?: string | null;
