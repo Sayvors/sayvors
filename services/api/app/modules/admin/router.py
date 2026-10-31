@@ -1331,6 +1331,15 @@ router.include_router(
     dependencies=[Depends(require_admin), Depends(admin_rate_limit)],
 )
 
+# ASR-engine admin follows the same ownership rule: the STT capability owns
+# its config, the admin router only mounts it.
+from ..stt.admin_router import router as stt_admin_router
+
+router.include_router(
+    stt_admin_router,
+    dependencies=[Depends(require_admin), Depends(admin_rate_limit)],
+)
+
 
 # ---------------------------------------------------------------------------
 # Operator management + audit log

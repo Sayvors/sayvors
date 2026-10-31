@@ -79,12 +79,14 @@ async def transcribe_audio(
     model: str | None = None,
     beam_size: int | None = None,
     vad_filter: bool | None = None,
+    db=None,
 ) -> dict:
-    """Transcribe audio from a public URL using faster-whisper.
+    """Transcribe audio from a public URL.
 
-    General-purpose: any audio URL from any channel (WhatsApp voice notes,
-    Instagram voice messages, Facebook voice notes, Telegram voice messages,
-    Google voice posts, user uploads, etc.).
+    Provider resolution mirrors the LLM/embedding stacks: the admin activates
+    a hosted engine in the database and this function uses it. With no active
+    engine (or a misconfigured one) it falls back to the local faster-whisper
+    model, so a bad key degrades quality rather than killing every voice note.
 
     Returns a dict with:
         text            — transcribed text
@@ -93,6 +95,16 @@ async def transcribe_audio(
         duration_ms     — audio duration in milliseconds
         segments        — per-segment transcription with timestamps
     """
+    hosted = await _active_hosted_engine(db, language)
+    if hosted is not None:
+        try:
+            return await _transcribe_hosted(hosted, audio_url, language, model)
+        except Exception as e:  # noqa: BLE001 - never lose the voice note
+            logger.warning(
+                "ASR provider %s failed (%s: %s) - falling back to faster-whisper",
+                hosted.get("provider"), type(e).__name__, str(e)[:160],
+            )
+
     # Download audio to a temp file (providers serve media over public URLs).
     audio_path = await _download_audio(audio_url)
 
@@ -187,12 +199,20 @@ async def _download_audio(audio_url: str) -> Path:
 
     Returns the local path. Caller is responsible for cleanup.
     """
+    audio, ext, _content_type = await _download_audio_bytes(audio_url)
+    tmp_path = Path(tempfile.gettempdir()) / f"stt_{os_urandom_hex(8)}{ext}"
+    tmp_path.write_bytes(audio)
+    return tmp_path
+
+
+async def _download_audio_bytes(audio_url: str) -> tuple[bytes, str, str]:
+    """Download the media once and report (bytes, extension, content type)."""
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.get(audio_url, follow_redirects=True)
         resp.raise_for_status()
 
         content_type = resp.headers.get("content-type", "")
-        # Guess extension from content-type so faster-whisper can sniff it.
+        # Guess extension from content-type so providers can sniff it.
         ext = ".bin"
         if "audio/mpeg" in content_type or "audio/mp3" in content_type:
             ext = ".mp3"
@@ -209,9 +229,62 @@ async def _download_audio(audio_url: str) -> Path:
         elif "audio/x-m4a" in content_type:
             ext = ".m4a"
 
-        tmp_path = Path(tempfile.gettempdir()) / f"stt_{os_urandom_hex(8)}{ext}"
-        tmp_path.write_bytes(resp.content)
-        return tmp_path
+        return resp.content, ext, content_type or "application/octet-stream"
+
+
+async def _active_hosted_engine(db, language: str | None) -> dict | None:
+    """The configured hosted engine, when it can serve this language.
+
+    `faster_whisper` is never returned: it is the local path this function
+    guards. A language outside the engine's declared coverage also falls
+    back, so an engine pinned to Arabic does not mangle an English note.
+    """
+    try:
+        from .config import get_active_asr_config
+
+        config = await get_active_asr_config(db)
+    except Exception as e:  # noqa: BLE001 - config must never block audio
+        logger.warning("ASR config lookup failed: %s", e)
+        return None
+    if not config or config.get("provider") == "faster_whisper":
+        return None
+    if not config.get("api_key"):
+        logger.warning(
+            "ASR engine %s is active but has no API key - using local whisper",
+            config.get("provider"),
+        )
+        return None
+    languages = (config.get("languages") or "*").strip()
+    if language and languages != "*":
+        allowed = {part.strip().lower() for part in languages.split(",") if part.strip()}
+        if allowed and language.lower()[:2] not in allowed:
+            return None
+    return config
+
+
+async def _transcribe_hosted(
+    config: dict,
+    audio_url: str,
+    language: str | None,
+    model: str | None,
+) -> dict:
+    """Transcribe through the configured hosted provider."""
+    from .providers import transcribe_elevenlabs
+
+    provider = config.get("provider")
+    if provider != "elevenlabs":
+        raise RuntimeError(f"no client for ASR provider {provider!r}")
+
+    audio, ext, content_type = await _download_audio_bytes(audio_url)
+    return await transcribe_elevenlabs(
+        api_key=config["api_key"],
+        audio=audio,
+        filename=f"audio{ext}",
+        content_type=content_type,
+        model=model or config.get("model"),
+        language=language,
+        base_url=config.get("base_url"),
+    )
 
 
 def os_urandom_hex(n: int) -> str:

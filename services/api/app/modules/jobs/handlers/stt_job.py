@@ -65,6 +65,7 @@ async def handle_stt_job(job: Job, db: AsyncSession) -> dict | None:
         result = await transcribe_audio(
             audio_url=stt_job.audio_url,
             language=stt_job.language or None,
+            db=db,
         )
 
         stt_job.status = "completed"
