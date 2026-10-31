@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { NAV_DRAWER_EVENTS } from "@/lib/tour/nav-drawer";
 import { visibleChannelNav, type ChannelNavRow } from "@/lib/channel-nav";
@@ -111,6 +111,21 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { t, dir } = useI18n();
 
+  // Channel workspaces (WhatsApp / Instagram / Facebook, and the inbox) are
+  // reading-heavy: the nav column is noise there. Fold it on entry, but leave
+  // a manual expand alone — only crossing INTO the section collapses.
+  const previousPath = useRef<string>("");
+  useEffect(() => {
+    const isChannelSurface =
+      pathname.startsWith("/dashboard/channels") ||
+      pathname.startsWith("/dashboard/inbox");
+    const wasChannelSurface =
+      previousPath.current.startsWith("/dashboard/channels") ||
+      previousPath.current.startsWith("/dashboard/inbox");
+    if (isChannelSurface && !wasChannelSurface) setCollapsed(true);
+    previousPath.current = pathname;
+  }, [pathname]);
+
   const toggleAdvanced = () => setAdvancedOpen((prev) => !prev);
 
   useEffect(() => {
@@ -145,7 +160,7 @@ export default function Sidebar() {
       <aside
         id="dashboard-sidebar"
         aria-hidden={isMobile && !drawerOpen ? true : undefined}
-        className={`flex shrink-0 flex-col overflow-hidden bg-white text-ink ring-1 ring-ink/[0.06] transition-all duration-200 dark:bg-[#1d1636] dark:text-fog dark:ring-white/[0.08] ${
+        className={`relative flex shrink-0 flex-col bg-white text-ink ring-1 ring-ink/[0.06] transition-all duration-200 dark:bg-[#1d1636] dark:text-fog dark:ring-white/[0.08] ${
           isMobile
             ? `fixed inset-y-2 start-2 z-50 w-[264px] rounded-[20px] shadow-2xl ${
                 drawerOpen ? "translate-x-0" : dir === "rtl" ? "translate-x-[calc(100%+8px)]" : "-translate-x-[calc(100%+8px)]"
@@ -265,22 +280,23 @@ export default function Sidebar() {
           <UsageCard rail={rail} />
         </div>
 
-        {/* Collapse — the profile itself lives in the header now. */}
-        <div className={`hidden shrink-0 pb-2 md:block ${rail ? "px-2" : "px-3"}`}>
-          <button
-            onClick={() => setCollapsed(!collapsed)}
-            aria-label={collapsed ? t.nav.expand : t.nav.collapse}
-            title={collapsed ? t.nav.expand : t.nav.collapse}
-            className={`flex h-9 w-full items-center rounded-full text-ink/60 outline-none transition hover:bg-ink/[0.05] hover:text-ink/80 focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-fog/55 dark:hover:bg-fog/[0.06] dark:hover:text-fog/75 dark:focus-visible:ring-violet-soft/70 dark:focus-visible:ring-offset-[#1d1636] ${
-              rail ? "justify-center" : "gap-2 px-3"
+        {/* Edge toggle — a small circle on the rail's outer border, so the
+            collapse control sits where the sidebar ends instead of competing
+            with the nav. Mobile uses the drawer, so it stays hidden there. */}
+        <button
+          type="button"
+          onClick={() => setCollapsed((prev) => !prev)}
+          aria-label={collapsed ? t.nav.expand : t.nav.collapse}
+          aria-expanded={!collapsed}
+          title={collapsed ? t.nav.expand : t.nav.collapse}
+          className="absolute top-1/2 -end-3 z-20 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-ink/[0.10] bg-white text-ink/60 shadow-[0_6px_16px_-8px_rgba(26,18,48,0.55)] outline-none transition hover:border-deep-violet/30 hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white md:flex dark:border-white/[0.14] dark:bg-[#241a42] dark:text-fog/70 dark:hover:text-violet-soft dark:focus-visible:ring-violet-soft/70 dark:focus-visible:ring-offset-[#1d1636]"
+        >
+          <ChevronIcon
+            className={`h-3.5 w-3.5 transition-transform rtl:-scale-x-100 ${
+              collapsed ? "-rotate-90" : "rotate-90"
             }`}
-          >
-            <ChevronIcon
-              className={`h-3.5 w-3.5 shrink-0 transition-transform rtl:-scale-x-100 ${rail ? "-rotate-90" : "rotate-90"}`}
-            />
-            {!rail && <span className="text-[11px] font-medium">{t.nav.collapse}</span>}
-          </button>
-        </div>
+          />
+        </button>
       </aside>
     </>
   );

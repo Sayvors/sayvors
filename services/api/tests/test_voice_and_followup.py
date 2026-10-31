@@ -31,6 +31,7 @@ from app.modules.channels.models import (
 from app.modules.channels.service import (
     decrypt_contact_phone,
     decrypt_message_content,
+    encrypt_contact_phone,
     hash_contact_phone,
 )
 from conftest import TEST_ENGINE
@@ -966,6 +967,22 @@ async def _seed_voice_tenant(db, user_id, *, voice_replies):
         id=str(uuid.uuid4()), tenant_id=user_id, connection_id=conn.id,
         provider="whatsapp", asset_type="phone_number",
         external_asset_id=_PHONE_ID, phone="+1555", active=True,
+    ))
+    # Existing conversation: the first-contact language picker would otherwise
+    # intercept "hi" and send the three buttons instead of the voice reply.
+    channel = Channel(
+        id=str(uuid.uuid4()), user_id=user_id, platform="whatsapp",
+        platform_user_id=_PHONE_ID, display_name="Voice Test", status="active",
+    )
+    db.add(channel)
+    await db.flush()
+    db.add(WhatsAppThreadState(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        contact_phone=encrypt_contact_phone(_FROM),
+        contact_phone_hash=hash_contact_phone(_FROM),
+        language="en",
+        preferred_language="en",
     ))
     await db.commit()
 

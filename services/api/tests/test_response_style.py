@@ -14,8 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.modules.channels.meta import consumer as meta_consumer
 from app.modules.channels.meta import response_style as rs
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
-from app.modules.channels.models import ChannelMessage
-from app.modules.channels.service import decrypt_message_content
+from app.modules.channels.models import Channel, ChannelMessage, WhatsAppThreadState
+from app.modules.channels.service import (
+    decrypt_message_content,
+    encrypt_contact_phone,
+    hash_contact_phone,
+)
 from conftest import TEST_ENGINE
 
 _PHONE_ID = "pn-style-test-1"
@@ -188,7 +192,12 @@ def _test_session_factory():
 
 
 async def _seed_whatsapp(db, user_id, *, response_style):
-    """User + MetaAsset/MetaConnection with a decryptable token."""
+    """User + MetaAsset/MetaConnection with a decryptable token.
+
+    Also pre-creates the channel row and a thread state with a language
+    choice: the first-contact language gate would otherwise intercept the
+    message and send the picker instead of the reply this suite measures.
+    """
     from app.modules.channels.meta.credentials import encrypt_credential
 
     await _make_user(db, user_id, response_style=response_style)
@@ -202,6 +211,20 @@ async def _seed_whatsapp(db, user_id, *, response_style):
         id=str(uuid.uuid4()), tenant_id=user_id, connection_id=conn.id,
         provider="whatsapp", asset_type="phone_number",
         external_asset_id=_PHONE_ID, phone="+1555", active=True,
+    ))
+    channel = Channel(
+        id=str(uuid.uuid4()), user_id=user_id, platform="whatsapp",
+        platform_user_id=_PHONE_ID, display_name="Style Test", status="active",
+    )
+    db.add(channel)
+    await db.flush()
+    db.add(WhatsAppThreadState(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        contact_phone=encrypt_contact_phone(_FROM),
+        contact_phone_hash=hash_contact_phone(_FROM),
+        language="en",
+        preferred_language="en",
     ))
     await db.commit()
 
