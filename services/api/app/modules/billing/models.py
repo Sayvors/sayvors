@@ -205,6 +205,10 @@ class TenantSubscription(Base):
     granted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Promo override expiry.
     granted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Per-tenant feature overrides. Keys win over the plan's features dict;
+    # absent keys inherit the plan. Empty dict = no overrides (this is what
+    # the admin "Special list" keys off).
+    features_override: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

@@ -141,6 +141,7 @@ class SubscriptionOut(BaseModel):
     id: str
     tenant_id: str
     plan_id: str
+    email: str | None = None
     plan_slug: str | None = None
     plan_name: str | None = None
     status: str
@@ -148,9 +149,17 @@ class SubscriptionOut(BaseModel):
     period_end: datetime | None = None
     granted_by: str | None = None
     granted_until: datetime | None = None
+    features_override: dict = Field(default_factory=dict)
 
 
 class GrantPlanIn(BaseModel):
     plan_slug: str = Field(..., min_length=1, max_length=40)
     granted_until: datetime | None = None
     note: str | None = Field(default=None, max_length=500)
+
+
+class TenantFeaturesIn(BaseModel):
+    """Per-tenant feature overrides. True forces on, False forces off,
+    null removes the key (inherit the plan again). Unknown keys are dropped."""
+
+    features: dict[str, bool | None] = Field(default_factory=dict)
