@@ -107,6 +107,28 @@ _TOPIC_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
 )
 
 
+# A message that ASKS for a fact ("what are your hours?", "give me the
+# website quick") must be answered before urgency is considered. The word
+# "quick" in such a request is about the answer's speed, not a demand for a
+# human.
+_QUESTION_START = re.compile(
+    r"^\s*(what|whats|what's|where|when|which|who|how|can|could|do|does|"
+    r"are|is|tell|give|send|show|share)\b|"
+    r"^\s*(متى|أين|اين|كم|هل|ما|وش|وين|عطني|أعطني|اعطني)",
+    re.IGNORECASE,
+)
+
+
+def is_information_request(text: str | None) -> bool:
+    """True when the message is asking to be told a fact."""
+    if not text:
+        return False
+    stripped = text.strip()
+    if "?" in stripped or "؟" in stripped:
+        return True
+    return bool(_QUESTION_START.search(stripped))
+
+
 def detect_topics(text: str | None) -> list[str]:
     """Topics a message asks about, in priority order (hours first)."""
     if not text:

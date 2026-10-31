@@ -1894,6 +1894,16 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <li>Each reply logs <code>Reply context … facts=… card=… grounding=… catalog=…</code> plus tool topics, so "why didn't it know?" is answerable from the log.</li>
   </ul>
 
+  <h3>Urgency is classified, not keyword-matched</h3>
+  <p>The first version matched words: "quick" was missing (so "please, quick." did not page), and adding it would have paged a human for "give me your hours, quick" — the wrong answer twice. Urgency is now one more field on the existing per-message thread classifier, which reads the whole conversation and returns <code>urgent</code> with explicit rules:</p>
+  <ul>
+    <li>true only when the customer is blocked, needs it today/now, repeats the request, or is angry about delay;</li>
+    <li><strong>false</strong> for a factual question asked quickly ("what are your hours, quick?") and for "quick question";</li>
+    <li>a fact question with an answer always wins: the reply path answers it and suppresses the page, even when the classifier says urgent. A buying request ("I need this done today") has no fact ask and still pages.</li>
+    <li>the keyword matcher is now only a fallback when the classifier is unavailable, and it is gated by the same fact-question check.</li>
+    <li>escalation still ignores lead stage and age: a 20-day-old lost lead that says "quick" becomes important, while its pipeline stage is left untouched.</li>
+  </ul>
+
   <h3>Still open</h3>
   <ul>
     <li>Team membership changes do not rebuild eagerly yet (10-minute TTL covers them).</li>

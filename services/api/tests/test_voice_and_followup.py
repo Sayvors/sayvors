@@ -44,13 +44,19 @@ _FROM = "15550002"
 # ── thread_stats: parsing + fallbacks ──
 
 def test_parse_classification_accepts_clean_json():
-    parsed = ts.parse_classification('{"language": "ur", "confused": true, "awaiting_user": false}')
-    assert parsed == {"language": "ur", "confused": True, "awaiting_user": False}
+    parsed = ts.parse_classification('{"language": "ur", "confused": true, "awaiting_user": false, "urgent": true}')
+    assert parsed == {
+        "language": "ur", "confused": True,
+        "awaiting_user": False, "urgent": True,
+    }
 
 
 def test_parse_classification_accepts_wrapped_and_regional():
     parsed = ts.parse_classification('Sure! {"language": "ur-PK", "confused": false, "awaiting_user": true} thanks')
-    assert parsed == {"language": "ur", "confused": False, "awaiting_user": True}
+    assert parsed == {
+        "language": "ur", "confused": False,
+        "awaiting_user": True, "urgent": False,
+    }
 
 
 def test_parse_classification_rejects_garbage_and_unknown_language():
@@ -98,7 +104,10 @@ async def test_classify_thread_uses_llm_result(db, channel_id, monkeypatch):
         lambda model_id: _Provider(),
     )
     stats = await ts.classify_thread(db, channel_id, _FROM)
-    assert stats == {"language": "ps", "confused": True, "awaiting_user": True}
+    assert stats == {
+        "language": "ps", "confused": True,
+        "awaiting_user": True, "urgent": False,
+    }
 
 
 @pytest.mark.asyncio

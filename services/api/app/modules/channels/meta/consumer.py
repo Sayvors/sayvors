@@ -1488,13 +1488,29 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         )
 
         # Escalation. Two independent triggers, both in lead_escalation.py:
-        #   * urgency — the customer said it cannot wait, escalate now;
+        #   * urgency — classified from the conversation, NOT keyword-matched:
+        #     "give me your hours, quick" is a fact question, not a page;
         #   * confusion counter — only if the tenant opted in (threshold > 0).
         # A normal follow-up question is neither, so a healthy thread keeps
         # being answered by the AI instead of being muted after three turns.
         from .lead_escalation import detect_urgency, update_escalation_state
+        from ...profile.facts_tool import detect_topics, is_information_request
 
-        urgent = detect_urgency(text)
+        fact_topics = detect_topics(text)
+        # An information request that the facts can answer outranks urgency:
+        # answer it first, never hand a "what are your hours, quick?" to a
+        # human. "I need this done today" has no fact ask and still pages.
+        fact_question = bool(fact_topics) and is_information_request(text)
+        # The classifier reads the whole thread and decides intent; the
+        # keyword matcher remains only as a fallback when the model is down.
+        keyword_urgent = detect_urgency(text)
+        urgent = bool(stats.get("urgent")) or keyword_urgent
+        urgent = urgent and not fact_question
+        logger.info(
+            "Urgency wamid=%s classified=%s fallback=%s fact_question=%s -> %s",
+            wamid[:32], stats.get("urgent"), keyword_urgent,
+            fact_question, urgent,
+        )
         if inbound_lead is not None:
             try:
                 await update_escalation_state(
@@ -1650,7 +1666,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         if inbound_lead is not None and not should_ai_reply(inbound_lead):
             await escalate_to_human(
                 db, inbound_lead, adapter, phone_number_id, token,
-                urgent=detect_urgency(text),
+                urgent=urgent,
             )
             await db.commit()
             logger.info(
@@ -1977,7 +1993,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             # The LEAD line extracted from the reply can be the first proof
             # this is a lead. When the message was also urgent, page the team
             # now rather than waiting for the customer to write again.
-            if detect_urgency(text) and (lead.priority or "normal") != "important":
+            if urgent and (lead.priority or "normal") != "important":
                 try:
                     await update_escalation_state(db, lead, urgent=True)
                     await db.commit()

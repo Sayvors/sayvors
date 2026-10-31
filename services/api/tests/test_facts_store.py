@@ -16,6 +16,7 @@ from app.modules.profile.facts_store import (
 )
 from app.modules.profile.facts_tool import (
     detect_topics,
+    is_information_request,
     render_topic,
     run_facts_tool,
 )
@@ -210,6 +211,25 @@ async def test_tool_topics(db):
     assert "Shah Khan" in team and "Syed Syab (Founder)" in team
 
     assert await run_facts_tool(db, TENANT, "nonsense") == ""
+
+
+def test_information_requests_are_not_urgency():
+    assert is_information_request("give me business hours quick") is True
+    assert is_information_request("What are your opening hours?") is True
+    assert is_information_request("أعطني ساعات العمل") is True
+    assert is_information_request("I need it urgent, this is blocking me") is False
+    assert is_information_request("please quick") is False
+
+
+def test_quick_fact_question_is_answered_not_escalated():
+    text = "give me business hours quick"
+    topics = detect_topics(text)
+    fact_question = bool(topics) and is_information_request(text)
+    assert "hours" in topics
+    assert fact_question is True, "answer it; do not page a human"
+
+    buying = "I need a website urgently, this is blocking me"
+    assert is_information_request(buying) is False, "a buying request still pages"
 
 
 def test_render_topic_aliases_are_accepted():

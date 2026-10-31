@@ -40,7 +40,8 @@ _KNOWN_LANGUAGES = ("ar", "en", "ur", "ps", "hi", "bn")
 _CLASSIFY_SYSTEM_PROMPT = (
     "You analyse one customer conversation on WhatsApp for a small "
     "business. Reply with ONLY a JSON object, no other text:\n"
-    '{"language": "<code>", "confused": <bool>, "awaiting_user": <bool>}\n'
+    '{"language": "<code>", "confused": <bool>, '
+    '"awaiting_user": <bool>, "urgent": <bool>}\n'
     "Rules:\n"
     f"- language: the language the CUSTOMER writes in, one of "
     f"{list(_KNOWN_LANGUAGES)}. Arabic script could be Arabic (ar), Urdu "
@@ -52,6 +53,11 @@ _CLASSIFY_SYSTEM_PROMPT = (
     "- awaiting_user: true when the ASSISTANT's most recent message asked "
     "the customer a question and the customer has not answered yet. False "
     "when the last message is from the customer or no question is open.\n"
+    "- urgent: true only when the customer is pressing for speed on work that "
+    "needs a person — blocked on a decision, needs it today/now, has repeated "
+    "the request, or is angry about the delay. A factual question asked "
+    "quickly ('what are your hours, quick?') is NOT urgent. 'Quick "
+    "question' is NOT urgent. Judge the intent, not the word 'quick'.\n"
 )
 
 
@@ -90,6 +96,7 @@ def parse_classification(raw: str | None) -> dict | None:
         "language": language,
         "confused": bool(data.get("confused")),
         "awaiting_user": bool(data.get("awaiting_user")),
+        "urgent": bool(data.get("urgent")),
     }
 
 
@@ -170,12 +177,18 @@ async def classify_thread(db, channel_id: str, contact_phone: str | None) -> dic
     # No model / parse failure / error: script heuristic on the last
     # customer message, both signals off.
     fallback_text = ""
-    for m in reversed(rows):
-        if m.direction == "inbound":
-            fallback_text = m.content or ""
-            break
+    try:
+        from ...channels.service import decrypt_message_content
+
+        for m in reversed(rows):
+            if m.direction == "inbound":
+                fallback_text = decrypt_message_content(m.content) or ""
+                break
+    except Exception:  # noqa: BLE001 - heuristic only
+        fallback_text = ""
     return {
         "language": _script_language(fallback_text),
         "confused": False,
         "awaiting_user": False,
+        "urgent": False,
     }
