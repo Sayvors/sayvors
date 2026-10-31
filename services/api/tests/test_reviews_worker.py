@@ -530,3 +530,75 @@ async def test_pipeline_model_resolution_supplies_required_rating(db, monkeypatc
     assert captured["resolved"] is True
     assert captured["resolver_rating"] == 2
     assert captured["model"] == "openai:gpt-4o-mini"
+
+
+# ── poll pass aggregation ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_poll_once_sums_every_channel_field(db, channel_id, config_id, monkeypatch):
+    """The pass total must include the channel count, not just review counts."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr("app.database.async_session", factory)
+
+    async def _fake(ch_id, cfg_id, semaphore):
+        return {"channels": 1, "reviews": 3, "replied": 2, "queued": 1, "skipped": 0, "errors": 0}
+
+    monkeypatch.setattr(reviews_worker, "_poll_one_channel", _fake)
+
+    totals = await reviews_worker.poll_once()
+
+    assert totals == {"channels": 1, "reviews": 3, "replied": 2, "queued": 1, "skipped": 0, "errors": 0}
+
+
+@pytest.mark.asyncio
+async def test_poll_one_channel_reports_the_channel_it_polled(
+    db, channel_id, config_id, monkeypatch
+):
+    """`channels` must be a key of the per-channel stats dict.
+
+    Regression: `poll_once` sums `result["channels"]` but the dict created in
+    `_poll_one_channel` omitted that key. Every due channel therefore died
+    with KeyError('channels') before `process_channel` ran — Google reviews
+    were never polled at all, while each pass logged a generic failure.
+    """
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr("app.database.async_session", factory)
+
+    async def _claim(session, config_id_arg, last_polled_at):
+        return True
+
+    async def _release(session, config_id_arg):
+        return None
+
+    async def _health(session, channel, ok, error=None):
+        return None
+
+    async def _process(session, channel, config):
+        return {"reviews": 2, "replied": 1, "queued": 1, "skipped": 0, "errors": 0}
+
+    monkeypatch.setattr(reviews_worker, "_claim_channel", _claim)
+    monkeypatch.setattr(reviews_worker, "_release_channel", _release)
+    monkeypatch.setattr(reviews_worker, "_update_channel_health", _health)
+    monkeypatch.setattr(reviews_worker, "_is_in_health_backoff", lambda channel, now: False)
+    monkeypatch.setattr(reviews_worker, "process_channel", _process)
+
+    stats = await reviews_worker._poll_one_channel(
+        channel_id, config_id, asyncio.Semaphore(1)
+    )
+
+    assert stats["channels"] == 1
+    assert stats["reviews"] == 2
+    assert stats["replied"] == 1
+    # Everything poll_once aggregates must be present, including on the paths
+    # that return early (not claimed / in backoff).
+    for key in ("channels", "reviews", "replied", "queued", "skipped", "errors"):
+        assert key in stats, key
