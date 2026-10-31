@@ -106,6 +106,13 @@ class InteractiveSend(BaseModel):
     url: str | None = Field(None, max_length=2000)
 
 
+class QrCodeCreate(BaseModel):
+    """Create a WhatsApp short link + QR image for this number."""
+
+    prefilled_message: str = Field(..., min_length=1, max_length=140)
+    image_format: str = Field("PNG", pattern="^(PNG|SVG)$")
+
+
 class ChannelMessageResponse(BaseModel):
     id: str
     channel_id: str

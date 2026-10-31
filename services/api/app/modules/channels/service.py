@@ -623,6 +623,78 @@ async def send_interactive_message(
     return outbound
 
 
+async def whatsapp_number_health(
+    channel_id: str, user: User, db: AsyncSession
+) -> dict:
+    """Meta's quality rating + messaging limit for this channel's number."""
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Number health is only available on WhatsApp")
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    return await WhatsAppAdapter().get_number_health(phone_number_id, token)
+
+
+async def list_whatsapp_qr_codes(
+    channel_id: str, user: User, db: AsyncSession
+) -> list[dict]:
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("QR codes are only available on WhatsApp")
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    return await WhatsAppAdapter().list_qr_codes(phone_number_id, token)
+
+
+async def create_whatsapp_qr_code(
+    channel_id: str,
+    prefilled_message: str,
+    user: User,
+    db: AsyncSession,
+    *,
+    image_format: str = "PNG",
+) -> dict:
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("QR codes are only available on WhatsApp")
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    return await WhatsAppAdapter().create_qr_code(
+        phone_number_id, token, prefilled_message, image_format=image_format
+    )
+
+
+async def delete_whatsapp_qr_code(
+    channel_id: str, code: str, user: User, db: AsyncSession
+) -> bool:
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("QR codes are only available on WhatsApp")
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    return await WhatsAppAdapter().delete_qr_code(phone_number_id, token, code)
+
+
 async def _dispatch_instagram(
     db: AsyncSession,
     user: User,

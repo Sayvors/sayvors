@@ -502,6 +502,78 @@ class WhatsAppAdapter(MetaProviderAdapter):
     # it is persisted locally in asset_metadata.business_profile instead.
     PROFILE_FIELDS = ("about", "address", "description", "email", "websites", "vertical")
 
+    # ── Number health + QR codes (WA-7 / WA-9) ───────────────────────
+
+    async def get_number_health(self, phone_number_id: str, token: str) -> dict:
+        """Quality rating, messaging limit tier and identity for one number.
+
+        These are Meta-side signals: they explain a sudden send failure far
+        better than our own counters, so the dashboard shows them verbatim.
+        """
+        resp = await self._graph(
+            "GET",
+            f"/{phone_number_id}",
+            token,
+            params={
+                "fields": (
+                    "verified_name,display_phone_number,quality_rating,"
+                    "messaging_limit_tier,status,code_verification_status,"
+                    "account_mode,platform_type"
+                )
+            },
+        )
+        data = resp.json() or {}
+        return {
+            "verified_name": data.get("verified_name"),
+            "display_phone_number": data.get("display_phone_number"),
+            "quality_rating": data.get("quality_rating"),
+            "messaging_limit_tier": data.get("messaging_limit_tier"),
+            "status": data.get("status"),
+            "code_verification_status": data.get("code_verification_status"),
+            "account_mode": data.get("account_mode"),
+            "platform_type": data.get("platform_type"),
+        }
+
+    async def list_qr_codes(self, phone_number_id: str, token: str) -> list[dict]:
+        resp = await self._graph(
+            "GET", f"/{phone_number_id}/message_qrdls", token,
+            params={"fields": "code,prefilled_message,deep_link_url,qr_image_url"},
+        )
+        data = resp.json().get("data") or []
+        return [row for row in data if isinstance(row, dict)]
+
+    async def create_qr_code(
+        self,
+        phone_number_id: str,
+        token: str,
+        prefilled_message: str,
+        *,
+        image_format: str = "PNG",
+    ) -> dict:
+        """Create a short link + QR image. Pre-filled message max 140 chars."""
+        message = (prefilled_message or "").strip()
+        if not message:
+            raise ValueError("a QR code needs a pre-filled message")
+        if len(message) > 140:
+            raise ValueError("the pre-filled message must be 140 characters or fewer")
+        fmt = (image_format or "PNG").upper()
+        if fmt not in ("PNG", "SVG"):
+            raise ValueError("image format must be PNG or SVG")
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/message_qrdls",
+            token,
+            json={"prefilled_message": message, "generate_qr_image": fmt},
+        )
+        return resp.json() or {}
+
+    async def delete_qr_code(self, phone_number_id: str, token: str, code: str) -> bool:
+        """Retire a code; later scans show it as expired."""
+        resp = await self._graph(
+            "DELETE", f"/{phone_number_id}/message_qrdls/{code}", token
+        )
+        return bool((resp.json() or {}).get("success"))
+
     async def get_business_profile(self, phone_number_id: str, token: str) -> dict:
         """Fetch the WhatsApp business profile for a number.
 

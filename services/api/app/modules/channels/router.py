@@ -33,7 +33,8 @@ from .schemas import (
     ChannelMessageSend,
     ChannelResponse,
     InboxSendRequest,
-    InteractiveSend,    InboxSendResponse,
+    InteractiveSend,
+    QrCodeCreate,    InboxSendResponse,
     InboxThread,
     InboxThreadListResponse,
     ReviewReplyEdit,
@@ -62,6 +63,10 @@ from .service import (
     list_thread_messages,
     send_message,
     send_interactive_message,
+    whatsapp_number_health,
+    list_whatsapp_qr_codes,
+    create_whatsapp_qr_code,
+    delete_whatsapp_qr_code,
     verify_webhook_signature,
 )
 
@@ -447,6 +452,91 @@ async def send_interactive_to_channel(
         contact_name=msg.contact_name,
         created_at=msg.created_at.isoformat(),
     )
+
+
+@router.get("/{channel_id}/whatsapp/health", response_model=dict)
+async def get_whatsapp_health(
+    channel_id: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Meta's quality rating and messaging limit for this number.
+
+    Shown in the channel settings so a sudden send failure has a visible
+    cause instead of a support ticket.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    try:
+        return await whatsapp_number_health(channel_id, ctx.user, db)
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(
+            status_code=404 if message == "Channel not found" else 422,
+            detail=message,
+        )
+
+
+@router.get("/{channel_id}/whatsapp/qr-codes", response_model=list[dict])
+async def get_whatsapp_qr_codes(
+    channel_id: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    try:
+        return await list_whatsapp_qr_codes(channel_id, ctx.user, db)
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(
+            status_code=404 if message == "Channel not found" else 422,
+            detail=message,
+        )
+
+
+@router.post("/{channel_id}/whatsapp/qr-codes", response_model=dict)
+async def post_whatsapp_qr_code(
+    channel_id: str,
+    body: QrCodeCreate,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    try:
+        return await create_whatsapp_qr_code(
+            channel_id, body.prefilled_message, ctx.user, db,
+            image_format=body.image_format,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(
+            status_code=404 if message == "Channel not found" else 422,
+            detail=message,
+        )
+
+
+@router.delete("/{channel_id}/whatsapp/qr-codes/{code}", response_model=dict)
+async def remove_whatsapp_qr_code(
+    channel_id: str,
+    code: str,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    try:
+        deleted = await delete_whatsapp_qr_code(channel_id, code, ctx.user, db)
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(
+            status_code=404 if message == "Channel not found" else 422,
+            detail=message,
+        )
+    if not deleted:
+        raise HTTPException(status_code=502, detail="Meta did not confirm the deletion")
+    return {"deleted": True, "code": code}
 
 
 @router.get("/{channel_id}/messages", response_model=ChannelMessageListResponse)

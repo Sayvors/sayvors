@@ -8,6 +8,14 @@ import {
   getAutoReply,
   updateAutoReply,
 } from "@/lib/api-channels";
+import {
+  createWhatsAppQrCode,
+  deleteWhatsAppQrCode,
+  fetchWhatsAppHealth,
+  fetchWhatsAppQrCodes,
+  type WhatsAppHealth,
+  type WhatsAppQrCode,
+} from "@/lib/api-whatsapp-tools";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -75,6 +83,15 @@ export default function WhatsAppSettings({
   const [autoReply, setAutoReply] = useState<{ phoneId: string; enabled: boolean } | null>(null);
   const [autoReplyState, setAutoReplyState] = useState<SaveState>("idle");
   const [autoReplyError, setAutoReplyError] = useState<string | null>(null);
+  const [channelId, setChannelId] = useState<string | null>(null);
+
+  // ── Number health + QR codes (Meta-side) ──
+  const [health, setHealth] = useState<WhatsAppHealth | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [qrCodes, setQrCodes] = useState<WhatsAppQrCode[]>([]);
+  const [qrError, setQrError] = useState<string | null>(null);
+  const [qrMessage, setQrMessage] = useState("");
+  const [qrBusy, setQrBusy] = useState(false);
 
   useEffect(() => {
     let dead = false;
@@ -106,6 +123,7 @@ export default function WhatsAppSettings({
         const ch = await ensureWhatsAppChannel(phoneId, phone || businessName);
         const cfg = await getAutoReply(ch.id);
         if (!dead) {
+          setChannelId(ch.id);
           setAutoReply({ phoneId, enabled: !!cfg.enabled });
           setAutoReplyError(null);
         }
@@ -117,6 +135,48 @@ export default function WhatsAppSettings({
       dead = true;
     };
   }, [phoneId, phone, businessName]);
+
+  // Meta-side health and QR codes load once the channel row is resolved.
+  useEffect(() => {
+    if (!channelId) return;
+    let dead = false;
+    fetchWhatsAppHealth(channelId)
+      .then((data) => { if (!dead) { setHealth(data); setHealthError(null); } })
+      .catch((e) => { if (!dead) setHealthError(e instanceof Error ? e.message : "Could not load number health."); });
+    fetchWhatsAppQrCodes(channelId)
+      .then((rows) => { if (!dead) { setQrCodes(rows); setQrError(null); } })
+      .catch((e) => { if (!dead) setQrError(e instanceof Error ? e.message : "Could not load QR codes."); });
+    return () => { dead = true; };
+  }, [channelId]);
+
+  const createQr = async () => {
+    if (!channelId || !qrMessage.trim() || qrBusy) return;
+    setQrBusy(true);
+    setQrError(null);
+    try {
+      const created = await createWhatsAppQrCode(channelId, qrMessage.trim());
+      setQrCodes((prev) => [created, ...prev]);
+      setQrMessage("");
+    } catch (e) {
+      setQrError(e instanceof Error ? e.message : "Could not create the QR code.");
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  const removeQr = async (code: string) => {
+    if (!channelId || qrBusy) return;
+    setQrBusy(true);
+    setQrError(null);
+    try {
+      await deleteWhatsAppQrCode(channelId, code);
+      setQrCodes((prev) => prev.filter((qr) => qr.code !== code));
+    } catch (e) {
+      setQrError(e instanceof Error ? e.message : "Could not delete the QR code.");
+    } finally {
+      setQrBusy(false);
+    }
+  };
 
   const chooseResponseStyle = async (style: string) => {
     if (style === responseStyle || styleState === "saving") return;
@@ -210,6 +270,96 @@ export default function WhatsAppSettings({
               {usage.plan === "pro" ? "Pro" : "Free"} plan
             </p>
           </div>
+        )}
+      </Card>
+
+      {/* Number health — Meta's quality rating and sending capacity */}
+      <Card
+        title="Number health"
+        subtitle="Meta's own signals for this number: quality rating and how many unique customers you can message per day."
+      >
+        {healthError && (
+          <p role="alert" className="mt-2 text-[12px] text-[var(--wa-danger)]">{healthError}</p>
+        )}
+        {!health && !healthError && <p className="mt-2 text-[12px] text-[var(--wa-text-3)]">Loading&hellip;</p>}
+        {health && (
+          <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+            {[
+              { label: "Verified name", value: health.verified_name || "—" },
+              { label: "Number", value: health.display_phone_number || "—" },
+              { label: "Quality rating", value: health.quality_rating || "—" },
+              { label: "Messaging limit", value: health.messaging_limit_tier || "—" },
+              { label: "Status", value: health.status || "—" },
+              { label: "Verification", value: health.code_verification_status || "—" },
+            ].map((row) => (
+              <div key={row.label} className="rounded-[8px] bg-[var(--wa-panel-2,rgba(0,0,0,0.03))] px-3 py-2">
+                <dt className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--wa-text-3)]">{row.label}</dt>
+                <dd className={`mt-0.5 text-[13px] font-semibold ${
+                  row.label === "Quality rating" && row.value === "RED"
+                    ? "text-[var(--wa-danger)]"
+                    : "text-[var(--wa-text)]"
+                }`}>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </Card>
+
+      {/* QR codes — a zero-cost WhatsApp entry point for counters and print */}
+      <Card
+        title="QR codes"
+        subtitle="A short link and QR image that opens a chat with a message already typed. Print it, no ads needed."
+      >
+        {qrError && <p role="alert" className="mt-2 text-[12px] text-[var(--wa-danger)]">{qrError}</p>}
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <input
+            value={qrMessage}
+            onChange={(e) => setQrMessage(e.target.value)}
+            maxLength={140}
+            placeholder="Pre-filled message, e.g. Hi! I'd like to order"
+            aria-label="Pre-filled message for the new QR code"
+            className="min-w-0 flex-1 rounded-[8px] border border-[var(--wa-line,rgba(0,0,0,0.12))] bg-white px-3 py-2 text-[13px] text-[var(--wa-text)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wa-accent)]"
+          />
+          <button
+            onClick={createQr}
+            disabled={qrBusy || !qrMessage.trim()}
+            className="rounded-[8px] bg-[var(--wa-accent)] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50"
+          >
+            {qrBusy ? "Working…" : "Create QR"}
+          </button>
+        </div>
+        <p className="mt-1 text-[11px] text-[var(--wa-text-3)]">{qrMessage.length}/140</p>
+        {qrCodes.length === 0 ? (
+          <p className="mt-3 text-[12px] text-[var(--wa-text-3)]">No QR codes yet.</p>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {qrCodes.map((qr) => (
+              <li key={qr.code} className="flex items-start gap-3 rounded-[8px] bg-[var(--wa-panel-2,rgba(0,0,0,0.03))] px-3 py-2">
+                {qr.qr_image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={qr.qr_image_url} alt={`QR ${qr.code}`} className="h-14 w-14 shrink-0 rounded bg-white object-contain" />
+                ) : null}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[12px] font-semibold text-[var(--wa-text)]">{qr.prefilled_message}</p>
+                  <a
+                    href={qr.deep_link_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-0.5 block truncate text-[11px] text-[var(--wa-accent)] underline"
+                  >
+                    {qr.deep_link_url}
+                  </a>
+                </div>
+                <button
+                  onClick={() => removeQr(qr.code)}
+                  disabled={qrBusy}
+                  className="shrink-0 text-[11px] font-semibold text-[var(--wa-text-3)] underline disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
 

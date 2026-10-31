@@ -1840,9 +1840,9 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
   <h3>Missing - account &amp; operations</h3>
   <div class="scroll"><table>
     <tr><th>ID</th><th>Capability</th><th>Why it matters</th><th>Effort</th></tr>
-    <tr><td class="num">WA-7</td><td><strong>QR codes</strong> - create / list / delete per number</td><td>Store counter, website, packaging; a WhatsApp entry point with no ad spend.</td><td>S</td></tr>
+    <tr><td class="num">WA-7</td><td><strong>QR codes</strong> - create / list / delete per number. <span class="chip ok">Fixed 2026-10-31</span></td><td><strong>Shipped:</strong> <code>GET/POST /api/v1/channels/{id}/whatsapp/qr-codes</code> and <code>DELETE .../{code}</code>, plus a QR card in WhatsApp channel settings (list, limited create form, deep link, image, delete). Meta's 140-character pre-filled limit is enforced at the edge and in the adapter; a create returns the short link <code>https://wa.me/message/{code}</code> and the QR image.</td><td>S</td></tr>
     <tr><td class="num">WA-8</td><td><strong>Number lifecycle</strong> - request code, verify, register/deregister, two-step PIN</td><td>Tenants stop needing WhatsApp Manager to onboard or rotate a number.</td><td>M</td></tr>
-    <tr><td class="num">WA-9</td><td><strong>Quality rating, messaging limit, conversation analytics</strong></td><td>"Your number is Green, limit 10k/day" belongs in the tenant dashboard; it also explains a sudden send failure.</td><td>M</td></tr>
+    <tr><td class="num">WA-9</td><td><strong>Quality rating, messaging limit, conversation analytics</strong>. <span class="chip ok">Health fixed 2026-10-31</span></td><td><strong>Shipped:</strong> <code>GET /api/v1/channels/{id}/whatsapp/health</code> reads Meta's <code>quality_rating</code>, <code>messaging_limit_tier</code>, verified name, status and verification, shown as a "Number health" card in channel settings. <strong>Still open:</strong> conversation analytics (the WABA analytics endpoint) is not wired - our own message counters cover the volume view.</td><td>M</td></tr>
     <tr><td class="num">WA-10</td><td><strong>Template authoring</strong> - create / edit / delete + per-template analytics</td><td>We only sync today; tenants still author templates in Meta's console.</td><td>M</td></tr>
     <tr><td class="num">WA-11</td><td><strong>Catalog / commerce</strong> - link a Meta catalog, product + multi-product messages, order messages, order status</td><td>Retail tenants can sell inside the chat; ties into the catalog the assistant already quotes.</td><td>L</td></tr>
     <tr><td class="num">WA-12</td><td><strong>WhatsApp Flows</strong> - in-chat forms (booking, lead capture) + flow-response webhook</td><td>Structured intake beats a long Q&amp;A, and the answers arrive typed instead of parsed from prose.</td><td>L</td></tr>
@@ -1852,7 +1852,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
   <h3>Build order</h3>
   <ol>
     <li><strong>WA-2</strong> - inbound media is the remaining "customer sent something we ignore" gap (WA-1 shipped).</li>
-    <li><strong>WA-7 + WA-9</strong> - QR codes and a quality/limit panel are fast, visible value in the tenant dashboard.</li>
+    <li><strong>WA-7 + WA-9</strong> - <span class="chip ok">shipped</span> QR codes and the number-health card.</li>
     <li><strong>WA-10 + WA-8</strong> - template authoring and number lifecycle remove the WhatsApp Manager detour.</li>
     <li><strong>WA-3/4/5/6</strong> - small messaging conveniences, batchable in one pass.</li>
     <li><strong>WA-11 + WA-12</strong> - commerce and Flows, product decisions first.</li>
