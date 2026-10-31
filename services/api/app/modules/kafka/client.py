@@ -168,19 +168,32 @@ async def create_consumer(
     return consumer
 
 
+async def rearm_kafka_once() -> bool:
+    """One re-arm pass: unlatch the producer and any consumers marked offline.
+
+    Returns True when anything was re-latched. Split out of the loop so the
+    recovery itself is unit-testable without waiting out the 30s interval.
+    """
+    global _producer_available
+    relatched = False
+    # Re-latch producer if it was unavailable
+    if not _producer_available:
+        _producer_available = True
+        relatched = True
+        logger.info("Kafka re-arm prober: producer re-latched, will retry on next call")
+    # Re-latch all consumers
+    for gid in list(_consumer_available):
+        if not _consumer_available.get(gid, True):
+            _consumer_available[gid] = True
+            relatched = True
+            logger.info("Kafka re-arm prober: consumer %s re-latched", gid)
+    return relatched
+
+
 async def run_kafka_rearmer() -> None:
     """Background prober that re-arms Kafka consumers and producer after an outage."""
     import asyncio
 
     while True:
         await asyncio.sleep(30)
-        global _producer_available
-        # Re-latch producer if it was unavailable
-        if not _producer_available:
-            _producer_available = True
-            logger.info("Kafka re-arm prober: producer re-latched, will retry on next call")
-        # Re-latch all consumers
-        for gid in list(_consumer_available):
-            if not _consumer_available.get(gid, True):
-                _consumer_available[gid] = True
-                logger.info("Kafka re-arm prober: consumer %s re-latched", gid)
+        await rearm_kafka_once()
