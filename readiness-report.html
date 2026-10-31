@@ -1912,8 +1912,121 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
   </ul>
 </section>
 
+<section id="scoped-audit-2026-10-31">
+  <div class="eyebrow">&sect;&sect; 22 - Google Reviews + WhatsApp scoped readiness - 2026-10-31</div>
+  <h2>Google Reviews and WhatsApp only - how ready are we, really</h2>
+  <p>This is a deliberately narrow audit: only the two channels a tenant is sold today. Everything was re-verified against the working tree (<strong>141 migrations, single head <code>13d74ad0046228f3</code></strong>; <strong>1,909 tests collected across 144 files</strong>; the last full run was 1,880 passed / 4 skipped / 3 failed, and all three were test seeds fixed afterwards). Percentages are judgment anchored to verified code and open items, not a marketing score.</p>
+
+  <h3>Headline percentages</h3>
+  <div class="scroll"><table>
+    <tr><th>Surface</th><th>Ready</th><th>Basis</th></tr>
+    <tr><td><strong>Google Reviews</strong> (poll &rarr; reply &rarr; dashboard)</td><td><strong>~85%</strong></td><td>Core loop is solid and regression-tested; gaps are taxonomy, assignment, memory and one UI clock.</td></tr>
+    <tr><td><strong>WhatsApp conversation loop</strong> (text + voice)</td><td><strong>~90%</strong></td><td>Send, receive, reply, voice, language gate, facts tool, interactive, escalation all shipped and tested.</td></tr>
+    <tr><td><strong>Full WhatsApp Cloud API surface</strong></td><td><strong>~70%</strong></td><td>10 of 13 ledger items open: media, lifecycle, template authoring, commerce, Flows, calling.</td></tr>
+    <tr><td><strong>Security</strong> (these two surfaces)</td><td><strong>~85%</strong></td><td>Webhook auth, encryption, tenant isolation, rate limits verified; infrastructure-level items open.</td></tr>
+    <tr><td><strong>Production deployability</strong> (either surface)</td><td><strong>~60%</strong></td><td>The code is ready; the box, the backups and the deploy hygiene are not.</td></tr>
+  </table></div>
+  <p class="note">One-sentence version: <strong>the conversation loop on both channels is production-grade code running on non-production infrastructure.</strong> A tenant can connect a number, receive messages, get grounded answers, send voice notes, escalate to humans, and have Google reviews polled and answered. What can still bite is the single box dying, no proven backup, and Meta-side quota/quality surprises that are not fully visible yet.</p>
+
+  <h3>Google Reviews - verified working</h3>
+  <div class="scroll"><table>
+    <tr><th>Area</th><th>Evidence</th></tr>
+    <tr><td>Polling pipeline</td><td><code>reviews_worker.py</code> <code>poll_once</code> / <code>_poll_one_channel</code> / <code>process_channel</code> / <code>run_google_reviews_worker</code>. Oct-21 <code>KeyError('channels')</code> outage fixed and pinned by two regression tests.</td></tr>
+    <tr><td>Channel health</td><td>Exponential backoff (2^failures, capped 24h), success/failure persistence, atomic lease-based claiming so two workers never double-poll.</td></tr>
+    <tr><td>Reply pipeline</td><td><code>generate_auto_reply</code> &rarr; <code>reply_to_review</code> &rarr; <code>confirm_reply_live</code>; relevance &rarr; strategies &rarr; databank grounding &rarr; validated generation; failed replies resume without duplicating drafts.</td></tr>
+    <tr><td>Dashboard</td><td><code>/dashboard/reviews</code> (list + trace + approve/retry), <code>/reviews/issues</code> (tickets, virtualized), <code>/reviews/playground</code> (engine trace).</td></tr>
+    <tr><td>GBP sync</td><td>Regular/special/more hours, attributes, categories, service area, opening date pushed to Google. The same location schedule feeds the WhatsApp facts tool.</td></tr>
+  </table></div>
+
+  <h3>Google Reviews - gaps</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Gap</th><th>Impact</th><th>Effort</th></tr>
+    <tr><td class="num">BUG-4</td><td>No escalation clock in the UI (<code>priority_since</code>, reminder, resume window stored but never shown; no "hand back to AI").</td><td>Agents cannot see or force a resume; a long window looks like a hang. The only gap I would call blocking for a support team.</td><td>~1 day</td></tr>
+    <tr><td class="num">HAND-5</td><td>Lead labels are not canonical ("wholesale" has no home; <code>qualified</code> means "said something").</td><td>Review-lead triage and reporting stay coarse.</td><td>~1 day</td></tr>
+    <tr><td class="num">HAND-10</td><td>Handoff is a flag, not an assignment (no assignee, routing, presence, "mine" filter).</td><td>At team scale an escalated review has no owner.</td><td>~2 days</td></tr>
+    <tr><td class="num">HAND-11</td><td>No cumulative memory (resolved conversations never feed the databank).</td><td>The AI does not get smarter from outcomes.</td><td>~2 days + review queue</td></tr>
+  </table></div>
+
+  <h3>WhatsApp - verified working</h3>
+  <div class="scroll"><table>
+    <tr><th>Area</th><th>Evidence</th></tr>
+    <tr><td>Cloud API client</td><td><code>meta/providers/whatsapp.py</code>, 26 methods: connect, discover, subscribe, register, text, image, three interactive types, template, media upload, voice, typing, profile read/write/photo, QR create/list/delete, number health, status publish/delete.</td></tr>
+    <tr><td>Inbound pipeline</td><td><code>_handle_message_received</code>: HMAC-verified webhook &rarr; idempotent persist &rarr; intent-gated lead capture &rarr; bridge merge &rarr; language gate &rarr; transcription &rarr; classifier (language/confused/awaiting/urgent) &rarr; escalation &rarr; handoff code &rarr; reply &rarr; voice/text send &rarr; follow-up arming.</td></tr>
+    <tr><td>Interactive (WA-1)</td><td>API <code>POST /channels/{id}/interactive</code> (buttons/list/CTA) + AI <code>CHOICES:</code> path with text fallback; 14 tests.</td></tr>
+    <tr><td>Language gate</td><td>First-contact EN / العربية / اردو buttons; <code>preferred_language</code> (migration <code>bfbad89c36272457</code>); LANGUAGE LOCK prompt block; voice synthesised in the chosen language; once-only, never blocks a conversation. 17 tests.</td></tr>
+    <tr><td>Voice / ASR</td><td>Media download with tenant token &rarr; ElevenLabs <code>scribe_v1</code> (admin-managed) &rarr; transcript becomes the message; honest fallback line when unreadable; hostile transcript pinned as user data. Local whisper refused on the API path.</td></tr>
+    <tr><td>Facts tool</td><td><code>tenant_facts</code> (migration <code>13d74ad0046228f3</code>) + <code>get_business_facts(topic)</code> + deterministic EN/AR router + one model tool round; tenant id from context, never model arguments; multi-location hours grouped per branch. 18 tests.</td></tr>
+    <tr><td>Urgency</td><td>Classifier field, not keywords; fact questions suppress the page; keyword matcher is fallback-only; 20-day-old lost lead still pages, stage untouched; every decision logged.</td></tr>
+    <tr><td>Escalation / modes</td><td>Confusion counter (default off), urgent holding line, notification + email, resume sweep, AI/human switch and resolve in the inbox, snapshots on transitions.</td></tr>
+    <tr><td>QR + health (WA-7, WA-9)</td><td>QR create/list/delete and Meta quality/limit card in channel settings; 6 tests.</td></tr>
+    <tr><td>Pricing</td><td><code>pricing_rates</code> (migration <code>227dac0fa4926579</code>); LLM per-family + ASR per-minute through the durable ledger; Operations &rarr; Pricing page.</td></tr>
+    <tr><td>Cross-channel</td><td>IG &rarr; WhatsApp <code>wa.me</code> bridge with identity merge and context carry; review &rarr; WhatsApp handoff codes.</td></tr>
+  </table></div>
+
+  <h3>WhatsApp - open gaps</h3>
+  <h4>Conversation-affecting</h4>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Gap</th><th>Why it matters</th><th>Effort</th></tr>
+    <tr><td class="num">WA-2</td><td>Inbound image / document / video stored as <code>[image message]</code>, never answered.</td><td>The same silent-gap class voice notes had: screenshots, receipts and PDFs are how customers ask for help.</td><td>S-M</td></tr>
+    <tr><td class="num">WA-3</td><td>No outbound video, document, sticker or audio file (only image + voice note).</td><td>Invoices, menus, PDFs and quotes cannot be sent.</td><td>S</td></tr>
+    <tr><td class="num">WA-4</td><td>No quoted reply, send reaction, edit/delete message.</td><td>Agents cannot answer a specific message or retract a wrong send.</td><td>S</td></tr>
+    <tr><td class="num">WA-5</td><td>No location or contact-card messages.</td><td>"Send me your location" is routine in service chats.</td><td>S</td></tr>
+    <tr><td class="num">WA-6</td><td>No block / unblock user.</td><td>Abuse handling requires the dashboard.</td><td>S</td></tr>
+  </table></div>
+  <h4>Account &amp; operations</h4>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Gap</th><th>Why it matters</th><th>Effort</th></tr>
+    <tr><td class="num">WA-8</td><td>No number lifecycle: request code, verify, register/deregister, two-step PIN.</td><td>Tenants still need WhatsApp Manager to onboard or rotate a number.</td><td>M</td></tr>
+    <tr><td class="num">WA-10</td><td>Template authoring is sync-only: no create/edit/delete or per-template analytics.</td><td>Templates are authored in Meta's console, not in our dashboard.</td><td>M</td></tr>
+    <tr><td class="num">WA-9 (part)</td><td>WABA conversation analytics not wired (quality/limit card shipped; Meta analytics endpoint not).</td><td>No Meta-side cost or volume attribution.</td><td>M</td></tr>
+    <tr><td class="num">WA-11</td><td>No catalog / commerce messages (product, multi-product, orders).</td><td>Retail cannot sell inside the chat despite our catalog existing.</td><td>L</td></tr>
+    <tr><td class="num">WA-12</td><td>No WhatsApp Flows (forms + response webhook).</td><td>Structured intake stays a long Q&amp;A.</td><td>L</td></tr>
+    <tr><td class="num">WA-13</td><td>No Calling API.</td><td>Deferred; needs streaming ASR/TTS and SIP/WebRTC - a separate project.</td><td>XL</td></tr>
+  </table></div>
+  <h4>Pipeline and cost debt</h4>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Gap</th><th>Why it matters</th></tr>
+    <tr><td class="num">ASR-7</td><td>Voice replies + transcription are inline; <code>meta.send_reply</code> is a declared job type with <strong>no handler</strong>.</td><td>Every voice note holds its Kafka partition for the ASR latency; at volume this throttles the whole lane.</td></tr>
+    <tr><td class="num">TTS metering</td><td>Voice-reply cost has a rate card entry but no wallet debit.</td><td>Free voice minutes once ASR billing is enabled.</td></tr>
+    <tr><td class="num">ASR-8/9/10</td><td>Bulk concurrency vs the ElevenLabs plan; cross-replica key kill-switch; language coverage unverified.</td><td>Operational; bites at scale, not at launch.</td></tr>
+  </table></div>
+
+  <h3>Security posture for these two surfaces</h3>
+  <div class="scroll"><table>
+    <tr><th>Control</th><th>Status / evidence</th></tr>
+    <tr><td>Webhook authenticity</td><td><span class="chip ok">Verified</span> HMAC-SHA256 (<code>X-Hub-Signature-256</code>, constant-time compare) + handshake token; per-channel rate limit for verified traffic, separate per-IP limit for unverified to stop signature probing.</td></tr>
+    <tr><td>Data at rest</td><td><span class="chip ok">Verified</span> Fernet for message content, contact phones, webhook secrets, provider keys, connection tokens; legacy plaintext has a decrypt fallback.</td></tr>
+    <tr><td>Tenant isolation</td><td><span class="chip ok">Verified</span> Adversarial pass found zero missing tenant filters; facts tool takes the tenant from context (prompt-injected arguments cannot cross tenants); reply history is contact-scoped, never channel-wide.</td></tr>
+    <tr><td>Prompt injection</td><td><span class="chip ok">Verified</span> Transcripts, stored summaries and RAG passages enter as user/data, never system instructions; hostile-transcript regression test.</td></tr>
+    <tr><td>Media SSRF</td><td><span class="chip ok">Verified</span> DNS-pinned fetch, per-hop redirect validation and 25 MB streamed caps on both the ASR provider and the Meta media fetcher.</td></tr>
+    <tr><td>Auth &amp; RBAC</td><td><span class="chip ok">Verified</span> Admin JWT type-gated with cookie + <code>X-Requested-With</code>; operator accounts + audit log; WS auth with revocation and one-time tickets; OTP bypass fixed; lead moves require <code>channels.edit</code>.</td></tr>
+    <tr><td>Backups</td><td><span class="chip crit">OPS-1 open</span> PITR unverified, no rehearsed restore, no runbook. The highest security-adjacent risk: 141 migrations on an unproven backup is a data-loss event waiting for a bad deploy.</td></tr>
+    <tr><td>Infrastructure</td><td><span class="chip crit">OPS-4 open</span> Single t3.small runs auth + messaging + ingestion; deploy pulls a mutable <code>:staging</code> tag; no production host.</td></tr>
+    <tr><td>Server images</td><td><span class="chip warn">Open</span> CVE-3 (Redis 7) and CVE-4 (Kafka 3.8); 2 high Dependabot alerts on the default branch.</td></tr>
+    <tr><td>Token rotation</td><td><span class="chip warn">Gap</span> Meta connection tokens are decrypted per send with no rotation story or expiry alert; a leaked token stays valid until the tenant reconnects.</td></tr>
+    <tr><td>Meta spend attribution</td><td><span class="chip warn">Gap</span> No per-tenant Meta conversation cost tracking; under credit-line sharing we would be Bill-To-Party with unbounded exposure.</td></tr>
+    <tr><td>Audio retention</td><td><span class="chip warn">Decision</span> Only the transcript is stored. Dispute forensics need original audio; that is a consent + retention decision, not silent recording.</td></tr>
+  </table></div>
+
+  <h3>Blockers, ordered for these two channels</h3>
+  <ol>
+    <li><strong>OPS-1 backups</strong> - verify PITR &ge; 7 days, schedule the dump, rehearse a restore into scratch, write the runbook. Nothing else matters if a migration eats the database.</li>
+    <li><strong>Deploy hygiene (OPS-4)</strong> - pin images to commit SHA tags, stand up the production host. You cannot currently prove what code serves traffic.</li>
+    <li><strong>WA-2 inbound media</strong> - the largest remaining silent gap; customers send screenshots on day one.</li>
+    <li><strong>BUG-4 escalation clock UI</strong> - without it the first long-window escalation looks like a dead bot.</li>
+    <li><strong>ASR-7 reply onto job lanes</strong> - inline transcription + voice replies hold Kafka partitions; this is the voice throughput ceiling.</li>
+    <li><strong>TTS metering</strong> - close the free-voice hole before enabling ASR billing.</li>
+    <li><strong>WA-8 + WA-10</strong> - remove the WhatsApp Manager detour (lifecycle + template authoring).</li>
+    <li><strong>HAND-10 assignment</strong> - escalations need owners at team scale.</li>
+    <li><strong>WA-3/4/5/6 batch</strong>, then WA-11 commerce, WA-12 Flows, HAND-5 taxonomy, HAND-11 memory, WABA analytics, bulk-concurrency tuning, key kill-switch.</li>
+    <li><strong>Out of scope:</strong> WA-13 calling, Solution Partner credit-line module (M1-M9), multi-box / Kafka RF3 / Redis HA (correctly parked in <code>production-later.md</code>).</li>
+  </ol>
+
+  <p class="note"><strong>Bottom line:</strong> Google Reviews ~85%, WhatsApp conversation loop ~90%, full WhatsApp surface ~70%, security ~85%, deployability ~60%. The remaining code gaps are known, itemised and non-architectural - endpoints, handlers and UI on top of a pipeline that already works. The single most important next action is not code: <strong>rehearse a restore (OPS-1), then pin the deploy tags.</strong></p>
+</section>
+
 <footer>
-  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-29; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land. The 2026-10-29 pass added the conversation-control and Instagram &rarr; WhatsApp ledger (&sect;17, 16 items plus a deferred calling decision), including the silent-thread root cause (BUG-1 to BUG-4) and the outbox/publisher race that silently dropped inbound messages (BUG-5) found on staging. BUG-1/2/3, BUG-5, HAND-1 (the wa.me bridge), HAND-2 (templates + consent), HAND-3 (identity merge + carried context), HAND-4, HAND-6 (catalog + public page), HAND-7 (databank grounding), HAND-8 (conversation mode) and HAND-9 (stored context) were fixed in the same pass; 4 items remain open. The 2026-10-31 pass added the voice-note/ASR ledger (&sect;19): inbound voice notes are transcribed by the admin-managed engine and answered end to end, with billing for hosted minutes and moving the reply onto the job lanes still open. It also moved escalation from a per-message counter to urgency + a confused-return counter, and stopped information-only chats from creating CRM leads. The same pass added the WhatsApp surface ledger (&sect;20): text and voice are verified end to end, with interactive messages, inbound media, QR codes and the remaining account surface listed as the next build order.
+  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-29; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land. The 2026-10-29 pass added the conversation-control and Instagram &rarr; WhatsApp ledger (&sect;17, 16 items plus a deferred calling decision), including the silent-thread root cause (BUG-1 to BUG-4) and the outbox/publisher race that silently dropped inbound messages (BUG-5) found on staging. BUG-1/2/3, BUG-5, HAND-1 (the wa.me bridge), HAND-2 (templates + consent), HAND-3 (identity merge + carried context), HAND-4, HAND-6 (catalog + public page), HAND-7 (databank grounding), HAND-8 (conversation mode) and HAND-9 (stored context) were fixed in the same pass; 4 items remain open. The 2026-10-31 pass added the voice-note/ASR ledger (&sect;19): inbound voice notes are transcribed by the admin-managed engine and answered end to end, with billing for hosted minutes and moving the reply onto the job lanes still open. It also moved escalation from a per-message counter to urgency + a confused-return counter, and stopped information-only chats from creating CRM leads. The same pass added the WhatsApp surface ledger (&sect;20): text and voice are verified end to end, with interactive messages, inbound media, QR codes and the remaining account surface listed as the next build order. The scoped audit (&sect;22) scores Google Reviews at ~85% and the WhatsApp conversation loop at ~90%, names the four Google gaps and the ten WhatsApp gaps with effort, and states the one thing that outranks all of them: an unproven backup on 141 migrations.
 </footer>
 
 </div>
