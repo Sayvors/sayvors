@@ -654,6 +654,23 @@ async def _generate_reply(
         allow_image=(platform == "WhatsApp"),
     )
 
+    # The customer's explicit language choice, when they made one on the
+    # first-contact buttons. It outranks the detected language in the prompt.
+    lang_block = ""
+    if contact:
+        try:
+            from .language_gate import language_block
+            from .thread_state import get_thread_state
+
+            thread_state = await get_thread_state(db, channel.id, contact)
+            lang_block = language_block(
+                getattr(thread_state, "preferred_language", None)
+            )
+        except Exception as e:  # noqa: BLE001 - never cost the reply
+            logger.warning(
+                "preferred language read failed channel=%s: %s", channel.id, e
+            )
+
     resp = await complete(
         model=model_id,
         messages=history,
@@ -663,6 +680,7 @@ async def _generate_reply(
             voice_enabled=voice_enabled,
             bridge_enabled=bridge_enabled,
         )
+        + (f"\n\n{lang_block}" if lang_block else "")
         + (f"\n\n{business_card}" if business_card else "")
         + (f"\n\n{hours_block}" if hours_block else "")
         + (f"\n\n{grounding}" if grounding else "")
@@ -951,6 +969,112 @@ async def _publish_inbound_row_text(db, tenant_id: str, channel_id: str, row, co
     })
 
 
+async def _persist_system_outbound(
+    db,
+    *,
+    channel_id: str,
+    tenant_id: str,
+    contact: str,
+    provider_msg_id: str | None,
+    text: str,
+    content_type: str,
+):
+    """Store a system-authored outbound line and push it to the inbox."""
+    from ..models import ChannelMessage
+
+    row = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        platform_message_id=(provider_msg_id or "")[:200] or None,
+        direction="outbound",
+        content=encrypt_message_content(text),
+        content_type=content_type,
+        status="sent",
+        contact_phone=encrypt_contact_phone(contact or None),
+        contact_phone_hash=hash_contact_phone(contact) if contact else None,
+        is_ai=False,
+        handled_by="system",
+    )
+    db.add(row)
+    await db.commit()
+    await _publish_inbound_row_text(db, tenant_id, channel_id, row, contact)
+    return row
+
+
+async def _send_language_prompt(
+    db,
+    adapter,
+    *,
+    channel_id: str,
+    tenant_id: str,
+    phone_number_id: str,
+    token: str,
+    contact: str,
+) -> None:
+    """First-contact language picker. Falls back to plain text if rejected."""
+    from .language_gate import LANGUAGE_OPTIONS, PROMPT_BODY
+
+    labels = [label for label, _code in LANGUAGE_OPTIONS]
+    content_type = "interactive"
+    try:
+        provider_id = await adapter.send_interactive_buttons(
+            phone_number_id, token, contact, PROMPT_BODY, labels
+        )
+    except Exception as e:  # noqa: BLE001 - buttons are nice, text still works
+        logger.warning(
+            "Language prompt buttons rejected from=+%s: %s — sending text",
+            contact[-6:], str(e)[:160],
+        )
+        try:
+            provider_id = await adapter.send_text_message(
+                phone_number_id, token, contact, PROMPT_BODY
+            )
+            content_type = "text"
+        except Exception as send_error:  # noqa: BLE001 - next message retries
+            logger.error(
+                "Language prompt failed from=+%s: %s",
+                contact[-6:], str(send_error)[:200],
+            )
+            return
+    await _persist_system_outbound(
+        db,
+        channel_id=channel_id,
+        tenant_id=tenant_id,
+        contact=contact,
+        provider_msg_id=provider_id,
+        text=PROMPT_BODY,
+        content_type=content_type,
+    )
+    logger.info("Language prompt sent to=+%s channel=%s", contact[-6:], channel_id[:8])
+
+
+async def _send_language_confirmation(
+    db, adapter, *, channel_id: str, tenant_id: str, phone_number_id: str,
+    token: str, contact: str, language: str,
+) -> None:
+    from .language_gate import CONFIRMATION
+
+    text = CONFIRMATION.get(language) or CONFIRMATION["en"]
+    try:
+        provider_id = await adapter.send_text_message(
+            phone_number_id, token, contact, text
+        )
+    except Exception as e:  # noqa: BLE001 - the choice is already stored
+        logger.warning(
+            "Language confirmation failed from=+%s: %s", contact[-6:], str(e)[:200]
+        )
+        return
+    await _persist_system_outbound(
+        db,
+        channel_id=channel_id,
+        tenant_id=tenant_id,
+        contact=contact,
+        provider_msg_id=provider_id,
+        text=text,
+        content_type="text",
+    )
+
+
 async def _handle_message_received(event: dict, data: dict) -> None:
     """Persist the inbound message, then AI-reply + send when possible."""
     from ..models import ChannelMessage
@@ -1198,16 +1322,47 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             )
             return
 
+        # Language gate: a brand-new conversation opens with three buttons
+        # (English / العربية / اردو) and the chosen language is then locked in
+        # for text and voice. A tap arrives as ordinary text, so detection is
+        # by label/alias. The prompt is sent once: any outbound row (this one
+        # included) means the conversation has started.
+        from .language_gate import language_from_label, prompt_once
+        from .thread_state import get_thread_state, set_preferred_language
+
+        state = await get_thread_state(db, channel.id, from_wa)
+        preferred_language = getattr(state, "preferred_language", None)
+        if not preferred_language:
+            picked = language_from_label(text)
+            if picked:
+                await set_preferred_language(db, channel.id, from_wa, picked)
+                await db.commit()
+                preferred_language = picked
+                logger.info(
+                    "Language chosen lang=%s from=+%s wamid=%s",
+                    picked, from_wa[-6:], wamid[:32],
+                )
+                await _send_language_confirmation(
+                    db, adapter, channel_id=channel.id, tenant_id=tenant_id,
+                    phone_number_id=phone_number_id, token=token,
+                    contact=from_wa, language=picked,
+                )
+                return
+            if await prompt_once(db, channel.id, from_wa):
+                await _send_language_prompt(
+                    db, adapter, channel_id=channel.id, tenant_id=tenant_id,
+                    phone_number_id=phone_number_id, token=token,
+                    contact=from_wa,
+                )
+                return
+
         # A note we could not transcribe gets one honest line, then the thread
         # waits for the customer. A person in the thread already returned
         # above, so this only fires when the AI owns the conversation.
         if voice_unreadable:
-            from .thread_state import get_thread_state
-
-            state = await get_thread_state(db, channel.id, from_wa)
             await _reply_voice_note_unreadable(
                 db, adapter, phone_number_id, token, from_wa, channel.id,
-                tenant_id, getattr(state, "language", None),
+                tenant_id, preferred_language or getattr(state, "language", None),
             )
             return
 
@@ -1239,6 +1394,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         stats = await classify_thread(db, channel.id, from_wa)
         await apply_classification(db, channel.id, from_wa, stats)
         await db.commit()
+        # A chosen language outranks the classifier: the customer picked it
+        # explicitly, and the voice-note path reads this value.
+        if preferred_language:
+            stats["language"] = preferred_language
         # Rollout diagnosis: makes "why did/didn't voice fire?" answerable
         # from the logs alone (tier, and what the classifier decided).
         logger.info(

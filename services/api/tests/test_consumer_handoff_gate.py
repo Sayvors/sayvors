@@ -83,6 +83,20 @@ async def _seed(db):
         priority_since=datetime.now(timezone.utc) - timedelta(hours=25),
     )
     db.add(lead)
+    # An existing conversation: the first-contact language gate keys on "no
+    # outbound yet", and these tests exercise the normal reply path.
+    from app.modules.channels.service import encrypt_contact_phone, hash_contact_phone
+
+    db.add(ChannelMessage(
+        id=f"handoff-msg-{uuid.uuid4().hex[:8]}",
+        channel_id=channel.id,
+        direction="outbound",
+        content="earlier reply",
+        status="sent",
+        contact_phone=encrypt_contact_phone(CUSTOMER),
+        contact_phone_hash=hash_contact_phone(CUSTOMER),
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+    ))
     await db.commit()
     return lead, channel
 

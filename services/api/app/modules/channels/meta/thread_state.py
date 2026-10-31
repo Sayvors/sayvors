@@ -36,6 +36,22 @@ async def get_thread_state(db, channel_id: str, contact_phone: str | None) -> Wh
     ).scalar_one_or_none()
 
 
+async def set_preferred_language(
+    db, channel_id: str, contact_phone: str | None, language: str
+) -> None:
+    """Pin the language the customer chose. Best-effort, never raises."""
+    try:
+        state = await get_or_create_thread_state(db, channel_id, contact_phone)
+        if state is None:
+            return
+        state.preferred_language = language
+        await db.flush()
+    except Exception as e:  # noqa: BLE001 - a stats write must not cost a reply
+        logger.warning(
+            "preferred language write failed channel=%s: %s", channel_id[:8], e
+        )
+
+
 async def get_or_create_thread_state(
     db, channel_id: str, contact_phone: str | None
 ) -> WhatsAppThreadState | None:

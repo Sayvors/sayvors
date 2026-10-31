@@ -1824,6 +1824,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <tr><td>AI on top</td><td>Auto-reply, lead capture, urgency/confusion escalation, conversation mode, opening hours, catalog + databank grounding, voice replies.</td></tr>
   </table></div>
   <p class="note"><strong>Text + voice verification (2026-10-31):</strong> 117 tests green across the consumer, voice notes, webhook parser, handoff gate, templates and escalation. A voice note is transcribed before the guard that decides "text only", so it travels the exact text path (lead intent, escalation, hours, prompt, reply). An unreadable note gets one honest line and never reaches the model. A spoken "ignore your rules" is pinned as user-role data by a regression test.</p>
+  <p class="note"><strong>First-contact language gate (2026-10-31):</strong> a brand-new conversation opens with three reply buttons - English / العربية / اردو - and the body says text and voice will be in the chosen language. The choice lives on <code>whatsapp_thread_states.preferred_language</code> (migration <code>bfbad89c36272457</code>) and is enforced twice: the prompt carries a LANGUAGE LOCK block, and the classifier's detected language is overridden so voice notes are synthesised in it. The gate is once-only (any outbound row ends it), a customer who ignores it is answered normally, and a rejected button payload falls back to plain text. A tap arrives as ordinary text and is matched against the label plus English/native aliases.</p>
 
   <h3>Missing - messaging surface</h3>
   <div class="scroll"><table>
