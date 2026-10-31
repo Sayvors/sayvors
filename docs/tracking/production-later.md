@@ -106,24 +106,3 @@ infrastructure and two decisions:
 | CI test gating | `.github/workflows/` | Code only |
 | OPS-1 backups (RDS PITR) | AWS console | Config only |
 | **Blocker 06 — Backup & restore story** | Needs production VM | RDS PITR on + 7-day retention, nightly pg_dump → S3 (30-day retention), rehearse one restore into scratch DB, write runbook. See launch-readiness-report.html #06. |
-
----
-
-## Voice notes & ASR (added 2026-10-31)
-
-The provider layer is built: `asr_engine_configs` + admin `/asr` page + ElevenLabs
-(`POST /v1/speech-to-text`, `scribe_v1`) behind `transcribe_audio()`, falling back to
-local faster-whisper. These are the remaining items, in the order they matter.
-
-| Item | Kind | Status / what to do later |
-|------|------|---------------------------|
-| Wire inbound WhatsApp voice notes | Code | Not wired yet. Flow: Meta media URL + token → download → `create_stt_job` (`stt.job`, bulk lane) → transcript → reply. The provider/admin half is done; the channel half is the next step |
-| Treat transcripts as DATA, not instructions | Code | When wiring, the transcript must never be concatenated as a system instruction. A spoken "ignore your rules" is an injection vector; add a regression test with a hostile transcript |
-| ASR usage metering + billing | Code | `STTJob.duration_ms` records audio length but no `billing_events` row is written. ElevenLabs bills per minute, so add a usage event (provider, model, duration) before reselling this capability, and decide whether it draws from the LLM credit wallet |
-| Local fallback memory | Decision | The worker container has 384 MB. faster-whisper loading a model there can OOM if ElevenLabs fails broadly. Either run a tiny model / heavier worker, or gate the fallback behind an env flag so jobs retry instead of crash-loading |
-| `JOBS_BULK_CONCURRENCY` vs provider limit | Config | Bulk-lane concurrency is per process. Set it to the ElevenLabs plan's concurrent-request entitlement; above it you get 429s that burn the 10 bulk retries |
-| ASR config cache across replicas | Decision | 30 s per-process TTL, invalidated immediately on save in the process that saved. Other replicas pick a key rotation up within 30 s. If instant fleet-wide switch-off is required (leaked key), publish invalidation over Redis pub/sub |
-| Audio size cap | Done | 25 MB streamed cap in `stt/provider.py`; WhatsApp voice notes are ≤16 MB. Raise only with a matching worker-memory review |
-| Language coverage | Config | The engine's `languages` list gates which notes use the hosted provider; everything else falls back. Confirm `scribe_v1` covers the languages you actually sell in (ar/ur/en) before relying on it |
-| Connection test | Done | Sends 1 s of real audio through `/v1/speech-to-text`, so an STT-only key validates without account/voice endpoints. Do not add it to health checks — it is a paid call per click |
-

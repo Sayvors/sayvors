@@ -771,6 +771,144 @@ async def _send_catalog_image(
         logger.debug("catalog image realtime publish skipped: %s", e)
 
 
+async def _publish_inbound_row(db, tenant_id: str, channel_id: str, row) -> None:
+    """Push one inbound row to the inbox socket and the notification bell."""
+    from ...channels.realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "message",
+        "id": row.id,
+        "channel_id": channel_id,
+        "platform": "whatsapp",
+        "direction": "inbound",
+        "content": decrypt_message_content(row.content),
+        "content_type": row.content_type,
+        "status": row.status,
+        "contact_phone": decrypt_contact_phone(row.contact_phone),
+        "contact_name": row.contact_name,
+        "created_at": row.created_at,
+    })
+    await _publish_message_notification(db, tenant_id, row, "whatsapp")
+
+
+# A voice note we could not transcribe must be answered honestly. Feeding the
+# "[audio message]" placeholder to the assistant would make it invent content
+# the customer never said.
+VOICE_UNREADABLE_TEXT = {
+    "ar": "لم أتمكن من سماع الرسالة الصوتية بوضوح — أرسلها مرة أخرى أو اكتب سؤالك.",
+    "en": "I couldn't hear that voice note clearly — could you send it again or type your question?",
+}
+
+
+async def _transcribe_voice_note(
+    *,
+    media_id: str,
+    token: str | None,
+    wamid: str,
+) -> str:
+    """Download and transcribe one WhatsApp voice note. "" when unreadable.
+
+    Transcription is inline because the reply pipeline is inline: making the
+    audio a job would move the ASR to the bulk lane but leave nobody to send
+    the answer. ``allow_local_fallback=False`` keeps the API process from
+    loading a Whisper model into a container sized for web traffic — the
+    admin's hosted engine is the path, and an honest "couldn't hear that"
+    beats an OOM that drops every conversation in flight.
+    """
+    import time
+
+    from ...stt.provider import transcribe_bytes
+    from .media import MediaDownloadError, download_whatsapp_media
+
+    if not token:
+        logger.info("Voice note skipped (no access token) wamid=%s", wamid[:32])
+        return ""
+    started = time.perf_counter()
+    try:
+        audio, mime = await download_whatsapp_media(media_id, token)
+    except MediaDownloadError as e:
+        logger.warning("Voice note download failed wamid=%s: %s", wamid[:32], e)
+        return ""
+    try:
+        result = await transcribe_bytes(
+            audio,
+            filename="voice.ogg",
+            content_type=mime,
+            language=None,
+            allow_local_fallback=False,
+        )
+    except Exception as e:  # noqa: BLE001 - the caller sends the fallback line
+        logger.warning(
+            "Voice note transcription failed wamid=%s: %s: %s",
+            wamid[:32], type(e).__name__, str(e)[:200],
+        )
+        return ""
+    text = (result.get("text") or "").strip()
+    logger.info(
+        "Voice note transcribed wamid=%s lang=%s chars=%d bytes=%d latency_ms=%d",
+        wamid[:32], result.get("language") or "auto", len(text), len(audio),
+        int((time.perf_counter() - started) * 1000),
+    )
+    return text
+
+
+async def _reply_voice_note_unreadable(
+    db,
+    adapter,
+    phone_number_id: str,
+    token: str,
+    from_wa: str,
+    channel_id: str,
+    tenant_id: str,
+    language: str | None,
+) -> None:
+    """Tell the customer we could not hear the note, and stop."""
+    from ..models import ChannelMessage
+
+    text = VOICE_UNREADABLE_TEXT["ar" if (language or "").lower().startswith("ar") else "en"]
+    try:
+        provider_id = await adapter.send_text_message(
+            phone_number_id, token, from_wa, text
+        )
+    except Exception as e:  # noqa: BLE001 - the note is already stored
+        logger.warning("Voice unreadable reply failed from=+%s: %s", from_wa[-6:], e)
+        return
+    row = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        platform_message_id=(provider_id or "")[:200] or None,
+        direction="outbound",
+        content=encrypt_message_content(text),
+        content_type="text",
+        status="sent",
+        contact_phone=encrypt_contact_phone(from_wa or None),
+        contact_phone_hash=hash_contact_phone(from_wa or None),
+        is_ai=False,
+        handled_by="system",
+    )
+    db.add(row)
+    await db.commit()
+    await _publish_inbound_row_text(db, tenant_id, channel_id, row, from_wa)
+
+
+async def _publish_inbound_row_text(db, tenant_id: str, channel_id: str, row, contact: str) -> None:
+    """Publish an outbound system line (same shape as the AI replies)."""
+    from ...channels.realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "message",
+        "id": row.id,
+        "channel_id": channel_id,
+        "platform": "whatsapp",
+        "direction": "outbound",
+        "content": decrypt_message_content(row.content),
+        "content_type": row.content_type,
+        "status": row.status,
+        "contact_phone": contact,
+        "created_at": row.created_at,
+    })
+
+
 async def _handle_message_received(event: dict, data: dict) -> None:
     """Persist the inbound message, then AI-reply + send when possible."""
     from ..models import ChannelMessage
@@ -892,27 +1030,16 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         # Escalation is evaluated AFTER the thread classifier below: the
         # counter only moves when the customer came back confused, so the
         # signal has to exist first.
-
-        from ...channels.realtime import publish_inbox_event
-
-        await publish_inbox_event(tenant_id, {
-            "type": "message",
-            "id": row.id,
-            "channel_id": channel.id,
-            "platform": "whatsapp",
-            "direction": "inbound",
-            "content": decrypt_message_content(row.content),
-            "content_type": row.content_type,
-            "status": row.status,
-            "contact_phone": decrypt_contact_phone(row.contact_phone),
-            "contact_name": row.contact_name,
-            "created_at": row.created_at,
-        })
-
-        await _publish_message_notification(db, tenant_id, row, "whatsapp")
+        #
+        # A voice note is published after transcription instead, so the inbox
+        # shows what the customer actually said rather than "[audio message]".
+        if msg_type not in ("audio", "voice"):
+            await _publish_inbound_row(db, tenant_id, channel.id, row)
 
         token = decrypt_connection_token(asset.connection) if asset.connection else None
         if not token:
+            if msg_type in ("audio", "voice"):
+                await _publish_inbound_row(db, tenant_id, channel.id, row)
             logger.info(
                 "WhatsApp AI reply skipped (no access token on connection %s) "
                 "wamid=%s from=+%s", connection_id, wamid[:32], from_wa[-6:],
@@ -922,12 +1049,17 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         # tenant re-selects the asset) but the AI must not speak for a page
         # or number the tenant turned off.
         if not asset.active:
+            if msg_type in ("audio", "voice"):
+                await _publish_inbound_row(db, tenant_id, channel.id, row)
             logger.info(
                 "WhatsApp AI reply skipped (asset deselected) wamid=%s",
                 wamid[:32],
             )
             return
-        if not text or msg_type != "text":
+        # Voice notes pass through untranscribed here: the download needs the
+        # token and must not happen for a stale event, so it runs below. Every
+        # other non-text type is stored and not answered.
+        if msg_type not in ("audio", "voice") and (not text or msg_type != "text"):
             logger.info(
                 "WhatsApp AI reply skipped for non-text message type=%s wamid=%s",
                 msg_type, wamid[:32],
@@ -945,12 +1077,46 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 int(age.total_seconds() // 60), wamid[:32], from_wa[-6:],
             )
             _report_stale_skip("whatsapp", wamid, from_wa, age)
+            # Voice notes deferred their publish until transcription; a stale
+            # one is never transcribed, so publish the stored row as-is.
+            if msg_type in ("audio", "voice"):
+                await _publish_inbound_row(db, tenant_id, channel.id, row)
             return
 
         # get_adapter returns a process-level singleton shared with the HTTP
         # routers — used in place, never closed (its httpx client lives as
         # long as the app).
         adapter = get_adapter("whatsapp")
+
+        # Voice notes become text here, once, so every downstream feature —
+        # lead capture, escalation, the prompt, voice replies — behaves
+        # exactly as it does for a typed message. A note we cannot transcribe
+        # is answered honestly and never fed to the model as a placeholder.
+        voice_unreadable = False
+        if msg_type in ("audio", "voice"):
+            media_id = str((data.get("media") or {}).get("id") or "")
+            transcript = (
+                await _transcribe_voice_note(
+                    media_id=media_id,
+                    token=token,
+                    wamid=wamid,
+                )
+                if media_id
+                else ""
+            )
+            if transcript:
+                text = transcript
+                msg_type = "text"
+                row.content = encrypt_message_content(text)
+                row.category, row.priority = _categorize(text)
+                await db.commit()
+            else:
+                voice_unreadable = True
+                logger.info(
+                    "WhatsApp voice note unreadable wamid=%s from=+%s",
+                    wamid[:32], from_wa[-6:],
+                )
+            await _publish_inbound_row(db, tenant_id, channel.id, row)
 
         # Conversation mode is checked before the typing indicator: showing
         # "typing…" and then never replying is worse than staying quiet, and a
@@ -986,6 +1152,19 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 channel_id=channel.id,
                 contact_phone=from_wa,
                 reason="human_message",
+            )
+            return
+
+        # A note we could not transcribe gets one honest line, then the thread
+        # waits for the customer. A person in the thread already returned
+        # above, so this only fires when the AI owns the conversation.
+        if voice_unreadable:
+            from .thread_state import get_thread_state
+
+            state = await get_thread_state(db, channel.id, from_wa)
+            await _reply_voice_note_unreadable(
+                db, adapter, phone_number_id, token, from_wa, channel.id,
+                tenant_id, getattr(state, "language", None),
             )
             return
 

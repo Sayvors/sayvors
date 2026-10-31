@@ -54,6 +54,10 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             "profile_name": profile_name,
                             # Reactions carry their emoji here, not in text.
                             "reaction": msg.get("reaction"),
+                            # Type-specific payload: for audio/voice notes this
+                            # holds {id, mime_type, voice, duration}, which the
+                            # consumer needs to fetch and transcribe the media.
+                            "media": msg.get(msg.get("type") or "") or {},
                         },
                     }
                 )

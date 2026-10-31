@@ -15,9 +15,9 @@ the job fails with a clear error instead of silently producing garbage.
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import httpx
 
@@ -25,7 +25,6 @@ from ...config import settings
 
 logger = logging.getLogger(__name__)
 
-import os
 
 # One 25 MB clip is the ceiling for a customer-supplied media URL. See
 # `_download_audio_bytes` for why the cap exists.
@@ -113,37 +112,95 @@ async def transcribe_audio(
 
     # Download audio to a temp file (providers serve media over public URLs).
     audio_path = await _download_audio(audio_url)
-
     try:
-        model = _load_model()
-        if model is None:
-            raise RuntimeError(
-                _model_loading_error
-                or "faster-whisper model unavailable (not installed or load failed)"
+        return await _transcribe_path(audio_path, language, model, beam_size, vad_filter)
+    finally:
+        _cleanup(audio_path)
+
+
+async def transcribe_bytes(
+    audio: bytes,
+    *,
+    filename: str = "audio.ogg",
+    content_type: str = "audio/ogg",
+    language: str | None = None,
+    db=None,
+    allow_local_fallback: bool = True,
+) -> dict:
+    """Transcribe audio already in memory (an inbound voice note).
+
+    The channel path downloads the media itself — WhatsApp media URLs require
+    the tenant's token — so there is nothing for this function to fetch.
+
+    ``allow_local_fallback=False`` is for the API process: loading a Whisper
+    model there can exhaust a container sized for web traffic. The caller
+    prefers an honest "couldn't hear that" over an OOM that kills every
+    conversation in flight.
+    """
+    hosted = await _active_hosted_engine(db, language)
+    if hosted is not None:
+        try:
+            return await _transcribe_hosted_bytes(
+                hosted, audio, filename, content_type, language
             )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "ASR provider %s failed (%s: %s)",
+                hosted.get("provider"), type(e).__name__, str(e)[:160],
+            )
+            if not allow_local_fallback:
+                raise
+    elif not allow_local_fallback:
+        raise RuntimeError("no hosted ASR engine is configured")
 
-        # Run the blocking CPU/GPU inference in a thread pool so the event
-        # loop is not blocked while Whisper crunches audio.
-        import asyncio
+    import tempfile
+    from pathlib import Path
 
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            _transcribe_sync,
-            model,
-            str(audio_path),
-            language,
-            beam_size,
-            vad_filter,
+    suffix = Path(filename).suffix or ".ogg"
+    tmp_path = Path(tempfile.gettempdir()) / f"stt_{os_urandom_hex(8)}{suffix}"
+    tmp_path.write_bytes(audio)
+    try:
+        return await _transcribe_path(tmp_path, language, None, None, None)
+    finally:
+        _cleanup(tmp_path)
+
+
+async def _transcribe_path(
+    audio_path: Path,
+    language: str | None,
+    model: str | None,
+    beam_size: int | None,
+    vad_filter: bool | None,
+) -> dict:
+    """Local faster-whisper transcription of a file already on disk."""
+    loaded = _load_model()
+    if loaded is None:
+        raise RuntimeError(
+            _model_loading_error
+            or "faster-whisper model unavailable (not installed or load failed)"
         )
 
-        return result
-    finally:
-        # Clean up the temp file.
-        try:
-            audio_path.unlink(missing_ok=True)
-        except Exception:  # noqa: BLE001 — best effort cleanup
-            pass
+    # Run the blocking CPU/GPU inference in a thread pool so the event
+    # loop is not blocked while Whisper crunches audio.
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        _transcribe_sync,
+        loaded,
+        str(audio_path),
+        language,
+        beam_size,
+        vad_filter,
+    )
+
+
+def _cleanup(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001 — best effort cleanup
+        pass
 
 
 def _transcribe_sync(
@@ -300,7 +357,22 @@ async def _transcribe_hosted(
     language: str | None,
     model: str | None,
 ) -> dict:
-    """Transcribe through the configured hosted provider."""
+    """Download then transcribe through the configured hosted provider."""
+    audio, ext, content_type = await _download_audio_bytes(audio_url)
+    return await _transcribe_hosted_bytes(
+        config, audio, f"audio{ext}", content_type, language, model
+    )
+
+
+async def _transcribe_hosted_bytes(
+    config: dict,
+    audio: bytes,
+    filename: str,
+    content_type: str,
+    language: str | None,
+    model: str | None = None,
+) -> dict:
+    """Transcribe in-memory audio through the configured hosted provider."""
     import time
 
     from .providers import transcribe_elevenlabs
@@ -310,11 +382,10 @@ async def _transcribe_hosted(
         raise RuntimeError(f"no client for ASR provider {provider!r}")
 
     started = time.perf_counter()
-    audio, ext, content_type = await _download_audio_bytes(audio_url)
     result = await transcribe_elevenlabs(
         api_key=config["api_key"],
         audio=audio,
-        filename=f"audio{ext}",
+        filename=filename,
         content_type=content_type,
         model=model or config.get("model"),
         language=language,
@@ -335,6 +406,4 @@ async def _transcribe_hosted(
 
 
 def os_urandom_hex(n: int) -> str:
-    import os
-
     return os.urandom(n).hex()
