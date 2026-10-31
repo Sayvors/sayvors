@@ -76,10 +76,34 @@ class ServiceResponse(BaseModel):
 class ChannelMessageSend(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
     content_type: str = "text"
-    # Required to send. The channel alone doesn't identify a recipient — a
+    # Required to send. The channel alone doesn't identify a recipient - a
     # WhatsApp number serves every customer on it.
     contact_phone: str = Field(..., min_length=1, max_length=32)
     contact_name: str | None = Field(None, max_length=120)
+
+
+class InteractiveSend(BaseModel):
+    """WhatsApp interactive message: reply buttons, a list, or a CTA link.
+
+    The payload is validated again by ``meta.interactive`` (Meta's limits are
+    hard errors), but these constraints catch obvious mistakes at the door.
+    A tap comes back as a normal inbound text message with the button title.
+    """
+
+    contact_phone: str = Field(..., min_length=1, max_length=32)
+    contact_name: str | None = Field(None, max_length=120)
+    kind: str = Field(..., pattern="^(buttons|list|cta)$")
+    body: str = Field(..., min_length=1, max_length=1024)
+    header: str | None = Field(None, max_length=60)
+    footer: str | None = Field(None, max_length=60)
+    # buttons
+    buttons: list[str] | None = Field(None, max_length=3)
+    # list
+    button_text: str | None = Field(None, max_length=20)
+    sections: list[dict] | None = None
+    # cta
+    display_text: str | None = Field(None, max_length=20)
+    url: str | None = Field(None, max_length=2000)
 
 
 class ChannelMessageResponse(BaseModel):

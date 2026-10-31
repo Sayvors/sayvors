@@ -188,6 +188,81 @@ class WhatsAppAdapter(MetaProviderAdapter):
         msgs = data.get("messages", [])
         return msgs[0].get("id", "") if msgs else ""
 
+    async def _send_interactive(
+        self, phone_number_id: str, token: str, to: str, interactive: dict
+    ) -> str:
+        resp = await self._graph(
+            "POST",
+            f"/{phone_number_id}/messages",
+            token,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "interactive",
+                "interactive": interactive,
+            },
+        )
+        data = resp.json()
+        msgs = data.get("messages", [])
+        return msgs[0].get("id", "") if msgs else ""
+
+    async def send_interactive_buttons(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        body: str,
+        titles: list[str],
+        *,
+        header: str | None = None,
+        footer: str | None = None,
+    ) -> str:
+        """Reply buttons (1-3). The tap returns the title as customer text."""
+        from ..interactive import build_buttons
+
+        interactive = build_buttons(body, titles, header=header, footer=footer)
+        return await self._send_interactive(phone_number_id, token, to, interactive)
+
+    async def send_interactive_list(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        body: str,
+        button_text: str,
+        sections: list[dict],
+        *,
+        header: str | None = None,
+        footer: str | None = None,
+    ) -> str:
+        """List menu (up to 10 rows). Rows arrive back as their title."""
+        from ..interactive import build_list
+
+        interactive = build_list(
+            body, button_text, sections, header=header, footer=footer
+        )
+        return await self._send_interactive(phone_number_id, token, to, interactive)
+
+    async def send_cta_url_message(
+        self,
+        phone_number_id: str,
+        token: str,
+        to: str,
+        body: str,
+        display_text: str,
+        url: str,
+        *,
+        header: str | None = None,
+        footer: str | None = None,
+    ) -> str:
+        """One call-to-action link button."""
+        from ..interactive import build_cta_url
+
+        interactive = build_cta_url(
+            body, display_text, url, header=header, footer=footer
+        )
+        return await self._send_interactive(phone_number_id, token, to, interactive)
+
     async def send_template_message(
         self,
         phone_number_id: str,

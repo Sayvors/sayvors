@@ -33,7 +33,7 @@ from .schemas import (
     ChannelMessageSend,
     ChannelResponse,
     InboxSendRequest,
-    InboxSendResponse,
+    InteractiveSend,    InboxSendResponse,
     InboxThread,
     InboxThreadListResponse,
     ReviewReplyEdit,
@@ -61,6 +61,7 @@ from .service import (
     list_messages,
     list_thread_messages,
     send_message,
+    send_interactive_message,
     verify_webhook_signature,
 )
 
@@ -359,6 +360,80 @@ async def send_to_channel(
             raise HTTPException(status_code=404, detail=message)
         # A missing recipient is a bad request, not a missing channel.
         raise HTTPException(status_code=422, detail=message)
+    return ChannelMessageResponse(
+        id=msg.id,
+        channel_id=msg.channel_id,
+        platform_message_id=msg.platform_message_id,
+        direction=msg.direction,
+        content=decrypt_message_content(msg.content),
+        content_type=msg.content_type,
+        status=msg.status,
+        error=msg.error,
+        contact_phone=decrypt_contact_phone(msg.contact_phone),
+        contact_name=msg.contact_name,
+        created_at=msg.created_at.isoformat(),
+    )
+
+
+@router.post(
+    "/{channel_id}/interactive",
+    response_model=ChannelMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def send_interactive_to_channel(
+    channel_id: str,
+    body: InteractiveSend,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send WhatsApp reply buttons, a list menu, or a CTA link.
+
+    The tap arrives back as an ordinary inbound text message carrying the
+    button/row title, so the AI and the inbox handle it with no special case.
+    """
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+
+    payload: dict = {
+        "body": body.body,
+        "header": body.header,
+        "footer": body.footer,
+    }
+    if body.kind == "buttons":
+        if not body.buttons:
+            raise HTTPException(status_code=422, detail="buttons are required")
+        payload["buttons"] = body.buttons
+    elif body.kind == "list":
+        if not body.button_text or not body.sections:
+            raise HTTPException(
+                status_code=422, detail="button_text and sections are required"
+            )
+        payload["button_text"] = body.button_text
+        payload["sections"] = body.sections
+    else:
+        if not body.display_text or not body.url:
+            raise HTTPException(
+                status_code=422, detail="display_text and url are required"
+            )
+        payload["display_text"] = body.display_text
+        payload["url"] = body.url
+
+    try:
+        msg = await send_interactive_message(
+            channel_id,
+            contact_phone=body.contact_phone,
+            kind=body.kind,
+            payload=payload,
+            user=ctx.user,
+            db=db,
+            contact_name=body.contact_name,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == "Channel not found":
+            raise HTTPException(status_code=404, detail=message)
+        raise HTTPException(status_code=422, detail=message)
+
     return ChannelMessageResponse(
         id=msg.id,
         channel_id=msg.channel_id,

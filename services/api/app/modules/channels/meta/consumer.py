@@ -408,6 +408,16 @@ def _system_prompt(
         "directly; if it does not cover the day asked about, say you will "
         "confirm with the team and follow up here.",
     ]
+    if platform == "WhatsApp":
+        lines.append(
+            "When the next step has 2 or 3 clear alternatives, end your "
+            "reply with one final line exactly like: "
+            'CHOICES: ["Pricing", "Book a demo", "Talk to a human"] — each '
+            "label 1-3 words, at most 20 characters, no duplicates. The "
+            "pipeline turns that line into tappable WhatsApp buttons and "
+            "never shows it to the customer. Never add it for yes/no, for a "
+            "single option, or when you are closing the conversation."
+        )
     if voice_enabled:
         lines.append(
             "If the customer seems frustrated or confused: acknowledge it, "
@@ -1448,6 +1458,13 @@ async def _handle_message_received(event: dict, data: dict) -> None:
 
         reply, send_item_id = split_catalog_request(reply)
 
+        # A CHOICES line becomes tappable reply buttons on WhatsApp. Parsed
+        # here, once: the directive must never reach the customer as text, and
+        # an invalid one is dropped rather than eating the reply.
+        from .interactive import split_choices
+
+        reply, choices = split_choices(reply)
+
         if not reply:
             logger.warning(
                 "WhatsApp AI reply was empty — skipping send wamid=%s from=+%s",
@@ -1570,6 +1587,14 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     "as text", voice_tier, stats.get("language"),
                 )
 
+        # A voice note cannot carry buttons; never append the labels as text.
+        if choices and voice_sent:
+            logger.info(
+                "WhatsApp CHOICES dropped: reply sent as a voice note wamid=%s",
+                wamid[:32],
+            )
+            choices = []
+
         messages: list[str] = []
         if not voice_sent:
             # Tenant response style decides text delivery — one message, or
@@ -1586,36 +1611,63 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 return
 
             for index, part in enumerate(messages):
+                is_last = index == len(messages) - 1
+                use_buttons = bool(choices) and is_last
                 try:
-                    provider_msg_id = await adapter.send_text_message(
-                        phone_number_id, token, from_wa, part
-                    )
-                except MetaAPIError as e:
-                    logger.error(
-                        "WhatsApp send failed from=+%s: %s %s",
-                        from_wa[-6:], e.status_code, str(e)[:200],
-                    )
-                    db.add(
-                        ChannelMessage(
-                            id=str(uuid.uuid4()),
-                            channel_id=channel.id,
-                            direction="outbound",
-                            content=encrypt_message_content(part),
-                            status="failed",
-                            error=str(e)[:500],
-                            contact_phone=encrypt_contact_phone(from_wa or None),
-                            contact_phone_hash=hash_contact_phone(from_wa or None),
+                    if use_buttons:
+                        provider_msg_id = await adapter.send_interactive_buttons(
+                            phone_number_id, token, from_wa, part, choices
                         )
-                    )
-                    await db.commit()
-                    # Later parts would land without their context — stop.
-                    return
+                    else:
+                        provider_msg_id = await adapter.send_text_message(
+                            phone_number_id, token, from_wa, part
+                        )
+                except (MetaAPIError, ValueError) as e:
+                    # A rejected interactive payload must not cost the
+                    # customer the reply: fall back to plain text once.
+                    if use_buttons:
+                        logger.warning(
+                            "WhatsApp interactive send rejected from=+%s: %s — "
+                            "falling back to text", from_wa[-6:], str(e)[:160],
+                        )
+                        try:
+                            provider_msg_id = await adapter.send_text_message(
+                                phone_number_id, token, from_wa, part
+                            )
+                        except MetaAPIError as fallback_error:
+                            e = fallback_error
+                        else:
+                            use_buttons = False
+                            e = None
+                    if e is not None:
+                        logger.error(
+                            "WhatsApp send failed from=+%s: %s %s",
+                            from_wa[-6:], getattr(e, "status_code", ""),
+                            str(e)[:200],
+                        )
+                        db.add(
+                            ChannelMessage(
+                                id=str(uuid.uuid4()),
+                                channel_id=channel.id,
+                                direction="outbound",
+                                content=encrypt_message_content(part),
+                                status="failed",
+                                error=str(e)[:500],
+                                contact_phone=encrypt_contact_phone(from_wa or None),
+                                contact_phone_hash=hash_contact_phone(from_wa or None),
+                            )
+                        )
+                        await db.commit()
+                        # Later parts would land without their context — stop.
+                        return
+                content_type = "interactive" if use_buttons else "text"
                 row = ChannelMessage(
                         id=str(uuid.uuid4()),
                         channel_id=channel.id,
                         platform_message_id=provider_msg_id[:200] or None,
                         direction="outbound",
                         content=encrypt_message_content(part),
+                        content_type=content_type,
                         status="sent",
                         contact_phone=encrypt_contact_phone(from_wa or None),
                         contact_phone_hash=hash_contact_phone(from_wa or None),
@@ -1633,7 +1685,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     "platform": "whatsapp",
                     "direction": "outbound",
                     "content": decrypt_message_content(row.content),
-                    "content_type": "text",
+                    "content_type": content_type,
                     "status": "sent",
                     "contact_phone": decrypt_contact_phone(row.contact_phone),
                     "created_at": row.created_at,

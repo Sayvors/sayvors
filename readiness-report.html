@@ -1828,7 +1828,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
   <h3>Missing - messaging surface</h3>
   <div class="scroll"><table>
     <tr><th>ID</th><th>Capability</th><th>Why it matters</th><th>Effort</th></tr>
-    <tr><td class="num">WA-1</td><td><strong>Interactive messages</strong> - reply buttons, list menus, CTA-URL buttons</td><td>The assistant can offer "Pricing / Book / Talk to human" instead of free text, cutting dead-end threads and wrong-intent replies.</td><td>M</td></tr>
+    <tr><td class="num">WA-1</td><td><strong>Interactive messages</strong> - reply buttons, list menus, CTA-URL buttons. <span class="chip ok">Fixed 2026-10-31</span></td><td><strong>Shipped:</strong> <code>POST /api/v1/channels/{id}/interactive</code> (<code>kind=buttons|list|cta</code>) for agents, plus an AI path: when the model ends a reply with <code>CHOICES: ["Pricing", "Book a demo"]</code> the pipeline strips the line and sends the body as tappable WhatsApp buttons; an invalid/rejected payload falls back to plain text. A tap arrives as a normal inbound text message carrying the label, so the AI and inbox need no special case. Payload rules (1-3 buttons, 20-char titles, 10 list rows, absolute CTA URL) live in <code>meta/interactive.py</code> and are tested. The label must tell the assistant what a normal choice does not: <strong>ask it for options</strong> ("what are my options?") and it will offer buttons.</td><td>M</td></tr>
     <tr><td class="num">WA-2</td><td><strong>Inbound image / document / video</strong></td><td>Currently stored as <code>[image message]</code> - the same class of silent gap voice notes had. Customers send screenshots, receipts and PDFs constantly.</td><td>S-M</td></tr>
     <tr><td class="num">WA-3</td><td><strong>Outbound media</strong> - video, document, sticker, audio file</td><td>Invoices, menus, PDFs and quotes; today only image and voice note exist.</td><td>S</td></tr>
     <tr><td class="num">WA-4</td><td><strong>Quoted reply, send reaction, edit/delete message</strong></td><td>Agents answer a specific message; a wrong send can be withdrawn instead of followed by a correction.</td><td>S</td></tr>
@@ -1850,7 +1850,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
 
   <h3>Build order</h3>
   <ol>
-    <li><strong>WA-1 + WA-2</strong> - interactive buttons and inbound media change how conversations feel; media is the remaining "customer sent something we ignore" gap.</li>
+    <li><strong>WA-2</strong> - inbound media is the remaining "customer sent something we ignore" gap (WA-1 shipped).</li>
     <li><strong>WA-7 + WA-9</strong> - QR codes and a quality/limit panel are fast, visible value in the tenant dashboard.</li>
     <li><strong>WA-10 + WA-8</strong> - template authoring and number lifecycle remove the WhatsApp Manager detour.</li>
     <li><strong>WA-3/4/5/6</strong> - small messaging conveniences, batchable in one pass.</li>
