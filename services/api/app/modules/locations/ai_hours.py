@@ -127,8 +127,9 @@ def render_hours_block(hours: dict | None, timezone_name: str = "UTC") -> str:
         return ""
 
     lines = [
-        "OPENING HOURS (owner-configured — treat as ground truth and answer "
-        "from this when asked):",
+        "OPENING HOURS (the business's physical visiting hours — not the "
+        "assistant's availability. Owner-configured; treat as ground truth and "
+        "answer from this when asked):",
         *weekly,
     ]
     if more:

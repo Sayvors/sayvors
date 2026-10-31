@@ -403,10 +403,16 @@ def _system_prompt(
         "is fine without a question.",
         "Language: reply in the language the customer wrote in "
         "(Arabic or English; match their script exactly).",
-        "Never invent prices, stock, opening hours or policies you were "
-        "not given. When an OPENING HOURS block is present, answer from it "
-        "directly; if it does not cover the day asked about, say you will "
-        "confirm with the team and follow up here.",
+        "Never invent prices, stock, opening hours, addresses, services or "
+        "links you were not given. When a PUBLIC BUSINESS FACTS block is "
+        "present, answer from it directly; if it does not cover the question, "
+        "say you will confirm with the team and follow up here.",
+        # Hours vs availability: the block's hours are for people walking in,
+        # not for this chat. A customer must never be told "we're closed".
+        "You answer 24/7. The opening hours describe the business's physical "
+        "visiting hours — never your own availability. Never say you are "
+        "closed, offline or unavailable. If asked outside those hours, state "
+        "the hours and offer to help right now.",
     ]
     if platform == "WhatsApp":
         lines.append(
@@ -541,31 +547,33 @@ async def _generate_reply(
 
     business_card = await prompt_block(tenant_id, db)
 
-    # Opening hours: stored on the location profile (and synced to Google) but
-    # never fed to the assistant, so "what are your hours?" was answered with
-    # "I'll confirm with the team" although the business publishes them. The
-    # block is ground truth; "" when the tenant has not set any hours.
-    hours_block = ""
+    # Public facts: hours, address, website, services (offered/not offered) and
+    # the owner's profile, in one ground-truth block. The hours are the
+    # business's physical visiting hours — the prompt tells the model they are
+    # not its own availability. Best-effort; "" when nothing is configured.
+    facts_block = ""
     try:
         import json
 
         from .lead_engine import normalize_lead_settings
-        from ...locations.ai_hours import opening_hours_block
+        from ...profile.public_facts import public_facts_block
 
         try:
             meta = json.loads(channel.metadata_json or "{}")
         except (TypeError, ValueError):
             meta = {}
-        hours_block = await opening_hours_block(
+        facts_block = await public_facts_block(
             db,
-            tenant_id,
-            listing_id=str(meta.get("location_id") or "") or None,
+            tenant_id=tenant_id,
+            channel_id=channel.id,
+            user=user,
             timezone_name=normalize_lead_settings(
                 getattr(user, "lead_settings", None)
             )["timezone"],
+            listing_id=str(meta.get("location_id") or "") or None,
         )
     except Exception as e:  # noqa: BLE001 - never cost the reply
-        logger.warning("opening hours block skipped channel=%s: %s", channel.id, e)
+        logger.warning("public facts block skipped channel=%s: %s", channel.id, e)
 
     # Lead capture rides this same call: the model may append one silent
     # LEAD line, which the handlers split off after the fact — extraction
@@ -682,7 +690,7 @@ async def _generate_reply(
         )
         + (f"\n\n{lang_block}" if lang_block else "")
         + (f"\n\n{business_card}" if business_card else "")
-        + (f"\n\n{hours_block}" if hours_block else "")
+        + (f"\n\n{facts_block}" if facts_block else "")
         + (f"\n\n{grounding}" if grounding else "")
         + (f"\n\n{catalog}" if catalog else "")
         + stored_block
