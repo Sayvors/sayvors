@@ -1808,8 +1808,60 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
   </ul>
 </section>
 
+<section id="whatsapp-gaps">
+  <div class="eyebrow">&sect;&sect; 20 - WhatsApp surface coverage - 2026-10-31</div>
+  <h2>WhatsApp - what tenants can manage today, and the gaps</h2>
+  <p>Measured against Meta's Cloud API (official docs: <a href="https://developers.facebook.com/docs/whatsapp/cloud-api/overview">Cloud API overview</a>, <a href="https://developers.facebook.com/docs/whatsapp/cloud-api/reference/business-profiles">business profiles</a>, <a href="https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates">templates</a>, <a href="https://developers.facebook.com/documentation/business-messaging/whatsapp/calling">calling</a>, <a href="https://developers.facebook.com/docs/whatsapp/cloud-api/guides/commerce-guides/share-products-with-customers">commerce</a>). Text and voice notes are the two paths that must be solid before anything else is added; both are covered below and pinned by tests.</p>
+
+  <h3>Working today</h3>
+  <div class="scroll"><table>
+    <tr><th>Area</th><th>What the tenant gets</th></tr>
+    <tr><td>Connect &amp; number</td><td>Embedded Signup v4, coexistence history/contacts sync, number registration, per-WABA webhook subscription.</td></tr>
+    <tr><td>Send</td><td>Text, image, voice note (TTS), template message; typing indicator and read receipts.</td></tr>
+    <tr><td>Receive</td><td>Text, reactions, delivery statuses, message echo, <strong>voice notes</strong> (downloaded with the tenant token and transcribed by the admin-managed ASR engine), history sync.</td></tr>
+    <tr><td>Templates</td><td>List + sync from Meta, eligibility check, send, per-tenant consent ledger.</td></tr>
+    <tr><td>Business profile</td><td>Read, update, profile photo.</td></tr>
+    <tr><td>AI on top</td><td>Auto-reply, lead capture, urgency/confusion escalation, conversation mode, opening hours, catalog + databank grounding, voice replies.</td></tr>
+  </table></div>
+  <p class="note"><strong>Text + voice verification (2026-10-31):</strong> 117 tests green across the consumer, voice notes, webhook parser, handoff gate, templates and escalation. A voice note is transcribed before the guard that decides "text only", so it travels the exact text path (lead intent, escalation, hours, prompt, reply). An unreadable note gets one honest line and never reaches the model. A spoken "ignore your rules" is pinned as user-role data by a regression test.</p>
+
+  <h3>Missing - messaging surface</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Capability</th><th>Why it matters</th><th>Effort</th></tr>
+    <tr><td class="num">WA-1</td><td><strong>Interactive messages</strong> - reply buttons, list menus, CTA-URL buttons</td><td>The assistant can offer "Pricing / Book / Talk to human" instead of free text, cutting dead-end threads and wrong-intent replies.</td><td>M</td></tr>
+    <tr><td class="num">WA-2</td><td><strong>Inbound image / document / video</strong></td><td>Currently stored as <code>[image message]</code> - the same class of silent gap voice notes had. Customers send screenshots, receipts and PDFs constantly.</td><td>S-M</td></tr>
+    <tr><td class="num">WA-3</td><td><strong>Outbound media</strong> - video, document, sticker, audio file</td><td>Invoices, menus, PDFs and quotes; today only image and voice note exist.</td><td>S</td></tr>
+    <tr><td class="num">WA-4</td><td><strong>Quoted reply, send reaction, edit/delete message</strong></td><td>Agents answer a specific message; a wrong send can be withdrawn instead of followed by a correction.</td><td>S</td></tr>
+    <tr><td class="num">WA-5</td><td><strong>Location + contact card</strong></td><td>"Send me your location" and sharing a contact are routine in service chats.</td><td>S</td></tr>
+    <tr><td class="num">WA-6</td><td><strong>Block / unblock user</strong></td><td>Abuse handling without leaving the dashboard.</td><td>S</td></tr>
+  </table></div>
+
+  <h3>Missing - account &amp; operations</h3>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Capability</th><th>Why it matters</th><th>Effort</th></tr>
+    <tr><td class="num">WA-7</td><td><strong>QR codes</strong> - create / list / delete per number</td><td>Store counter, website, packaging; a WhatsApp entry point with no ad spend.</td><td>S</td></tr>
+    <tr><td class="num">WA-8</td><td><strong>Number lifecycle</strong> - request code, verify, register/deregister, two-step PIN</td><td>Tenants stop needing WhatsApp Manager to onboard or rotate a number.</td><td>M</td></tr>
+    <tr><td class="num">WA-9</td><td><strong>Quality rating, messaging limit, conversation analytics</strong></td><td>"Your number is Green, limit 10k/day" belongs in the tenant dashboard; it also explains a sudden send failure.</td><td>M</td></tr>
+    <tr><td class="num">WA-10</td><td><strong>Template authoring</strong> - create / edit / delete + per-template analytics</td><td>We only sync today; tenants still author templates in Meta's console.</td><td>M</td></tr>
+    <tr><td class="num">WA-11</td><td><strong>Catalog / commerce</strong> - link a Meta catalog, product + multi-product messages, order messages, order status</td><td>Retail tenants can sell inside the chat; ties into the catalog the assistant already quotes.</td><td>L</td></tr>
+    <tr><td class="num">WA-12</td><td><strong>WhatsApp Flows</strong> - in-chat forms (booking, lead capture) + flow-response webhook</td><td>Structured intake beats a long Q&amp;A, and the answers arrive typed instead of parsed from prose.</td><td>L</td></tr>
+    <tr><td class="num">WA-13</td><td><strong>Calling API</strong> - call button, permission templates, inbound/outbound VoIP</td><td>Needs streaming ASR/TTS and SIP/WebRTC; already scoped as deferred in &sect;17.</td><td>XL</td></tr>
+  </table></div>
+
+  <h3>Build order</h3>
+  <ol>
+    <li><strong>WA-1 + WA-2</strong> - interactive buttons and inbound media change how conversations feel; media is the remaining "customer sent something we ignore" gap.</li>
+    <li><strong>WA-7 + WA-9</strong> - QR codes and a quality/limit panel are fast, visible value in the tenant dashboard.</li>
+    <li><strong>WA-10 + WA-8</strong> - template authoring and number lifecycle remove the WhatsApp Manager detour.</li>
+    <li><strong>WA-3/4/5/6</strong> - small messaging conveniences, batchable in one pass.</li>
+    <li><strong>WA-11 + WA-12</strong> - commerce and Flows, product decisions first.</li>
+    <li><strong>WA-13</strong> - calling, separate project.</li>
+  </ol>
+  <p class="note"><strong>Verify before building WA-10/WA-11:</strong> whether the business-profile endpoint currently accepts <code>business_hours</code> (so tenant hours sync to WhatsApp and not only into our prompt), and whether the WABA has commerce/catalog access enabled. Both are Meta-side and environment-specific.</p>
+</section>
+
 <footer>
-  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-29; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land. The 2026-10-29 pass added the conversation-control and Instagram &rarr; WhatsApp ledger (&sect;17, 16 items plus a deferred calling decision), including the silent-thread root cause (BUG-1 to BUG-4) and the outbox/publisher race that silently dropped inbound messages (BUG-5) found on staging. BUG-1/2/3, BUG-5, HAND-1 (the wa.me bridge), HAND-2 (templates + consent), HAND-3 (identity merge + carried context), HAND-4, HAND-6 (catalog + public page), HAND-7 (databank grounding), HAND-8 (conversation mode) and HAND-9 (stored context) were fixed in the same pass; 4 items remain open. The 2026-10-31 pass added the voice-note/ASR ledger (&sect;19): inbound voice notes are transcribed by the admin-managed engine and answered end to end, with billing for hosted minutes and moving the reply onto the job lanes still open. It also moved escalation from a per-message counter to urgency + a confused-return counter, and stopped information-only chats from creating CRM leads.
+  Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-29; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land. The 2026-10-29 pass added the conversation-control and Instagram &rarr; WhatsApp ledger (&sect;17, 16 items plus a deferred calling decision), including the silent-thread root cause (BUG-1 to BUG-4) and the outbox/publisher race that silently dropped inbound messages (BUG-5) found on staging. BUG-1/2/3, BUG-5, HAND-1 (the wa.me bridge), HAND-2 (templates + consent), HAND-3 (identity merge + carried context), HAND-4, HAND-6 (catalog + public page), HAND-7 (databank grounding), HAND-8 (conversation mode) and HAND-9 (stored context) were fixed in the same pass; 4 items remain open. The 2026-10-31 pass added the voice-note/ASR ledger (&sect;19): inbound voice notes are transcribed by the admin-managed engine and answered end to end, with billing for hosted minutes and moving the reply onto the job lanes still open. It also moved escalation from a per-message counter to urgency + a confused-return counter, and stopped information-only chats from creating CRM leads. The same pass added the WhatsApp surface ledger (&sect;20): text and voice are verified end to end, with interactive messages, inbound media, QR codes and the remaining account surface listed as the next build order.
 </footer>
 
 </div>
