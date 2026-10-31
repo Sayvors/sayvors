@@ -74,6 +74,61 @@ async def _services(db, channel_id: str) -> tuple[list[str], list[str]]:
     return offered[:40], not_offered[:20]
 
 
+async def _team_facts(db, tenant_id: str, owner) -> list[str]:
+    """Owner + active team names and role titles, with no contact details.
+
+    Customers ask "who runs this?" and "who can I speak to?"; the answer is
+    already in the workspace, not the databank. Only names and role labels are
+    exposed — never emails, phones or permission strings.
+    """
+    lines: list[str] = []
+    owner_name = " ".join(
+        part for part in (
+            str(getattr(owner, "first_name", "") or "").strip(),
+            str(getattr(owner, "last_name", "") or "").strip(),
+        ) if part
+    ).strip()
+    if owner_name:
+        lines.append(f"- Owner: {owner_name}")
+
+    try:
+        from ..team.models import TeamMember, TeamRole
+        from ..users.models import User
+
+        rows = (
+            await db.execute(
+                select(TeamMember, User, TeamRole)
+                .join(User, User.id == TeamMember.user_id)
+                .join(TeamRole, TeamRole.id == TeamMember.role_id)
+                .where(
+                    TeamMember.tenant_id == tenant_id,
+                    TeamMember.status == "active",
+                )
+                .order_by(TeamRole.name, User.first_name)
+                .limit(20)
+            )
+        ).all()
+    except Exception as e:  # noqa: BLE001 - facts are an enhancement
+        logger.warning("team facts lookup failed tenant=%s: %s", tenant_id, e)
+        return lines
+
+    members: list[str] = []
+    for member, user, role in rows:
+        name = " ".join(
+            part for part in (
+                str(user.first_name or "").strip(),
+                str(user.last_name or "").strip(),
+            ) if part
+        ).strip()
+        if not name:
+            continue
+        label = str(role.name or "").strip()
+        members.append(f"{name} ({label})" if label else name)
+    if members:
+        lines.append(f"- Team: {', '.join(members)}")
+    return lines
+
+
 def _websites(raw) -> list[str]:
     if isinstance(raw, list):
         return [str(w).strip() for w in raw if str(w or "").strip()][:3]
@@ -182,6 +237,12 @@ async def public_facts_block(
     doesnt = (getattr(user, "business_doesnt_sell", None) or "").strip()
     if doesnt:
         lines.append(f"- Does NOT offer: {doesnt[:400]}")
+
+    # Owner/team names are public shopfront facts, not CRM data. Only names
+    # and role labels are added, and only for a real business (a personal
+    # account with no business name must not leak its owner).
+    if name:
+        lines.extend(await _team_facts(db, tenant_id, user))
 
     websites = _websites(profile.get("websites"))
     if websites:

@@ -145,6 +145,49 @@ async def test_legacy_whatsapp_hours_are_still_answered(db):
 
 
 @pytest.mark.asyncio
+async def test_owner_and_active_team_are_public_facts_without_contact_details(db):
+    from app.modules.team.models import TeamMember, TeamRole
+    from app.modules.users.models import User
+
+    channel, user = await _seed(db)
+    member = User(
+        id="facts-member-1", email="syab@example.com", first_name="Syed",
+        last_name="Syab", password_hash="x", email_verified=True,
+    )
+    invited = User(
+        id="facts-member-2", email="gone@example.com", first_name="Gone",
+        last_name="Person", password_hash="x", email_verified=True,
+    )
+    db.add_all([member, invited])
+    role = TeamRole(
+        id="facts-role-1", tenant_id=user.id, name="Founder",
+        is_system=True, permissions=[],
+    )
+    db.add(role)
+    await db.flush()
+    db.add_all([
+        TeamMember(
+            id="facts-tm-1", tenant_id=user.id, user_id=member.id,
+            email="syab@example.com", role_id=role.id, status="active",
+        ),
+        TeamMember(
+            id="facts-tm-2", tenant_id=user.id, user_id=invited.id,
+            email="gone@example.com", role_id=role.id, status="invited",
+        ),
+    ])
+    await db.commit()
+
+    block = await public_facts_block(
+        db, tenant_id=user.id, channel_id=channel.id, user=user
+    )
+
+    assert "- Owner: F T" in block
+    assert "- Team: Syed Syab (Founder)" in block
+    assert "Gone Person" not in block, "invited members are not public yet"
+    assert "syab@example.com" not in block, "never expose contact details"
+
+
+@pytest.mark.asyncio
 async def test_partial_facts_still_render(db):
     channel, user = await _seed(db, hours=False, services=False, profile=False)
 

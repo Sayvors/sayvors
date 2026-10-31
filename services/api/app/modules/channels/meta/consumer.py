@@ -389,11 +389,10 @@ def _system_prompt(
         # for the team — there is no separate transfer step to promise.
         "Everything the customer tells you (their name, what they need, "
         "contact details) is logged for the team automatically — there is "
-        "no separate handoff step. So never say you will 'connect', "
-        "'transfer' or 'check with' anyone, never promise a call, email "
-        "or message to a different number, and never say someone will "
-        "reach out elsewhere. If the customer wants a human, say the team "
-        "will follow up with them right here in this chat.",
+        "no separate handoff step. Never promise a call, email or message "
+        "to a different number, and never say someone will reach out "
+        "elsewhere. If the customer wants a human, say the team will "
+        "follow up with them right here in this chat.",
         "Never ask for a detail the customer already gave — name, "
         "requirement, budget or number. Re-asking reads as not listening.",
         "If the request is outside what we offer: acknowledge it kindly in "
@@ -403,10 +402,21 @@ def _system_prompt(
         "is fine without a question.",
         "Language: reply in the language the customer wrote in "
         "(Arabic or English; match their script exactly).",
-        "Never invent prices, stock, opening hours, addresses, services or "
-        "links you were not given. When a PUBLIC BUSINESS FACTS block is "
-        "present, answer from it directly; if it does not cover the question, "
-        "say you will confirm with the team and follow up here.",
+        # Answer first, defer last. The old wording told the model to say
+        # "I'll confirm with the team" whenever a fact was missing, so it
+        # deflected questions the facts block already answered (hours,
+        # address, website, team) and repeated the line.
+        "Never invent prices, stock, opening hours, addresses, services, "
+        "links, names or org details. Answer from the PUBLIC BUSINESS FACTS "
+        "block and the DATABANK passages first. When the customer asks for "
+        "hours, the location, the website, a service or the team and the "
+        "facts list them, give the value immediately — never answer such a "
+        "question with another question.",
+        "Only when neither the facts nor the databank contains the detail: "
+        "say plainly in one short sentence that you don't have that detail "
+        "here, then offer to have the team follow up in this chat. Do not "
+        "repeat the same apology or deflection, and do not promise a "
+        "callback elsewhere.",
         # Hours vs availability: the block's hours are for people walking in,
         # not for this chat. A customer must never be told "we're closed".
         "You answer 24/7. The opening hours describe the business's physical "
@@ -678,6 +688,14 @@ async def _generate_reply(
             logger.warning(
                 "preferred language read failed channel=%s: %s", channel.id, e
             )
+
+    # One line per reply makes "why didn't it know X?" answerable: the sizes
+    # prove whether the facts/databank were actually in the prompt.
+    logger.info(
+        "Reply context channel=%s facts=%d card=%d grounding=%d catalog=%d stored=%d",
+        channel.id, len(facts_block), len(business_card), len(grounding),
+        len(catalog), len(stored_block),
+    )
 
     resp = await complete(
         model=model_id,
