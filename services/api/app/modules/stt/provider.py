@@ -25,6 +25,12 @@ from ...config import settings
 
 logger = logging.getLogger(__name__)
 
+import os
+
+# One 25 MB clip is the ceiling for a customer-supplied media URL. See
+# `_download_audio_bytes` for why the cap exists.
+MAX_AUDIO_BYTES = 25 * 1024 * 1024
+
 # Cached model instance — loaded once on first use.
 _model: "WhisperModel | None" = None
 _model_loading_error: str | None = None
@@ -206,30 +212,56 @@ async def _download_audio(audio_url: str) -> Path:
 
 
 async def _download_audio_bytes(audio_url: str) -> tuple[bytes, str, str]:
-    """Download the media once and report (bytes, extension, content type)."""
+    """Download the media once and report (bytes, extension, content type).
+
+    Streamed with a hard cap: a bulk lane worker has ~384 MB of heap and a
+    media URL is customer-controlled data. Without the cap one oversized (or
+    malicious) file could OOM the process and take every queued voice note
+    with it. WhatsApp voice notes are well under 16 MB; 25 MB leaves room for
+    forwarded clips without trusting the sender.
+    """
+    ext = ".bin"
+    content_type = "application/octet-stream"
+    chunks: list[bytes] = []
+    total = 0
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.get(audio_url, follow_redirects=True)
-        resp.raise_for_status()
+        async with client.stream("GET", audio_url, follow_redirects=True) as resp:
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type") or content_type
+            declared = resp.headers.get("content-length")
+            if declared:
+                try:
+                    if int(declared) > MAX_AUDIO_BYTES:
+                        raise RuntimeError(
+                            f"audio too large: {declared} bytes (max {MAX_AUDIO_BYTES})"
+                        )
+                except ValueError:
+                    pass
+            async for chunk in resp.aiter_bytes():
+                total += len(chunk)
+                if total > MAX_AUDIO_BYTES:
+                    raise RuntimeError(
+                        f"audio too large: exceeded {MAX_AUDIO_BYTES} bytes"
+                    )
+                chunks.append(chunk)
 
-        content_type = resp.headers.get("content-type", "")
-        # Guess extension from content-type so providers can sniff it.
-        ext = ".bin"
-        if "audio/mpeg" in content_type or "audio/mp3" in content_type:
-            ext = ".mp3"
-        elif "audio/wav" in content_type:
-            ext = ".wav"
-        elif "audio/ogg" in content_type or "audio/opus" in content_type:
-            ext = ".ogg"
-        elif "audio/mp4" in content_type or "audio/aac" in content_type:
-            ext = ".m4a"
-        elif "audio/webm" in content_type:
-            ext = ".webm"
-        elif "audio/flac" in content_type:
-            ext = ".flac"
-        elif "audio/x-m4a" in content_type:
-            ext = ".m4a"
+    # Guess extension from content-type so providers can sniff it.
+    if "audio/mpeg" in content_type or "audio/mp3" in content_type:
+        ext = ".mp3"
+    elif "audio/wav" in content_type:
+        ext = ".wav"
+    elif "audio/ogg" in content_type or "audio/opus" in content_type:
+        ext = ".ogg"
+    elif "audio/mp4" in content_type or "audio/aac" in content_type:
+        ext = ".m4a"
+    elif "audio/webm" in content_type:
+        ext = ".webm"
+    elif "audio/flac" in content_type:
+        ext = ".flac"
+    elif "audio/x-m4a" in content_type:
+        ext = ".m4a"
 
-        return resp.content, ext, content_type or "application/octet-stream"
+    return b"".join(chunks), ext, content_type
 
 
 async def _active_hosted_engine(db, language: str | None) -> dict | None:
@@ -269,14 +301,17 @@ async def _transcribe_hosted(
     model: str | None,
 ) -> dict:
     """Transcribe through the configured hosted provider."""
+    import time
+
     from .providers import transcribe_elevenlabs
 
     provider = config.get("provider")
     if provider != "elevenlabs":
         raise RuntimeError(f"no client for ASR provider {provider!r}")
 
+    started = time.perf_counter()
     audio, ext, content_type = await _download_audio_bytes(audio_url)
-    return await transcribe_elevenlabs(
+    result = await transcribe_elevenlabs(
         api_key=config["api_key"],
         audio=audio,
         filename=f"audio{ext}",
@@ -285,6 +320,18 @@ async def _transcribe_hosted(
         language=language,
         base_url=config.get("base_url"),
     )
+    # Capacity numbers for the bulk lane: bytes in, wall time, characters out.
+    # Without this an ASR slowdown is invisible until the queue backs up.
+    logger.info(
+        "ASR provider=%s model=%s bytes=%d lang=%s latency_ms=%d chars=%d",
+        provider,
+        model or config.get("model"),
+        len(audio),
+        result.get("language") or language or "auto",
+        int((time.perf_counter() - started) * 1000),
+        len(result.get("text") or ""),
+    )
+    return result
 
 
 def os_urandom_hex(n: int) -> str:

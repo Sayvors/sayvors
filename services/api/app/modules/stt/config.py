@@ -9,6 +9,7 @@ contract `rag.embeddings` uses.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,6 +26,18 @@ _session_factory = None
 # "Field not supplied" marker. An omitted key must be distinguishable from
 # an explicit empty string (which clears the stored key).
 KEEP = object()
+
+# The active engine is read once per voice note. A 30s cache turns that into
+# one indexed read per process per half-minute instead of one per note, and
+# still applies a key rotation or a disabled engine quickly everywhere.
+# Every write below invalidates the local entry immediately.
+ACTIVE_CACHE_TTL_SECONDS = 30.0
+_active_cache: tuple[float, dict[str, Any] | None] | None = None
+
+
+def invalidate_asr_cache() -> None:
+    global _active_cache
+    _active_cache = None
 
 
 async def _session(db=None):
@@ -94,7 +107,16 @@ async def get_active_asr_config(db=None) -> dict[str, Any] | None:
     Only an enabled, activated row is returned. A provider that disables
     itself (bad key, quota) drops the system back to local transcription
     instead of failing every voice note.
+
+    Cached for ``ACTIVE_CACHE_TTL_SECONDS``: a bulk lane running thousands of
+    voice notes must not issue one config query each, and a worker must not
+    hammer the row when the database is already busy.
     """
+    global _active_cache
+    now = time.monotonic()
+    if _active_cache is not None and now - _active_cache[0] < ACTIVE_CACHE_TTL_SECONDS:
+        return _active_cache[1]
+
     async for session in _session(db):
         row = (
             await session.execute(
@@ -106,7 +128,9 @@ async def get_active_asr_config(db=None) -> dict[str, Any] | None:
                 .order_by(ASREngineConfig.updated_at.desc())
             )
         ).scalars().first()
-        return _row_to_internal(row) if row is not None else None
+        result = _row_to_internal(row) if row is not None else None
+        _active_cache = (now, result)
+        return result
     return None
 
 
@@ -169,4 +193,5 @@ async def save_asr_config(
     row.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(row)
+    invalidate_asr_cache()
     return row_to_config(row)

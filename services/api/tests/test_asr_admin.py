@@ -254,3 +254,120 @@ async def test_language_outside_the_engine_coverage_falls_back(db, monkeypatch):
 
     assert await provider._active_hosted_engine(None, "en") is None
     assert (await provider._active_hosted_engine(None, "ar"))["provider"] == "elevenlabs"
+
+
+# ── bulk-lane capacity guards ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_active_engine_is_cached_and_invalidated(db):
+    """A bulk lane transcribing thousands of notes must not query per note."""
+    from app.modules.stt import config as asr_config
+    from app.modules.stt.models import ASREngineConfig
+
+    asr_config.invalidate_asr_cache()
+    await asr_config.save_asr_config(
+        db, "elevenlabs", active=True, languages="*", api_key="sk-cache"
+    )
+
+    first = await asr_config.get_active_asr_config(db)
+    assert first["provider"] == "elevenlabs"
+
+    # Remove it behind the cache's back: the cached read must still answer.
+    row = await db.get(ASREngineConfig, "elevenlabs")
+    await db.delete(row)
+    await db.commit()
+    assert (await asr_config.get_active_asr_config(db))["provider"] == "elevenlabs"
+
+    # Saving invalidates immediately, so an operator's deactivation applies
+    # on this worker without a restart.
+    asr_config.invalidate_asr_cache()
+    assert await asr_config.get_active_asr_config(db) is None
+
+
+class _FakeResponse:
+    status_code = 200
+
+    def __init__(self, headers: dict, chunks: list[bytes]):
+        self.headers = headers
+        self._chunks = chunks
+
+    def raise_for_status(self) -> None:
+        return None
+
+    async def aiter_bytes(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _FakeStream:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeClient:
+    response: _FakeResponse | None = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def stream(self, *args, **kwargs):
+        assert _FakeClient.response is not None
+        return _FakeStream(_FakeClient.response)
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_a_declared_oversized_file(monkeypatch):
+    from app.modules.stt import provider
+
+    _FakeClient.response = _FakeResponse(
+        {"content-type": "audio/ogg", "content-length": str(provider.MAX_AUDIO_BYTES + 1)},
+        [b"x"],
+    )
+    monkeypatch.setattr(provider.httpx, "AsyncClient", _FakeClient)
+
+    with pytest.raises(RuntimeError, match="too large"):
+        await provider._download_audio_bytes("https://media.example/huge.ogg")
+
+
+@pytest.mark.asyncio
+async def test_download_stops_when_a_stream_exceeds_the_cap(monkeypatch):
+    """No content-length header: the cap still has to hold mid-stream."""
+    from app.modules.stt import provider
+
+    chunk = b"x" * (1024 * 1024)
+    _FakeClient.response = _FakeResponse(
+        {"content-type": "audio/ogg"},
+        [chunk] * (provider.MAX_AUDIO_BYTES // len(chunk) + 2),
+    )
+    monkeypatch.setattr(provider.httpx, "AsyncClient", _FakeClient)
+
+    with pytest.raises(RuntimeError, match="too large"):
+        await provider._download_audio_bytes("https://media.example/long.ogg")
+
+
+@pytest.mark.asyncio
+async def test_download_returns_bytes_and_extension(monkeypatch):
+    from app.modules.stt import provider
+
+    _FakeClient.response = _FakeResponse(
+        {"content-type": "audio/ogg; codecs=opus"}, [b"RIFF", b"data"]
+    )
+    monkeypatch.setattr(provider.httpx, "AsyncClient", _FakeClient)
+
+    audio, ext, content_type = await provider._download_audio_bytes("https://media.example/ok.ogg")
+    assert audio == b"RIFFdata"
+    assert ext == ".ogg"
+    assert "audio/ogg" in content_type
