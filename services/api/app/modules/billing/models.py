@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -148,6 +149,32 @@ class BillingEvent(Base):
     )
 
 
+class PricingRate(Base):
+    """Admin-managed unit price, in USD cents, for one billable unit.
+
+    ``kind`` names the meter and ``key`` the thing being priced:
+      llm_input    key=<provider family>  cents per 1M prompt tokens
+      llm_output   key=<provider family>  cents per 1M completion tokens
+      asr_minute   key="default"          cents per audio minute transcribed
+      tts_kchar    key="default"          cents per 1k characters spoken
+
+    Rows override the code defaults in ``billing.pricing``; an absent row
+    means "use the default", so this table starts empty and behaviour is
+    unchanged until an admin edits a rate.
+    """
+
+    __tablename__ = "pricing_rates"
+
+    kind: Mapped[str] = mapped_column(String(24), primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    unit_price_cents: Mapped[float] = mapped_column(Float, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class Plan(Base):
     """A sellable plan. Admin-managed; tenants pick one.
 
@@ -157,7 +184,6 @@ class Plan(Base):
     """
 
     __tablename__ = "plans"
-
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     slug: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(80))
@@ -205,6 +231,10 @@ class TenantSubscription(Base):
     granted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Promo override expiry.
     granted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Per-tenant feature overrides. Keys win over the plan's features dict;
+    # absent keys inherit the plan. Empty dict = no overrides (this is what
+    # the admin "Special list" keys off).
+    features_override: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

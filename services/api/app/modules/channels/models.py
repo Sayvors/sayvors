@@ -974,6 +974,10 @@ class WhatsAppThreadState(Base):
     # Customer's language as detected from their own words ("en", "ar",
     # "ur", "ps", "hi", "bn", ...). Drives the voice-note language.
     language: Mapped[str] = mapped_column(String(16), default="en")
+    # Language the customer picked on the first-contact buttons. Set once and
+    # enforced: the model answers only in it and voice notes are synthesised
+    # in it, even if a later message is written in another language.
+    preferred_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     confused: Mapped[bool] = mapped_column(Boolean, default=False)
     confused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Set when the AI's reply asked the customer something; cleared the

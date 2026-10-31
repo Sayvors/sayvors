@@ -171,11 +171,12 @@ const QUIET_PHRASES = [
   "Scenario: a 22:00-07:00 window means a 23:30 lead waits until 07:00.",
 ];
 const ESCALATION_PHRASES = [
-  "Escalate after: consecutive unanswered AI replies before a person takes over.",
+  "Urgent words (\"urgent\", \"asap\", \"right now\", Arabic equivalents) escalate the thread immediately — no counter involved.",
+  "Escalate after: consecutive turns where the customer came back confused. 0 disables the counter; normal follow-up questions never trip it.",
   "AI resumes after: hours of silence with no human action.",
   "Remind after: one reminder only, then never.",
   "Recipients: up to 10; empty goes to the account owner's email.",
-  "Scenario: repeated customer pushes hand the thread to a human; the AI stays quiet.",
+  "Scenario: customer says \"this is urgent\" -> thread is handed to a human at once; the AI stays quiet until someone replies or the resume window passes.",
 ];
 
 export default function LeadSettingsSection() {
@@ -505,7 +506,7 @@ export default function LeadSettingsSection() {
 
         <Group
           title="Escalation"
-          note="When a customer keeps writing after the AI replies, the thread is handed to a person and the AI stops answering it. That silence is the point — it is also why the resume window exists."
+          note="The AI answers normal follow-up questions indefinitely. It only steps aside when the customer says it is urgent, or when the confusion counter you enable below trips."
           help={
             <SettingHelp
               ariaLabel="How lead escalation works"
@@ -517,9 +518,9 @@ export default function LeadSettingsSection() {
           <div className="grid gap-4 sm:grid-cols-3">
             <Num
               label="Escalate after"
-              hint="Unanswered AI replies in a row"
+              hint="Confused customer turns in a row · 0 = never"
               value={draft.escalation_threshold}
-              min={1}
+              min={0}
               max={10}
               suffix="cycles"
               disabled={busy}

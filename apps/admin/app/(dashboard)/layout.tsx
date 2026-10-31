@@ -11,7 +11,7 @@ type NavItem = {
   href: string;
   label: string;
   desc: string;
-  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings" | "billing" | "jobs";
+  icon: "overview" | "tenants" | "usage" | "logs" | "llms" | "voice" | "embeddings" | "billing" | "jobs" | "special";
 };
 
 const SECTIONS: { title: string; items: NavItem[] }[] = [
@@ -20,6 +20,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/overview", label: "Overview", desc: "Funnel & health", icon: "overview" },
       { href: "/tenants", label: "Tenants", desc: "Accounts & listings", icon: "tenants" },
+      { href: "/special", label: "Special list", desc: "Custom feature overrides", icon: "special" },
     ],
   },
   {
@@ -28,6 +29,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: "/usage", label: "Usage", desc: "Tokens & metering", icon: "usage" },
       { href: "/billing", label: "Billing", desc: "Wallets & ledger", icon: "billing" },
       { href: "/plans", label: "Plans", desc: "Plans & entitlements", icon: "billing" },
+      { href: "/pricing", label: "Pricing", desc: "Tokens & voice rates", icon: "billing" },
       { href: "/jobs", label: "Jobs", desc: "Queue & workers", icon: "jobs" },
       { href: "/logs", label: "Logs", desc: "Services & failures", icon: "logs" },
     ],
@@ -38,6 +40,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: "/llms", label: "LLMs", desc: "Providers & models", icon: "llms" },
       { href: "/embeddings", label: "Embeddings", desc: "RAG vector API", icon: "embeddings" },
       { href: "/voice", label: "Voice models", desc: "WhatsApp voice TTS", icon: "voice" },
+      { href: "/asr", label: "Speech-to-text", desc: "ASR provider & keys", icon: "voice" },
     ],
   },
   {
@@ -138,6 +141,17 @@ function NavIcon({ name, active }: { name: NavItem["icon"]; active: boolean }) {
           <circle cx="7" cy="6" r="0.9" fill="currentColor" />
           <circle cx="7" cy="12" r="0.9" fill="currentColor" />
           <circle cx="7" cy="18" r="0.9" fill="currentColor" />
+        </svg>
+      );
+    case "special":
+      return (
+        <svg aria-hidden viewBox="0 0 24 24" fill="none" className={cls}>
+          <path
+            d="M12 3.6l2.5 5.2 5.7.8-4.1 4 1 5.7-5.1-2.7-5.1 2.7 1-5.7-4.1-4 5.7-.8L12 3.6z"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinejoin="round"
+          />
         </svg>
       );
     default:

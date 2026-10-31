@@ -17,6 +17,9 @@ from ...core.deps import get_db, require_admin
 from ...security import create_admin_token, hash_password, verify_password
 from ..auth.rate_limit import rate_limit
 from ..auth.router import get_client_ip
+# SubscriptionOut is needed at import time by the `/tenants/special` decorator,
+# which must be declared before `/tenants/{user_id}` or FastAPI shadows it.
+from ..billing.schemas import SubscriptionOut, TenantFeaturesIn
 from . import service as admin_service
 from . import stats as admin_service_stats
 from .schemas import (
@@ -328,6 +331,40 @@ async def admin_tenants(
 ):
     items, total = await admin_service.list_tenants(db, search, limit, offset)
     return AdminTenantList(items=items, total=total)
+
+
+@router.get("/tenants/special", response_model=list[SubscriptionOut])
+async def list_special_tenants(_admin=Depends(require_admin)):
+    """Tenants with per-feature overrides — the admin "Special list".
+
+    A tenant lands here the moment any key differs from its plan, and leaves
+    when the override is cleared back to {}. Email is joined in because this
+    is the screen an operator uses to recognise *who* was customised.
+    """
+    from ...database import async_session
+    from ..users.models import User
+
+    async with async_session() as db:
+        rows = (
+            await db.execute(
+                _select(TenantSubscription, User.email, Plan.slug, Plan.name)
+                .join(User, User.id == TenantSubscription.tenant_id)
+                .join(Plan, Plan.id == TenantSubscription.plan_id)
+                .where(TenantSubscription.features_override != {})
+                .order_by(User.email)
+            )
+        ).all()
+        return [
+            SubscriptionOut(
+                id=sub.id, tenant_id=sub.tenant_id, plan_id=sub.plan_id,
+                email=email, plan_slug=slug, plan_name=plan_name,
+                status=sub.status, period_start=sub.period_start,
+                period_end=sub.period_end,
+                granted_by=sub.granted_by, granted_until=sub.granted_until,
+                features_override=dict(sub.features_override or {}),
+            )
+            for sub, email, slug, plan_name in rows
+        ]
 
 
 @router.get("/tenants/{user_id}/usage")
@@ -1294,6 +1331,15 @@ router.include_router(
     dependencies=[Depends(require_admin), Depends(admin_rate_limit)],
 )
 
+# ASR-engine admin follows the same ownership rule: the STT capability owns
+# its config, the admin router only mounts it.
+from ..stt.admin_router import router as stt_admin_router
+
+router.include_router(
+    stt_admin_router,
+    dependencies=[Depends(require_admin), Depends(admin_rate_limit)],
+)
+
 
 # ---------------------------------------------------------------------------
 # Operator management + audit log
@@ -1472,7 +1518,7 @@ from sqlalchemy import select as _select
 
 from ..billing.features import sanitize_features
 from ..billing.models import Plan, TenantSubscription
-from ..billing.schemas import PlanOut, PlanCreate, PlanUpdate, SubscriptionOut, GrantPlanIn
+from ..billing.schemas import PlanOut, PlanCreate, PlanUpdate, GrantPlanIn
 
 
 @router.get("/plan-features")
@@ -1564,6 +1610,39 @@ async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_adm
         )
 
 
+@router.get("/pricing")
+async def admin_list_pricing(db: AsyncSession = Depends(get_db), _admin=Depends(require_admin)):
+    """The billable rate card: every editable unit with its effective price."""
+    from ..billing.pricing import list_rates
+
+    return await list_rates(db)
+
+
+class PricingRateIn(BaseModel):
+    kind: str = Field(min_length=1, max_length=24)
+    key: str = Field(default="default", max_length=64)
+    unit_price_cents: float = Field(ge=0, le=1_000_000)
+
+
+@router.put("/pricing")
+async def admin_save_pricing(
+    body: PricingRateIn,
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(require_admin),
+):
+    """Set one rate. Applies to the next metered call, no restart.
+
+    The unit is fixed by ``kind``: cents per 1M tokens for LLM input/output,
+    cents per audio minute for ASR, cents per 1k characters for TTS.
+    """
+    from ..billing.pricing import save_rate
+
+    try:
+        return await save_rate(db, body.kind, body.key, body.unit_price_cents)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/tenants/{tenant_id}/subscription", response_model=SubscriptionOut)
 async def get_tenant_subscription(tenant_id: str, _admin=Depends(require_admin)):
     from ...database import async_session
@@ -1583,6 +1662,7 @@ async def get_tenant_subscription(tenant_id: str, _admin=Depends(require_admin))
             plan_name=plan.name if plan else None,
             status=sub.status, period_start=sub.period_start, period_end=sub.period_end,
             granted_by=sub.granted_by, granted_until=sub.granted_until,
+            features_override=dict(sub.features_override or {}),
         )
 
 
@@ -1623,12 +1703,71 @@ async def grant_plan(tenant_id: str, body: GrantPlanIn, _admin=Depends(require_a
             plan_slug=plan.slug, plan_name=plan.name, status=sub.status,
             period_start=sub.period_start, period_end=sub.period_end,
             granted_by=sub.granted_by, granted_until=sub.granted_until,
+            features_override=dict(sub.features_override or {}),
+        )
+
+
+@router.put("/tenants/{tenant_id}/features", response_model=SubscriptionOut)
+async def set_tenant_features(
+    tenant_id: str, body: TenantFeaturesIn, _admin=Depends(require_admin)
+):
+    """Replace a tenant's per-feature overrides.
+
+    Each key: true forces the feature on, false forces it off, null removes
+    the key so the plan value applies again. Unknown keys are dropped.
+    Sending {} clears the tenant back to pure plan inheritance (and off the
+    Special list).
+    """
+    from ...database import async_session
+    from ..billing.entitlements import get_effective_plan
+    from ..billing.features import FEATURE_KEYS
+
+    async with async_session() as db:
+        sub = (
+            await db.execute(
+                _select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id)
+            )
+        ).scalar_one_or_none()
+        if sub is None:
+            from ..users.models import User
+
+            if await db.get(User, tenant_id) is None:
+                raise HTTPException(status_code=404, detail="Tenant not found.")
+            plan, _, _, _, _ = await get_effective_plan(tenant_id, db)
+            if plan is None:
+                raise HTTPException(status_code=404, detail="Tenant not found.")
+            sub = TenantSubscription(
+                tenant_id=tenant_id,
+                plan_id=plan.id,
+                status="active",
+                granted_by=_admin.get("username") or "admin",
+            )
+            db.add(sub)
+        cleaned: dict[str, bool] = {}
+        for key, value in (body.features or {}).items():
+            if key not in FEATURE_KEYS:
+                continue
+            if value is None:
+                continue
+            cleaned[key] = bool(value)
+        sub.features_override = cleaned
+        await db.commit()
+        await db.refresh(sub)
+        plan = await db.get(Plan, sub.plan_id)
+        return SubscriptionOut(
+            id=sub.id, tenant_id=sub.tenant_id, plan_id=sub.plan_id,
+            plan_slug=plan.slug if plan else None,
+            plan_name=plan.name if plan else None,
+            status=sub.status, period_start=sub.period_start,
+            period_end=sub.period_end,
+            granted_by=sub.granted_by, granted_until=sub.granted_until,
+            features_override=dict(sub.features_override or {}),
         )
 
 
 @router.get("/tenants/{tenant_id}/entitlements")
 async def get_tenant_entitlements(tenant_id: str, _admin=Depends(require_admin)):
-    from ...billing.entitlements import get_entitlements
+    from ..billing.entitlements import get_entitlements
     from ...database import async_session
 
     async with async_session() as db:
@@ -1641,6 +1780,8 @@ async def get_tenant_entitlements(tenant_id: str, _admin=Depends(require_admin))
             "max_messages_per_month": ent.max_messages_per_month,
             "included_credit_cents": ent.included_credit_cents,
             "features": ent.features,
+            "plan_features": ent.plan_features,
+            "features_override": ent.features_override,
             "promo_active": ent.promo_active,
             "granted_by": ent.granted_by,
             "granted_until": ent.granted_until.isoformat() if ent.granted_until else None,

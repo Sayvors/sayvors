@@ -254,6 +254,9 @@ async def stream(
         completion_tokens = (
             max(1, len(text) // _STREAM_CHARS_PER_TOKEN) if text else 0
         )
+        from ..billing import pricing as _pricing
+
+        await _pricing.ensure_fresh()
         actual = (
             0
             if failure is not None

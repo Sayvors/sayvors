@@ -422,6 +422,15 @@ async def lifespan(app: FastAPI):
     # The prober unlatches it on a fixed interval regardless of traffic.
     redis_rearmer_task = asyncio.create_task(run_redis_rearmer())
 
+    # Same story for Kafka: a boot-time broker blip latches the API process's
+    # producer offline (is_kafka_available() reads that latch), and nothing in
+    # this process re-arms it — the Kafka rearmer only ran in the worker
+    # deployment. The admin health page then shows Kafka red with
+    # "producer not connected" while the worker next to it is connected and
+    # fine. Re-arm here too; the check is cheap and traffic-independent.
+    from .modules.kafka.client import run_kafka_rearmer
+    kafka_rearmer_task = asyncio.create_task(run_kafka_rearmer())
+
     # Queue/poll workers (AI replies, syncs, publishers, Kafka consumers)
     # belong OUTSIDE the HTTP process: in the worker deployment they run via
     # `python -m app.workers` and the api sets RUN_BACKGROUND_WORKERS=false,
@@ -470,9 +479,10 @@ async def lifespan(app: FastAPI):
     # Shutdown
     retention_task.cancel()
     redis_rearmer_task.cancel()
+    kafka_rearmer_task.cancel()
     for task in bg_tasks:
         task.cancel()
-    await asyncio.gather(retention_task, redis_rearmer_task, *bg_tasks, return_exceptions=True)
+    await asyncio.gather(retention_task, redis_rearmer_task, kafka_rearmer_task, *bg_tasks, return_exceptions=True)
     if outbox_worker is not None:
         await outbox_worker.stop()
     try:
@@ -511,8 +521,13 @@ from .modules.billing.entitlements import EntitlementDenied
 @app.exception_handler(EntitlementDenied)
 async def _entitlement_denied_handler(request, exc):
     from fastapi import HTTPException
+    from .modules.billing.entitlements import ENTITLEMENT_DENIED_HEADER
 
-    raise HTTPException(status_code=403, detail=str(exc))
+    raise HTTPException(
+        status_code=403,
+        detail=str(exc),
+        headers={ENTITLEMENT_DENIED_HEADER: exc.feature or "plan"},
+    )
 # Routers are imported at the top of this module; only registration happens
 # here. Re-importing them lower down shadowed nothing but left two copies of
 # every import to keep in sync.

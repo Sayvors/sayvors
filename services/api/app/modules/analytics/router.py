@@ -1162,8 +1162,10 @@ async def get_external_benchmark(
 
     uid = tenant_id_of(user)
     ent = await get_entitlements(uid, db)
+    from ..billing.entitlements import entitlement_403
+
     if not ent.has_feature("benchmark_external"):
-        raise HTTPException(status_code=403, detail="External benchmarking is a Pro feature.")
+        raise entitlement_403("External benchmarking is a Pro feature.", "benchmark_external")
     return await competitors.get_external_peer_set(db, uid)
 
 
@@ -1184,8 +1186,10 @@ async def refresh_external_benchmark(
 
     uid = tenant_id_of(user)
     ent = await get_entitlements(uid, db)
+    from ..billing.entitlements import entitlement_403
+
     if not ent.has_feature("benchmark_external"):
-        raise HTTPException(status_code=403, detail="External benchmarking is a Pro feature.")
+        raise entitlement_403("External benchmarking is a Pro feature.", "benchmark_external")
 
     name = address = category = None
     conn = (

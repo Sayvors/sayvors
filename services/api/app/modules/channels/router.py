@@ -33,7 +33,8 @@ from .schemas import (
     ChannelMessageSend,
     ChannelResponse,
     InboxSendRequest,
-    InboxSendResponse,
+    InteractiveSend,
+    QrCodeCreate,    InboxSendResponse,
     InboxThread,
     InboxThreadListResponse,
     ReviewReplyEdit,
@@ -61,6 +62,11 @@ from .service import (
     list_messages,
     list_thread_messages,
     send_message,
+    send_interactive_message,
+    whatsapp_number_health,
+    list_whatsapp_qr_codes,
+    create_whatsapp_qr_code,
+    delete_whatsapp_qr_code,
     verify_webhook_signature,
 )
 
@@ -124,13 +130,15 @@ async def connect_channel(
     from ...channels.service import list_channels
 
     existing, _ = await list_channels(ctx.user, db, limit=100, offset=0)
+    from ..billing.entitlements import entitlement_403
+
     if not ent.channel_quota_ok(len(existing)):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Channel limit reached for plan '{ent.plan_slug}' (max {ent.max_channels}). Upgrade to add more.",
+        raise entitlement_403(
+            f"Channel limit reached for plan '{ent.plan_slug}' (max {ent.max_channels}). Upgrade to add more.",
+            "quota",
         )
     if not ent.has_feature("channels"):
-        raise HTTPException(status_code=403, detail="Channels are not included in your plan.")
+        raise entitlement_403("Channels are not included in your plan.", "channels")
 
     try:
         channel = await create_channel(body, ctx.user, db)
@@ -370,6 +378,165 @@ async def send_to_channel(
         contact_name=msg.contact_name,
         created_at=msg.created_at.isoformat(),
     )
+
+
+@router.post(
+    "/{channel_id}/interactive",
+    response_model=ChannelMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def send_interactive_to_channel(
+    channel_id: str,
+    body: InteractiveSend,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send WhatsApp reply buttons, a list menu, or a CTA link.
+
+    The tap arrives back as an ordinary inbound text message carrying the
+    button/row title, so the AI and the inbox handle it with no special case.
+    """
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+
+    payload: dict = {
+        "body": body.body,
+        "header": body.header,
+        "footer": body.footer,
+    }
+    if body.kind == "buttons":
+        if not body.buttons:
+            raise HTTPException(status_code=422, detail="buttons are required")
+        payload["buttons"] = body.buttons
+    elif body.kind == "list":
+        if not body.button_text or not body.sections:
+            raise HTTPException(
+                status_code=422, detail="button_text and sections are required"
+            )
+        payload["button_text"] = body.button_text
+        payload["sections"] = body.sections
+    else:
+        if not body.display_text or not body.url:
+            raise HTTPException(
+                status_code=422, detail="display_text and url are required"
+            )
+        payload["display_text"] = body.display_text
+        payload["url"] = body.url
+
+    try:
+        msg = await send_interactive_message(
+            channel_id,
+            contact_phone=body.contact_phone,
+            kind=body.kind,
+            payload=payload,
+            user=ctx.user,
+            db=db,
+            contact_name=body.contact_name,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == "Channel not found":
+            raise HTTPException(status_code=404, detail=message)
+        raise HTTPException(status_code=422, detail=message)
+
+    return ChannelMessageResponse(
+        id=msg.id,
+        channel_id=msg.channel_id,
+        platform_message_id=msg.platform_message_id,
+        direction=msg.direction,
+        content=decrypt_message_content(msg.content),
+        content_type=msg.content_type,
+        status=msg.status,
+        error=msg.error,
+        contact_phone=decrypt_contact_phone(msg.contact_phone),
+        contact_name=msg.contact_name,
+        created_at=msg.created_at.isoformat(),
+    )
+
+
+@router.get("/{channel_id}/whatsapp/health", response_model=dict)
+async def get_whatsapp_health(
+    channel_id: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Meta's quality rating and messaging limit for this number.
+
+    Shown in the channel settings so a sudden send failure has a visible
+    cause instead of a support ticket.
+    """
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    try:
+        return await whatsapp_number_health(channel_id, ctx.user, db)
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(
+            status_code=404 if message == "Channel not found" else 422,
+            detail=message,
+        )
+
+
+@router.get("/{channel_id}/whatsapp/qr-codes", response_model=list[dict])
+async def get_whatsapp_qr_codes(
+    channel_id: str,
+    ctx: TenantContext = Depends(require_perm("inbox.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    if ctx.channel_level(channel_id) == "none":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    try:
+        return await list_whatsapp_qr_codes(channel_id, ctx.user, db)
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(
+            status_code=404 if message == "Channel not found" else 422,
+            detail=message,
+        )
+
+
+@router.post("/{channel_id}/whatsapp/qr-codes", response_model=dict)
+async def post_whatsapp_qr_code(
+    channel_id: str,
+    body: QrCodeCreate,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    try:
+        return await create_whatsapp_qr_code(
+            channel_id, body.prefilled_message, ctx.user, db,
+            image_format=body.image_format,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(
+            status_code=404 if message == "Channel not found" else 422,
+            detail=message,
+        )
+
+
+@router.delete("/{channel_id}/whatsapp/qr-codes/{code}", response_model=dict)
+async def remove_whatsapp_qr_code(
+    channel_id: str,
+    code: str,
+    ctx: TenantContext = Depends(require_perm("inbox.reply")),
+    db: AsyncSession = Depends(get_db),
+):
+    if not ctx.can_edit_channel(channel_id):
+        raise HTTPException(status_code=403, detail="No edit access to this channel")
+    try:
+        deleted = await delete_whatsapp_qr_code(channel_id, code, ctx.user, db)
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(
+            status_code=404 if message == "Channel not found" else 422,
+            detail=message,
+        )
+    if not deleted:
+        raise HTTPException(status_code=502, detail="Meta did not confirm the deletion")
+    return {"deleted": True, "code": code}
 
 
 @router.get("/{channel_id}/messages", response_model=ChannelMessageListResponse)
@@ -1040,11 +1207,19 @@ async def inbox_send(
 
     tid = tenant_id_of(ctx.user)
     ent = await get_entitlements(tid, db)
+    from ..billing.entitlements import entitlement_403
+
     if not ent.has_feature("messaging"):
-        raise HTTPException(status_code=403, detail="Messaging is not included in your plan.")
+        raise entitlement_403("Messaging is not included in your plan.", "messaging")
     used = await count_messages_this_month(tid, db)
     if not ent.message_quota_ok(used):
-        raise HTTPException(status_code=429, detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.")
+        from ..billing.entitlements import ENTITLEMENT_DENIED_HEADER
+
+        raise HTTPException(
+            status_code=429,
+            detail=f"Monthly message limit reached for plan '{ent.plan_slug}'. Upgrade to send more.",
+            headers={ENTITLEMENT_DENIED_HEADER: "quota"},
+        )
     try:
         msg = await send_message(
             body.channel_id,

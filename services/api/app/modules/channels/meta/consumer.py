@@ -403,9 +403,27 @@ def _system_prompt(
         "is fine without a question.",
         "Language: reply in the language the customer wrote in "
         "(Arabic or English; match their script exactly).",
-        "Never invent prices, stock, opening hours or policies you were "
-        "not given — say you will confirm with the team and follow up here.",
+        "Never invent prices, stock, opening hours, addresses, services or "
+        "links you were not given. When a PUBLIC BUSINESS FACTS block is "
+        "present, answer from it directly; if it does not cover the question, "
+        "say you will confirm with the team and follow up here.",
+        # Hours vs availability: the block's hours are for people walking in,
+        # not for this chat. A customer must never be told "we're closed".
+        "You answer 24/7. The opening hours describe the business's physical "
+        "visiting hours — never your own availability. Never say you are "
+        "closed, offline or unavailable. If asked outside those hours, state "
+        "the hours and offer to help right now.",
     ]
+    if platform == "WhatsApp":
+        lines.append(
+            "When the next step has 2 or 3 clear alternatives, end your "
+            "reply with one final line exactly like: "
+            'CHOICES: ["Pricing", "Book a demo", "Talk to a human"] — each '
+            "label 1-3 words, at most 20 characters, no duplicates. The "
+            "pipeline turns that line into tappable WhatsApp buttons and "
+            "never shows it to the customer. Never add it for yes/no, for a "
+            "single option, or when you are closing the conversation."
+        )
     if voice_enabled:
         lines.append(
             "If the customer seems frustrated or confused: acknowledge it, "
@@ -529,6 +547,34 @@ async def _generate_reply(
 
     business_card = await prompt_block(tenant_id, db)
 
+    # Public facts: hours, address, website, services (offered/not offered) and
+    # the owner's profile, in one ground-truth block. The hours are the
+    # business's physical visiting hours — the prompt tells the model they are
+    # not its own availability. Best-effort; "" when nothing is configured.
+    facts_block = ""
+    try:
+        import json
+
+        from .lead_engine import normalize_lead_settings
+        from ...profile.public_facts import public_facts_block
+
+        try:
+            meta = json.loads(channel.metadata_json or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        facts_block = await public_facts_block(
+            db,
+            tenant_id=tenant_id,
+            channel_id=channel.id,
+            user=user,
+            timezone_name=normalize_lead_settings(
+                getattr(user, "lead_settings", None)
+            )["timezone"],
+            listing_id=str(meta.get("location_id") or "") or None,
+        )
+    except Exception as e:  # noqa: BLE001 - never cost the reply
+        logger.warning("public facts block skipped channel=%s: %s", channel.id, e)
+
     # Lead capture rides this same call: the model may append one silent
     # LEAD line, which the handlers split off after the fact — extraction
     # without a second LLM request.
@@ -616,6 +662,23 @@ async def _generate_reply(
         allow_image=(platform == "WhatsApp"),
     )
 
+    # The customer's explicit language choice, when they made one on the
+    # first-contact buttons. It outranks the detected language in the prompt.
+    lang_block = ""
+    if contact:
+        try:
+            from .language_gate import language_block
+            from .thread_state import get_thread_state
+
+            thread_state = await get_thread_state(db, channel.id, contact)
+            lang_block = language_block(
+                getattr(thread_state, "preferred_language", None)
+            )
+        except Exception as e:  # noqa: BLE001 - never cost the reply
+            logger.warning(
+                "preferred language read failed channel=%s: %s", channel.id, e
+            )
+
     resp = await complete(
         model=model_id,
         messages=history,
@@ -625,7 +688,9 @@ async def _generate_reply(
             voice_enabled=voice_enabled,
             bridge_enabled=bridge_enabled,
         )
+        + (f"\n\n{lang_block}" if lang_block else "")
         + (f"\n\n{business_card}" if business_card else "")
+        + (f"\n\n{facts_block}" if facts_block else "")
         + (f"\n\n{grounding}" if grounding else "")
         + (f"\n\n{catalog}" if catalog else "")
         + stored_block
@@ -742,6 +807,282 @@ async def _send_catalog_image(
         logger.debug("catalog image realtime publish skipped: %s", e)
 
 
+async def _publish_inbound_row(db, tenant_id: str, channel_id: str, row) -> None:
+    """Push one inbound row to the inbox socket and the notification bell."""
+    from ...channels.realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "message",
+        "id": row.id,
+        "channel_id": channel_id,
+        "platform": "whatsapp",
+        "direction": "inbound",
+        "content": decrypt_message_content(row.content),
+        "content_type": row.content_type,
+        "status": row.status,
+        "contact_phone": decrypt_contact_phone(row.contact_phone),
+        "contact_name": row.contact_name,
+        "created_at": row.created_at,
+    })
+    await _publish_message_notification(db, tenant_id, row, "whatsapp")
+
+
+# A voice note we could not transcribe must be answered honestly. Feeding the
+# "[audio message]" placeholder to the assistant would make it invent content
+# the customer never said.
+VOICE_UNREADABLE_TEXT = {
+    "ar": "لم أتمكن من سماع الرسالة الصوتية بوضوح — أرسلها مرة أخرى أو اكتب سؤالك.",
+    "en": "I couldn't hear that voice note clearly — could you send it again or type your question?",
+}
+
+
+async def _transcribe_voice_note(
+    *,
+    media_id: str,
+    token: str | None,
+    wamid: str,
+) -> tuple[str, int]:
+    """Download and transcribe one WhatsApp voice note.
+
+    Returns (text, duration_ms); "" when unreadable. Transcription is inline
+    because the reply pipeline is inline: making the audio a job would move
+    the ASR to the bulk lane but leave nobody to send the answer.
+    ``allow_local_fallback=False`` keeps the API process from loading a
+    Whisper model into a container sized for web traffic — the admin's hosted
+    engine is the path, and an honest "couldn't hear that" beats an OOM that
+    drops every conversation in flight.
+    """
+    import time
+
+    from ...stt.provider import transcribe_bytes
+    from .media import MediaDownloadError, download_whatsapp_media
+
+    if not token:
+        logger.info("Voice note skipped (no access token) wamid=%s", wamid[:32])
+        return "", 0
+    started = time.perf_counter()
+    try:
+        audio, mime = await download_whatsapp_media(media_id, token)
+    except MediaDownloadError as e:
+        logger.warning("Voice note download failed wamid=%s: %s", wamid[:32], e)
+        return "", 0
+    try:
+        result = await transcribe_bytes(
+            audio,
+            filename="voice.ogg",
+            content_type=mime,
+            language=None,
+            allow_local_fallback=False,
+        )
+    except Exception as e:  # noqa: BLE001 - the caller sends the fallback line
+        logger.warning(
+            "Voice note transcription failed wamid=%s: %s: %s",
+            wamid[:32], type(e).__name__, str(e)[:200],
+        )
+        return "", 0
+    text = (result.get("text") or "").strip()
+    duration_ms = int(result.get("duration_ms") or 0)
+    logger.info(
+        "Voice note transcribed wamid=%s lang=%s chars=%d bytes=%d latency_ms=%d",
+        wamid[:32], result.get("language") or "auto", len(text), len(audio),
+        int((time.perf_counter() - started) * 1000),
+    )
+    return text, duration_ms
+
+
+async def _meter_asr(tenant_id: str, duration_ms: int, wamid: str) -> None:
+    """Charge the hosted minutes for one voice note. Never raises.
+
+    Post-paid: the provider call already happened. A 0 rate (the default)
+    means voice is not billed, so this exits immediately.
+    """
+    if duration_ms <= 0:
+        return
+    try:
+        from ...billing import pricing
+
+        await pricing.ensure_fresh()
+        cents = pricing.asr_cost_cents(duration_ms)
+        if cents <= 0:
+            return
+        charged = await pricing.charge_voice(
+            tenant_id,
+            cents,
+            purpose=f"voice note {duration_ms}ms",
+            idempotency_key=f"asr:wa:{wamid[:120]}",
+        )
+        if charged:
+            logger.info(
+                "Voice note billed %d cents tenant=%s wamid=%s",
+                charged, tenant_id, wamid[:32],
+            )
+    except Exception as e:  # noqa: BLE001 - billing never costs the reply
+        logger.warning("Voice note metering failed wamid=%s: %s", wamid[:32], e)
+
+
+async def _reply_voice_note_unreadable(
+    db,
+    adapter,
+    phone_number_id: str,
+    token: str,
+    from_wa: str,
+    channel_id: str,
+    tenant_id: str,
+    language: str | None,
+) -> None:
+    """Tell the customer we could not hear the note, and stop."""
+    from ..models import ChannelMessage
+
+    text = VOICE_UNREADABLE_TEXT["ar" if (language or "").lower().startswith("ar") else "en"]
+    try:
+        provider_id = await adapter.send_text_message(
+            phone_number_id, token, from_wa, text
+        )
+    except Exception as e:  # noqa: BLE001 - the note is already stored
+        logger.warning("Voice unreadable reply failed from=+%s: %s", from_wa[-6:], e)
+        return
+    row = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        platform_message_id=(provider_id or "")[:200] or None,
+        direction="outbound",
+        content=encrypt_message_content(text),
+        content_type="text",
+        status="sent",
+        contact_phone=encrypt_contact_phone(from_wa or None),
+        contact_phone_hash=hash_contact_phone(from_wa or None),
+        is_ai=False,
+        handled_by="system",
+    )
+    db.add(row)
+    await db.commit()
+    await _publish_inbound_row_text(db, tenant_id, channel_id, row, from_wa)
+
+
+async def _publish_inbound_row_text(db, tenant_id: str, channel_id: str, row, contact: str) -> None:
+    """Publish an outbound system line (same shape as the AI replies)."""
+    from ...channels.realtime import publish_inbox_event
+
+    await publish_inbox_event(tenant_id, {
+        "type": "message",
+        "id": row.id,
+        "channel_id": channel_id,
+        "platform": "whatsapp",
+        "direction": "outbound",
+        "content": decrypt_message_content(row.content),
+        "content_type": row.content_type,
+        "status": row.status,
+        "contact_phone": contact,
+        "created_at": row.created_at,
+    })
+
+
+async def _persist_system_outbound(
+    db,
+    *,
+    channel_id: str,
+    tenant_id: str,
+    contact: str,
+    provider_msg_id: str | None,
+    text: str,
+    content_type: str,
+):
+    """Store a system-authored outbound line and push it to the inbox."""
+    from ..models import ChannelMessage
+
+    row = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        platform_message_id=(provider_msg_id or "")[:200] or None,
+        direction="outbound",
+        content=encrypt_message_content(text),
+        content_type=content_type,
+        status="sent",
+        contact_phone=encrypt_contact_phone(contact or None),
+        contact_phone_hash=hash_contact_phone(contact) if contact else None,
+        is_ai=False,
+        handled_by="system",
+    )
+    db.add(row)
+    await db.commit()
+    await _publish_inbound_row_text(db, tenant_id, channel_id, row, contact)
+    return row
+
+
+async def _send_language_prompt(
+    db,
+    adapter,
+    *,
+    channel_id: str,
+    tenant_id: str,
+    phone_number_id: str,
+    token: str,
+    contact: str,
+) -> None:
+    """First-contact language picker. Falls back to plain text if rejected."""
+    from .language_gate import LANGUAGE_OPTIONS, PROMPT_BODY
+
+    labels = [label for label, _code in LANGUAGE_OPTIONS]
+    content_type = "interactive"
+    try:
+        provider_id = await adapter.send_interactive_buttons(
+            phone_number_id, token, contact, PROMPT_BODY, labels
+        )
+    except Exception as e:  # noqa: BLE001 - buttons are nice, text still works
+        logger.warning(
+            "Language prompt buttons rejected from=+%s: %s — sending text",
+            contact[-6:], str(e)[:160],
+        )
+        try:
+            provider_id = await adapter.send_text_message(
+                phone_number_id, token, contact, PROMPT_BODY
+            )
+            content_type = "text"
+        except Exception as send_error:  # noqa: BLE001 - next message retries
+            logger.error(
+                "Language prompt failed from=+%s: %s",
+                contact[-6:], str(send_error)[:200],
+            )
+            return
+    await _persist_system_outbound(
+        db,
+        channel_id=channel_id,
+        tenant_id=tenant_id,
+        contact=contact,
+        provider_msg_id=provider_id,
+        text=PROMPT_BODY,
+        content_type=content_type,
+    )
+    logger.info("Language prompt sent to=+%s channel=%s", contact[-6:], channel_id[:8])
+
+
+async def _send_language_confirmation(
+    db, adapter, *, channel_id: str, tenant_id: str, phone_number_id: str,
+    token: str, contact: str, language: str,
+) -> None:
+    from .language_gate import CONFIRMATION
+
+    text = CONFIRMATION.get(language) or CONFIRMATION["en"]
+    try:
+        provider_id = await adapter.send_text_message(
+            phone_number_id, token, contact, text
+        )
+    except Exception as e:  # noqa: BLE001 - the choice is already stored
+        logger.warning(
+            "Language confirmation failed from=+%s: %s", contact[-6:], str(e)[:200]
+        )
+        return
+    await _persist_system_outbound(
+        db,
+        channel_id=channel_id,
+        tenant_id=tenant_id,
+        contact=contact,
+        provider_msg_id=provider_id,
+        text=text,
+        content_type="text",
+    )
+
+
 async def _handle_message_received(event: dict, data: dict) -> None:
     """Persist the inbound message, then AI-reply + send when possible."""
     from ..models import ChannelMessage
@@ -823,6 +1164,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             message_id=wamid[:200] or None,
             inbound_text=text,
             occurred_at=row.created_at,
+            require_intent=True,
         )
 
         # Instagram -> WhatsApp bridge. The first inbound from a number that
@@ -859,38 +1201,19 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             )
             return
 
-        # Escalation counter. The customer has just written again, so if the
-        # previous voice in this thread was the AI, this is another miss. May
-        # promote the lead to 'important' and email a human; see
-        # lead_escalation.py. Never raises.
-        from .lead_escalation import update_escalation_state
-
-        try:
-            await update_escalation_state(db, inbound_lead)
-            await db.commit()
-        except Exception as e:
-            logger.warning("escalation update failed wamid=%s: %s", wamid[:32], e)
-
-        from ...channels.realtime import publish_inbox_event
-
-        await publish_inbox_event(tenant_id, {
-            "type": "message",
-            "id": row.id,
-            "channel_id": channel.id,
-            "platform": "whatsapp",
-            "direction": "inbound",
-            "content": decrypt_message_content(row.content),
-            "content_type": row.content_type,
-            "status": row.status,
-            "contact_phone": decrypt_contact_phone(row.contact_phone),
-            "contact_name": row.contact_name,
-            "created_at": row.created_at,
-        })
-
-        await _publish_message_notification(db, tenant_id, row, "whatsapp")
+        # Escalation is evaluated AFTER the thread classifier below: the
+        # counter only moves when the customer came back confused, so the
+        # signal has to exist first.
+        #
+        # A voice note is published after transcription instead, so the inbox
+        # shows what the customer actually said rather than "[audio message]".
+        if msg_type not in ("audio", "voice"):
+            await _publish_inbound_row(db, tenant_id, channel.id, row)
 
         token = decrypt_connection_token(asset.connection) if asset.connection else None
         if not token:
+            if msg_type in ("audio", "voice"):
+                await _publish_inbound_row(db, tenant_id, channel.id, row)
             logger.info(
                 "WhatsApp AI reply skipped (no access token on connection %s) "
                 "wamid=%s from=+%s", connection_id, wamid[:32], from_wa[-6:],
@@ -900,12 +1223,17 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         # tenant re-selects the asset) but the AI must not speak for a page
         # or number the tenant turned off.
         if not asset.active:
+            if msg_type in ("audio", "voice"):
+                await _publish_inbound_row(db, tenant_id, channel.id, row)
             logger.info(
                 "WhatsApp AI reply skipped (asset deselected) wamid=%s",
                 wamid[:32],
             )
             return
-        if not text or msg_type != "text":
+        # Voice notes pass through untranscribed here: the download needs the
+        # token and must not happen for a stale event, so it runs below. Every
+        # other non-text type is stored and not answered.
+        if msg_type not in ("audio", "voice") and (not text or msg_type != "text"):
             logger.info(
                 "WhatsApp AI reply skipped for non-text message type=%s wamid=%s",
                 msg_type, wamid[:32],
@@ -923,12 +1251,47 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 int(age.total_seconds() // 60), wamid[:32], from_wa[-6:],
             )
             _report_stale_skip("whatsapp", wamid, from_wa, age)
+            # Voice notes deferred their publish until transcription; a stale
+            # one is never transcribed, so publish the stored row as-is.
+            if msg_type in ("audio", "voice"):
+                await _publish_inbound_row(db, tenant_id, channel.id, row)
             return
 
         # get_adapter returns a process-level singleton shared with the HTTP
         # routers — used in place, never closed (its httpx client lives as
         # long as the app).
         adapter = get_adapter("whatsapp")
+
+        # Voice notes become text here, once, so every downstream feature —
+        # lead capture, escalation, the prompt, voice replies — behaves
+        # exactly as it does for a typed message. A note we cannot transcribe
+        # is answered honestly and never fed to the model as a placeholder.
+        voice_unreadable = False
+        if msg_type in ("audio", "voice"):
+            media_id = str((data.get("media") or {}).get("id") or "")
+            transcript, voice_duration_ms = (
+                await _transcribe_voice_note(
+                    media_id=media_id,
+                    token=token,
+                    wamid=wamid,
+                )
+                if media_id
+                else ("", 0)
+            )
+            if transcript:
+                text = transcript
+                msg_type = "text"
+                row.content = encrypt_message_content(text)
+                row.category, row.priority = _categorize(text)
+                await db.commit()
+                await _meter_asr(tenant_id, voice_duration_ms, wamid)
+            else:
+                voice_unreadable = True
+                logger.info(
+                    "WhatsApp voice note unreadable wamid=%s from=+%s",
+                    wamid[:32], from_wa[-6:],
+                )
+            await _publish_inbound_row(db, tenant_id, channel.id, row)
 
         # Conversation mode is checked before the typing indicator: showing
         # "typing…" and then never replying is worse than staying quiet, and a
@@ -945,10 +1308,11 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 inbound_lead is not None
                 and (inbound_lead.priority or "normal") == "important"
             ):
-                from .lead_escalation import escalate_to_human
+                from .lead_escalation import detect_urgency, escalate_to_human
 
                 await escalate_to_human(
-                    db, inbound_lead, adapter, phone_number_id, token
+                    db, inbound_lead, adapter, phone_number_id, token,
+                    urgent=detect_urgency(text),
                 )
                 await db.commit()
             logger.info(
@@ -963,6 +1327,50 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 channel_id=channel.id,
                 contact_phone=from_wa,
                 reason="human_message",
+            )
+            return
+
+        # Language gate: a brand-new conversation opens with three buttons
+        # (English / العربية / اردو) and the chosen language is then locked in
+        # for text and voice. A tap arrives as ordinary text, so detection is
+        # by label/alias. The prompt is sent once: any outbound row (this one
+        # included) means the conversation has started.
+        from .language_gate import language_from_label, prompt_once
+        from .thread_state import get_thread_state, set_preferred_language
+
+        state = await get_thread_state(db, channel.id, from_wa)
+        preferred_language = getattr(state, "preferred_language", None)
+        if not preferred_language:
+            picked = language_from_label(text)
+            if picked:
+                await set_preferred_language(db, channel.id, from_wa, picked)
+                await db.commit()
+                preferred_language = picked
+                logger.info(
+                    "Language chosen lang=%s from=+%s wamid=%s",
+                    picked, from_wa[-6:], wamid[:32],
+                )
+                await _send_language_confirmation(
+                    db, adapter, channel_id=channel.id, tenant_id=tenant_id,
+                    phone_number_id=phone_number_id, token=token,
+                    contact=from_wa, language=picked,
+                )
+                return
+            if await prompt_once(db, channel.id, from_wa):
+                await _send_language_prompt(
+                    db, adapter, channel_id=channel.id, tenant_id=tenant_id,
+                    phone_number_id=phone_number_id, token=token,
+                    contact=from_wa,
+                )
+                return
+
+        # A note we could not transcribe gets one honest line, then the thread
+        # waits for the customer. A person in the thread already returned
+        # above, so this only fires when the AI owns the conversation.
+        if voice_unreadable:
+            await _reply_voice_note_unreadable(
+                db, adapter, phone_number_id, token, from_wa, channel.id,
+                tenant_id, preferred_language or getattr(state, "language", None),
             )
             return
 
@@ -994,6 +1402,10 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         stats = await classify_thread(db, channel.id, from_wa)
         await apply_classification(db, channel.id, from_wa, stats)
         await db.commit()
+        # A chosen language outranks the classifier: the customer picked it
+        # explicitly, and the voice-note path reads this value.
+        if preferred_language:
+            stats["language"] = preferred_language
         # Rollout diagnosis: makes "why did/didn't voice fire?" answerable
         # from the logs alone (tier, and what the classifier decided).
         logger.info(
@@ -1001,6 +1413,28 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             "awaiting=%s", wamid[:32], stats.get("language"),
             stats.get("confused"), stats.get("awaiting_user"),
         )
+
+        # Escalation. Two independent triggers, both in lead_escalation.py:
+        #   * urgency — the customer said it cannot wait, escalate now;
+        #   * confusion counter — only if the tenant opted in (threshold > 0).
+        # A normal follow-up question is neither, so a healthy thread keeps
+        # being answered by the AI instead of being muted after three turns.
+        from .lead_escalation import detect_urgency, update_escalation_state
+
+        urgent = detect_urgency(text)
+        if inbound_lead is not None:
+            try:
+                await update_escalation_state(
+                    db,
+                    inbound_lead,
+                    confused=bool(stats.get("confused")),
+                    urgent=urgent,
+                )
+                await db.commit()
+            except Exception as e:
+                logger.warning(
+                    "escalation update failed wamid=%s: %s", wamid[:32], e
+                )
 
         # Escalation and the review handoff both decide whether the AI may
         # speak. Order matters twice over:
@@ -1142,7 +1576,8 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         # and a matched handoff code already resumed and re-moded the thread.
         if inbound_lead is not None and not should_ai_reply(inbound_lead):
             await escalate_to_human(
-                db, inbound_lead, adapter, phone_number_id, token
+                db, inbound_lead, adapter, phone_number_id, token,
+                urgent=detect_urgency(text),
             )
             await db.commit()
             logger.info(
@@ -1189,6 +1624,13 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         from ...catalog.service import split_catalog_request
 
         reply, send_item_id = split_catalog_request(reply)
+
+        # A CHOICES line becomes tappable reply buttons on WhatsApp. Parsed
+        # here, once: the directive must never reach the customer as text, and
+        # an invalid one is dropped rather than eating the reply.
+        from .interactive import split_choices
+
+        reply, choices = split_choices(reply)
 
         if not reply:
             logger.warning(
@@ -1312,6 +1754,14 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     "as text", voice_tier, stats.get("language"),
                 )
 
+        # A voice note cannot carry buttons; never append the labels as text.
+        if choices and voice_sent:
+            logger.info(
+                "WhatsApp CHOICES dropped: reply sent as a voice note wamid=%s",
+                wamid[:32],
+            )
+            choices = []
+
         messages: list[str] = []
         if not voice_sent:
             # Tenant response style decides text delivery — one message, or
@@ -1328,36 +1778,63 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 return
 
             for index, part in enumerate(messages):
+                is_last = index == len(messages) - 1
+                use_buttons = bool(choices) and is_last
                 try:
-                    provider_msg_id = await adapter.send_text_message(
-                        phone_number_id, token, from_wa, part
-                    )
-                except MetaAPIError as e:
-                    logger.error(
-                        "WhatsApp send failed from=+%s: %s %s",
-                        from_wa[-6:], e.status_code, str(e)[:200],
-                    )
-                    db.add(
-                        ChannelMessage(
-                            id=str(uuid.uuid4()),
-                            channel_id=channel.id,
-                            direction="outbound",
-                            content=encrypt_message_content(part),
-                            status="failed",
-                            error=str(e)[:500],
-                            contact_phone=encrypt_contact_phone(from_wa or None),
-                            contact_phone_hash=hash_contact_phone(from_wa or None),
+                    if use_buttons:
+                        provider_msg_id = await adapter.send_interactive_buttons(
+                            phone_number_id, token, from_wa, part, choices
                         )
-                    )
-                    await db.commit()
-                    # Later parts would land without their context — stop.
-                    return
+                    else:
+                        provider_msg_id = await adapter.send_text_message(
+                            phone_number_id, token, from_wa, part
+                        )
+                except (MetaAPIError, ValueError) as e:
+                    # A rejected interactive payload must not cost the
+                    # customer the reply: fall back to plain text once.
+                    if use_buttons:
+                        logger.warning(
+                            "WhatsApp interactive send rejected from=+%s: %s — "
+                            "falling back to text", from_wa[-6:], str(e)[:160],
+                        )
+                        try:
+                            provider_msg_id = await adapter.send_text_message(
+                                phone_number_id, token, from_wa, part
+                            )
+                        except MetaAPIError as fallback_error:
+                            e = fallback_error
+                        else:
+                            use_buttons = False
+                            e = None
+                    if e is not None:
+                        logger.error(
+                            "WhatsApp send failed from=+%s: %s %s",
+                            from_wa[-6:], getattr(e, "status_code", ""),
+                            str(e)[:200],
+                        )
+                        db.add(
+                            ChannelMessage(
+                                id=str(uuid.uuid4()),
+                                channel_id=channel.id,
+                                direction="outbound",
+                                content=encrypt_message_content(part),
+                                status="failed",
+                                error=str(e)[:500],
+                                contact_phone=encrypt_contact_phone(from_wa or None),
+                                contact_phone_hash=hash_contact_phone(from_wa or None),
+                            )
+                        )
+                        await db.commit()
+                        # Later parts would land without their context — stop.
+                        return
+                content_type = "interactive" if use_buttons else "text"
                 row = ChannelMessage(
                         id=str(uuid.uuid4()),
                         channel_id=channel.id,
                         platform_message_id=provider_msg_id[:200] or None,
                         direction="outbound",
                         content=encrypt_message_content(part),
+                        content_type=content_type,
                         status="sent",
                         contact_phone=encrypt_contact_phone(from_wa or None),
                         contact_phone_hash=hash_contact_phone(from_wa or None),
@@ -1375,7 +1852,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     "platform": "whatsapp",
                     "direction": "outbound",
                     "content": decrypt_message_content(row.content),
-                    "content_type": "text",
+                    "content_type": content_type,
                     "status": "sent",
                     "contact_phone": decrypt_contact_phone(row.contact_phone),
                     "created_at": row.created_at,
@@ -1408,6 +1885,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             message_id=wamid[:200] or None,
             inbound_text=text,
             delta=lead_delta,
+            require_intent=True,
         )
         if lead is not None:
             final_text = reply if voice_sent else messages[-1]
@@ -1422,6 +1900,19 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                     question=final_text,
                     settings=lead_settings,
                 )
+
+            # The LEAD line extracted from the reply can be the first proof
+            # this is a lead. When the message was also urgent, page the team
+            # now rather than waiting for the customer to write again.
+            if detect_urgency(text) and (lead.priority or "normal") != "important":
+                try:
+                    await update_escalation_state(db, lead, urgent=True)
+                    await db.commit()
+                except Exception as e:  # noqa: BLE001 - the reply already went out
+                    logger.warning(
+                        "post-reply urgency escalation failed lead=%s: %s",
+                        lead.id, e,
+                    )
 
         logger.info(
             "WhatsApp AI reply sent to=+%s wamid=%s provider_msg=%s parts=%d%s",
@@ -2109,6 +2600,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             message_id=mid[:200] or None,
             inbound_text=text,
             occurred_at=row.created_at,
+            require_intent=True,
         )
 
         # Same conversation mode as WhatsApp: a human who took the thread over
@@ -2322,6 +2814,7 @@ async def _handle_instagram_message(event: dict, data: dict) -> None:
             message_id=mid[:200] or None,
             inbound_text=text,
             delta=lead_delta,
+            require_intent=True,
         )
         if lead is not None and is_open_question(messages[-1]):
             await schedule_followup(

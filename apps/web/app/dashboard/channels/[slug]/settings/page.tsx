@@ -116,10 +116,6 @@ export default function ChannelSettingsPage() {
 
   const [selectedAgent, setSelectedAgent] = useState<string>(channel?.connected ? "support-bot" : "");
   const [autoReply, setAutoReply] = useState(true);
-  const [workingHours, setWorkingHours] = useState(true);
-  const [workingStart, setWorkingStart] = useState("09:00");
-  const [workingEnd, setWorkingEnd] = useState("17:00");
-  const [offlineMsg, setOfflineMsg] = useState("We're currently offline. Leave a message and we'll get back to you!");
 
   // Response style and typing indicator are real tenant-level settings
   // (per account, applying to every reply) — the rest of this page is still
@@ -355,54 +351,8 @@ export default function ChannelSettingsPage() {
             <div className="space-y-3">
               <Toggle label="Auto-Reply" desc="Automatically respond to incoming messages" checked={autoReply} onChange={() => setAutoReply(!autoReply)} />
               <Toggle label="Typing Indicator" desc='Show "typing..." while the agent processes' checked={typingIndicator} disabled={typingStatus === "saving"} onChange={() => toggleTypingIndicator(!typingIndicator)} />
-              <Toggle label="Working Hours" desc="Only respond during business hours" checked={workingHours} onChange={() => setWorkingHours(!workingHours)} />
             </div>
           </section>
-
-          {/* ── Working Hours (conditional) ── */}
-          {workingHours && (
-            <>
-              <div className="border-t border-deep-violet/10" />
-              <section>
-                <h2 className="mb-1 text-[15px] font-bold text-ink">Business Hours</h2>
-                <p className="mb-4 text-[13px] text-ink/60">Set when the agent is available.</p>
-                <div className="rounded-xl border-2 border-white bg-white/80 p-4 sm:p-5">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
-                    <div className="flex-1 w-full sm:w-auto">
-                      <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">Start</label>
-                      <input
-                        type="time"
-                        value={workingStart}
-                        onChange={(e) => setWorkingStart(e.target.value)}
-                        className="w-full rounded-xl border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
-                      />
-                    </div>
-                    <span className="mt-5 hidden sm:block text-ink/25">&rarr;</span>
-                    <span className="mt-1 sm:mt-5 text-ink/25 sm:hidden">&darr;</span>
-                    <div className="flex-1 w-full sm:w-auto">
-                      <label className="mb-1.5 block text-[11px] font-semibold text-ink/50">End</label>
-                      <input
-                        type="time"
-                        value={workingEnd}
-                        onChange={(e) => setWorkingEnd(e.target.value)}
-                        className="w-full rounded-xl border-2 border-white bg-white px-4 py-2.5 text-[13px] text-ink outline-none focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-4">
-                    <label className="mb-2 block text-[12px] font-semibold text-ink">Offline Message</label>
-                    <textarea
-                      value={offlineMsg}
-                      onChange={(e) => setOfflineMsg(e.target.value)}
-                      rows={3}
-                      placeholder="Message shown outside working hours..."
-                      className="w-full rounded-xl border-2 border-white bg-white px-4 py-3 text-[13px] text-ink outline-none transition placeholder:text-ink/35 focus:border-deep-violet/40 focus:ring-2 focus:ring-deep-violet/10"
-                    />
-                  </div>
-                </div>
-              </section>
-            </>
-          )}
 
           {/* ── Divider ── */}
           <div className="border-t border-deep-violet/10" />

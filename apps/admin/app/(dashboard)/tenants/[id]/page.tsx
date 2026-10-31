@@ -3,7 +3,17 @@
 import Link from "next/link";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { adminFetch, type AdminTenantDetail } from "@/lib/admin-api";
-import { fetchTenantBilling, reconcileWallet, type TenantBilling, type WalletReconcileResult } from "@/lib/billing-api";
+import {
+  fetchPlanFeatures,
+  fetchTenantBilling,
+  fetchTenantEntitlements,
+  reconcileWallet,
+  saveTenantFeatures,
+  type PlanFeatureSpec,
+  type TenantBilling,
+  type TenantEntitlements,
+  type WalletReconcileResult,
+} from "@/lib/billing-api";
 
 type Review = AdminTenantDetail["recent_reviews"][number];
 
@@ -122,6 +132,16 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const [reconcileResult, setReconcileResult] = useState<WalletReconcileResult | null>(null);
   const [reconcileError, setReconcileError] = useState<string | null>(null);
 
+  // Plan + per-tenant feature overrides
+  const [ent, setEnt] = useState<TenantEntitlements | null>(null);
+  const [entLoading, setEntLoading] = useState(true);
+  const [entError, setEntError] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState<PlanFeatureSpec[]>([]);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [draft, setDraft] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     adminFetch<AdminTenantDetail>(`/api/v1/admin/tenants/${encodeURIComponent(id)}`)
@@ -199,6 +219,78 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
       .finally(() => setBillingLoading(false));
   }, [id]);
 
+  // Plan + per-tenant overrides for this tenant.
+  const loadEntitlements = useCallback(() => {
+    setEntLoading(true);
+    setEntError(null);
+    fetchTenantEntitlements(id)
+      .then((e) => { setEnt(e); })
+      .catch((e) => { setEntError(e instanceof Error ? e.message : "Plan load failed."); })
+      .finally(() => setEntLoading(false));
+  }, [id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setEntLoading(true);
+    setEntError(null);
+    fetchTenantEntitlements(id)
+      .then((e) => { if (!cancelled) { setEnt(e); setEntLoading(false); } })
+      .catch((e) => { if (!cancelled) { setEntError(e instanceof Error ? e.message : "Plan load failed."); setEntLoading(false); } });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  // The feature catalog is static — fetch it the first time the modal opens.
+  useEffect(() => {
+    if (!planOpen || catalog.length > 0) return;
+    let cancelled = false;
+    fetchPlanFeatures()
+      .then((rows) => { if (!cancelled) setCatalog(rows); })
+      .catch((e) => { if (!cancelled) setSaveError(e instanceof Error ? e.message : "Feature catalog load failed."); });
+    return () => { cancelled = true; };
+  }, [planOpen, catalog.length]);
+
+  useEffect(() => {
+    if (!planOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPlanOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [planOpen]);
+
+  const openPlan = useCallback(() => {
+    setSaveError(null);
+    setDraft({ ...(ent?.features_override ?? {}) });
+    setPlanOpen(true);
+  }, [ent]);
+
+  /**
+   * A key is only stored when it differs from the plan baseline. An override
+   * equal to the plan would change nothing yet still put the tenant on the
+   * Special list, so we drop it and let the tenant inherit again.
+   */
+  const setFeature = useCallback((key: string, planDefault: boolean, next: boolean) => {
+    setDraft((prev) => {
+      const out = { ...prev };
+      if (next === planDefault) delete out[key];
+      else out[key] = next;
+      return out;
+    });
+  }, []);
+
+  const savePlan = useCallback(async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await saveTenantFeatures(id, draft);
+      const fresh = await fetchTenantEntitlements(id);
+      setEnt(fresh);
+      setPlanOpen(false);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  }, [id, draft]);
+
   const runReconcile = useCallback(async () => {
     setReconciling(true);
     setReconcileError(null);
@@ -233,6 +325,8 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [selected]);
+
+  const overrideCount = Object.keys(ent?.features_override ?? {}).length;
 
   // usage momentum, derived outside render
   const growth = useMemo(() => {
@@ -585,20 +679,43 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
           </div>
         ) : billing ? (
           <>
-            <dl className="mt-4 grid gap-2.5 sm:grid-cols-4">
+            <div className="mt-4 grid gap-2.5 sm:grid-cols-4">
               {[
                 { label: "Available", value: fmtCents(billing.balance_cents), note: billing.status === "debt" ? "In debt — top up required" : billing.status === "empty" ? "No credit left" : billing.status === "low" ? "Running low" : "Ready to spend", tone: billing.balance_cents < 0 ? "text-red-600" : "text-ink" },
                 { label: "Held in flight", value: billing.held_cents > 0 ? fmtCents(billing.held_cents) : "—", note: `${billing.holds.length} pending hold${billing.holds.length === 1 ? "" : "s"}`, tone: "text-deep-violet" },
                 { label: "Total committed", value: fmtCents(billing.total_cents), note: "Available + held", tone: "text-ink" },
-                { label: "Plan", value: billing.plan, note: billing.email, tone: "text-ink" },
               ].map((c) => (
                 <div key={c.label} className="rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3">
-                  <dt className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</dt>
-                  <dd className={`mt-1 text-[18px] font-bold leading-none tabular-nums ${c.tone}`}>{c.value}</dd>
-                  <dd className="mt-1 text-[11px] text-ink/45">{c.note}</dd>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">{c.label}</p>
+                  <p className={`mt-1 text-[18px] font-bold leading-none tabular-nums ${c.tone}`}>{c.value}</p>
+                  <p className="mt-1 text-[11px] text-ink/45">{c.note}</p>
                 </div>
               ))}
-            </dl>
+              {/* Plan card — opens the per-tenant feature override modal. */}
+              <button
+                type="button"
+                onClick={() => { if (ent) openPlan(); else loadEntitlements(); }}
+                disabled={entLoading}
+                aria-haspopup={ent ? "dialog" : undefined}
+                aria-label={ent ? "Manage plan features for this tenant" : "Retry loading plan features"}
+                className={`group rounded-[2px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-3.5 py-3 text-left transition hover:border-deep-violet disabled:cursor-not-allowed disabled:opacity-60 ${FOCUS_RING}`}
+              >
+                <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-ink/40">Plan</span>
+                <span className={`mt-1 block text-[18px] font-bold leading-none tabular-nums text-ink ${entError ? "!text-[12px] font-semibold text-amber-700" : ""}`}>
+                  {entLoading ? "…" : ent ? ent.plan_name : "Unavailable"}
+                </span>
+                <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink/45">
+                  {ent && overrideCount > 0 ? (
+                    <span className="rounded-full bg-deep-violet/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-deep-violet">
+                      {overrideCount} override{overrideCount === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                  <span className="transition group-hover:text-deep-violet">
+                    {entError ? "Retry" : "Manage features →"}
+                  </span>
+                </span>
+              </button>
+            </div>
 
             {/* reconcile */}
             <div className="mt-4 rounded-[2px] border border-[var(--ui-line)] bg-ink/[0.02] p-3.5">
@@ -829,6 +946,132 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
           </dl>
         </section>
       </div>
+
+      {/* ── plan features modal ──────────────────────────── */}
+      {planOpen && ent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Close feature settings"
+            onClick={() => setPlanOpen(false)}
+            className={`absolute inset-0 bg-ink/40 ${FOCUS_RING}`}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="plan-modal-title"
+            className="panel relative flex max-h-[85vh] w-full max-w-[620px] flex-col overflow-hidden"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--ui-line)] px-5 py-4">
+              <div>
+                <h2 id="plan-modal-title" className="text-[13px] font-bold text-ink">Plan features</h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-ink/50">
+                  Baseline: <span className="font-semibold text-ink/70">{ent.plan_name}</span>. A tick here applies to this
+                  tenant only — the plan stays untouched for everybody else.
+                </p>
+              </div>
+              <button
+                onClick={() => setPlanOpen(false)}
+                className={`shrink-0 rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-1.5 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet ${FOCUS_RING}`}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+              {catalog.length === 0 ? (
+                <div className="grid gap-2" aria-hidden aria-label="Loading features">
+                  {[1, 2, 3, 4].map((i) => <div key={i} className="h-12 animate-pulse rounded-[2px] bg-ink/[0.04]" />)}
+                </div>
+              ) : (
+                <ul className="grid gap-2">
+                  {catalog.map((f) => {
+                    const hasOverride = Object.prototype.hasOwnProperty.call(draft, f.key);
+                    const planValue = ent.plan_features[f.key] ?? f.default;
+                    const value = hasOverride ? draft[f.key] : planValue;
+                    return (
+                      <li
+                        key={f.key}
+                        className={`rounded-[2px] border px-3.5 py-3 transition ${
+                          hasOverride
+                            ? "border-deep-violet/40 bg-deep-violet/[0.04]"
+                            : "border-[var(--ui-line)] bg-[var(--ui-surface)]"
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <input
+                            id={`feature-${f.key}`}
+                            type="checkbox"
+                            checked={value}
+                            onChange={(e) => setFeature(f.key, planValue, e.target.checked)}
+                            className={`mt-0.5 h-4 w-4 shrink-0 rounded border-[var(--ui-line-strong)] ${FOCUS_RING}`}
+                          />
+                          <label htmlFor={`feature-${f.key}`} className="min-w-0 flex-1 cursor-pointer">
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span className="text-[12.5px] font-bold text-ink">{f.label}</span>
+                              {hasOverride ? (
+                                <span className="rounded-full bg-deep-violet px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-white">
+                                  {value ? "Forced on" : "Forced off"}
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-ink/[0.06] px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-ink/45">
+                                  Plan default
+                                </span>
+                              )}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-relaxed text-ink/45">{f.description}</span>
+                          </label>
+                          {hasOverride && (
+                            <button
+                              type="button"
+                              onClick={() => setFeature(f.key, planValue, planValue)}
+                              className={`shrink-0 rounded-[2px] px-2 py-1 text-[10.5px] font-semibold text-ink/50 underline decoration-dotted transition hover:text-deep-violet ${FOCUS_RING}`}
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            <div className="border-t border-[var(--ui-line)] px-5 py-4">
+              {saveError && (
+                <div role="alert" className="mb-3 rounded-[2px] border border-red-200 bg-red-50 px-3 py-2 text-[11px] leading-relaxed text-red-700">
+                  {saveError}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[11px] text-ink/45">
+                  {Object.keys(draft).length === 0
+                    ? "Inheriting the plan exactly — not on the Special list."
+                    : `${Object.keys(draft).length} override${Object.keys(draft).length === 1 ? "" : "s"} · appears on the Special list`}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setDraft({})}
+                    disabled={Object.keys(draft).length === 0 || saving}
+                    className={`rounded-[2px] border border-[var(--ui-line-strong)] bg-[var(--ui-surface)] px-3 py-2 text-[11px] font-semibold text-ink/60 transition hover:border-red-300 hover:text-red-600 disabled:opacity-40 ${FOCUS_RING}`}
+                  >
+                    Clear all
+                  </button>
+                  <button
+                    onClick={savePlan}
+                    disabled={saving}
+                    className={`rounded-[2px] bg-deep-violet px-4 py-2 text-[11px] font-bold text-white transition hover:bg-deep-violet/90 disabled:opacity-50 ${FOCUS_RING}`}
+                  >
+                    {saving ? "Saving…" : "Save for this tenant"}
+                  </button>
+                </div>
+              </div>
+              <p className="mt-2 text-[10.5px] text-ink/30">Click outside or press Esc to close without saving.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── review modal ─────────────────────────────────── */}
       {selected && (

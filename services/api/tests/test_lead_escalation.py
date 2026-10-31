@@ -29,7 +29,7 @@ async def _seed_lead(db, *, stage: str = "qualified", phone: str = "+15550000001
     db.add(User(
         id=uid, first_name="G", last_name="A",
         email=f"{uid}@example.com", password_hash="x",
-        lead_settings=dict(QUIET_OFF),
+        lead_settings={**QUIET_OFF, "escalation_threshold": 3},
     ))
     channel = Channel(
         id=f"gate-chan-{uuid.uuid4().hex[:8]}", user_id=uid,
@@ -108,7 +108,7 @@ async def test_counter_increments_after_ai_reply(db):
     from app.modules.channels.meta.lead_escalation import update_escalation_state
 
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=1)
-    await update_escalation_state(db, lead)
+    await update_escalation_state(db, lead, confused=True)
     await db.commit()
     assert lead.ai_miss_count == 1
     assert lead.priority == "normal"      # below threshold
@@ -121,7 +121,7 @@ async def test_counter_resets_after_human_reply(db):
     from app.modules.channels.meta.lead_escalation import update_escalation_state
 
     lead = await _seed_thread(db, last_outbound_is_ai=False, count=1)
-    await update_escalation_state(db, lead)
+    await update_escalation_state(db, lead, confused=True)
     await db.commit()
     assert lead.ai_miss_count == 0
     assert lead.priority == "normal"
@@ -133,7 +133,7 @@ async def test_first_contact_is_zero(db):
     from app.modules.channels.meta.lead_escalation import update_escalation_state
 
     lead = await _seed_thread(db, last_outbound_is_ai=None, count=1)
-    await update_escalation_state(db, lead)
+    await update_escalation_state(db, lead, confused=True)
     await db.commit()
     assert lead.ai_miss_count == 0
 
@@ -146,7 +146,7 @@ async def test_priority_escalates_at_three(db):
     lead.ai_miss_count = 2
     await db.commit()
 
-    await update_escalation_state(db, lead)
+    await update_escalation_state(db, lead, confused=True)
     await db.commit()
     assert lead.ai_miss_count == 3
     assert lead.priority == "important"
@@ -166,7 +166,7 @@ async def test_priority_deescalates_and_clears_state(db):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await update_escalation_state(db, lead)
+    await update_escalation_state(db, lead, confused=True)
     await db.commit()
     assert lead.priority == "important"
     lead.escalated_at = datetime.now(timezone.utc)
@@ -175,7 +175,7 @@ async def test_priority_deescalates_and_clears_state(db):
     await db.commit()
 
     lead.ai_miss_count = 0
-    await update_escalation_state(db, lead)
+    await update_escalation_state(db, lead, confused=True)
     await db.commit()
 
     assert lead.priority == "normal"
@@ -228,7 +228,7 @@ async def test_escalation_email_sends_once_and_arms_reminder(db, monkeypatch):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     await db.commit()
 
     assert len(sent) == 1
@@ -238,7 +238,7 @@ async def test_escalation_email_sends_once_and_arms_reminder(db, monkeypatch):
     assert "channel=" in (sent[0]["cta"] or "")
 
     # A second update at the same count must not re-send: already important.
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     await db.commit()
     assert len(sent) == 1, "must not re-send while already escalated"
 
@@ -257,7 +257,7 @@ async def test_escalation_email_failure_leaves_escalated_at_null(db, monkeypatch
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     await db.commit()
 
     assert lead.priority == "important"
@@ -368,7 +368,7 @@ async def test_handover_line_failure_still_silences_thread(db, monkeypatch):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     await db.commit()
     assert lead.priority == "important"
 
@@ -395,7 +395,7 @@ async def test_reminder_sends_once_then_stops(db, monkeypatch):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     lead.escalation_reminder_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     await db.commit()
     sent.clear()          # drop the initial escalation; count only the reminder
@@ -422,7 +422,7 @@ async def test_reminder_failure_keeps_retry(db, monkeypatch):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     lead.escalation_reminder_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     await db.commit()
 
@@ -442,7 +442,7 @@ async def test_resume_hands_thread_back_after_24h(db, monkeypatch):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=25)
     await db.commit()
     assert lead.priority == "important"
@@ -473,7 +473,7 @@ async def test_resume_breaks_the_reescalation_loop(db, monkeypatch):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=25)
     await db.commit()
     assert lead.priority == "important"
@@ -490,7 +490,7 @@ async def test_resume_breaks_the_reescalation_loop(db, monkeypatch):
         created_at=datetime.now(timezone.utc),
     ))
     await db.flush()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     await db.commit()
 
     assert lead.ai_miss_count == 1
@@ -508,7 +508,7 @@ async def test_resume_waits_until_24h(db, monkeypatch):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=23)
     await db.commit()
 
@@ -529,7 +529,7 @@ async def test_resume_fires_even_if_handover_line_never_sent(db, monkeypatch):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=25)
     lead.handover_sent_at = None
     await db.commit()
@@ -551,9 +551,9 @@ async def test_resume_skips_thread_a_human_already_answered(db, monkeypatch):
     lead = await _seed_thread(db, last_outbound_is_ai=True, count=3)
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     lead.ai_miss_count = 0
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     lead.priority_since = datetime.now(timezone.utc) - timedelta(hours=25)
     await db.commit()
 
@@ -564,12 +564,12 @@ async def test_resume_skips_thread_a_human_already_answered(db, monkeypatch):
 # ── Per-tenant configuration ────────────────────────────────────────────
 
 def test_normalizer_clamps_escalation_settings():
-    """Owner input is bounded: no paging a human on every first contact, and
-    no zero-length mute that makes the handover pointless."""
+    """Owner input is bounded: the counter is off by default (0), can be
+    re-enabled up to 10, and a zero-length mute is still refused."""
     from app.modules.channels.meta.lead_engine import normalize_lead_settings
 
     d = normalize_lead_settings(None)
-    assert d["escalation_threshold"] == 3
+    assert d["escalation_threshold"] == 0
     assert d["escalation_resume_hours"] == 24
     assert d["escalation_reminder_hours"] == 4
     assert d["escalation_emails"] == []
@@ -581,6 +581,9 @@ def test_normalizer_clamps_escalation_settings():
         "escalation_emails": [" A@X.com ", "a@x.com", 5, ""],
     })
     assert c["escalation_threshold"] == 10
+    assert normalize_lead_settings({"escalation_threshold": -4})[
+        "escalation_threshold"
+    ] == 0
     assert c["escalation_resume_hours"] == 1
     assert c["escalation_reminder_hours"] == 4      # junk -> default
     assert c["escalation_emails"] == ["a@x.com"]   # normalised + de-duped
@@ -603,7 +606,7 @@ async def test_tenant_threshold_is_honoured(db, monkeypatch):
 
     lead.ai_miss_count = 1
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     await db.commit()
 
     assert lead.ai_miss_count == 2
@@ -627,7 +630,7 @@ async def test_tenant_resume_window_is_honoured(db, monkeypatch):
 
     lead.ai_miss_count = 2
     await db.commit()
-    await lead_escalation.update_escalation_state(db, lead)
+    await lead_escalation.update_escalation_state(db, lead, confused=True)
     assert lead.priority == "important"
 
     # 25h in: past the 24h default, well inside this tenant's 48h.

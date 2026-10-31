@@ -13,7 +13,6 @@ charge; it exists for dashboard compatibility and cheap reads. Keys have no
 TTL (the previous 24h TTL was the original wallet-loss bug).
 """
 import logging
-import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -31,7 +30,11 @@ PLAN_INCLUDED_CENTS = {"free": 0, "pro": 2000}
 
 # Conservative USD cents per 1M tokens: (prompt, completion), keyed by the
 # model-id family prefix (the part before ":"). Deliberately above list
-# price — headroom for price moves plus margin; admin tunes per model later.
+# price — headroom for price moves plus margin.
+#
+# DEPRECATED: the effective rate card is ``billing.pricing`` (admin-editable).
+# This dict is kept so existing imports and the dashboard's historical
+# estimate still resolve; new code must use pricing.rate().
 TOKEN_PRICES: dict[str, tuple[float, float]] = {
     "groq": (15.0, 60.0),
     "openai": (150.0, 600.0),
@@ -79,18 +82,17 @@ def _key(tenant_id: str) -> str:
     return f"ai_balance:{tenant_id}"
 
 
-def _family(model_id: str | None) -> str:
-    if model_id and ":" in model_id:
-        return model_id.split(":", 1)[0].lower()
-    return "unknown"
-
-
 def cost_cents(model_id: str | None, prompt_tokens: int, completion_tokens: int) -> int:
-    """Real cost of a call in USD cents (rounded up, never negative)."""
-    prompt_p, completion_p = TOKEN_PRICES.get(_family(model_id), TOKEN_PRICES["unknown"])
-    total = (max(0, prompt_tokens) / 1_000_000) * prompt_p
-    total += (max(0, completion_tokens) / 1_000_000) * completion_p
-    return max(0, math.ceil(total))
+    """Real cost of a call in USD cents (rounded up, never negative).
+
+    The rate card lives in ``billing.pricing`` and is admin-editable; this
+    wrapper keeps the existing call sites (provider paths, wallet backfill)
+    unchanged. Callers in async paths should ``await pricing.ensure_fresh()``
+    first so a freshly edited rate is used on the next call.
+    """
+    from . import pricing
+
+    return pricing.llm_cost_cents(model_id, prompt_tokens, completion_tokens)
 
 
 async def get_cached_balance(tenant_id: str) -> int | None:

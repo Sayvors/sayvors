@@ -150,7 +150,6 @@ def _profile_out(
         websites=data.get("websites") or [],
         vertical=data.get("vertical"),
         profile_picture_url=data.get("profile_picture_url"),
-        hours=data.get("hours"),
         synced_at=synced_at,
         stale=stale,
     )
@@ -764,9 +763,6 @@ async def get_whatsapp_profile(
                 stale=True,
             )
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    # `hours` never comes back from Graph — keep the locally persisted copy.
-    if stored_profile.get("hours"):
-        data["hours"] = stored_profile["hours"]
     # An empty live read must never blank the editor (or wipe storage):
     # fall back to the last persisted copy.
     if not data and stored_profile:
@@ -821,7 +817,7 @@ async def update_whatsapp_profile(
     if not token:
         raise HTTPException(status_code=409, detail="Reconnect WhatsApp — the access token is missing")
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
-    hours = fields.pop("hours", None)  # not a Graph param — persist locally
+    stored_profile = (asset.asset_metadata or {}).get("business_profile") or {}
     if "vertical" in fields and fields["vertical"]:
         fields["vertical"] = _normalize_vertical(fields["vertical"])
     if "websites" in fields:
@@ -831,12 +827,10 @@ async def update_whatsapp_profile(
         data = await adapter.set_business_profile(phone_number_id, token, fields)
     except _MetaAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    stored_profile = (asset.asset_metadata or {}).get("business_profile") or {}
     # Graph acknowledged the write but the re-read came back empty — keep the
     # stored copy and overlay what we just saved instead of blanking it.
     if not data:
         data = {**stored_profile, **fields}
-    data["hours"] = hours if hours is not None else stored_profile.get("hours")
     synced_at = _persist_profile(asset, data)
     db.add(asset)
     await db.commit()
@@ -2587,8 +2581,6 @@ async def upload_profile_photo(
         data = {}
     if not data:
         data = stored_profile
-    if stored_profile.get("hours"):
-        data.setdefault("hours", stored_profile["hours"])
     synced_at = _persist_profile(asset, data)
     db.add(asset)
     await db.commit()

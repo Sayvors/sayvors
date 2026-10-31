@@ -62,7 +62,10 @@ SETTINGS_DEFAULTS = {
     # ── Escalation ────────────────────────────────────────────────────
     # Per-tenant, so an owner can tune how quickly a struggling thread is
     # pulled off the AI and how long it stays muted before being handed back.
-    "escalation_threshold": 3,
+    # 0 = never escalate on the counter. The counter only moves when the
+    # customer comes back confused, so a normal question-and-answer thread
+    # never escalates; an explicitly urgent message always does.
+    "escalation_threshold": 0,
     "escalation_resume_hours": 24,
     "escalation_reminder_hours": 4,
     # Empty = escalate to the tenant owner's own signup email.
@@ -103,9 +106,11 @@ _INT_CLAMP = {
     "max_attempts": (0, 4),
     "quiet_start_hour": (0, 23),
     "quiet_end_hour": (0, 23),
-    # Escalation floor of 1: a threshold of 0 would flag every first contact
-    # as a failure and page a human for "hello".
-    "escalation_threshold": (1, 10),
+    # Escalation floor of 0: 0 disables the confusion counter entirely, which
+    # is the default. A tenant that wants the safety net sets 1-10. The
+    # counter moved to "customer came back confused" so a healthy
+    # question-and-answer thread never trips it.
+    "escalation_threshold": (0, 10),
     # A resume window of 0 would mute the thread and hand it straight back,
     # making the handover pointless.
     "escalation_resume_hours": (1, 336),
@@ -285,8 +290,9 @@ def _extract_phone_candidate(text: str | None) -> str | None:
 
 _INTENT_RE = re.compile(
     r"\b(price|pricing|cost|how much|quote|order|buy|purchase|book|booking|"
-    r"appointment|available|availability|discount)\b|"
-    r"(سعر|أسعار|حجز|موعد|طلب|شراء|عرض سعر)",
+    r"appointment|available|availability|discount|website|web ?site|"
+    r"e-?commerce|web ?store|online store|landing page|shop|store|app)\b|"
+    r"(سعر|أسعار|حجز|موعد|طلب|شراء|عرض سعر|موقع|متجر)",
     re.IGNORECASE,
 )
 
@@ -303,6 +309,25 @@ def detect_intent(text: str | None) -> str | None:
     if not text:
         return None
     return "buying" if _INTENT_RE.search(text) else None
+
+
+# Intents that describe a person who wants something from the business. "info"
+# is deliberately absent: a question answered by the assistant ("what are your
+# hours?") is a conversation, not a lead, and putting it in the CRM fills the
+# pipeline with noise. An existing lead that later asks an info question is
+# still updated -- this only gates CREATING a new row.
+_LEAD_INTENTS = ("buying", "booking", "quote")
+
+
+def has_lead_substance(text: str | None, delta: dict | None = None) -> bool:
+    """True when this message shows someone the team should sell to."""
+    if delta:
+        intent = str(delta.get("intent") or "").strip().lower()
+        if intent in _LEAD_INTENTS:
+            return True
+        if str(delta.get("request") or "").strip():
+            return True
+    return detect_intent(text) == "buying"
 
 
 def detect_opt_out(text: str | None) -> bool:
@@ -329,6 +354,7 @@ async def capture_lead(
     inbound_text: str | None = None,
     delta: dict | None = None,
     occurred_at: datetime | None = None,
+    require_intent: bool = False,
 ) -> Lead | None:
     """Create or merge the tenant's lead for this conversation.
 
@@ -336,6 +362,11 @@ async def capture_lead(
     and merge-safe: empty/invalid values never erase known fields, and a
     lower-confidence value never replaces a higher one. Never raises —
     a capture problem must never cost the customer their reply.
+
+    ``require_intent`` skips CREATING a row when the message shows no lead
+    substance: a pure information request stays an inbox conversation instead
+    of becoming a CRM entry. A lead that already exists is always returned and
+    kept up to date, so a returning customer is never demoted to a stranger.
     """
     try:
         lead = (await db.execute(
@@ -344,6 +375,8 @@ async def capture_lead(
                 Lead.contact_id == contact_id,
             )
         )).scalar_one_or_none()
+        if lead is None and require_intent and not has_lead_substance(inbound_text, delta):
+            return None
         now = occurred_at or datetime.now(timezone.utc)
         if lead is None:
             lead = Lead(

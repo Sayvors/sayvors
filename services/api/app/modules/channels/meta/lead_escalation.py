@@ -12,6 +12,7 @@ See docs/specs/2026-10-13-lead-priority-escalation-design.md.
 """
 
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -109,22 +110,35 @@ async def _latest_outbound(db, lead):
     ).scalars().first()
 
 
-async def update_escalation_state(db, lead) -> None:
+async def update_escalation_state(db, lead, *, confused: bool = False, urgent: bool = False) -> None:
     """Update the counter, then recompute priority. The only writer of both.
 
-    Call immediately after persisting an inbound ChannelMessage. Increments
-    when the previous outbound was AI-authored, resets to 0 otherwise -- a
-    human reply clears the thread because the AI is no longer the last voice.
+    Call immediately after persisting an inbound ChannelMessage.
+
+    ``confused`` is the thread classifier's signal that the customer came back
+    lost ("what?", the same question again after an answer). That -- not "the
+    customer wrote again" -- is what an AI miss is: counting every follow-up
+    muted healthy question-and-answer threads after three turns, which is the
+    bug this fixes.
+
+    ``urgent`` comes from ``detect_urgency`` and escalates immediately: a
+    customer who says "urgent" or "right now" should not wait for a counter.
     """
     previous = await _latest_outbound(db, lead)
     previous_is_ai = None if previous is None else bool(previous.is_ai)
-    lead.ai_miss_count = (lead.ai_miss_count or 0) + 1 if previous_is_ai else 0
+    if previous_is_ai and confused:
+        lead.ai_miss_count = (lead.ai_miss_count or 0) + 1
+    else:
+        lead.ai_miss_count = 0
 
     tenant_settings = await load_settings(db, lead.tenant_id)
     threshold = tenant_settings["escalation_threshold"]
 
     was_important = lead.priority == "important"
-    if (lead.ai_miss_count or 0) >= threshold:
+    # threshold 0 = counter disabled. Urgency is evaluated on its own line
+    # below so "0" never means "never escalate at all".
+    count_triggered = threshold > 0 and (lead.ai_miss_count or 0) >= threshold
+    if urgent or count_triggered:
         if was_important:
             return
         # Entering: a fresh escalation. Clearing here is what makes a
@@ -133,7 +147,7 @@ async def update_escalation_state(db, lead) -> None:
         _clear_escalation_state(lead)
         lead.priority = "important"
         lead.priority_since = _now()
-        await on_escalate(db, lead, tenant_settings)
+        await on_escalate(db, lead, tenant_settings, reason="urgent" if urgent else "confused")
         return
 
     if was_important:
@@ -142,6 +156,32 @@ async def update_escalation_state(db, lead) -> None:
         lead.priority = "normal"
         lead.ai_miss_count = 0
         _clear_escalation_state(lead)
+
+
+# Urgency markers: English and the Arabic/Urdu forms customers actually type.
+# Word-boundary matched so a substring can never trip it ("nowadays" is not
+# "now"). "today" is deliberately absent: "what are your hours today?" is a
+# normal question, not an emergency.
+_URGENT_PATTERNS = (
+    r"\b(urgent|urgently|asap|as\s+soon\s+as\s+possible|immediately|"
+    r"right\s+away|right\s+now|emergency|time[- ]sensitive)\b",
+    r"(عاجل|عاجلا|بسرعة|حالا|حالاً|فورا|فوراً|ضروري|الان|الآن)",
+    r"\b(still\s+waiting|no\s+one\s+(?:has\s+)?(?:replied|answered)|"
+    r"keeps?\s+ignoring|third\s+time)\b",
+)
+
+
+def detect_urgency(text: str | None) -> bool:
+    """True when the customer is saying this cannot wait.
+
+    Deliberately deterministic and free: an LLM round-trip on every inbound to
+    decide whether to page a human is slower than the reply it is meant to
+    rescue, and a classifier outage must not disable the safety path.
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(re.search(pattern, lowered) for pattern in _URGENT_PATTERNS)
 
 
 def should_ai_reply(lead, mode: str = "ai") -> bool:
@@ -180,6 +220,12 @@ def _lead_label(lead) -> str:
 
 
 HANDOVER_TEXT = "Let me get my colleague to help you with this."
+# Urgent handovers need their own line: "let me get a colleague" reads as a
+# deflection to someone who just said it cannot wait.
+URGENT_HANDOVER_TEXT = (
+    "Understood — I've flagged this as urgent. A team member will pick it up "
+    "here shortly."
+)
 ESCALATION_SUBJECT = "A lead needs you: {name}"
 
 
@@ -237,11 +283,14 @@ async def resolve_recipients(db, lead) -> list[str]:
     return [owner_email] if owner_email else []
 
 
-async def on_escalate(db, lead, tenant_settings: dict | None = None) -> None:
+async def on_escalate(db, lead, tenant_settings: dict | None = None,
+                      reason: str = "confused") -> None:
     """Side effects on entering 'important'. Never raises.
 
     One in-app notification plus one escalation email. Neither may be able to
-    break message handling, so every call is guarded.
+    break message handling, so every call is guarded. ``reason`` lets the page
+    say *why* it fired: "urgent" means the customer said so, "confused" means
+    the counter tripped.
     """
     try:
         from ...channels.realtime import publish_inbox_event
@@ -253,7 +302,11 @@ async def on_escalate(db, lead, tenant_settings: dict | None = None) -> None:
                 "channel_id": lead.channel_id,
                 "contact_id": lead.contact_id,
                 "contact_name": lead.contact_name,
-                "preview": "The AI could not resolve this conversation.",
+                "preview": (
+                    "The customer asked for something urgent."
+                    if reason == "urgent"
+                    else "The AI could not resolve this conversation."
+                ),
             },
         })
     except Exception as e:
@@ -269,15 +322,22 @@ async def on_escalate(db, lead, tenant_settings: dict | None = None) -> None:
         logger.warning("lead %s escalated with no recipient", lead.id)
         return
 
+    body = (
+        f"{_lead_label(lead)} said their request is urgent. The AI has stopped "
+        f"replying so someone can take over now."
+        if reason == "urgent"
+        else (
+            f"{_lead_label(lead)} came back confused {lead.ai_miss_count} "
+            f"times after an AI reply. The AI has stopped replying so someone "
+            f"can take over."
+        )
+    )
+
     try:
         await _send_email(
             recipients,
             ESCALATION_SUBJECT.format(name=_lead_label(lead)),
-            (
-                f"{_lead_label(lead)} kept writing after the AI replied "
-                f"{lead.ai_miss_count} times. The AI has stopped replying so "
-                f"someone can take over."
-            ),
+            body,
             cta_url=f"/dashboard/inbox?channel={lead.channel_id}&key={lead.contact_id}",
         )
     except Exception as e:
@@ -293,7 +353,7 @@ async def on_escalate(db, lead, tenant_settings: dict | None = None) -> None:
     lead.escalation_reminder_at = _now() + timedelta(hours=reminder_hours)
 
 
-async def _persist_handover(db, lead, provider_msg_id: str | None) -> None:
+async def _persist_handover(db, lead, provider_msg_id: str | None, text: str = HANDOVER_TEXT) -> None:
     """Store the holding line as a normal outbound row.
 
     Without this the inbox, the lead digest and the escalation counter never
@@ -312,7 +372,7 @@ async def _persist_handover(db, lead, provider_msg_id: str | None) -> None:
         channel_id=lead.channel_id,
         platform_message_id=(provider_msg_id or "")[:200] or None,
         direction="outbound",
-        content=encrypt_message_content(HANDOVER_TEXT),
+        content=encrypt_message_content(text),
         content_type="text",
         status="sent",
         contact_phone=encrypt_contact_phone(contact or None),
@@ -334,7 +394,7 @@ async def _persist_handover(db, lead, provider_msg_id: str | None) -> None:
             "channel_id": lead.channel_id,
             "platform": platform,
             "direction": "outbound",
-            "content": HANDOVER_TEXT,
+            "content": text,
             "content_type": "text",
             "status": "sent",
             "contact_phone": lead.contact_id,
@@ -346,7 +406,8 @@ async def _persist_handover(db, lead, provider_msg_id: str | None) -> None:
         )
 
 
-async def send_handover(db, lead, adapter, phone_number_id: str, token: str) -> None:
+async def send_handover(db, lead, adapter, phone_number_id: str, token: str,
+                        urgent: bool = False) -> None:
     """Deliver the holding line, once, and record it.
 
     Guarded by handover_sent_at so a re-trigger never repeats it. A send
@@ -355,26 +416,30 @@ async def send_handover(db, lead, adapter, phone_number_id: str, token: str) -> 
     cosmetic line must not block the escalation itself. A persistence failure
     after a successful send is logged but does not reopen the send — the
     customer already has the message.
+
+    ``urgent`` picks the acknowledgement that matches why the page fired.
     """
     if lead.handover_sent_at is not None:
         return
+    text = URGENT_HANDOVER_TEXT if urgent else HANDOVER_TEXT
     try:
         provider_msg_id = await adapter.send_text_message(
-            phone_number_id, token, lead.contact_id, HANDOVER_TEXT
+            phone_number_id, token, lead.contact_id, text
         )
         lead.handover_sent_at = _now()
     except Exception as e:
         logger.warning("handover line failed for lead %s: %s", lead.id, e)
         return
     try:
-        await _persist_handover(db, lead, provider_msg_id)
+        await _persist_handover(db, lead, provider_msg_id, text)
     except Exception as e:
         logger.error(
             "handover line sent but not persisted for lead %s: %s", lead.id, e
         )
 
 
-async def escalate_to_human(db, lead, adapter, phone_number_id: str, token: str) -> None:
+async def escalate_to_human(db, lead, adapter, phone_number_id: str, token: str,
+                            urgent: bool = False) -> None:
     """Hand a thread to a human: cancel queued nudges, say so once, stop.
 
     Called by the consumer when a thread is 'important' at reply time. This is
@@ -407,7 +472,7 @@ async def escalate_to_human(db, lead, adapter, phone_number_id: str, token: str)
         )
     except Exception as e:
         logger.warning("handover cancel failed for lead %s: %s", lead.id, e)
-    await send_handover(db, lead, adapter, phone_number_id, token)
+    await send_handover(db, lead, adapter, phone_number_id, token, urgent=urgent)
 
 
 async def run_reminder_sweep(db, limit: int = 50) -> int:

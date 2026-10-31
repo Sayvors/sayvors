@@ -898,7 +898,7 @@ async def _poll_one_channel(
     """
     from ...database import async_session
 
-    stats = {"reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
+    stats = {"channels": 0, "reviews": 0, "replied": 0, "queued": 0, "skipped": 0, "errors": 0}
 
     async with semaphore:
         async with async_session() as session:
@@ -982,9 +982,11 @@ async def poll_once() -> dict:
         return_exceptions=True,
     )
 
-    for result in results:
+    for (ch_id, _cfg_id), result in zip(channel_configs, results):
         if isinstance(result, Exception):
-            logger.error("Poll task failed: %s", result)
+            # Name the channel and keep the traceback: a bare "'channels'" told
+            # nobody which channel broke or where, and the pass moved on.
+            logger.error("Poll task failed for channel %s: %r", ch_id, result, exc_info=result)
             totals["errors"] += 1
         else:
             for k in ("channels", "reviews", "replied", "queued", "skipped", "errors"):
@@ -998,7 +1000,7 @@ async def run_google_reviews_worker() -> None:
     while True:
         try:
             totals = await poll_once()
-            if totals["reviews"]:
+            if totals["reviews"] or totals["errors"]:
                 logger.info("Google reviews poll: %s", totals)
         except Exception as e:
             logger.error("Google reviews poll pass failed: %s", e)

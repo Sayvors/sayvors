@@ -432,14 +432,35 @@ async def _dispatch_whatsapp(
     channel row, mirroring the consumer: a channel must belong to this tenant
     before we use its credentials.
     """
-    from .meta.credentials import decrypt_connection_token
-    from .meta.models import MetaAsset
     from .meta.providers.base import MetaAPIError
     from .meta.providers.whatsapp import WhatsAppAdapter
 
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        return "", error
+
+    try:
+        provider_msg_id = await WhatsAppAdapter().send_text_message(
+            phone_number_id, token, to, text
+        )
+    except MetaAPIError as exc:
+        detail = f"{exc.status_code}: {exc}" if exc.status_code else str(exc)
+        return "", detail[:500]
+    if not provider_msg_id:
+        return "", "WhatsApp accepted the request but returned no message id."
+    return provider_msg_id, ""
+
+
+async def _whatsapp_credentials(
+    db: AsyncSession, user: User, channel: Channel
+) -> tuple[str, str, str]:
+    """(phone_number_id, token, error) for a channel's WhatsApp number."""
+    from .meta.credentials import decrypt_connection_token
+    from .meta.models import MetaAsset
+
     phone_number_id = channel.platform_user_id
     if not phone_number_id:
-        return "", "This channel has no WhatsApp number attached."
+        return "", "", "This channel has no WhatsApp number attached."
 
     result = await db.execute(
         select(MetaAsset)
@@ -452,24 +473,226 @@ async def _dispatch_whatsapp(
     )
     asset = result.scalar_one_or_none()
     if asset is None:
-        return "", "No WhatsApp account is connected for this number."
+        return "", "", "No WhatsApp account is connected for this number."
     if not asset.active:
-        return "", "This WhatsApp number is not active."
+        return "", "", "This WhatsApp number is not active."
 
     token = decrypt_connection_token(asset.connection) if asset.connection else None
     if not token:
-        return "", "WhatsApp credentials are missing. Reconnect the account."
+        return "", "", "WhatsApp credentials are missing. Reconnect the account."
+    return phone_number_id, token, ""
 
+
+async def _dispatch_whatsapp_interactive(
+    db: AsyncSession,
+    user: User,
+    channel: Channel,
+    to: str,
+    kind: str,
+    payload: dict,
+) -> tuple[str, str]:
+    """(provider_message_id, error) for buttons / list / CTA messages."""
+    from .meta.providers.base import MetaAPIError
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        return "", error
+
+    adapter = WhatsAppAdapter()
     try:
-        provider_msg_id = await WhatsAppAdapter().send_text_message(
-            phone_number_id, token, to, text
-        )
+        if kind == "buttons":
+            provider_msg_id = await adapter.send_interactive_buttons(
+                phone_number_id, token, to,
+                payload["body"], payload["buttons"],
+                header=payload.get("header"), footer=payload.get("footer"),
+            )
+        elif kind == "list":
+            provider_msg_id = await adapter.send_interactive_list(
+                phone_number_id, token, to,
+                payload["body"], payload["button_text"], payload["sections"],
+                header=payload.get("header"), footer=payload.get("footer"),
+            )
+        elif kind == "cta":
+            provider_msg_id = await adapter.send_cta_url_message(
+                phone_number_id, token, to,
+                payload["body"], payload["display_text"], payload["url"],
+                header=payload.get("header"), footer=payload.get("footer"),
+            )
+        else:
+            return "", f"Unknown interactive kind {kind!r}"
     except MetaAPIError as exc:
         detail = f"{exc.status_code}: {exc}" if exc.status_code else str(exc)
         return "", detail[:500]
+    except ValueError as exc:
+        return "", str(exc)[:500]
     if not provider_msg_id:
         return "", "WhatsApp accepted the request but returned no message id."
     return provider_msg_id, ""
+
+
+async def send_interactive_message(
+    channel_id: str,
+    *,
+    contact_phone: str,
+    kind: str,
+    payload: dict,
+    user: User,
+    db: AsyncSession,
+    contact_name: str | None = None,
+) -> ChannelMessage:
+    """Send buttons / a list / a CTA link and record the outcome.
+
+    Same persistence and ownership rules as ``send_message``: the row carries
+    the provider's verdict (never optimistic), and a *successful* send means a
+    human now owns the thread, so the AI steps back.
+    """
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    recipient = (contact_phone or "").strip()
+    if not recipient:
+        raise ValueError("A recipient phone number is required to send")
+    if channel.platform != "whatsapp":
+        raise ValueError("Interactive messages are only available on WhatsApp")
+
+    from .meta.interactive import readable_content
+
+    if kind == "buttons":
+        shown = list(payload.get("buttons") or [])
+    elif kind == "list":
+        shown = [str(payload.get("button_text") or "")]
+        for section in payload.get("sections") or []:
+            shown += [str(r.get("title") or "") for r in section.get("rows") or []]
+    elif kind == "cta":
+        shown = [str(payload.get("display_text") or "")]
+    else:
+        raise ValueError(f"Unknown interactive kind {kind!r}")
+
+    outbound = ChannelMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel_id,
+        direction="outbound",
+        content=encrypt_message_content(
+            readable_content(str(payload.get("body") or ""), shown)
+        ),
+        content_type="interactive",
+        status="sent",
+        contact_phone=encrypt_contact_phone(recipient),
+        contact_phone_hash=hash_contact_phone(recipient),
+        contact_name=contact_name or None,
+        handled_by="human",
+    )
+
+    try:
+        provider_msg_id, error = await _dispatch_whatsapp_interactive(
+            db, user, channel, recipient, kind, payload
+        )
+    except Exception as exc:  # noqa: BLE001 - recorded on the row, not raised
+        provider_msg_id, error = "", str(exc)[:500]
+
+    if error:
+        outbound.status = "failed"
+        outbound.error = error
+    else:
+        outbound.platform_message_id = provider_msg_id[:200] or None
+        outbound.status = "sent"
+
+    db.add(outbound)
+    await db.commit()
+    await db.refresh(outbound)
+
+    if not error:
+        from .conversation_mode import MODE_HUMAN, set_mode
+
+        try:
+            await set_mode(
+                db,
+                tenant_id=tenant_id_of(user),
+                channel_id=channel_id,
+                contact_phone=recipient,
+                mode=MODE_HUMAN,
+                by=user.id or "human_reply",
+                reason="human_reply",
+            )
+        except Exception as exc:  # noqa: BLE001 - the message already landed
+            logger.warning(
+                "conversation mode switch failed after interactive send "
+                "channel=%s: %s", channel_id, exc,
+            )
+    return outbound
+
+
+async def whatsapp_number_health(
+    channel_id: str, user: User, db: AsyncSession
+) -> dict:
+    """Meta's quality rating + messaging limit for this channel's number."""
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("Number health is only available on WhatsApp")
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    return await WhatsAppAdapter().get_number_health(phone_number_id, token)
+
+
+async def list_whatsapp_qr_codes(
+    channel_id: str, user: User, db: AsyncSession
+) -> list[dict]:
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("QR codes are only available on WhatsApp")
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    return await WhatsAppAdapter().list_qr_codes(phone_number_id, token)
+
+
+async def create_whatsapp_qr_code(
+    channel_id: str,
+    prefilled_message: str,
+    user: User,
+    db: AsyncSession,
+    *,
+    image_format: str = "PNG",
+) -> dict:
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("QR codes are only available on WhatsApp")
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    return await WhatsAppAdapter().create_qr_code(
+        phone_number_id, token, prefilled_message, image_format=image_format
+    )
+
+
+async def delete_whatsapp_qr_code(
+    channel_id: str, code: str, user: User, db: AsyncSession
+) -> bool:
+    channel = await get_channel(channel_id, user, db)
+    if not channel:
+        raise ValueError("Channel not found")
+    if channel.platform != "whatsapp":
+        raise ValueError("QR codes are only available on WhatsApp")
+    phone_number_id, token, error = await _whatsapp_credentials(db, user, channel)
+    if error:
+        raise ValueError(error)
+    from .meta.providers.whatsapp import WhatsAppAdapter
+
+    return await WhatsAppAdapter().delete_qr_code(phone_number_id, token, code)
 
 
 async def _dispatch_instagram(

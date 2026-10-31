@@ -100,7 +100,6 @@ class WhatsAppProfileOut(BaseModel):
     websites: list[str] = []
     vertical: str | None = None
     profile_picture_url: str | None = None
-    hours: dict[str, list[dict[str, str]]] | None = None
     # When the live Graph read failed, `stale` marks the persisted copy.
     synced_at: str | None = None
     stale: bool = False
@@ -471,4 +470,3 @@ class WhatsAppProfileUpdate(BaseModel):
     email: str | None = Field(None, max_length=128)
     websites: list[str] | None = Field(None, max_length=2)
     vertical: str | None = Field(None, max_length=64)
-    hours: dict[str, list[dict[str, str]]] | None = None
