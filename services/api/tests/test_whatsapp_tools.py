@@ -136,3 +136,42 @@ def test_health_on_a_non_whatsapp_channel_is_rejected(client, channel_id):
 def test_qr_list_on_a_non_whatsapp_channel_is_rejected(client, channel_id):
     res = client.get(f"/api/v1/channels/{channel_id}/whatsapp/qr-codes")
     assert res.status_code in (403, 422), res.text
+
+
+# ── hours in the description (Meta has no hours field) ───────────────
+
+
+def test_hours_are_appended_to_the_description_once():
+    from app.modules.channels.meta.router import attach_hours_to_description
+
+    hours = {
+        "mon": [{"start": "09:00", "end": "17:00"}],
+        "tue": [{"start": "09:00", "end": "17:00"}],
+        "fri": [],
+    }
+    first = attach_hours_to_description("We build software.", hours)
+    assert first.startswith("We build software.")
+    assert "Mon 09:00-17:00" in first
+    assert "Fri closed" in first
+    assert "Wed closed" in first
+
+    # Saving again must replace the generated line, not stack a second one.
+    second = attach_hours_to_description(first, hours)
+    assert second.count("Hours:") == 1
+    assert second == first
+
+
+def test_hours_line_stays_inside_meta_description_limit():
+    from app.modules.channels.meta.router import attach_hours_to_description
+
+    hours = {
+        "mon": [{"start": "09:00", "end": "17:00"}, {"start": "18:00", "end": "22:00"}],
+        "tue": [{"start": "09:00", "end": "17:00"}, {"start": "18:00", "end": "22:00"}],
+        "wed": [{"start": "09:00", "end": "17:00"}, {"start": "18:00", "end": "22:00"}],
+        "thu": [{"start": "09:00", "end": "17:00"}, {"start": "18:00", "end": "22:00"}],
+        "fri": [{"start": "09:00", "end": "17:00"}, {"start": "18:00", "end": "22:00"}],
+        "sat": [{"start": "09:00", "end": "17:00"}, {"start": "18:00", "end": "22:00"}],
+        "sun": [{"start": "09:00", "end": "17:00"}, {"start": "18:00", "end": "22:00"}],
+    }
+    out = attach_hours_to_description("x" * 500, hours)
+    assert len(out) <= 512

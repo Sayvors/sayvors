@@ -122,6 +122,43 @@ def _normalize_vertical(value: str) -> str:
     )
 
 
+def _hours_description_line(hours: dict) -> str:
+    """Compact one-line hours for the profile description.
+
+    The UI stores hours as {mon: [{start, end}, ...], ...} with an empty list
+    (or a missing key) meaning closed. Two slots per day is the UI ceiling.
+    """
+    days = (
+        ("mon", "Mon"), ("tue", "Tue"), ("wed", "Wed"), ("thu", "Thu"),
+        ("fri", "Fri"), ("sat", "Sat"), ("sun", "Sun"),
+    )
+    parts: list[str] = []
+    for key, label in days:
+        slots = hours.get(key) or []
+        ranges: list[str] = []
+        for slot in slots[:2] if isinstance(slots, list) else []:
+            if not isinstance(slot, dict):
+                continue
+            start = str(slot.get("start") or "").strip()
+            end = str(slot.get("end") or "").strip()
+            if start and end:
+                ranges.append(f"{start}-{end}")
+        parts.append(f"{label} {' & '.join(ranges)}" if ranges else f"{label} closed")
+    return "Hours: " + ", ".join(parts)
+
+
+# The exact shape we generate, so a re-save replaces it instead of stacking.
+_GENERATED_HOURS_RE = re.compile(r"(?:\r?\n){1,2}Hours:\s[^\n]*$", re.IGNORECASE)
+
+
+def attach_hours_to_description(description: str | None, hours: dict) -> str:
+    """Description with one generated hours line appended (max 512 chars)."""
+    base = _GENERATED_HOURS_RE.sub("", description or "").rstrip()
+    line = _hours_description_line(hours)
+    merged = f"{base}\n\n{line}" if base else line
+    return merged[:512]
+
+
 def _persist_profile(asset, data: dict) -> str:
     """Store the profile snapshot on the number asset (DB copy).
 
@@ -822,6 +859,19 @@ async def update_whatsapp_profile(
         raise HTTPException(status_code=409, detail="Reconnect WhatsApp — the access token is missing")
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
     hours = fields.pop("hours", None)  # not a Graph param — persist locally
+    sync_hours = bool(fields.pop("sync_hours_to_description", False))
+    stored_profile = (asset.asset_metadata or {}).get("business_profile") or {}
+    # Meta's Cloud API business profile has no hours field (a `hours` param is
+    # rejected with 400 #131009), so the structured hours are ours. The
+    # Description is the only writable place a customer can see them; append a
+    # compact line there, replacing any line we generated previously.
+    if hours and sync_hours:
+        base_description = (
+            fields.get("description")
+            if "description" in fields
+            else stored_profile.get("description")
+        ) or ""
+        fields["description"] = attach_hours_to_description(base_description, hours)
     if "vertical" in fields and fields["vertical"]:
         fields["vertical"] = _normalize_vertical(fields["vertical"])
     if "websites" in fields:
@@ -831,7 +881,6 @@ async def update_whatsapp_profile(
         data = await adapter.set_business_profile(phone_number_id, token, fields)
     except _MetaAPIError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    stored_profile = (asset.asset_metadata or {}).get("business_profile") or {}
     # Graph acknowledged the write but the re-read came back empty — keep the
     # stored copy and overlay what we just saved instead of blanking it.
     if not data:

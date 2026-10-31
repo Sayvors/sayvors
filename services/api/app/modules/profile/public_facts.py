@@ -82,6 +82,45 @@ def _websites(raw) -> list[str]:
     return []
 
 
+_WA_DAYS = (
+    ("mon", "Monday"), ("tue", "Tuesday"), ("wed", "Wednesday"),
+    ("thu", "Thursday"), ("fri", "Friday"), ("sat", "Saturday"),
+    ("sun", "Sunday"),
+)
+
+
+def _whatsapp_hours_text(hours, timezone_name: str) -> str:
+    """Render the WhatsApp profile hours editor's shape for the prompt.
+
+    That editor stores {mon: [{start, end}], ...} with an empty list meaning
+    closed. It is the hours the tenant actually filled on the WhatsApp screen,
+    so it wins over the Google location copy when both exist.
+    """
+    if not isinstance(hours, dict) or not hours:
+        return ""
+    lines = [
+        "OPENING HOURS (the business's physical visiting hours — not the "
+        "assistant's availability. Owner-configured; answer from this when "
+        "asked):",
+    ]
+    for key, label in _WA_DAYS:
+        slots = hours.get(key) or []
+        ranges: list[str] = []
+        for slot in slots[:2] if isinstance(slots, list) else []:
+            if not isinstance(slot, dict):
+                continue
+            start = str(slot.get("start") or "").strip()
+            end = str(slot.get("end") or "").strip()
+            if start and end:
+                ranges.append(f"{start}-{end}")
+        lines.append(f"- {label}: {' & '.join(ranges) if ranges else 'closed'}")
+    lines.append(
+        f"All times are local ({timezone_name or 'UTC'}). If a day is not "
+        "listed above, say you will confirm it with the team."
+    )
+    return "\n".join(lines)
+
+
 async def public_facts_block(
     db,
     *,
@@ -96,7 +135,11 @@ async def public_facts_block(
 
     profile = await _whatsapp_profile(db, tenant_id, channel_id)
     offered, not_offered = await _services(db, channel_id)
-    hours = await opening_hours_block(
+    # The WhatsApp profile editor's hours are what the tenant filled in on the
+    # screen they are looking at; fall back to the location copy otherwise.
+    hours = _whatsapp_hours_text(
+        profile.get("hours"), timezone_name
+    ) or await opening_hours_block(
         db, tenant_id, listing_id=listing_id, timezone_name=timezone_name
     )
 

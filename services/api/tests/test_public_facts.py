@@ -117,6 +117,35 @@ async def test_empty_tenant_yields_no_block(db):
 
 
 @pytest.mark.asyncio
+async def test_whatsapp_profile_hours_win_over_the_location_copy(db):
+    """The hours filled on the WhatsApp Profile screen are the ones to use."""
+    from app.modules.channels.meta.models import MetaAsset
+    from app.modules.profile.public_facts import public_facts_block
+
+    channel, user = await _seed(db)
+    asset = await db.get(MetaAsset, "facts-asset-1")
+    asset.asset_metadata = {
+        **(asset.asset_metadata or {}),
+        "business_profile": {
+            **(asset.asset_metadata or {}).get("business_profile", {}),
+            "hours": {
+                "mon": [{"start": "10:00", "end": "18:00"}],
+                "fri": [],
+            },
+        },
+    }
+    await db.commit()
+
+    block = await public_facts_block(
+        db, tenant_id=user.id, channel_id=channel.id, user=user
+    )
+
+    assert "- Monday: 10:00-18:00" in block
+    assert "- Friday: closed" in block
+    assert "07:00-15:00" not in block, "the location copy is only a fallback"
+
+
+@pytest.mark.asyncio
 async def test_partial_facts_still_render(db):
     channel, user = await _seed(db, hours=False, services=False, profile=False)
 

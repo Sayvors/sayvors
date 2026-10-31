@@ -26,6 +26,7 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
   const [msg, setMsg] = useState<string | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [syncHours, setSyncHours] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
   // Only user edits are worth persisting — writing the fetched profile out on
   // every load would let a previously-empty response poison later loads.
@@ -139,6 +140,7 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
         vertical: draft.vertical ?? undefined,
         websites: draft.websites?.map(normalizeUrl),
         hours: draft.hours && Object.keys(draft.hours).length > 0 ? draft.hours : undefined,
+        sync_hours_to_description: syncHours,
       };
       const updated = await saveWaProfile(phoneId, patch);
       setProfile(updated);
@@ -146,7 +148,11 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
         sessionStorage.removeItem(`wa-draft-${phoneId}`);
       } catch { /* noop */ }
       setStatus("saved");
-      setMsg("Saved — live on WhatsApp now.");
+      setMsg(
+        patch.hours && syncHours
+          ? "Saved — profile updated, and your hours are now in the Description so customers see them."
+          : "Saved — profile is live on WhatsApp."
+      );
       setTimeout(() => setStatus("idle"), 2500);
     } catch (e) {
       setStatus("error");
@@ -325,6 +331,19 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
                 );
               })}
             </div>
+            <label className="mt-2 flex items-start gap-2 text-[11px] leading-relaxed text-[var(--wa-text-2)]">
+              <input
+                type="checkbox"
+                checked={syncHours}
+                onChange={(e) => { dirtyRef.current = true; setSyncHours(e.target.checked); }}
+                className="mt-0.5 h-3.5 w-3.5"
+              />
+              <span>
+                Also add these hours to the profile <b>Description</b>. WhatsApp&apos;s API has no
+                hours field, so this is how customers see them on your profile — the assistant uses
+                them either way and still answers 24/7.
+              </span>
+            </label>
           </div>
         </div>
         {/* Preview first on mobile (stacked), beside the form from md up */}
