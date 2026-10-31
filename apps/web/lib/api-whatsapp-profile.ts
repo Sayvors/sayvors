@@ -10,9 +10,6 @@ export type WaProfile = {
   websites: string[];
   vertical: string | null;
   profile_picture_url: string | null;
-  hours: Record<string, { start: string; end: string }[]> | null;
-  /** Ask the API to append the hours to the Description (Meta has no hours field). */
-  sync_hours_to_description?: boolean | null;
   synced_at?: string | null;
   stale?: boolean;
 };

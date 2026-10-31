@@ -8,16 +8,6 @@ import PhonePreview from "./PhonePreview";
 
 type Draft = Partial<WaProfile> & { displayName?: string };
 
-const DAYS = [
-  { key: "mon", label: "Mon" },
-  { key: "tue", label: "Tue" },
-  { key: "wed", label: "Wed" },
-  { key: "thu", label: "Thu" },
-  { key: "fri", label: "Fri" },
-  { key: "sat", label: "Sat" },
-  { key: "sun", label: "Sun" },
-] as const;
-
 export default function ProfileForm({ phoneId, businessName }: { phoneId: string; businessName?: string | null }) {
   const [profile, setProfile] = useState<WaProfile | null>(null);
   const [draft, setDraft] = useState<Draft>({});
@@ -26,7 +16,6 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
   const [msg, setMsg] = useState<string | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
-  const [syncHours, setSyncHours] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
   // Only user edits are worth persisting — writing the fetched profile out on
   // every load would let a previously-empty response poison later loads.
@@ -87,33 +76,6 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
     }
   };
 
-  const addHour = (day: string) => {
-    dirtyRef.current = true;
-    setDraft((d) => {
-      const hours = { ...(d.hours ?? {}) };
-      const slots = [...(hours[day] ?? []), { start: "09:00", end: "17:00" }];
-      return { ...d, hours: { ...hours, [day]: slots } };
-    });
-  };
-
-  const setHour = (day: string, idx: number, field: "start" | "end", val: string) => {
-    dirtyRef.current = true;
-    setDraft((d) => {
-      const hours = { ...(d.hours ?? {}) };
-      const slots = (hours[day] ?? []).map((s, i) => (i === idx ? { ...s, [field]: val } : s));
-      return { ...d, hours: { ...hours, [day]: slots } };
-    });
-  };
-
-  const removeHour = (day: string, idx: number) => {
-    dirtyRef.current = true;
-    setDraft((d) => {
-      const hours = { ...(d.hours ?? {}) };
-      const slots = (hours[day] ?? []).filter((_, i) => i !== idx);
-      return { ...d, hours: { ...hours, [day]: slots } };
-    });
-  };
-
   const validate = (d: Draft): Record<string, string> => {
     const e: Record<string, string> = {};
     if (d.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) e.email = "Emails need an @ — check for a typo.";
@@ -139,8 +101,6 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
         email: draft.email ?? undefined,
         vertical: draft.vertical ?? undefined,
         websites: draft.websites?.map(normalizeUrl),
-        hours: draft.hours && Object.keys(draft.hours).length > 0 ? draft.hours : undefined,
-        sync_hours_to_description: syncHours,
       };
       const updated = await saveWaProfile(phoneId, patch);
       setProfile(updated);
@@ -148,11 +108,7 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
         sessionStorage.removeItem(`wa-draft-${phoneId}`);
       } catch { /* noop */ }
       setStatus("saved");
-      setMsg(
-        patch.hours && syncHours
-          ? "Saved — profile updated, and your hours are now in the Description so customers see them."
-          : "Saved — profile is live on WhatsApp."
-      );
+      setMsg("Saved — profile is live on WhatsApp.");
       setTimeout(() => setStatus("idle"), 2500);
     } catch (e) {
       setStatus("error");
@@ -303,47 +259,6 @@ export default function ProfileForm({ phoneId, businessName }: { phoneId: string
           <div>
             <label htmlFor="wa-web" className={labelCls}>Website (optional)</label>
             <input id="wa-web" value={(draft.websites ?? [])[0] ?? ""} onChange={(e) => set("websites", [e.target.value])} inputMode="url" placeholder="shop.com" className={inputCls} />
-          </div>
-          <div>
-            <p className={labelCls}>Business hours</p>
-            <div className="space-y-2">
-              {DAYS.map((d) => {
-                const slots = (draft.hours?.[d.key] ?? []).slice(0, 2);
-                return (
-                  <div key={d.key} className="flex flex-wrap items-center gap-2">
-                    <span className="w-10 shrink-0 text-[13px] font-medium text-[var(--wa-text-2)]">{d.label}</span>
-                    {slots.length === 0 ? (
-                      <span className="text-[12px] text-[var(--wa-text-3)]">Closed</span>
-                    ) : (
-                      slots.map((s, i) => (
-                        <span key={i} className="flex items-center gap-1">
-                          <input type="time" value={s.start} onChange={(e) => setHour(d.key, i, "start", e.target.value)} className="h-9 w-[72px] rounded-lg border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-1.5 text-[12px] text-[var(--wa-text)] outline-none focus:border-[var(--wa-accent)]" aria-label={`${d.label} start`} />
-                          <span className="text-[12px] text-[var(--wa-text-3)]">–</span>
-                          <input type="time" value={s.end} onChange={(e) => setHour(d.key, i, "end", e.target.value)} className="h-9 w-[72px] rounded-lg border border-[var(--wa-input-border)] bg-[var(--wa-input-bg)] px-1.5 text-[12px] text-[var(--wa-text)] outline-none focus:border-[var(--wa-accent)]" aria-label={`${d.label} end`} />
-                          <button onClick={() => removeHour(d.key, i)} className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--wa-danger)] hover:bg-[var(--wa-danger)]/10" aria-label={`Remove ${d.label} slot ${i + 1}`}>×</button>
-                        </span>
-                      ))
-                    )}
-                    {slots.length < 2 && (
-                      <button onClick={() => addHour(d.key)} className="h-9 rounded-full border border-[var(--wa-accent)] px-3 text-[11px] font-semibold text-[var(--wa-accent-deep)] hover:bg-[var(--wa-accent)]/10">+ Add</button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <label className="mt-2 flex items-start gap-2 text-[11px] leading-relaxed text-[var(--wa-text-2)]">
-              <input
-                type="checkbox"
-                checked={syncHours}
-                onChange={(e) => { dirtyRef.current = true; setSyncHours(e.target.checked); }}
-                className="mt-0.5 h-3.5 w-3.5"
-              />
-              <span>
-                Also add these hours to the profile <b>Description</b>. WhatsApp&apos;s API has no
-                hours field, so this is how customers see them on your profile — the assistant uses
-                them either way and still answers 24/7.
-              </span>
-            </label>
           </div>
         </div>
         {/* Preview first on mobile (stacked), beside the form from md up */}

@@ -100,7 +100,6 @@ class WhatsAppProfileOut(BaseModel):
     websites: list[str] = []
     vertical: str | None = None
     profile_picture_url: str | None = None
-    hours: dict[str, list[dict[str, str]]] | None = None
     # When the live Graph read failed, `stale` marks the persisted copy.
     synced_at: str | None = None
     stale: bool = False
@@ -471,9 +470,3 @@ class WhatsAppProfileUpdate(BaseModel):
     email: str | None = Field(None, max_length=128)
     websites: list[str] | None = Field(None, max_length=2)
     vertical: str | None = Field(None, max_length=64)
-    hours: dict[str, list[dict[str, str]]] | None = None
-    # Meta's Cloud API has no hours field on the business profile, so the
-    # structured hours stay local (they feed the assistant). When set, the
-    # same hours are appended to the Description - the one profile field the
-    # API can write - so customers still see them.
-    sync_hours_to_description: bool | None = None
