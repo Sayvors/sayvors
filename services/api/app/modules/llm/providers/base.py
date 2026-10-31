@@ -142,8 +142,10 @@ class LLMProvider(ABC):
             raise
         from ..usage import record_usage_event
 
+        from ...billing import pricing as _pricing
         from ...billing.budget import cost_cents
 
+        await _pricing.ensure_fresh()
         usage = resp.usage or LLMUsage()
         actual = cost_cents(req.model_id or req.model,
                             usage.prompt_tokens, usage.completion_tokens)

@@ -1610,6 +1610,39 @@ async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_adm
         )
 
 
+@router.get("/pricing")
+async def admin_list_pricing(db: AsyncSession = Depends(get_db), _admin=Depends(require_admin)):
+    """The billable rate card: every editable unit with its effective price."""
+    from ..billing.pricing import list_rates
+
+    return await list_rates(db)
+
+
+class PricingRateIn(BaseModel):
+    kind: str = Field(min_length=1, max_length=24)
+    key: str = Field(default="default", max_length=64)
+    unit_price_cents: float = Field(ge=0, le=1_000_000)
+
+
+@router.put("/pricing")
+async def admin_save_pricing(
+    body: PricingRateIn,
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(require_admin),
+):
+    """Set one rate. Applies to the next metered call, no restart.
+
+    The unit is fixed by ``kind``: cents per 1M tokens for LLM input/output,
+    cents per audio minute for ASR, cents per 1k characters for TTS.
+    """
+    from ..billing.pricing import save_rate
+
+    try:
+        return await save_rate(db, body.kind, body.key, body.unit_price_cents)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/tenants/{tenant_id}/subscription", response_model=SubscriptionOut)
 async def get_tenant_subscription(tenant_id: str, _admin=Depends(require_admin)):
     from ...database import async_session

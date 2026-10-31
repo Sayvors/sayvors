@@ -690,7 +690,7 @@
     <tr><td><code>growth</code></td><td>Growth</td><td>50,000</td><td>50,000</td><td>25</td><td>100,000</td></tr>
     <tr><td><code>enterprise</code></td><td>Enterprise</td><td>100,000</td><td>100,000</td><td>unlimited</td><td>unlimited</td></tr>
   </table></div>
-  <p class="note"><strong>Admin endpoints (shipped):</strong> <code>GET/POST/PATCH /api/v1/admin/plans</code> (CRUD), <code>GET /api/v1/admin/tenants/{id}/subscription</code>, <code>POST /api/v1/admin/tenants/{id}/grant-plan</code> (with optional <code>granted_until</code> promo expiry). <strong>Per-tenant feature overrides:</strong> <code>PUT /api/v1/admin/tenants/{id}/features</code> writes <code>tenant_subscriptions.features_override</code>, a JSONB dict merged over the plan's <code>features</code> per key (<code>true</code> forces on, <code>false</code> forces off, absent inherits; unknown keys dropped). <code>GET /api/v1/admin/tenants/special</code> lists only the tenants carrying at least one override — the admin <strong>Special list</strong> — and a tenant leaves it the moment the dict is cleared to <code>{}</code>. The tenant detail page opens this as a Plan-card modal with feature checkboxes against the plan baseline (<code>GET /api/v1/admin/tenants/{id}/entitlements</code> now returns <code>plan_features</code> and <code>features_override</code>). Overrides never touch the plan row, so customising one tenant leaves every other tenant on that plan unchanged. <strong>Tenant endpoint:</strong> <code>GET /api/v1/billing/plan</code>. <strong>Backfill:</strong> <code>scripts/backfill_plans.py</code> (idempotent — 22 tenants backfilled to free-trial). Features per plan are placeholders pending product decision; admin can edit via PATCH.</p>
+  <p class="note"><strong>Admin endpoints (shipped):</strong> <code>GET/POST/PATCH /api/v1/admin/plans</code> (CRUD), <code>GET /api/v1/admin/tenants/{id}/subscription</code>, <code>POST /api/v1/admin/tenants/{id}/grant-plan</code> (with optional <code>granted_until</code> promo expiry). <strong>Per-tenant feature overrides:</strong> <code>PUT /api/v1/admin/tenants/{id}/features</code> writes <code>tenant_subscriptions.features_override</code>, a JSONB dict merged over the plan's <code>features</code> per key (<code>true</code> forces on, <code>false</code> forces off, absent inherits; unknown keys dropped). <code>GET /api/v1/admin/tenants/special</code> lists only the tenants carrying at least one override — the admin <strong>Special list</strong> — and a tenant leaves it the moment the dict is cleared to <code>{}</code>. The tenant detail page opens this as a Plan-card modal with feature checkboxes against the plan baseline (<code>GET /api/v1/admin/tenants/{id}/entitlements</code> now returns <code>plan_features</code> and <code>features_override</code>). Overrides never touch the plan row, so customising one tenant leaves every other tenant on that plan unchanged. <strong>Tenant endpoint:</strong> <code>GET /api/v1/billing/plan</code>. <strong>Billable rate card:</strong> <code>GET/PUT /api/v1/admin/pricing</code> — LLM input/output per provider family, ASR per audio minute, TTS per 1k characters; see <a href="#pricing">§19b</a>. <strong>Backfill:</strong> <code>scripts/backfill_plans.py</code> (idempotent — 22 tenants backfilled to free-trial). Features per plan are placeholders pending product decision; admin can edit via PATCH.</p>
 
   <h3>Activation — one function, three sources</h3>
   <div class="card">
@@ -1768,7 +1768,7 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
   <h3>Open - can be done in dev/staging now</h3>
   <div class="scroll"><table>
     <tr><th>ID</th><th>Item</th><th>What it needs</th></tr>
-    <tr><td class="num">ASR-6</td><td><strong>Hosted ASR is not metered or billed.</strong></td><td><code>STTJob.duration_ms</code> records the audio length but no <code>billing_events</code> row is written. ElevenLabs bills per minute: add a usage event (provider, model, duration) before reselling, and decide whether it draws from the LLM credit wallet.</td></tr>
+    <tr><td class="num">ASR-6</td><td><strong>Hosted ASR was not metered or billed.</strong> <span class="chip ok">Fixed 2026-10-31</span></td><td>The admin-editable rate card (<code>pricing_rates</code>, <a href="#pricing">§19b</a>) prices ASR per audio minute. Both the STT job handler and the inbound voice path charge the tenant after transcription through the durable hold ledger, idempotent on the job id / wamid. The default rate is 0 (voice stays free) so enabling billing is an explicit dashboard decision. <strong>Still open:</strong> TTS characters are not metered yet — the reply voice path calls the engine inline without a tenant-scoped charge.</td></tr>
     <tr><td class="num">ASR-7</td><td><strong>Voice replies block the meta consumer.</strong></td><td>Transcription is inline because the reply pipeline is inline; <code>meta.send_reply</code> is a declared job type with <em>no handler</em>, so there is nowhere to hand the reply to. Extract the reply path into a handler, then audio → <code>stt.job</code> (bulk lane) → reply job. Until then a voice note holds its Kafka partition for the ASR latency.</td></tr>
     <tr><td class="num">ASR-8</td><td><strong>Bulk-lane concurrency vs the provider plan.</strong></td><td>Set <code>JOBS_BULK_CONCURRENCY</code> to the ElevenLabs concurrent-request entitlement; above it every 429 burns one of 10 bulk retries.</td></tr>
     <tr><td class="num">ASR-9</td><td><strong>Cross-replica config invalidation.</strong></td><td>30 s per-process TTL covers normal rotation; a leaked key needs an instant fleet-wide kill switch, which means Redis pub/sub invalidation (one worker today, so no fleet yet).</td></tr>
@@ -1776,6 +1776,36 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
     <tr><td class="num">ASR-11</td><td><strong>Audio is not retained.</strong></td><td>By design today: only the transcript is stored. If support needs the original note (disputes, mis-transcription), add object storage with a short retention window and an explicit consent line — that is a product/privacy decision, not a bug.</td></tr>
   </table></div>
   <p class="note">Bottom line: voice notes are answered end to end now. The remaining work is billing for the hosted minutes, moving the reply onto the job lanes, and operational knobs (concurrency, language coverage, key kill switch).</p>
+</section>
+
+<section id="pricing">
+  <div class="eyebrow">&sect;&sect; 19b - Billable rate card - 2026-10-31</div>
+  <h2>Billable rate card (admin-editable)</h2>
+  <p>Money used to be decided in two places: an LLM-only <code>TOKEN_PRICES</code> dict in <code>billing/budget.py</code> (provider pass-through), and nowhere at all for voice. It is now one table, one admin page, and one set of cost functions.</p>
+
+  <h3>What a tenant pays</h3>
+  <div class="scroll"><table>
+    <tr><th>Meter</th><th>Unit</th><th>Default</th><th>How it is charged</th></tr>
+    <tr><td>LLM input</td><td>cents per 1M prompt tokens, per provider family</td><td>existing pass-through (e.g. groq 15¢, openai 150¢)</td><td>Reserved before the call (5¢ hold), settled to the exact cost after. Formula: <code>tokens/1M × rate</code>, rounded up.</td></tr>
+    <tr><td>LLM output</td><td>cents per 1M completion tokens, per provider family</td><td>existing pass-through (e.g. groq 60¢, openai 600¢)</td><td>Same hold → settle path as input.</td></tr>
+    <tr><td>Speech-to-text</td><td>cents per audio minute</td><td><strong>0 = free</strong></td><td>Post-paid after transcription, idempotent per job id / WhatsApp message id. Any started minute rounds up.</td></tr>
+    <tr><td>Text-to-speech</td><td>cents per 1k characters</td><td><strong>0 = free</strong></td><td>Rate is configurable now; metering the inline reply path is the remaining work.</td></tr>
+  </table></div>
+
+  <h3>Where it lives</h3>
+  <ul>
+    <li><strong>Table:</strong> <code>pricing_rates (kind, key, unit_price_cents, updated_at)</code>, migration <code>227dac0fa4926579</code>. Empty by default; absent rows fall back to the code defaults, so applying the migration changes no price.</li>
+    <li><strong>Code:</strong> <code>billing/pricing.py</code> owns the units, defaults, a 60 s in-process cache, and the sync cost functions (<code>llm_cost_cents</code>, <code>asr_cost_cents</code>, <code>tts_cost_cents</code>). <code>budget.cost_cents()</code> now delegates to it so existing provider call sites are unchanged.</li>
+    <li><strong>Admin:</strong> <code>GET /api/v1/admin/pricing</code> and <code>PUT /api/v1/admin/pricing</code>; dashboard page <strong>Operations → Pricing</strong>. Each row shows the default, the effective rate, and a plain-language translation ("≈ 6.7M tokens per $1", "$0.60 per audio hour").</li>
+    <li><strong>Latency of a change:</strong> the saving process refreshes immediately; every other process picks it up within 60 s. No restart or deploy.</li>
+  </ul>
+
+  <h3>What is still open</h3>
+  <ul>
+    <li><strong>TTS metering</strong> — voice replies call the engine inline in the consumer; the rate exists but no wallet debit yet. Needs the tenant id threaded into <code>synthesize_voice_note</code> (or the TTS job path used for it).</li>
+    <li><strong>Markup model</strong> — rates are absolute cents, not a multiplier. That is deliberate (an operator can set any margin per family), but there is no "apply 20% to all provider costs" button.</li>
+    <li><strong>Historical repricing</strong> — <code>wallet.py</code> prices historical usage rows with the current table; editing a rate does not rewrite past charges (the ledger already settled them).</li>
+  </ul>
 </section>
 
 <footer>

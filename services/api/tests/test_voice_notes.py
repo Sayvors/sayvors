@@ -83,15 +83,20 @@ async def test_transcribe_voice_note_returns_the_text(monkeypatch):
         assert kwargs["allow_local_fallback"] is False, (
             "the API process must not load a Whisper model"
         )
-        return {"text": "  I need a website for my shoe store  ", "language": "en"}
+        return {
+            "text": "  I need a website for my shoe store  ",
+            "language": "en",
+            "duration_ms": 4200,
+        }
 
     monkeypatch.setattr("app.modules.channels.meta.media.download_whatsapp_media", _download)
     monkeypatch.setattr("app.modules.stt.provider.transcribe_bytes", _transcribe)
 
-    text = await consumer._transcribe_voice_note(
+    text, duration_ms = await consumer._transcribe_voice_note(
         media_id="media-1", token="tok", wamid="wamid-voice-1"
     )
     assert text == "I need a website for my shoe store"
+    assert duration_ms == 4200
 
 
 @pytest.mark.asyncio
@@ -103,10 +108,10 @@ async def test_transcribe_voice_note_is_empty_when_download_fails(monkeypatch):
 
     monkeypatch.setattr("app.modules.channels.meta.media.download_whatsapp_media", _download)
 
-    text = await consumer._transcribe_voice_note(
+    text, duration_ms = await consumer._transcribe_voice_note(
         media_id="media-1", token="tok", wamid="wamid-voice-1"
     )
-    assert text == ""
+    assert (text, duration_ms) == ("", 0)
 
 
 @pytest.mark.asyncio
@@ -122,7 +127,7 @@ async def test_transcribe_voice_note_is_empty_without_a_token(monkeypatch):
 
     assert await consumer._transcribe_voice_note(
         media_id="media-1", token=None, wamid="wamid-voice-1"
-    ) == ""
+    ) == ("", 0)
     assert called is False
 
 

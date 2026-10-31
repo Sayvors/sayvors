@@ -85,6 +85,28 @@ async def handle_stt_job(job: Job, db: AsyncSession) -> dict | None:
             len(stt_job.text or ""),
         )
 
+        # Meter the hosted minutes (post-paid: the provider call already ran).
+        # The rate card is admin-editable; a 0 rate means "not billed", so
+        # this is a no-op until an operator sets one.
+        try:
+            from ...billing import pricing
+
+            await pricing.ensure_fresh(db)
+            cents = pricing.asr_cost_cents(stt_job.duration_ms)
+            charged = await pricing.charge_voice(
+                stt_job.user_id,
+                cents,
+                purpose=f"stt {stt_job.duration_ms or 0}ms",
+                idempotency_key=f"asr:{stt_job.id}",
+            )
+            if charged:
+                logger.info(
+                    "STT job %s billed %d cents (tenant %s)",
+                    stt_job.id, charged, stt_job.user_id,
+                )
+        except Exception as e:  # noqa: BLE001 - billing never breaks the job
+            logger.warning("STT job %s metering failed: %s", stt_job.id, e)
+
         return {
             "status": "completed",
             "stt_job_id": stt_job.id,

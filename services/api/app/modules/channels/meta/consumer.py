@@ -805,15 +805,16 @@ async def _transcribe_voice_note(
     media_id: str,
     token: str | None,
     wamid: str,
-) -> str:
-    """Download and transcribe one WhatsApp voice note. "" when unreadable.
+) -> tuple[str, int]:
+    """Download and transcribe one WhatsApp voice note.
 
-    Transcription is inline because the reply pipeline is inline: making the
-    audio a job would move the ASR to the bulk lane but leave nobody to send
-    the answer. ``allow_local_fallback=False`` keeps the API process from
-    loading a Whisper model into a container sized for web traffic — the
-    admin's hosted engine is the path, and an honest "couldn't hear that"
-    beats an OOM that drops every conversation in flight.
+    Returns (text, duration_ms); "" when unreadable. Transcription is inline
+    because the reply pipeline is inline: making the audio a job would move
+    the ASR to the bulk lane but leave nobody to send the answer.
+    ``allow_local_fallback=False`` keeps the API process from loading a
+    Whisper model into a container sized for web traffic — the admin's hosted
+    engine is the path, and an honest "couldn't hear that" beats an OOM that
+    drops every conversation in flight.
     """
     import time
 
@@ -822,13 +823,13 @@ async def _transcribe_voice_note(
 
     if not token:
         logger.info("Voice note skipped (no access token) wamid=%s", wamid[:32])
-        return ""
+        return "", 0
     started = time.perf_counter()
     try:
         audio, mime = await download_whatsapp_media(media_id, token)
     except MediaDownloadError as e:
         logger.warning("Voice note download failed wamid=%s: %s", wamid[:32], e)
-        return ""
+        return "", 0
     try:
         result = await transcribe_bytes(
             audio,
@@ -842,14 +843,45 @@ async def _transcribe_voice_note(
             "Voice note transcription failed wamid=%s: %s: %s",
             wamid[:32], type(e).__name__, str(e)[:200],
         )
-        return ""
+        return "", 0
     text = (result.get("text") or "").strip()
+    duration_ms = int(result.get("duration_ms") or 0)
     logger.info(
         "Voice note transcribed wamid=%s lang=%s chars=%d bytes=%d latency_ms=%d",
         wamid[:32], result.get("language") or "auto", len(text), len(audio),
         int((time.perf_counter() - started) * 1000),
     )
-    return text
+    return text, duration_ms
+
+
+async def _meter_asr(tenant_id: str, duration_ms: int, wamid: str) -> None:
+    """Charge the hosted minutes for one voice note. Never raises.
+
+    Post-paid: the provider call already happened. A 0 rate (the default)
+    means voice is not billed, so this exits immediately.
+    """
+    if duration_ms <= 0:
+        return
+    try:
+        from ...billing import pricing
+
+        await pricing.ensure_fresh()
+        cents = pricing.asr_cost_cents(duration_ms)
+        if cents <= 0:
+            return
+        charged = await pricing.charge_voice(
+            tenant_id,
+            cents,
+            purpose=f"voice note {duration_ms}ms",
+            idempotency_key=f"asr:wa:{wamid[:120]}",
+        )
+        if charged:
+            logger.info(
+                "Voice note billed %d cents tenant=%s wamid=%s",
+                charged, tenant_id, wamid[:32],
+            )
+    except Exception as e:  # noqa: BLE001 - billing never costs the reply
+        logger.warning("Voice note metering failed wamid=%s: %s", wamid[:32], e)
 
 
 async def _reply_voice_note_unreadable(
@@ -1095,14 +1127,14 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         voice_unreadable = False
         if msg_type in ("audio", "voice"):
             media_id = str((data.get("media") or {}).get("id") or "")
-            transcript = (
+            transcript, voice_duration_ms = (
                 await _transcribe_voice_note(
                     media_id=media_id,
                     token=token,
                     wamid=wamid,
                 )
                 if media_id
-                else ""
+                else ("", 0)
             )
             if transcript:
                 text = transcript
@@ -1110,6 +1142,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
                 row.content = encrypt_message_content(text)
                 row.category, row.priority = _categorize(text)
                 await db.commit()
+                await _meter_asr(tenant_id, voice_duration_ms, wamid)
             else:
                 voice_unreadable = True
                 logger.info(

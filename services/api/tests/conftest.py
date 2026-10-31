@@ -57,6 +57,9 @@ def _test_billing_sessions(monkeypatch):
     monkeypatch.setattr(entitlements, "_session_factory", TEST_SESSION, raising=False)
     monkeypatch.setattr(ledger, "_session_factory", TEST_SESSION, raising=False)
     monkeypatch.setattr(usage, "_session_factory", TEST_SESSION, raising=False)
+    from app.modules.billing import pricing
+
+    monkeypatch.setattr(pricing, "_session_factory", TEST_SESSION, raising=False)
 
 
 @asynccontextmanager
@@ -127,6 +130,9 @@ async def engine():
     invalidate_asr_cache()
     yield
     invalidate_asr_cache()
+    from app.modules.billing.pricing import invalidate as invalidate_pricing
+
+    invalidate_pricing()
     async with TEST_ENGINE.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
 
