@@ -267,7 +267,8 @@ async def test_transcript_is_user_history_not_system_instructions(
         captured.update(kwargs)
 
         class _Result:
-            content = "Sure — what would you like to build?"
+            content = "Sure - what would you like to build?"
+            tool_calls: list = []
 
         return _Result()
 

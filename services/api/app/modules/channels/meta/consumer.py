@@ -389,11 +389,10 @@ def _system_prompt(
         # for the team — there is no separate transfer step to promise.
         "Everything the customer tells you (their name, what they need, "
         "contact details) is logged for the team automatically — there is "
-        "no separate handoff step. So never say you will 'connect', "
-        "'transfer' or 'check with' anyone, never promise a call, email "
-        "or message to a different number, and never say someone will "
-        "reach out elsewhere. If the customer wants a human, say the team "
-        "will follow up with them right here in this chat.",
+        "no separate handoff step. Never promise a call, email or message "
+        "to a different number, and never say someone will reach out "
+        "elsewhere. If the customer wants a human, say the team will "
+        "follow up with them right here in this chat.",
         "Never ask for a detail the customer already gave — name, "
         "requirement, budget or number. Re-asking reads as not listening.",
         "If the request is outside what we offer: acknowledge it kindly in "
@@ -403,10 +402,28 @@ def _system_prompt(
         "is fine without a question.",
         "Language: reply in the language the customer wrote in "
         "(Arabic or English; match their script exactly).",
-        "Never invent prices, stock, opening hours, addresses, services or "
-        "links you were not given. When a PUBLIC BUSINESS FACTS block is "
-        "present, answer from it directly; if it does not cover the question, "
-        "say you will confirm with the team and follow up here.",
+        # Answer first, defer last. The old wording told the model to say
+        # "I'll confirm with the team" whenever a fact was missing, so it
+        # deflected questions the facts block already answered (hours,
+        # address, website, team) and repeated the line.
+        "Never invent prices, stock, opening hours, addresses, services, "
+        "links, names or org details. Answer from the PUBLIC BUSINESS FACTS "
+        "block and the DATABANK passages first. When the customer asks for "
+        "hours, the location, the website, a service or the team and the "
+        "facts list them, give the value immediately — never answer such a "
+        "question with another question.",
+        "Only when neither the facts nor the databank contains the detail: "
+        "say plainly in one short sentence that you don't have that detail "
+        "here, then offer to have the team follow up in this chat. Do not "
+        "repeat the same apology or deflection, and do not promise a "
+        "callback elsewhere.",
+        # Tool contract. The router pre-loads hours/address/website/etc., but
+        # anything it missed is one tool call away.
+        "Business facts tool: for opening hours, branches or address, website, "
+        "services, team or owner, call get_business_facts with the matching "
+        "topic. State the returned value directly. If it returns nothing, say "
+        "you don't have that detail here — never guess and never answer with "
+        "a question instead of the fact.",
         # Hours vs availability: the block's hours are for people walking in,
         # not for this chat. A customer must never be told "we're closed".
         "You answer 24/7. The opening hours describe the business's physical "
@@ -547,33 +564,32 @@ async def _generate_reply(
 
     business_card = await prompt_block(tenant_id, db)
 
-    # Public facts: hours, address, website, services (offered/not offered) and
-    # the owner's profile, in one ground-truth block. The hours are the
-    # business's physical visiting hours — the prompt tells the model they are
-    # not its own availability. Best-effort; "" when nothing is configured.
+    # Business facts come from the central `tenant_facts` store via the same
+    # `get_business_facts` tool the model can call. Detected topics are read
+    # eagerly (a deterministic tool call, so "what are your hours?" cannot be
+    # missed); the tool is also offered to the model for anything the router
+    # did not spot. Hours are physical visiting hours — the assistant is 24/7.
     facts_block = ""
+    fact_topics: list[str] = []
     try:
-        import json
+        from ...profile.facts_store import get_facts, render_core
+        from ...profile.facts_tool import detect_topics, render_topic
 
-        from .lead_engine import normalize_lead_settings
-        from ...profile.public_facts import public_facts_block
-
-        try:
-            meta = json.loads(channel.metadata_json or "{}")
-        except (TypeError, ValueError):
-            meta = {}
-        facts_block = await public_facts_block(
-            db,
-            tenant_id=tenant_id,
-            channel_id=channel.id,
-            user=user,
-            timezone_name=normalize_lead_settings(
-                getattr(user, "lead_settings", None)
-            )["timezone"],
-            listing_id=str(meta.get("location_id") or "") or None,
-        )
+        facts = await get_facts(db, tenant_id)
+        facts_block = render_core(facts)
+        fact_topics = detect_topics(text)
+        slices: list[str] = []
+        for topic in fact_topics:
+            slice_text = render_topic(facts, topic)
+            if slice_text:
+                slices.append(f"[get_business_facts(topic=\"{topic}\")]\n{slice_text}")
+        if slices:
+            facts_block += (
+                "\n\nBUSINESS FACTS TOOL RESULTS (answer these directly):\n"
+                + "\n\n".join(slices)
+            )
     except Exception as e:  # noqa: BLE001 - never cost the reply
-        logger.warning("public facts block skipped channel=%s: %s", channel.id, e)
+        logger.warning("business facts skipped channel=%s: %s", channel.id, e)
 
     # Lead capture rides this same call: the model may append one silent
     # LEAD line, which the handlers split off after the fact — extraction
@@ -679,10 +695,16 @@ async def _generate_reply(
                 "preferred language read failed channel=%s: %s", channel.id, e
             )
 
-    resp = await complete(
-        model=model_id,
-        messages=history,
-        system_prompt=_system_prompt(
+    # One line per reply makes "why didn't it know X?" answerable: the sizes
+    # prove whether the facts/databank were actually in the prompt.
+    logger.info(
+        "Reply context channel=%s facts=%d card=%d grounding=%d catalog=%d stored=%d",
+        channel.id, len(facts_block), len(business_card), len(grounding),
+        len(catalog), len(stored_block),
+    )
+
+    system_prompt = (
+        _system_prompt(
             user,
             platform=platform,
             voice_enabled=voice_enabled,
@@ -695,13 +717,64 @@ async def _generate_reply(
         + (f"\n\n{catalog}" if catalog else "")
         + stored_block
         + (f"\n\n{context}" if context else "")
-        + f"\n\n{LEAD_PROMPT_BLOCK}",
+        + f"\n\n{LEAD_PROMPT_BLOCK}"
+    )
+
+    from ...profile.facts_tool import FACTS_TOOL, run_facts_tool
+
+    resp = await complete(
+        model=model_id,
+        messages=history,
+        system_prompt=system_prompt,
         temperature=_REPLY_TEMPERATURE,
         max_tokens=_REPLY_MAX_TOKENS,
+        tools=[FACTS_TOOL],
         tenant_id=tenant_id,
         purpose=f"{platform.lower()}.auto_reply",
         channel_id=channel.id,
     )
+
+    # The model may still ask for a fact the router did not detect. Execute the
+    # tool here (tenant id from context, never from the model's arguments) and
+    # make one final, tools-free call so it cannot loop.
+    if resp.tool_calls:
+        observations: list[str] = []
+        for call in resp.tool_calls[:2]:
+            if call.name != FACTS_TOOL.name:
+                continue
+            topic = str((call.arguments or {}).get("topic") or "all")
+            slice_text = await run_facts_tool(db, tenant_id, topic)
+            observations.append(
+                f"Tool get_business_facts(topic=\"{topic}\") returned:\n"
+                f"{slice_text or '(not configured)'}"
+            )
+            logger.info(
+                "facts tool used tenant=%s topic=%s chars=%d",
+                tenant_id, topic, len(slice_text or ""),
+            )
+        if observations:
+            resp = await complete(
+                model=model_id,
+                messages=list(history)
+                + [
+                    LLMMessage(role="assistant", content=resp.content or ""),
+                    LLMMessage(
+                        role="user",
+                        content=(
+                            "\n\n".join(observations)
+                            + "\n\nAnswer the customer's last message using these "
+                            "facts. State them directly; do not say you will confirm."
+                        ),
+                    ),
+                ],
+                system_prompt=system_prompt,
+                temperature=_REPLY_TEMPERATURE,
+                max_tokens=_REPLY_MAX_TOKENS,
+                tenant_id=tenant_id,
+                purpose=f"{platform.lower()}.auto_reply",
+                channel_id=channel.id,
+            )
+
     return (resp.content or "").strip()
 
 
@@ -1415,13 +1488,29 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         )
 
         # Escalation. Two independent triggers, both in lead_escalation.py:
-        #   * urgency — the customer said it cannot wait, escalate now;
+        #   * urgency — classified from the conversation, NOT keyword-matched:
+        #     "give me your hours, quick" is a fact question, not a page;
         #   * confusion counter — only if the tenant opted in (threshold > 0).
         # A normal follow-up question is neither, so a healthy thread keeps
         # being answered by the AI instead of being muted after three turns.
         from .lead_escalation import detect_urgency, update_escalation_state
+        from ...profile.facts_tool import detect_topics, is_information_request
 
-        urgent = detect_urgency(text)
+        fact_topics = detect_topics(text)
+        # An information request that the facts can answer outranks urgency:
+        # answer it first, never hand a "what are your hours, quick?" to a
+        # human. "I need this done today" has no fact ask and still pages.
+        fact_question = bool(fact_topics) and is_information_request(text)
+        # The classifier reads the whole thread and decides intent; the
+        # keyword matcher remains only as a fallback when the model is down.
+        keyword_urgent = detect_urgency(text)
+        urgent = bool(stats.get("urgent")) or keyword_urgent
+        urgent = urgent and not fact_question
+        logger.info(
+            "Urgency wamid=%s classified=%s fallback=%s fact_question=%s -> %s",
+            wamid[:32], stats.get("urgent"), keyword_urgent,
+            fact_question, urgent,
+        )
         if inbound_lead is not None:
             try:
                 await update_escalation_state(
@@ -1577,7 +1666,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
         if inbound_lead is not None and not should_ai_reply(inbound_lead):
             await escalate_to_human(
                 db, inbound_lead, adapter, phone_number_id, token,
-                urgent=detect_urgency(text),
+                urgent=urgent,
             )
             await db.commit()
             logger.info(
@@ -1904,7 +1993,7 @@ async def _handle_message_received(event: dict, data: dict) -> None:
             # The LEAD line extracted from the reply can be the first proof
             # this is a lead. When the message was also urgent, page the team
             # now rather than waiting for the customer to write again.
-            if detect_urgency(text) and (lead.priority or "normal") != "important":
+            if urgent and (lead.priority or "normal") != "important":
                 try:
                     await update_escalation_state(db, lead, urgent=True)
                     await db.commit()

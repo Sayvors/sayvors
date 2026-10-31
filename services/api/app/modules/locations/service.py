@@ -283,6 +283,12 @@ async def update_profile(
     profile.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
+    # The AI's facts row mirrors this schedule; rebuild now so a customer's
+    # next "what are your hours?" is answered with the saved value.
+    from ..profile.facts_store import rebuild_facts_safe
+
+    await rebuild_facts_safe(db, user_id)
+
     pushed: list[str] = []
     if provider == GOOGLE:
         pushed = await _push_profile_native(db, user_id, listing_id, profile)

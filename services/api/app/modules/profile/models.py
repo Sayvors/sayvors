@@ -1,13 +1,14 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
 from ..user_feedback.models import UserFeedback
 
-__all__ = ["BusinessProfile", "UserFeedback"]
+__all__ = ["BusinessProfile", "TenantFacts", "UserFeedback"]
 
 
 class BusinessProfile(Base):
@@ -50,6 +51,37 @@ class BusinessProfile(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class TenantFacts(Base):
+    """The single source the AI's fact tools read.
+
+    One row per tenant, rebuilt from the owner profile, WhatsApp business
+    profile, channel services, team and every location's hours. The reply
+    path calls the facts tool instead of querying nine tables, so there is
+    exactly one place to inspect and one place to fix when the assistant
+    "doesn't know" something.
+
+    `updated_at` is the freshness contract: a read older than the TTL is
+    rebuilt on demand, and write paths rebuild eagerly.
+    """
+
+    __tablename__ = "tenant_facts"
+
+    tenant_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    facts: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'")
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

@@ -834,6 +834,11 @@ async def update_whatsapp_profile(
     synced_at = _persist_profile(asset, data)
     db.add(asset)
     await db.commit()
+
+    # Keep the AI facts row in step (address/website/email feed answers).
+    from ...profile.facts_store import rebuild_facts_safe
+
+    await rebuild_facts_safe(db, tenant_id_of(user))
     return _profile_out(data, synced_at)
 
 

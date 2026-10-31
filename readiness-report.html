@@ -1862,6 +1862,56 @@ from users where id = '&lt;tenant id&gt;';</code></pre>
   <p class="note"><strong>Verify before building WA-10/WA-11:</strong> whether the business-profile endpoint currently accepts <code>business_hours</code> (so tenant hours sync to WhatsApp and not only into our prompt), and whether the WABA has commerce/catalog access enabled. Both are Meta-side and environment-specific.</p>
 </section>
 
+<section id="ai-facts">
+  <div class="eyebrow">&sect;&sect; 21 - Central AI facts &amp; the facts tool - 2026-10-31</div>
+  <h2>One facts row, one tool, no more nine-table guessing</h2>
+  <p>The assistant used to assemble its answer from nine separate sources on every reply (owner profile, WhatsApp profile, services, hours, legacy hours, team, business card, databank, catalog). A missing field in any one of them produced "I'll confirm with the team". The facts are now materialised per tenant and read through a tool.</p>
+
+  <h3>What exists now</h3>
+  <div class="scroll"><table>
+    <tr><th>Piece</th><th>What it does</th></tr>
+    <tr><td><code>tenant_facts</code> (migration <code>13d74ad0046228f3</code>)</td><td>One JSONB row per tenant: business identity, contact (address/website/email), services offered/not, active team + owner, and <strong>every location</strong> with a normalised schedule. Missing rows rebuild on read.</td></tr>
+    <tr><td><code>profile/facts_store.py</code></td><td>Builds the row from the real sources; compresses schedules (<code>Mon–Thu 09:00–17:00, Fri closed</code>); groups identical schedules across branches; falls back to the pre-removal WhatsApp hours so old tenants are not stranded.</td></tr>
+    <tr><td><code>get_business_facts(topic)</code></td><td>Tool definition plus server-side executor. Topics: <code>hours</code>, <code>locations</code>, <code>website</code>, <code>contact</code>, <code>services</code>, <code>team</code>, <code>owner</code>, <code>all</code>. Tenant id comes from the authenticated context, never from model arguments.</td></tr>
+    <tr><td>Deterministic router</td><td>Detects factual topics (EN + AR) before the LLM call and loads those slices eagerly, so "what are your hours?" cannot be missed. The tool is still offered to the model for anything the router did not spot; one tool round is allowed, the final call is tools-free.</td></tr>
+    <tr><td>Freshness</td><td>Rebuilt after WhatsApp profile, Locations hours and service saves; 10-minute TTL rebuild on read; admin endpoints <code>GET /api/v1/admin/tenants/{id}/ai-facts</code> and <code>POST .../ai-facts/rebuild</code>.</td></tr>
+  </table></div>
+
+  <h3>Multi-location hours</h3>
+  <p>This was the "intelligence" gap. The store keeps one schedule per location and renders the answer the way a person would:</p>
+  <ul>
+    <li>All branches share a schedule → <em>"All 3 locations (Al-Malaz; Olaya; Dammam): Mon–Sun 09:00–17:00"</em>.</li>
+    <li>One differs → <em>"We have 3 locations: Al-Malaz (Riyadh): Mon–Thu 09:00–17:00, Fri closed; Dammam: Mon–Sun 10:00–22:00"</em>.</li>
+    <li>One location → its name/address and the schedule, no list theatre.</li>
+    <li>Closing days are explicit; consecutive identical days are compressed.</li>
+  </ul>
+
+  <h3>Prompt behaviour</h3>
+  <ul>
+    <li>Only a compact identity block is always injected; hours/services/team arrive as <strong>tool results</strong> for the detected topics.</li>
+    <li>The model is told to state the value directly and never answer a factual question with another question. Deferral is allowed only when both the facts row and the databank lack the detail — once, without repeating.</li>
+    <li>Opening hours remain the business's physical visiting hours; the assistant is 24/7 and never says it is closed.</li>
+    <li>Each reply logs <code>Reply context … facts=… card=… grounding=… catalog=…</code> plus tool topics, so "why didn't it know?" is answerable from the log.</li>
+  </ul>
+
+  <h3>Urgency is classified, not keyword-matched</h3>
+  <p>The first version matched words: "quick" was missing (so "please, quick." did not page), and adding it would have paged a human for "give me your hours, quick" — the wrong answer twice. Urgency is now one more field on the existing per-message thread classifier, which reads the whole conversation and returns <code>urgent</code> with explicit rules:</p>
+  <ul>
+    <li>true only when the customer is blocked, needs it today/now, repeats the request, or is angry about delay;</li>
+    <li><strong>false</strong> for a factual question asked quickly ("what are your hours, quick?") and for "quick question";</li>
+    <li>a fact question with an answer always wins: the reply path answers it and suppresses the page, even when the classifier says urgent. A buying request ("I need this done today") has no fact ask and still pages.</li>
+    <li>the keyword matcher is now only a fallback when the classifier is unavailable, and it is gated by the same fact-question check.</li>
+    <li>escalation still ignores lead stage and age: a 20-day-old lost lead that says "quick" becomes important, while its pipeline stage is left untouched.</li>
+  </ul>
+
+  <h3>Still open</h3>
+  <ul>
+    <li>Team membership changes do not rebuild eagerly yet (10-minute TTL covers them).</li>
+    <li>Databank search remains RAG; it is not part of the facts row (documents can be large and change independently).</li>
+    <li>The admin facts inspector is JSON only; a rendered "what the AI sees" screen is UI work.</li>
+  </ul>
+</section>
+
 <footer>
   Sayvors production-readiness audit - originally compiled 2026-10-11 (read-only), kept current since. The actionable ledger is <strong>34 original findings</strong> (SEC 11, SCALE 6, OPS 5, ANL 12: 32 resolved, 2 open), the <strong>7-finding INS pass</strong> (4 fixed, 3 open), and the <strong>55-alert dependency ledger</strong> (all closed); CVE-1/CVE-2 (Next.js/sharp) are fixed, CVE-3 (Redis 7) and CVE-4 (Kafka 3.8) remain open on the server images; sections 5-7 are the strategy answers. Per-item status reflects the working tree as of 2026-10-29; implementation details live in <code>docs/security/</code>. The 2026-10-25 pass added the INS ledger and the ordered code/infra/buy fix queue (§§11) and re-verified the resolved findings against the working tree. The 2026-10-26 pass added the dependency ledger (§§15) and closed all 55 Dependabot alerts the same day; the default branch was moved from <code>main</code> to <code>development</code> so Dependabot scans the branch where fixes land. The 2026-10-29 pass added the conversation-control and Instagram &rarr; WhatsApp ledger (&sect;17, 16 items plus a deferred calling decision), including the silent-thread root cause (BUG-1 to BUG-4) and the outbox/publisher race that silently dropped inbound messages (BUG-5) found on staging. BUG-1/2/3, BUG-5, HAND-1 (the wa.me bridge), HAND-2 (templates + consent), HAND-3 (identity merge + carried context), HAND-4, HAND-6 (catalog + public page), HAND-7 (databank grounding), HAND-8 (conversation mode) and HAND-9 (stored context) were fixed in the same pass; 4 items remain open. The 2026-10-31 pass added the voice-note/ASR ledger (&sect;19): inbound voice notes are transcribed by the admin-managed engine and answered end to end, with billing for hosted minutes and moving the reply onto the job lanes still open. It also moved escalation from a per-message counter to urgency + a confused-return counter, and stopped information-only chats from creating CRM leads. The same pass added the WhatsApp surface ledger (&sect;20): text and voice are verified end to end, with interactive messages, inbound media, QR codes and the remaining account surface listed as the next build order.
 </footer>

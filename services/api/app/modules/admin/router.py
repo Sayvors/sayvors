@@ -1610,6 +1610,33 @@ async def update_plan(plan_id: str, body: PlanUpdate, _admin=Depends(require_adm
         )
 
 
+@router.get("/tenants/{tenant_id}/ai-facts")
+async def admin_get_ai_facts(tenant_id: str, _admin=Depends(require_admin)):
+    """Exactly what the assistant's fact tool can answer, for support."""
+    from ...database import async_session
+    from ..profile.facts_store import get_facts
+
+    async with async_session() as db:
+        return await get_facts(db, tenant_id)
+
+
+@router.post("/tenants/{tenant_id}/ai-facts/rebuild")
+async def admin_rebuild_ai_facts(tenant_id: str, _admin=Depends(require_admin)):
+    """Rebuild the facts row now (hours/services/profile changed)."""
+    from ...database import async_session
+    from ..profile.facts_store import rebuild_facts
+
+    async with async_session() as db:
+        facts = await rebuild_facts(db, tenant_id)
+        return {
+            "tenant_id": tenant_id,
+            "updated_at": facts.get("generated_at"),
+            "locations": len(facts.get("locations") or []),
+            "services_offered": len((facts.get("services") or {}).get("offered") or []),
+            "team": len(facts.get("team") or []),
+        }
+
+
 @router.get("/pricing")
 async def admin_list_pricing(db: AsyncSession = Depends(get_db), _admin=Depends(require_admin)):
     """The billable rate card: every editable unit with its effective price."""

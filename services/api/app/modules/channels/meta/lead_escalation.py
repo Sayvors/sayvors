@@ -164,8 +164,11 @@ async def update_escalation_state(db, lead, *, confused: bool = False, urgent: b
 # normal question, not an emergency.
 _URGENT_PATTERNS = (
     r"\b(urgent|urgently|asap|as\s+soon\s+as\s+possible|immediately|"
-    r"right\s+away|right\s+now|emergency|time[- ]sensitive)\b",
-    r"(عاجل|عاجلا|بسرعة|حالا|حالاً|فورا|فوراً|ضروري|الان|الآن)",
+    r"right\s+away|right\s+now|emergency|time[- ]sensitive|"
+    r"quickly|hurry|rush|promptly|fast\s+as\s+possible|"
+    r"quick(?!\s+question))\b",
+    r"(عاجل|عاجلا|بسرعة|سريع|بأسرع وقت|بأقرب وقت|حالا|حالاً|فورا|فوراً|"
+    r"ضروري|الان|الآن|على وجه السرعة)",
     r"\b(still\s+waiting|no\s+one\s+(?:has\s+)?(?:replied|answered)|"
     r"keeps?\s+ignoring|third\s+time)\b",
 )

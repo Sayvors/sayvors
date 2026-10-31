@@ -28,6 +28,10 @@ from test_lead_escalation import _noop_async, _seed_thread
         "still waiting for an answer",
         "no one has replied",
         "this is the third time I ask",
+        "please, quick.",
+        "I need it quickly",
+        "hurry please",
+        "بأسرع وقت من فضلك",
     ],
 )
 def test_urgency_markers_are_detected(text):
@@ -41,6 +45,7 @@ def test_urgency_markers_are_detected(text):
         "nowadays I sell shoes online",
         "I want an e-commerce website for shoes and jewelry",
         "Why don't you help me",
+        "can I ask a quick question about pricing?",
         "",
         None,
     ],
@@ -99,6 +104,27 @@ async def test_confusion_counter_is_off_by_default(db, monkeypatch):
 
     assert lead.ai_miss_count == 6, "the signal is still counted..."
     assert lead.priority == "normal", "...but it must not page anyone at 0"
+
+
+@pytest.mark.asyncio
+async def test_urgent_message_reopens_a_lost_lead_as_important(db, monkeypatch):
+    """A 20-day-old lost lead that says "quick" must page a human again.
+
+    Stage is not a gate: priority is what the inbox sorts on, and a customer
+    asking for speed outranks the old pipeline state.
+    """
+    monkeypatch.setattr(lead_escalation, "_send_email", _noop_async)
+    lead_escalation.clear_settings_cache()
+
+    lead = await _seed_thread(db, last_outbound_is_ai=True, count=1, phone="+15550000041")
+    lead.stage = "lost"
+    await db.commit()
+
+    await lead_escalation.update_escalation_state(db, lead, urgent=True)
+    await db.commit()
+
+    assert lead.priority == "important"
+    assert lead.stage == "lost", "the pipeline state is not rewritten by a page"
 
 
 @pytest.mark.asyncio
