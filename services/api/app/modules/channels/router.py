@@ -865,6 +865,7 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
     escalation: dict = {
         "priority": "normal",
         "ai_miss_count": 0,
+        "lead_category": None,
         "priority_since": None,
         "escalated_at": None,
         "escalation_reminder_at": None,
@@ -930,6 +931,7 @@ async def _thread_state(db, tenant_id: str, channel_id: str, phone: str) -> Thre
             escalation = {
                 "priority": lead.priority or "normal",
                 "ai_miss_count": int(lead.ai_miss_count or 0),
+                "lead_category": lead.category,
                 "priority_since": (
                     priority_since.isoformat() if priority_since else None
                 ),

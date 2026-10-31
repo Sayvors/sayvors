@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchLeadSettings, updateLeadSettings, type LeadSettings } from "@/lib/api-leads";
+import {
+  LEAD_CATEGORIES,
+  LEAD_CATEGORY_LABELS,
+  type LeadCategory,
+} from "@/lib/lead-labels";
 import { apiFetch } from "@/lib/api-rag";
 import SettingHelp from "@/components/settings/SettingHelp";
 
@@ -271,6 +276,9 @@ export default function LeadSettingsSection() {
     if (settings.digest_enabled !== draft.digest_enabled) return true;
     if (settings.digest_hour !== draft.digest_hour) return true;
     if (settings.digest_max_leads !== draft.digest_max_leads) return true;
+    const qa = [...(draft.qualified_categories ?? [])].sort();
+    const qb = [...(settings.qualified_categories ?? [])].sort();
+    if (qa.length !== qb.length || !qa.every((c, i) => c === qb[i])) return true;
     const a = [...recipients].sort();
     const b = [...(settings.escalation_emails ?? [])].sort();
     return a.length !== b.length || !a.every((e, i) => e === b[i]);
@@ -283,6 +291,18 @@ export default function LeadSettingsSection() {
     setStatus("idle");
     setError(null);
   }, [settings]);
+
+  const toggleQualifiedCategory = (category: LeadCategory) => {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const current = prev.qualified_categories ?? [];
+      const next = current.includes(category)
+        ? current.filter((c) => c !== category)
+        : [...current, category];
+      return { ...prev, qualified_categories: next };
+    });
+    if (status === "saved") setStatus("idle");
+  };
 
   const save = async () => {
     if (status === "saving" || !draft) return;
@@ -377,7 +397,7 @@ export default function LeadSettingsSection() {
       <div className="space-y-5 px-5 py-5">
         <Group
           title="Follow-up cadence"
-          note="Only leads that showed buying intent are followed up — a conversation that never asked about price, availability or booking is left alone."
+          note="Only leads whose type is checked in “What counts as qualified” are followed up — a conversation that never showed a commercial signal is left alone."
           help={
             <SettingHelp
               ariaLabel="How lead follow-up cadence works"
@@ -428,6 +448,42 @@ export default function LeadSettingsSection() {
               onChange={set("max_attempts")}
             />
           </div>
+        </Group>
+
+        <Group
+          title="What counts as qualified"
+          note="A captured lead enters the sales pipeline only when its type is checked here. Support and info stay on the board as New until the customer shows a commercial signal. Keep at least one checked — an empty set falls back to the defaults rather than silently disabling the pipeline."
+        >
+          <fieldset>
+            <legend className="sr-only">Which lead types auto-qualify</legend>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {LEAD_CATEGORIES.map((category) => {
+                const checked = (draft.qualified_categories ?? []).includes(category);
+                const isLastChecked =
+                  checked && (draft.qualified_categories ?? []).length <= 1;
+                return (
+                  <label
+                    key={category}
+                    className={`flex cursor-pointer items-center gap-2 rounded-[2px] border ${HAIRLINE} bg-white px-3 py-2 text-[13px] font-medium ${INK} ${FOCUS}`}
+                    title={
+                      isLastChecked
+                        ? "At least one lead type must stay qualified."
+                        : undefined
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={busy || isLastChecked}
+                      onChange={() => toggleQualifiedCategory(category)}
+                      className="h-3.5 w-3.5 accent-[var(--ui-ink)]"
+                    />
+                    {LEAD_CATEGORY_LABELS[category]}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
         </Group>
 
         <Group

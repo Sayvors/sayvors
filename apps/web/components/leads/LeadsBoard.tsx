@@ -8,6 +8,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query-keys";
 import PlatformMark, { platformLabel } from "@/components/channels/PlatformMark";
 import { fetchLeads, updateLead, type Lead, type LeadStage } from "@/lib/api-leads";
+import {
+  LEAD_CATEGORIES,
+  LEAD_CATEGORY_LABELS,
+  leadCategoryLabel,
+  type LeadCategory,
+} from "@/lib/lead-labels";
 
 /*
  * The all-channels leads board: every conversation the messaging engine
@@ -48,13 +54,6 @@ const STAGE_LABEL: Record<LeadStage, string> = {
 };
 
 const STAGES: LeadStage[] = ["new", "qualified", "follow_up", "converted", "lost"];
-
-const INTENT_LABEL: Record<string, string> = {
-  buying: "Wants to buy",
-  booking: "Booking",
-  quote: "Quote request",
-  info: "Exploring",
-};
 
 const CHANNELS = ["whatsapp", "instagram", "facebook"] as const;
 
@@ -135,12 +134,15 @@ function LeadCard({
   lead,
   busy,
   onMove,
+  onCategory,
 }: {
   lead: Lead;
   busy: boolean;
   onMove: (lead: Lead, stage: LeadStage) => void;
+  onCategory: (lead: Lead, category: LeadCategory) => void;
 }) {
   const reqs = requirements(lead.request);
+  const categoryLabel = leadCategoryLabel(lead.category);
   return (
     <li
       className={`flex flex-col rounded-[12px] border p-4 ${
@@ -195,9 +197,9 @@ function LeadCard({
       </div>
 
       <div className="mt-3 flex items-start gap-2">
-        {lead.intent && (
+        {categoryLabel && (
           <span className="shrink-0 rounded-[8px] border border-[var(--ui-line)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-ink)]">
-            {INTENT_LABEL[lead.intent] ?? lead.intent}
+            {categoryLabel}
           </span>
         )}
         <p className={`min-w-0 flex-1 text-[13px] leading-snug ${INK}`}>
@@ -244,6 +246,22 @@ function LeadCard({
 
       <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
         <select
+          value={lead.category ?? ""}
+          onChange={(e) => onCategory(lead, e.target.value as LeadCategory)}
+          disabled={busy}
+          aria-label={`Lead type for ${lead.contact_name || lead.contact_id}`}
+          className={`h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
+        >
+          <option value="" disabled>
+            No type
+          </option>
+          {LEAD_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {LEAD_CATEGORY_LABELS[c]}
+            </option>
+          ))}
+        </select>
+        <select
           value={lead.stage}
           onChange={(e) => onMove(lead, e.target.value as LeadStage)}
           disabled={busy}
@@ -283,6 +301,7 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
   const queryClient = useQueryClient();
   const [priorityFirst, setPriorityFirst] = useState(true);
   const [stageFilter, setStageFilter] = useState<"all" | LeadStage>("all");
+  const [categoryFilter, setCategoryFilter] = useState<"all" | LeadCategory>("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "important">("all");
   const [channelFilter, setChannelFilter] = useState<string>("all");
   const [age, setAge] = useState<AgeKey>("any");
@@ -311,6 +330,20 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
     setBusyId(lead.id);
     try {
       const updated = await updateLead(lead.id, { stage });
+      queryClient.setQueryData(queryKeys.leads.list(platform, priorityFirst), (old: { leads: Lead[]; now: number } | undefined) =>
+        old ? { ...old, leads: (old.leads ?? []).map((r) => (r.id === updated.id ? updated : r)) } : old,
+      );
+    } catch {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.leads.all() });
+    } finally {
+      setBusyId(null);
+    }
+  };
+  const changeCategory = async (lead: Lead, category: LeadCategory) => {
+    if (category === lead.category || busyId) return;
+    setBusyId(lead.id);
+    try {
+      const updated = await updateLead(lead.id, { category });
       queryClient.setQueryData(queryKeys.leads.list(platform, priorityFirst), (old: { leads: Lead[]; now: number } | undefined) =>
         old ? { ...old, leads: (old.leads ?? []).map((r) => (r.id === updated.id ? updated : r)) } : old,
       );
@@ -406,6 +439,9 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
   // returns, and a hook there would violate the Rules of Hooks. n is capped at
   // 200 by the fetch, so the sort is free.
   let rows = stageFilter === "all" ? base : base.filter((l) => l.stage === stageFilter);
+  if (categoryFilter !== "all") {
+    rows = rows.filter((l) => l.category === categoryFilter);
+  }
   if (priorityFilter === "important") {
     rows = rows.filter((l) => l.priority === "important");
   }
@@ -479,6 +515,20 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
             </button>
           ))}
         </div>
+
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value as "all" | LeadCategory)}
+          aria-label="Filter leads by type"
+          className={`h-8 rounded-[8px] border border-[var(--ui-line)] bg-[var(--ui-surface)] px-2 text-[12px] font-semibold ${INK} ${FOCUS}`}
+        >
+          <option value="all">All lead types</option>
+          {LEAD_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {LEAD_CATEGORY_LABELS[c]}
+            </option>
+          ))}
+        </select>
 
         {!platform && (
           <div
@@ -559,7 +609,13 @@ export default function LeadsBoard({ platform }: { platform?: string }) {
                   className={`grid gap-3 ${cols === 3 ? "lg:grid-cols-3" : cols === 2 ? "lg:grid-cols-2" : "grid-cols-1"}`}
                 >
                   {rowItems.map((lead) => (
-                    <LeadCard key={lead.id} lead={lead} busy={busyId === lead.id} onMove={move} />
+                    <LeadCard
+                      key={lead.id}
+                      lead={lead}
+                      busy={busyId === lead.id}
+                      onMove={move}
+                      onCategory={changeCategory}
+                    />
                   ))}
                 </div>
               );

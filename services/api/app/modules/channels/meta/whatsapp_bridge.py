@@ -292,7 +292,12 @@ async def _carry_context(db, bridge: ChannelBridge, ig_lead: Lead | None,
         asked = ig_lead.request or ig_lead.summary
         if asked:
             lines.append(f"Asked: {asked}")
-        if ig_lead.intent:
+        from .lead_engine import category_label
+
+        category = category_label(getattr(ig_lead, "category", None))
+        if category:
+            lines.append(f"Type: {category}")
+        elif ig_lead.intent:
             lines.append(f"Intent: {ig_lead.intent}")
         if ig_lead.stage and ig_lead.stage != "new":
             lines.append(f"Stage: {ig_lead.stage}")

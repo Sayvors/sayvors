@@ -24,6 +24,7 @@ from ...channels.service import (
     hash_contact_phone,
 )
 from ..models import ChannelMessage, Lead
+from .lead_engine import category_label
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +226,15 @@ def resume_lead(lead, reason: str) -> None:
 
 
 def _lead_label(lead) -> str:
-    return lead.contact_name or lead.contact_id or "A customer"
+    """The same canonical label the inbox and lead card show.
+
+    Category is included here because the escalation email is often the only
+    context a human has before opening the thread; "Amina (Wholesale)" tells
+    them whether this is a bulk buyer or a personal order.
+    """
+    name = lead.contact_name or lead.contact_id or "A customer"
+    category = category_label(getattr(lead, "category", None))
+    return f"{name} ({category})" if category else name
 
 
 HANDOVER_TEXT = "Let me get my colleague to help you with this."

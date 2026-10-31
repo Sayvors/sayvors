@@ -155,6 +155,7 @@ async def test_thread_state_exposes_the_escalation_clock(client, db, user_id):
         platform="whatsapp", contact_id=CUSTOMER, stage="qualified",
         language="en", opt_out=False, thread_key=CUSTOMER,
         priority="important", ai_miss_count=3,
+        category="wholesale",
         priority_since=since, escalated_at=since, handover_sent_at=since,
         # NULL reminder + a sent escalation = the reminder already fired.
         escalation_reminder_at=None,
@@ -167,6 +168,7 @@ async def test_thread_state_exposes_the_escalation_clock(client, db, user_id):
 
     assert opened["priority"] == "important"
     assert opened["ai_miss_count"] == 3
+    assert opened["lead_category"] == "wholesale"
     assert opened["escalated_at"] is not None
     assert opened["handover_sent_at"] is not None
     assert opened["escalation_reminder_at"] is None

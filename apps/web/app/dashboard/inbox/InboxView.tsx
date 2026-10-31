@@ -28,6 +28,7 @@ import {
   setCustomerAwaiting,
   useTypingSource,
 } from "@/lib/inbox-typing";
+import { leadCategoryLabel } from "@/lib/lead-labels";
 import { useInboxRealtime, type InboxRealtimeEvent } from "@/lib/use-inbox-realtime";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import TypingIndicator from "@/components/inbox/TypingIndicator";
@@ -978,6 +979,11 @@ export default function InboxView() {
                                 <span className="truncate text-[13px] font-semibold text-ink dark:text-fog">
                                   {t.display_name || "Unknown sender"}
                                 </span>
+                                {t.lead_category && (
+                                  <span className="shrink-0 rounded-full border border-ink/[0.08] px-1.5 py-0.5 text-[9px] font-semibold text-ink/60 dark:border-fog/[0.12] dark:text-fog/60">
+                                    {leadCategoryLabel(t.lead_category)}
+                                  </span>
+                                )}
                                 {t.important && (
                                   <span
                                     className="shrink-0 rounded-full bg-[#FF4F6E]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#C4304B] dark:bg-[#FF4F6E]/20 dark:text-[#FF8FA3]"
@@ -1066,8 +1072,17 @@ export default function InboxView() {
                     <PlatformBadge platform={target.platform} />
                   </Avatar>
                   <span className="min-w-0 flex-1">
-                    <p className="truncate text-[14px] font-semibold text-ink dark:text-fog">
-                      {target.display_name || "Unknown sender"}
+                    <p className="flex min-w-0 items-center gap-1.5 text-[14px] font-semibold text-ink dark:text-fog">
+                      <span className="truncate">
+                        {target.display_name || "Unknown sender"}
+                      </span>
+                      {(threadState?.lead_category ?? target.lead_category) && (
+                        <span className="shrink-0 rounded-full border border-ink/[0.08] px-1.5 py-0.5 text-[9px] font-semibold text-ink/55 dark:border-fog/[0.12] dark:text-fog/55">
+                          {leadCategoryLabel(
+                            threadState?.lead_category ?? target.lead_category,
+                          )}
+                        </span>
+                      )}
                     </p>
                     <p className="truncate text-[11px] text-ink/45 dark:text-fog/45">
                       {/* An IGSID is not a phone number — no formatting. */}

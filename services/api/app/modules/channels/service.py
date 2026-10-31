@@ -16,7 +16,7 @@ from ...core.crypto import encrypt_secret as _encrypt_secret
 from ...core.crypto import get_fernet as _get_fernet
 from ..team.context import tenant_id_of
 from ..users.models import User
-from .models import Channel, ChannelMessage, ChannelThread, ContactProfile
+from .models import Channel, ChannelMessage, ChannelThread, ContactProfile, Lead
 from . import thread_maintenance  # noqa: F401  registers event listeners
 from .schemas import ChannelCreate, ChannelMessageSend
 
@@ -853,12 +853,55 @@ async def _thread_profiles(
     return {(r.platform, r.contact_id): r for r in rows}
 
 
+async def _thread_lead_categories(
+    db: AsyncSession,
+    tenant_id: str,
+    pairs: set[tuple[str, str]],
+) -> dict[tuple[str, str], str]:
+    """Canonical lead label for a page of threads, in one indexed query.
+
+    The inbox row stores the per-message conversation category (complaint,
+    question); the lead's own category lives on `leads`. Loading it here
+    keeps the inbox labels identical to the lead card, digest and escalation
+    email instead of re-deriving a label in the browser.
+    """
+    if not pairs:
+        return {}
+    rows = (
+        await db.execute(
+            select(Lead.channel_id, Lead.contact_id, Lead.category).where(
+                Lead.tenant_id == tenant_id,
+                Lead.merged_into_id.is_(None),
+                tuple_(Lead.channel_id, Lead.contact_id).in_(pairs),
+            )
+        )
+    ).all()
+    return {
+        (channel_id, contact_id): category
+        for channel_id, contact_id, category in rows
+        if category
+    }
+
+
+def _thread_lead_pairs(threads: list[ChannelThread]) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for t in threads:
+        if t.contact_phone is None:
+            continue
+        phone = decrypt_contact_phone(t.contact_phone)
+        if phone:
+            pairs.add((t.channel_id, phone))
+    return pairs
+
+
 def _thread_payloads(
     threads: list[ChannelThread],
     by_id: dict[str, Channel],
     profiles: dict,
+    lead_categories: dict[tuple[str, str], str] | None = None,
 ) -> list[dict]:
     """Serialise thread rows for the inbox response."""
+    lead_categories = lead_categories or {}
     out: list[dict] = []
     for t in threads:
         ch = by_id.get(t.channel_id)
@@ -899,6 +942,11 @@ def _thread_payloads(
                 "is_unknown": phone is None,
                 "category": category,
                 "priority": priority,
+                "lead_category": (
+                    lead_categories.get((t.channel_id, decrypted_phone))
+                    if decrypted_phone is not None
+                    else None
+                ),
                 "important": is_important(priority, category),
                 "can_reply": ch.platform != "google_reviews" and phone is not None,
                 "archived": t.archived_at is not None,
@@ -1131,6 +1179,17 @@ async def list_inbox_threads(
             ).scalars().all()
             profiles = {(r.platform, r.contact_id): r for r in rows}
 
+        lead_pairs: set[tuple[str, str]] = set()
+        for _phone_hash, phone, cid, _la, _t in summaries:
+            if phone is None:
+                continue
+            decrypted = decrypt_contact_phone(phone)
+            if decrypted:
+                lead_pairs.add((cid, decrypted))
+        lead_categories = await _thread_lead_categories(
+            db, tenant_id_of(user), lead_pairs
+        )
+
         out: list[dict] = []
         for phone_hash, phone, channel_id, last_at, total in summaries:
             msgs = msgs_by_thread.get((channel_id, phone_hash), [])
@@ -1181,6 +1240,11 @@ async def list_inbox_threads(
                     "is_unknown": phone is None,
                     "category": category,
                     "priority": priority,
+                    "lead_category": (
+                        lead_categories.get((channel_id, decrypted_phone))
+                        if decrypted_phone is not None
+                        else None
+                    ),
                     "important": is_important(priority, category),
                     "can_reply": platform != "google_reviews" and phone is not None,
                     # No thread row exists on this path, so nothing has ever
@@ -1198,7 +1262,10 @@ async def list_inbox_threads(
         if not threads:
             return []
         profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
-        return _thread_payloads(threads, by_id, profiles)
+        lead_categories = await _thread_lead_categories(
+            db, tenant_id_of(user), _thread_lead_pairs(threads)
+        )
+        return _thread_payloads(threads, by_id, profiles, lead_categories)
 
     # --- Fast path: read from denormalized thread table (1 query) ---
     t_stmt = (
@@ -1223,7 +1290,10 @@ async def list_inbox_threads(
         return []
 
     profiles = await _thread_profiles(db, tenant_id_of(user), threads, by_id)
-    return _thread_payloads(threads, by_id, profiles)
+    lead_categories = await _thread_lead_categories(
+        db, tenant_id_of(user), _thread_lead_pairs(threads)
+    )
+    return _thread_payloads(threads, by_id, profiles, lead_categories)
 
 
 async def list_thread_messages(

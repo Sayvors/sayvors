@@ -28,6 +28,8 @@ export interface InboxThread {
   category?: string | null;
   /** urgent | high | normal | low */
   priority?: string | null;
+  /** Canonical lead label for the conversation, when a lead exists. */
+  lead_category?: string | null;
   /** Who answers this conversation. "human" mutes the AI. */
   mode?: "ai" | "human";
   mode_changed_at?: string | null;
@@ -70,6 +72,8 @@ export interface ThreadState {
   /** Escalation clock — why the AI stopped and when it takes over again. */
   priority?: "normal" | "important";
   ai_miss_count?: number;
+  /** Canonical lead label, refreshed with the thread state. */
+  lead_category?: string | null;
   priority_since?: string | null;
   escalated_at?: string | null;
   escalation_reminder_at?: string | null;

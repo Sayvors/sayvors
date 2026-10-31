@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/api-rag";
+import type { LeadCategory } from "@/lib/lead-labels";
 
 /*
  * Leads: people the messaging engine is converting while chatting on the
@@ -21,6 +22,8 @@ export type Lead = {
   contact_username: string | null;
   language: string;
   intent: string | null;
+  /** Canonical label: wholesale | retail | booking | quote | support | info. */
+  category: LeadCategory | null;
   request: string | null;
   avatar_url: string | null;
   summary: string | null;
@@ -61,6 +64,8 @@ export type LeadSettings = {
   digest_enabled: boolean;
   digest_hour: number;
   digest_max_leads: number;
+  /** Which canonical lead types auto-qualify (the per-tenant stage rule). */
+  qualified_categories: LeadCategory[];
   review_issue_subcategories?: string[];
 };
 
@@ -68,6 +73,7 @@ export async function fetchLeads(
   params?: {
     platform?: string;
     stage?: LeadStage;
+    category?: LeadCategory;
     priority?: LeadPriority;
     priorityFirst?: boolean;
     limit?: number;
@@ -77,6 +83,7 @@ export async function fetchLeads(
   const qs = new URLSearchParams();
   if (params?.platform) qs.set("platform", params.platform);
   if (params?.stage) qs.set("stage", params.stage);
+  if (params?.category) qs.set("category", params.category);
   if (params?.priority) qs.set("priority", params.priority);
   if (params?.priorityFirst) qs.set("priority_first", "true");
   if (params?.limit) qs.set("limit", String(params.limit));
@@ -87,7 +94,7 @@ export async function fetchLeads(
 
 export async function updateLead(
   id: string,
-  patch: { stage?: LeadStage; summary?: string },
+  patch: { stage?: LeadStage; category?: LeadCategory; summary?: string },
 ): Promise<Lead> {
   return apiFetch(`/api/v1/leads/${encodeURIComponent(id)}`, {
     method: "PATCH",

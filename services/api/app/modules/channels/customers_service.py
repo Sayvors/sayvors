@@ -141,6 +141,7 @@ async def list_customers(
 
         row = dict(t)
         row["lead_stage"] = lead.stage if lead else None
+        row["lead_category"] = lead.category if lead else None
         row["intent"] = lead.intent if lead else None
         row["has_review"] = has_review
         out.append(row)
@@ -256,6 +257,7 @@ async def get_customer_profile(
             {
                 "id": lead.id,
                 "stage": lead.stage,
+                "category": lead.category,
                 "intent": lead.intent,
                 "request": lead.request,
                 "summary": lead.summary,

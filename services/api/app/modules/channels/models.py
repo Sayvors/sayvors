@@ -464,10 +464,13 @@ class Lead(Base):
     field keeps its provenance in field_provenance.
 
     stage is the deterministic pipeline state — new -> qualified ->
-    follow_up -> converted/lost. The engine moves it; the tenant can
-    override to won/lost at any point. opt_out suppresses every scheduled
-    action regardless of stage. thread_key is the unified-inbox thread
-    identifier, so the UI can walk from the lead into the conversation.
+    follow_up -> converted/lost. `qualified` means the captured category is
+    sellable (wholesale/retail/booking/quote by default), not merely that the
+    lead has a request; info and support leads stay `new` until they show a
+    commercial signal. The engine moves it; the tenant can override to
+    won/lost at any point. opt_out suppresses every scheduled action
+    regardless of stage. thread_key is the unified-inbox thread identifier,
+    so the UI can walk from the lead into the conversation.
     """
 
     __tablename__ = "leads"
@@ -476,6 +479,8 @@ class Lead(Base):
         # step's open-lead lookup (channel, contact) — one index each.
         Index("ix_leads_tenant_created", "tenant_id", "created_at"),
         Index("ix_leads_channel_contact", "channel_id", "contact_id"),
+        # Category filter + recency, the leads board's reporting query.
+        Index("ix_leads_tenant_category", "tenant_id", "category", "created_at"),
         # Board sort: WHERE tenant_id=? ORDER BY priority DESC, updated_at DESC.
         # Stored (not derived in SQL) so this stays an index scan rather than
         # a full sort of the lead table. See lead_escalation.py.
@@ -502,6 +507,19 @@ class Lead(Base):
     language: Mapped[str] = mapped_column(String(16), default="en")
     # Buying intent, one of "buying" | "booking" | "quote" | "info".
     intent: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # The canonical lead label shown in every surface (inbox, lead card,
+    # digest, escalation email): wholesale | retail | booking | quote |
+    # support | info. Classification is one place (`lead_engine.detect_category`
+    # plus the reply extraction); the surfaces only render the stored value.
+    # `intent` above remains the raw buying signal and is never shown as a
+    # label - it cannot express wholesale.
+    category: Mapped[str | None] = mapped_column(
+        Enum(
+            "wholesale", "retail", "booking", "quote", "support", "info",
+            name="lead_category",
+        ),
+        nullable=True,
+    )
     # What they need, in the customer's own words.
     request: Mapped[str | None] = mapped_column(Text, nullable=True)
     # One-line UI summary (falls back to request in the API when unset).

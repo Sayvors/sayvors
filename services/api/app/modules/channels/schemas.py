@@ -156,6 +156,9 @@ class ThreadStateOut(BaseModel):
     # automatic-escalation window is indistinguishable from a hung bot.
     priority: str = "normal"
     ai_miss_count: int = 0
+    # Canonical lead label, refreshed with the thread state so the header is
+    # correct even when the list row predates the capture.
+    lead_category: str | None = None
     priority_since: str | None = None
     escalated_at: str | None = None
     escalation_reminder_at: str | None = None
@@ -198,6 +201,10 @@ class InboxThread(BaseModel):
     message_count: int
     category: str | None = None
     priority: str | None = None
+    # Canonical lead label for this conversation (wholesale | retail | booking
+    # | quote | support | info), when a lead exists. Separate from `category`
+    # above, which is the per-message conversation category (complaint, ...).
+    lead_category: str | None = None
     # Who answers this conversation: "ai" (default) or "human". "human" means
     # the AI is muted, whoever set it.
     mode: str = "ai"
@@ -332,6 +339,8 @@ class LeadOut(BaseModel):
     contact_username: str | None = None
     language: str = "en"
     intent: str | None = None
+    # Canonical label: wholesale | retail | booking | quote | support | info.
+    category: str | None = None
     request: str | None = None
     # From contact_profiles when a cached avatar exists — temporary CDN
     # URL, refreshed on inbound traffic like the inbox's.
@@ -361,6 +370,9 @@ class LeadListResponse(BaseModel):
 
 class LeadUpdate(BaseModel):
     stage: str | None = Field(None, pattern="^(new|qualified|follow_up|converted|lost)$")
+    category: str | None = Field(
+        None, pattern="^(wholesale|retail|booking|quote|support|info)$"
+    )
     summary: str | None = Field(None, max_length=2000)
 
 
@@ -385,6 +397,8 @@ class LeadSettingsOut(BaseModel):
     digest_enabled: bool
     digest_hour: int
     digest_max_leads: int
+    # Per-tenant stage rule: which canonical categories auto-qualify a lead.
+    qualified_categories: list[str] = []
     review_issue_subcategories: list[str] = []
 
 
@@ -408,4 +422,5 @@ class LeadSettingsUpdate(BaseModel):
     digest_enabled: bool | None = None
     digest_hour: int | None = None
     digest_max_leads: int | None = None
+    qualified_categories: list[str] | None = Field(None, max_length=6)
     review_issue_subcategories: list[str] | None = Field(None, max_length=40)
