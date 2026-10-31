@@ -562,7 +562,7 @@ async def _generate_reply(
     # databank. Never raises; "" when no card exists yet.
     from ...profile.business_profile import prompt_block
 
-    business_card = await prompt_block(tenant_id, db)
+    business_card = (await prompt_block(tenant_id, db)) or ""
 
     # Business facts come from the central `tenant_facts` store via the same
     # `get_business_facts` tool the model can call. Detected topics are read
@@ -699,8 +699,8 @@ async def _generate_reply(
     # prove whether the facts/databank were actually in the prompt.
     logger.info(
         "Reply context channel=%s facts=%d card=%d grounding=%d catalog=%d stored=%d",
-        channel.id, len(facts_block), len(business_card), len(grounding),
-        len(catalog), len(stored_block),
+        channel.id, len(facts_block or ""), len(business_card or ""),
+        len(grounding or ""), len(catalog or ""), len(stored_block or ""),
     )
 
     system_prompt = (
@@ -736,10 +736,12 @@ async def _generate_reply(
 
     # The model may still ask for a fact the router did not detect. Execute the
     # tool here (tenant id from context, never from the model's arguments) and
-    # make one final, tools-free call so it cannot loop.
-    if resp.tool_calls:
+    # make one final, tools-free call so it cannot loop. `getattr` keeps older
+    # providers and test doubles (which return no tool_calls field) working.
+    tool_calls = getattr(resp, "tool_calls", None) or []
+    if tool_calls:
         observations: list[str] = []
-        for call in resp.tool_calls[:2]:
+        for call in tool_calls[:2]:
             if call.name != FACTS_TOOL.name:
                 continue
             topic = str((call.arguments or {}).get("topic") or "all")
